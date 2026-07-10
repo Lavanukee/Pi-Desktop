@@ -141,9 +141,9 @@ export function fileArtifact(absPath: string, read: ReadFileResult): Artifact {
   };
 }
 
-/** An in-flight file artifact from content we already have (a whole-file write's
- * args), before the authoritative disk read lands. */
-function hintArtifact(absPath: string, text: string): Artifact {
+/** A file artifact built from in-memory text (a whole-file write's args, or the
+ * buffer a user just saved) — no disk round-trip. */
+export function fileArtifactFromText(absPath: string, text: string): Artifact {
   return fileArtifact(absPath, {
     text,
     truncated: false,
@@ -151,6 +151,12 @@ function hintArtifact(absPath: string, text: string): Artifact {
     binary: false,
     bytes: text.length,
   });
+}
+
+/** An in-flight file artifact from content we already have (a whole-file write's
+ * args), before the authoritative disk read lands. */
+function hintArtifact(absPath: string, text: string): Artifact {
+  return fileArtifactFromText(absPath, text);
 }
 
 async function readFile(absPath: string): Promise<ReadFileResult | null> {

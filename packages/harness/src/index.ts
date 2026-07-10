@@ -22,20 +22,33 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from '@mariozechner/pi-coding-agent';
-import { classify, TASK_CLASSES, type TaskClass } from './classify/classify.js';
+import {
+  type AsyncClassifier,
+  classify,
+  classifyWithEscalation,
+  TASK_CLASSES,
+  type TaskClass,
+} from './classify/classify.js';
+import { createClassifierEscalation } from './classify/escalation.js';
 import { effortKnobs, isEffortLevel } from './effort/effort.js';
 import { parseModelParams, smallModelWarning } from './model/model-size.js';
+import { type CallModel, callModelFromEnv } from './model-call/call-model.js';
 import {
   isPermissionMode,
   type PermissionController,
   registerPermissions,
 } from './permissions/modes.js';
 import { resolvePresetTools } from './presets/presets.js';
+import { connectRepairBridge, type LiveRepairDeps } from './repair/bridge.js';
+import { createToolCallFixer, withRepairAttempts } from './repair/fixer.js';
+import { createHarnessExtraRungs, type HarnessRepairDeps } from './repair/rungs.js';
+import { adversarialCheck, reviewOutput } from './review/review.js';
 import {
   DEFAULT_CONFIG,
   HARNESS_CLASSIFY_ENTRY,
   HARNESS_CONFIG_ENTRY,
   HARNESS_REPAIR_ENTRY,
+  HARNESS_REVIEW_ENTRY,
   type HarnessConfig,
   type HarnessStatus,
   restoreConfig,
@@ -55,6 +68,23 @@ interface HarnessRuntime {
   model: { id: string; name?: string } | null;
   permission: PermissionController;
   statusTimer: ReturnType<typeof setInterval> | null;
+  /** Latest event ctx, captured so repair rungs (fired inside the provider's
+   * stream) can reach ctx.abort / ctx.ui.confirm for the active turn. */
+  currentCtx: ExtensionContext | null;
+  /** The prompt of the in-flight turn, for the reviewer pass. */
+  lastPrompt: string;
+  /** Skip the reviewer for the next turn (it's a revision we ourselves triggered). */
+  suppressNextReview: boolean;
+}
+
+/** Options for {@link wireHarness}. All optional; the app passes none (`-e` load). */
+export interface WireHarnessOptions {
+  /**
+   * The utility-model call powering the fixer, reviewer, and classifier
+   * escalation. Omitted → built from env (`PI_DESKTOP_UTILITY_*`); still absent →
+   * every model-dependent feature degrades to heuristic/skip.
+   */
+  readonly callModel?: CallModel;
 }
 
 /** A handle returned by {@link wireHarness} for tests + programmatic wiring. */
@@ -63,6 +93,10 @@ export interface HarnessHandle {
   getConfig(): HarnessConfig;
   getStatus(ctx: ExtensionContext): HarnessStatus;
   applyPreset(cls: TaskClass, ctx: ExtensionContext): void;
+  /** The live repair deps currently pushed to the provider (for tests/telemetry). */
+  buildRepairDeps(): LiveRepairDeps;
+  /** Run the reviewer/adversarial passes for a finished turn (effort-gated). */
+  reviewTurn(output: string, ctx: ExtensionContext): Promise<boolean>;
 }
 
 function getEntries(ctx: ExtensionContext): StoredEntryLike[] {
@@ -74,12 +108,34 @@ function countRepairFailures(entries: readonly StoredEntryLike[]): Record<string
   const counts: Record<string, number> = {};
   for (const e of entries) {
     if (e.type !== 'custom' || e.customType !== HARNESS_REPAIR_ENTRY) continue;
-    const data = e.data as { toolName?: unknown } | undefined;
+    const data = e.data as { toolName?: unknown; ok?: unknown } | undefined;
     const toolName = typeof data?.toolName === 'string' ? data.toolName : undefined;
     if (toolName === undefined) continue;
+    // Only the authoritative per-call outcome (onRepair) carries `ok`; count the
+    // failures. Rung-trace and relaxed/success entries (no `ok:false`) are skipped
+    // so a single failed tool call is counted exactly once.
+    if (data?.ok !== false) continue;
     counts[toolName] = (counts[toolName] ?? 0) + 1;
   }
   return counts;
+}
+
+/** Join the assistant text across a turn's messages (for the reviewer pass). */
+function extractAssistantText(messages: readonly unknown[]): string {
+  const parts: string[] = [];
+  for (const m of messages) {
+    const msg = m as { role?: unknown; content?: unknown };
+    if (msg.role !== 'assistant') continue;
+    if (typeof msg.content === 'string') {
+      parts.push(msg.content);
+    } else if (Array.isArray(msg.content)) {
+      for (const b of msg.content) {
+        const block = b as { type?: unknown; text?: unknown };
+        if (block.type === 'text' && typeof block.text === 'string') parts.push(block.text);
+      }
+    }
+  }
+  return parts.join('\n').trim();
 }
 
 const HELP = [
@@ -95,7 +151,7 @@ const HELP = [
  * Wire the full harness onto a pi session. Returns a handle used by tests and
  * (in the app) by the code that also needs the permission controller.
  */
-export function wireHarness(pi: ExtensionAPI): HarnessHandle {
+export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}): HarnessHandle {
   const runtime: HarnessRuntime = {
     config: DEFAULT_CONFIG,
     activeClass: null,
@@ -105,7 +161,129 @@ export function wireHarness(pi: ExtensionAPI): HarnessHandle {
     model: null,
     permission: { getMode: () => DEFAULT_CONFIG.mode, setMode: () => {} },
     statusTimer: null,
+    currentCtx: null,
+    lastPrompt: '',
+    suppressNextReview: false,
   };
+
+  // The utility model powering fixer + reviewer + classifier escalation. Absent
+  // (no PI_DESKTOP_UTILITY_BASE_URL and no injected callModel) → those features
+  // degrade to heuristic/skip; the rest of the harness is unaffected.
+  const callModel: CallModel | undefined = options.callModel ?? callModelFromEnv();
+  const asyncClassifier: AsyncClassifier | undefined =
+    callModel !== undefined ? createClassifierEscalation(callModel) : undefined;
+
+  // A session-stable per-tool failure counter shared by rungs 4 (bump) and 5
+  // (read → abort at threshold). Persists across effort changes (which only
+  // rebuild the rung array / threshold, not the counts).
+  const failureCounts = new Map<string, number>();
+
+  /**
+   * Build the live repair deps the provider's stream ladder consumes: the
+   * effort-bounded rung-2 fixer, rungs 3–5 (abort threshold from the effort
+   * slider), and telemetry that populates HarnessStatus.repairFailures.
+   */
+  function buildRepairDeps(): LiveRepairDeps {
+    const knobs = effortKnobs(runtime.config.effort);
+    const fixer =
+      callModel !== undefined
+        ? withRepairAttempts(createToolCallFixer(callModel), knobs.repairAttempts)
+        : undefined;
+
+    const harnessDeps: HarnessRepairDeps = {
+      abortThreshold: knobs.abortThreshold,
+      // Rung trace (no `ok` → not counted as a failure).
+      onRung: (info) =>
+        pi.appendEntry(HARNESS_REPAIR_ENTRY, { rung: info.rung, toolName: info.toolName }),
+      bumpFailureCount: (t) => {
+        const n = (failureCounts.get(t) ?? 0) + 1;
+        failureCounts.set(t, n);
+        return n;
+      },
+      getFailureCount: (t) => failureCounts.get(t) ?? 0,
+      confirmRelax: async ({ toolName, error, count }) => {
+        const ctx = runtime.currentCtx;
+        if (ctx?.hasUI !== true) return true; // headless → auto-approve relax
+        return ctx.ui.confirm(
+          `Relax "${toolName}" schema?`,
+          `${error} (attempt ${count}). Accept the arguments as-is?`,
+        );
+      },
+      relaxSchema: ({ toolName }) => {
+        // v1 records the relaxation (no `ok` → not a failure). Genuine same-name
+        // re-registration with a looser schema is tool-specific and deferred.
+        pi.appendEntry(HARNESS_REPAIR_ENTRY, { toolName, relaxed: true });
+      },
+      abort: ({ toolName, count }) => {
+        pi.appendEntry(HARNESS_REPAIR_ENTRY, { toolName, aborted: true, count });
+        runtime.currentCtx?.abort();
+      },
+    };
+
+    return {
+      fixer,
+      extraRungs: createHarnessExtraRungs(harnessDeps),
+      // Authoritative per-call outcome — the only entry carrying `ok`.
+      onRepair: (info) =>
+        pi.appendEntry(HARNESS_REPAIR_ENTRY, {
+          toolName: info.toolName,
+          rung: info.rung,
+          ok: info.ok,
+        }),
+    };
+  }
+
+  // Connect the repair bridge to the provider extension over pi.events (handshake
+  // is order-independent; no-op if pi.events / the provider isn't present).
+  const bridge = connectRepairBridge(pi.events, buildRepairDeps);
+
+  /**
+   * Effort-gated reviewer + adversarial passes over a finished turn's output.
+   * Returns true when a revision was triggered. Fail-open: no callModel → false.
+   */
+  async function reviewTurn(output: string, ctx: ExtensionContext): Promise<boolean> {
+    if (callModel === undefined || output.trim().length === 0) return false;
+    if (runtime.suppressNextReview) {
+      runtime.suppressNextReview = false;
+      return false;
+    }
+    const knobs = effortKnobs(runtime.config.effort);
+    if (knobs.reviewPasses <= 0 && !knobs.adversarialChecks) return false;
+
+    const task = runtime.lastPrompt;
+    const issues: string[] = [];
+    if (knobs.reviewPasses > 0) {
+      const r = await reviewOutput(callModel, { task, output });
+      if (!r.ok) issues.push(...r.issues);
+    }
+    if (knobs.adversarialChecks) {
+      const a = await adversarialCheck(callModel, { task, output });
+      if (!a.ok) issues.push(...a.issues);
+    }
+
+    pi.appendEntry(HARNESS_REVIEW_ENTRY, {
+      effort: runtime.config.effort,
+      reviewPasses: knobs.reviewPasses,
+      adversarial: knobs.adversarialChecks,
+      flagged: issues.length > 0,
+      issues,
+    });
+    if (issues.length === 0) return false;
+
+    // Trigger a revision turn, and don't review that revision (avoid a loop).
+    runtime.suppressNextReview = true;
+    if (ctx.hasUI) {
+      ctx.ui.notify(
+        `Reviewer flagged ${issues.length} issue(s); requesting a revision.`,
+        'warning',
+      );
+    }
+    pi.sendUserMessage?.(
+      `A reviewer flagged issues with your last result:\n- ${issues.join('\n- ')}\nPlease revise to address these.`,
+      { deliverAs: 'followUp' },
+    );
+    return true;
+  }
 
   // Tool search — always available so the model can pull in missing tools.
   registerToolSearch(pi, {
@@ -162,8 +340,11 @@ export function wireHarness(pi: ExtensionAPI): HarnessHandle {
 
   // Restore persisted config + start the status timer on session start.
   pi.on('session_start', (_event, ctx) => {
+    runtime.currentCtx = ctx;
     runtime.config = restoreConfig(getEntries(ctx));
     runtime.permission.setMode(runtime.config.mode);
+    // Push repair deps now that the effort level is known (abortThreshold etc.).
+    bridge.push();
     if (runtime.statusTimer !== null) clearInterval(runtime.statusTimer);
     runtime.statusTimer = setInterval(() => publishStatus(ctx), 1000);
     publishStatus(ctx);
@@ -176,34 +357,49 @@ export function wireHarness(pi: ExtensionAPI): HarnessHandle {
     }
   });
 
-  // Classify each task and load its preset before the agent loop runs.
-  pi.on('before_agent_start', (event, ctx) => {
+  // Classify each task and load its preset before the agent loop runs. When a
+  // utility model is configured, ambiguous heuristics escalate to a tier-2
+  // double-check (classifyWithEscalation); otherwise the pure heuristic stands.
+  pi.on('before_agent_start', async (event, ctx) => {
     runtime.turnIndex += 1;
-    const cls: TaskClass =
-      runtime.config.preset === 'auto'
-        ? classify({
-            prompt: event.prompt,
-            hasImages: (event.images?.length ?? 0) > 0,
-            priorClass: runtime.activeClass ?? undefined,
-            turnIndex: runtime.turnIndex,
-          }).class
-        : runtime.config.preset;
+    runtime.currentCtx = ctx;
+    runtime.lastPrompt = event.prompt;
+    let cls: TaskClass;
+    if (runtime.config.preset === 'auto') {
+      const input = {
+        prompt: event.prompt,
+        hasImages: (event.images?.length ?? 0) > 0,
+        priorClass: runtime.activeClass ?? undefined,
+        turnIndex: runtime.turnIndex,
+      };
+      cls =
+        asyncClassifier !== undefined
+          ? (await classifyWithEscalation(input, { asyncClassifier })).class
+          : classify(input).class;
+    } else {
+      cls = runtime.config.preset;
+    }
     applyPreset(cls, ctx);
     pi.appendEntry(HARNESS_CLASSIFY_ENTRY, { class: cls, turnIndex: runtime.turnIndex });
   });
 
   // Running-task timer.
   pi.on('agent_start', (_event, ctx) => {
+    runtime.currentCtx = ctx;
     runtime.taskStart = Date.now();
     publishStatus(ctx);
   });
-  pi.on('agent_end', (_event, ctx) => {
+  pi.on('agent_end', async (event, ctx) => {
+    runtime.currentCtx = ctx;
     runtime.taskStart = null;
     publishStatus(ctx);
+    // Effort high/max → reviewer + adversarial critique of the produced result.
+    await reviewTurn(extractAssistantText(event.messages), ctx);
   });
 
   // Model changes → small-model warning + status refresh.
   pi.on('model_select', (event, ctx) => {
+    runtime.currentCtx = ctx;
     runtime.model = { id: event.model.id, name: event.model.name };
     if (runtime.activeClass !== null) {
       const warning = smallModelWarning(runtime.model, runtime.activeClass);
@@ -256,10 +452,13 @@ export function wireHarness(pi: ExtensionAPI): HarnessHandle {
           }
           runtime.config = updateConfig(runtime.config, { effort: rest });
           persistConfig();
+          // Re-push repair deps so the new abortThreshold / repairAttempts take
+          // effect on the provider's live ladder immediately.
+          bridge.push();
           publishStatus(ctx);
           const k = effortKnobs(rest);
           ctx.ui.notify(
-            `effort → ${rest} (repairAttempts ${k.repairAttempts}, abortThreshold ${k.abortThreshold}, reviewPasses ${k.reviewPasses})`,
+            `effort → ${rest} (repairAttempts ${k.repairAttempts}, abortThreshold ${k.abortThreshold}, reviewPasses ${k.reviewPasses}, adversarial ${k.adversarialChecks})`,
           );
           return;
         }
@@ -306,6 +505,8 @@ export function wireHarness(pi: ExtensionAPI): HarnessHandle {
     getConfig: () => runtime.config,
     getStatus: (ctx) => buildStatus(ctx),
     applyPreset,
+    buildRepairDeps,
+    reviewTurn,
   };
 }
 
@@ -331,6 +532,7 @@ export {
   type TaskClass,
   type TaskTier,
 } from './classify/classify.js';
+export { createClassifierEscalation } from './classify/escalation.js';
 export {
   EFFORT_KNOBS,
   EFFORT_LEVELS,
@@ -350,6 +552,16 @@ export {
   SMALL_MODEL_THRESHOLD_B,
   smallModelWarning,
 } from './model/model-size.js';
+export {
+  type CallModel,
+  type CallModelRequest,
+  callModelFromEnv,
+  createOpenAiCompatCallModel,
+  type OpenAiCompatConfig,
+  UTILITY_API_KEY_ENV,
+  UTILITY_BASE_URL_ENV,
+  UTILITY_MODEL_ENV,
+} from './model-call/call-model.js';
 export {
   type BashFlagger,
   type EvaluateInput,
@@ -378,6 +590,18 @@ export {
   TOOL_SEARCH_TOOL_NAME,
 } from './presets/presets.js';
 export {
+  connectRepairBridge as connectHarnessRepairBridge,
+  type LiveRepairDeps,
+  REPAIR_BRIDGE_HELLO,
+  REPAIR_BRIDGE_READY,
+  type RepairBridgeReady,
+} from './repair/bridge.js';
+export {
+  createToolCallFixer,
+  extractJsonObject,
+  withRepairAttempts,
+} from './repair/fixer.js';
+export {
   createHarnessExtraRungs,
   createRung3,
   createRung4,
@@ -387,13 +611,22 @@ export {
   type RepairContext,
   type RepairResult,
   type RepairRung,
+  type ToolCallFixer,
   type ToolSchemaLike,
 } from './repair/rungs.js';
+export {
+  adversarialCheck,
+  parseReview,
+  type ReviewInput,
+  type ReviewResult,
+  reviewOutput,
+} from './review/review.js';
 export {
   DEFAULT_CONFIG,
   HARNESS_CLASSIFY_ENTRY,
   HARNESS_CONFIG_ENTRY,
   HARNESS_REPAIR_ENTRY,
+  HARNESS_REVIEW_ENTRY,
   type HarnessConfig,
   type HarnessStatus,
   type PresetSelection,

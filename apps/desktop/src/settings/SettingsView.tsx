@@ -50,9 +50,11 @@ const NAV: Array<{ id: SettingsSection; label: string; icon: ReactNode }> = [
 function SectionBody({
   section,
   onOpenGallery,
+  onOpenConnectors,
 }: {
   section: SettingsSection;
   onOpenGallery?: () => void;
+  onOpenConnectors?: () => void;
 }) {
   switch (section) {
     case 'models':
@@ -68,7 +70,7 @@ function SectionBody({
     case 'search':
       return <SearchPanel />;
     case 'connectors':
-      return <ConnectorsPanel />;
+      return <ConnectorsPanel onOpenConnectors={onOpenConnectors} />;
     case 'capabilities':
       return <CapabilitiesPanel />;
   }
@@ -79,12 +81,15 @@ export function SettingsView({
   onSection,
   onClose,
   onOpenGallery,
+  onOpenConnectors,
 }: {
   section: SettingsSection;
   onSection: (section: SettingsSection) => void;
   onClose: () => void;
   /** Open the dev component gallery (round-5 #23: entry lives in Interface). */
   onOpenGallery?: () => void;
+  /** Open the full Codex-style connectors gallery (its own top-level view). */
+  onOpenConnectors?: () => void;
 }) {
   return (
     <div className="pd-settings-enter flex h-full flex-col bg-bg-base" data-testid="settings-view">
@@ -141,7 +146,11 @@ export function SettingsView({
 
         <ScrollArea className="min-w-0 flex-1">
           <div className="mx-auto max-w-[760px] px-8 py-8">
-            <SectionBody section={section} onOpenGallery={onOpenGallery} />
+            <SectionBody
+              section={section}
+              onOpenGallery={onOpenGallery}
+              onOpenConnectors={onOpenConnectors}
+            />
           </div>
         </ScrollArea>
       </div>

@@ -33,6 +33,7 @@
  * The default export is the extension factory pi loads via `-e`.
  */
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
+import { connectRepairBridge, createRepairBridge } from './repair-bridge.js';
 import { createLlamaCppStream, type LlamaCppStreamDeps } from './stream.js';
 
 export const packageName = '@pi-desktop/provider-llamacpp';
@@ -69,11 +70,22 @@ export function registerLlamaCppProvider(
   });
 }
 
-/** pi extension factory. */
+/**
+ * pi extension factory.
+ *
+ * Self-wires the repair bridge: the harness (`@pi-desktop/harness`, a separate
+ * `-e` extension in the same process) pushes its live fixer + rungs 3–5 +
+ * telemetry over `pi.events`, and the registered `streamSimple` resolves them at
+ * call time via `repairProvider`. No app wiring is required; if the harness is
+ * absent the provider keeps its local rung 1–2 behavior.
+ */
 export default function activate(pi: ExtensionAPI): void {
-  registerLlamaCppProvider(pi);
+  const bridge = createRepairBridge();
+  registerLlamaCppProvider(pi, { deps: { repairProvider: () => bridge.current } });
+  connectRepairBridge(pi, bridge);
 }
 
 export * from './repair.js';
+export * from './repair-bridge.js';
 export * from './sse.js';
 export * from './stream.js';

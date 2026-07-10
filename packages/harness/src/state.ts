@@ -12,6 +12,8 @@ import { isPermissionMode, type PermissionMode } from './permissions/modes.js';
 export const HARNESS_CONFIG_ENTRY = 'harness/config';
 export const HARNESS_CLASSIFY_ENTRY = 'harness/classify';
 export const HARNESS_REPAIR_ENTRY = 'harness/repair';
+/** Reviewer/adversarial pass outcome (effort high/max). */
+export const HARNESS_REVIEW_ENTRY = 'harness/review';
 
 /** Preset selection: a fixed class, or `auto` to let the classifier decide. */
 export type PresetSelection = TaskClass | 'auto';

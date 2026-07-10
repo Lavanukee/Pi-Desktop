@@ -8,8 +8,20 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-/** How a server's tools are surfaced to the model. */
-export type McpMode = 'lite' | 'native';
+/**
+ * How a server's tools are surfaced to the model.
+ * - `lite`: one generic proxy tool set (`mcp_list`/`mcp_schema`/`mcp_call`),
+ *   schemas fetched on demand.
+ * - `native`: every MCP tool registered directly (`<id>_<tool>`), full schema in
+ *   context.
+ * - `bash-cli`: connectors reached through the real `bash` tool via a generated
+ *   `pi-tool` dispatcher on an injected PATH (a token-gated Unix-socket bridge),
+ *   so a small model uses familiar shell commands instead of structured calls.
+ */
+export type McpMode = 'lite' | 'native' | 'bash-cli';
+
+/** Every valid connector mode, in UI order. */
+export const MCP_MODES: readonly McpMode[] = ['lite', 'native', 'bash-cli'];
 
 /** A single configured MCP server (one gallery card). */
 export interface McpServerConfig {
@@ -81,7 +93,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 function normalizeMode(v: unknown): McpMode | undefined {
-  return v === 'lite' || v === 'native' ? v : undefined;
+  return v === 'lite' || v === 'native' || v === 'bash-cli' ? v : undefined;
 }
 
 function normalizeStringMap(v: unknown): Record<string, string> | undefined {

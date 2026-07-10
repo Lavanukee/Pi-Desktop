@@ -47,9 +47,59 @@ describe('CanvasOperationBar — kinds with no bar', () => {
     const { container } = await render(<CanvasOperationBar tab={tab({ kind: 'terminal' })} />);
     expect(container.querySelector('.pd-canvas-opbar')).toBeNull();
   });
-  it('renders nothing for code', async () => {
-    const { container } = await render(<CanvasOperationBar tab={tab({ kind: 'code' })} />);
+  it('renders nothing for subagent', async () => {
+    const { container } = await render(<CanvasOperationBar tab={tab({ kind: 'subagent' })} />);
     expect(container.querySelector('.pd-canvas-opbar')).toBeNull();
+  });
+});
+
+describe('CanvasOperationBar — renderable (html / svg / code)', () => {
+  it.each([
+    'html',
+    'svg',
+    'code',
+  ] as const)('shows the rendered/raw toggle + name·type for a %s tab', async (kind) => {
+    const onFileViewModeChange = vi.fn();
+    const { container } = await render(
+      <CanvasOperationBar
+        tab={tab({
+          kind,
+          title: 'chart',
+          artifact: { id: 'a', content: { kind, text: '<svg/>', language: 'html' } },
+        })}
+        fileViewMode="rendered"
+        onFileViewModeChange={onFileViewModeChange}
+      />,
+    );
+    // The bar renders (it did NOT before round-9) with the shared toggle.
+    expect(container.querySelector('.pd-canvas-opbar')).toBeTruthy();
+    const segments = [...container.querySelectorAll('.pd-canvas-view-toggle .pd-segment')].map(
+      (n) => n.textContent,
+    );
+    expect(segments).toEqual(['Rendered', 'Raw']);
+    // A "Name · TYPE" label sits next to the toggle.
+    expect(container.querySelector('.pd-media-title')).toBeTruthy();
+    const raw = [...container.querySelectorAll('.pd-canvas-view-toggle .pd-segment')].find(
+      (n) => n.textContent === 'Raw',
+    );
+    await click(raw ?? null);
+    expect(onFileViewModeChange).toHaveBeenCalledWith('raw');
+  });
+
+  it('wires expand + close on the right', async () => {
+    const onMediaExpand = vi.fn();
+    const onClose = vi.fn();
+    const { container } = await render(
+      <CanvasOperationBar
+        tab={tab({ kind: 'html', title: 'page' })}
+        onMediaExpand={onMediaExpand}
+        onClose={onClose}
+      />,
+    );
+    await click(container.querySelector('[aria-label="Expand"]'));
+    await click(container.querySelector('[aria-label="Close"]'));
+    expect(onMediaExpand).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 

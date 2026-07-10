@@ -60,4 +60,9 @@ describe('smallModelWarning', () => {
   it('warns on full-shebang with a small model', () => {
     expect(smallModelWarning({ id: 'llama-3.1-8b' }, 'full-shebang')).not.toBeNull();
   });
+
+  it("warns on 'other' with a small model (connector/integration work)", () => {
+    expect(smallModelWarning({ id: 'gemma4-e2b', name: 'Gemma4 E2B' }, 'other')).toContain('small');
+    expect(smallModelWarning({ id: 'qwen3.6-27b' }, 'other')).toBeNull();
+  });
 });

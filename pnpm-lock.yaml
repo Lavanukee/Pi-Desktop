@@ -53,6 +53,9 @@ importers:
       '@pi-desktop/mac-connectors':
         specifier: workspace:*
         version: link:../../packages/mac-connectors
+      '@pi-desktop/mcp-lite':
+        specifier: workspace:*
+        version: link:../../packages/mcp-lite
       '@pi-desktop/provider-afm':
         specifier: workspace:*
         version: link:../../packages/provider-afm

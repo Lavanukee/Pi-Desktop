@@ -44,6 +44,11 @@ const EXTENSION_PACKAGE_DIRS = [
   // export-default probe below, so both land automatically once present.
   'browser-use',
   'mac-connectors',
+  // mcp-lite (W8): connects the user's ~/.pi/desktop/mcp-connectors.json servers
+  // and exposes them to the model per the configured mode (lite proxy / native /
+  // bash-cli). Its src/index.ts re-exports the extension's default so the
+  // export-default probe below picks it up.
+  'mcp-lite',
 ] as const;
 
 function resolveExtensionPaths(): string[] {

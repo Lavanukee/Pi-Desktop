@@ -14,6 +14,7 @@
  */
 import * as os from 'node:os';
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
+import { type BashCliHandle, type BashCliOptions, registerBashCliTools } from './bash-cli';
 import { ConnectorHost } from './connector-host';
 import { registerNativeTools, registerProxyTools } from './pi-tools';
 import {
@@ -33,6 +34,8 @@ export interface McpLiteOptions {
   host?: ConnectorHost;
   /** Home dir for the default config path. Defaults to os.homedir(). */
   homedir?: string;
+  /** Injected bash-cli bridge options (tests: explicit shimDir/env/socket). */
+  bashCli?: BashCliOptions;
 }
 
 export interface McpLiteActivation {
@@ -43,6 +46,8 @@ export interface McpLiteActivation {
   summary: string[];
   /** Whether the lite proxy tools were registered. */
   proxyRegistered: boolean;
+  /** The live bash-cli bridge (shim dir + socket), or null when not in that mode. */
+  bashCli: BashCliHandle | null;
 }
 
 /**
@@ -63,6 +68,7 @@ export async function activateMcpLite(
   const enabled = registry.servers.filter((s) => s.enabled !== false);
   const summary: string[] = [];
   let proxyRegistered = false;
+  let bashCli: BashCliHandle | null = null;
 
   if (enabled.length > 0) {
     await host.connectAll(enabled);
@@ -75,11 +81,21 @@ export async function activateMcpLite(
       proxyRegistered = true;
     }
 
+    // bash-cli mode: install the pi-tool shim + socket bridge once, exposing the
+    // whole host through the real bash tool (plus the `cli` fallback). It routes
+    // to every connected server, so a single bridge serves all bash-cli servers.
+    const anyBashCli = enabled.some((s) => (s.mode ?? registry.mode) === 'bash-cli');
+    if (anyBashCli) {
+      bashCli = registerBashCliTools(pi, host, options.bashCli);
+    }
+
     for (const server of host.getConnected()) {
       const mode = server.config.mode ?? registry.mode;
       if (mode === 'native') {
         const names = registerNativeTools(pi, host, server);
         summary.push(`${server.config.id}: native — ${names.length} tool(s)`);
+      } else if (mode === 'bash-cli') {
+        summary.push(`${server.config.id}: bash-cli — ${server.tools.length} tool(s) via pi-tool`);
       } else {
         summary.push(`${server.config.id}: lite — ${server.tools.length} tool(s) via mcp_call`);
       }
@@ -102,16 +118,22 @@ export async function activateMcpLite(
         );
         return;
       }
-      const mode = proxyRegistered
-        ? 'lite proxy tools: mcp_list, mcp_schema, mcp_call'
-        : 'native tools registered';
-      ctx.ui.notify(`${header}\n  ${mode}\n${summary.map((l) => `  • ${l}`).join('\n')}`);
+      const surfaces: string[] = [];
+      if (proxyRegistered) surfaces.push('lite proxy tools: mcp_list, mcp_schema, mcp_call');
+      if (bashCli !== null) surfaces.push('bash-cli: `pi-tool` on PATH (+ `cli` tool)');
+      if (surfaces.length === 0) surfaces.push('native tools registered');
+      ctx.ui.notify(
+        `${header}\n  ${surfaces.join('\n  ')}\n${summary.map((l) => `  • ${l}`).join('\n')}`,
+      );
     },
   });
 
-  pi.on('session_shutdown', () => host.disposeAll());
+  pi.on('session_shutdown', () => {
+    host.disposeAll();
+    bashCli?.dispose();
+  });
 
-  return { host, registry, configPath, summary, proxyRegistered };
+  return { host, registry, configPath, summary, proxyRegistered, bashCli };
 }
 
 /** pi extension factory (default export loaded via `-e`). */

@@ -21,14 +21,49 @@ import {
   IconAppGeneric,
   IconArrowLeft,
   IconArrowRight,
+  IconCode,
   IconDownload,
   IconExpand,
   IconFolder,
   IconFolders,
+  IconMarkup,
 } from '../tab-icons.tsx';
 import { FileTree } from './file-tree.tsx';
-import type { CanvasTab, FileTreeNode, FileViewMode, OpenWithApp } from './tab-model.ts';
+import type {
+  CanvasTab,
+  CanvasTabKind,
+  FileTreeNode,
+  FileViewMode,
+  OpenWithApp,
+} from './tab-model.ts';
 import { useOutsideClose } from './use-outside-close.ts';
+
+/**
+ * Artifact kinds that have a distinct RENDERED preview vs. a RAW source view, so
+ * the operation bar offers a rendered/raw toggle: an interactive html frame, a
+ * drawn svg, a rendered markdown, and code (its raw view is the same source, but
+ * the toggle stays for uniformity + a clean copyable editor). Round-9 img72.
+ */
+const RENDERABLE_KINDS: ReadonlySet<CanvasTabKind> = new Set(['html', 'svg', 'code', 'markdown']);
+
+/**
+ * Whether this tab shows a rendered/raw toggle. File tabs toggle only for
+ * markdown (a `.ts` file has no separate rendered form); artifact-backed
+ * html/svg/code/markdown tabs always do.
+ */
+export function hasViewToggle(tab: CanvasTab): boolean {
+  if (tab.kind === 'file') return isMarkdownFile(tab);
+  return RENDERABLE_KINDS.has(tab.kind);
+}
+
+/**
+ * Default view for any toggle-bearing tab: markdown (file or artifact) and the
+ * renderable html/svg previews start RENDERED; a raw code file starts raw.
+ */
+export function viewModeDefault(tab: CanvasTab): FileViewMode {
+  if (tab.kind === 'file') return fileViewModeDefault(tab);
+  return 'rendered';
+}
 
 /**
  * True when a file tab renders as markdown (by content kind or by `.md`/`.mdx`
@@ -102,10 +137,11 @@ export interface CanvasOperationBarProps {
 /**
  * CanvasOperationBar — the SECOND bar under the tab strip, showing the active
  * tab's operations by kind: a file breadcrumb + file-tree + "Open ▾"; browser
- * back/fwd/refresh/URL/external/⋮; media name + download/refresh/expand/close.
- * Terminal (and the minimal code/markdown/svg/html kinds, whose copy lives in
- * the tab bar) render NOTHING — the bar collapses so those surfaces get the full
- * height. Every control is presentational and emits its callback for the app.
+ * back/fwd/refresh/URL/external/⋮; media name + download/refresh/expand/close;
+ * and renderable html/svg/code/markdown tabs a rendered/raw toggle + name·type +
+ * expand/close (round-9 img72). Only terminal/subagent render NOTHING — the bar
+ * collapses so those surfaces get the full height. Every control is
+ * presentational and emits its callback for the app.
  */
 export function CanvasOperationBar(props: CanvasOperationBarProps): ReactElement | null {
   const { tab, className } = props;
@@ -130,10 +166,59 @@ function renderOps(props: CanvasOperationBarProps): ReactNode {
     case 'image':
     case 'pdf':
       return <MediaOps {...props} />;
+    case 'html':
+    case 'svg':
+    case 'code':
+    case 'markdown':
+      return <RenderableOps {...props} />;
     default:
-      // terminal / subagent / code / markdown / svg / html — no operation bar.
+      // terminal / subagent — no operation bar.
       return null;
   }
+}
+
+/* ── Rendered/raw toggle (shared: file + renderable ops) ─────────────────── */
+
+/**
+ * The rendered↔raw segmented toggle. `rendered` shows the live surface (prose /
+ * frame / drawn svg); `raw` shows a syntax-highlighted source editor. Shared by
+ * {@link FileOps} and {@link RenderableOps} so the two paths never diverge.
+ */
+function ViewModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: FileViewMode;
+  onChange?: (mode: FileViewMode) => void;
+}) {
+  return (
+    <SegmentedControl
+      className="pd-canvas-view-toggle"
+      aria-label="View"
+      value={mode}
+      onValueChange={(value) => onChange?.(value as FileViewMode)}
+      options={[
+        {
+          value: 'rendered',
+          label: (
+            <>
+              <IconMarkup size={13} />
+              <span>Rendered</span>
+            </>
+          ),
+        },
+        {
+          value: 'raw',
+          label: (
+            <>
+              <IconCode size={13} />
+              <span>Raw</span>
+            </>
+          ),
+        },
+      ]}
+    />
+  );
 }
 
 /* ── File ───────────────────────────────────────────────────────────────── */
@@ -188,18 +273,7 @@ function FileOps({
         )}
       </nav>
       <span className="pd-canvas-opbar-spacer" />
-      {showToggle ? (
-        <SegmentedControl
-          className="pd-canvas-view-toggle"
-          aria-label="File view"
-          value={mode}
-          onValueChange={(value) => onFileViewModeChange?.(value as FileViewMode)}
-          options={[
-            { value: 'rendered', label: 'Rendered' },
-            { value: 'raw', label: 'Raw' },
-          ]}
-        />
-      ) : null}
+      {showToggle ? <ViewModeToggle mode={mode} onChange={onFileViewModeChange} /> : null}
       <div ref={treeRef} className="pd-canvas-opbar-pop">
         <IconButton
           size="sm"
@@ -300,6 +374,45 @@ function AppIcon({ app, slot = 'split' }: { app?: OpenWithApp; slot?: 'split' | 
         <IconAppGeneric size={16} />
       )}
     </span>
+  );
+}
+
+/* ── Renderable (html | svg | code | markdown) ──────────────────────────── */
+
+/** Type badge for a renderable tab: the code language (TS/PY/…) or the kind. */
+function renderableType(tab: CanvasTab): string {
+  if (tab.kind === 'code') return (tab.artifact?.content.language ?? 'CODE').toUpperCase();
+  return tab.kind.toUpperCase();
+}
+
+/**
+ * The bar for artifact-backed renderable tabs: a LEFT rendered/raw toggle, a
+ * "Name · TYPE" label, then expand/close on the right (Copy lives in the tab
+ * bar). The raw view is a syntax-highlighted source editor — shared with the
+ * standalone `<Canvas>` via the surfaces, not re-implemented here.
+ */
+function RenderableOps({
+  tab,
+  fileViewMode,
+  onFileViewModeChange,
+  onMediaExpand,
+  onClose,
+}: CanvasOperationBarProps) {
+  const mode = fileViewMode ?? viewModeDefault(tab);
+  return (
+    <>
+      <ViewModeToggle mode={mode} onChange={onFileViewModeChange} />
+      <span className="pd-media-title">
+        {mediaName(tab)} · <span className="pd-media-type">{renderableType(tab)}</span>
+      </span>
+      <span className="pd-canvas-opbar-spacer" />
+      <IconButton size="sm" aria-label="Expand" onClick={() => onMediaExpand?.()}>
+        <IconExpand size={16} />
+      </IconButton>
+      <IconButton size="sm" aria-label="Close" onClick={() => onClose?.()}>
+        <IconClose size={16} />
+      </IconButton>
+    </>
   );
 }
 

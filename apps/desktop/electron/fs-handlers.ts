@@ -17,6 +17,7 @@ import type { FsInvokeMap, FsTreeNode, SessionSummary } from './ipc-contract';
 const HOME = os.homedir();
 const AGENT_DIR = path.join(HOME, '.pi', 'agent');
 const SESSIONS_DIR = path.join(AGENT_DIR, 'sessions');
+const PROJECTS_PATH = path.join(HOME, '.pi', 'desktop', 'projects.json');
 
 function safeRead(file: string): string | null {
   try {
@@ -307,6 +308,83 @@ function readFileBounded(
   }
 }
 
+/**
+ * WRITE fence (round-9 live canvas editing). Unlike the read channels — where the
+ * renderer is trusted and reads anywhere — writing is fenced to the roots the app
+ * actually works in: the registered project folders, every cwd pi has a session
+ * for, and pi's own agent/session data dir. A path outside all of them is refused
+ * (belt-and-braces against a traversal/typo clobbering a system file). Payloads
+ * are size-capped and a path that already resolves to a directory is refused.
+ */
+const WRITE_FILE_MAX = 5 * 1024 * 1024;
+
+function normalizeRoot(p: string): string {
+  const abs = path.resolve(p.trim());
+  return abs.length > 1 && abs.endsWith(path.sep) ? abs.slice(0, -1) : abs;
+}
+
+/** Absolute paths of the registered project working folders (projects.json). */
+function projectRoots(): string[] {
+  const raw = safeRead(PROJECTS_PATH);
+  if (raw === null) return [];
+  try {
+    const doc = JSON.parse(raw) as { projects?: Array<{ path?: unknown }> };
+    return (doc.projects ?? [])
+      .map((p) => p?.path)
+      .filter((p): p is string => typeof p === 'string' && p.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/** Every cwd pi has a session directory for (decoded from the folder name). */
+function sessionCwdRoots(): string[] {
+  const out: string[] = [];
+  for (const p of listDir(SESSIONS_DIR)) {
+    if (statSafe(path.join(SESSIONS_DIR, p))?.isDirectory() !== true) continue;
+    const cwd = decodeCwd(p);
+    if (cwd && cwd !== '/') out.push(cwd);
+  }
+  return out;
+}
+
+/** The union of allowed write roots, normalized + de-duplicated. */
+function allowedWriteRoots(): string[] {
+  const roots = new Set<string>();
+  for (const p of projectRoots()) roots.add(normalizeRoot(p));
+  for (const p of sessionCwdRoots()) roots.add(normalizeRoot(p));
+  roots.add(normalizeRoot(AGENT_DIR));
+  return [...roots];
+}
+
+/** True when `target` is `root` itself or nested under it. */
+function isUnderRoot(root: string, target: string): boolean {
+  return target === root || target.startsWith(root + path.sep);
+}
+
+function writeFileFenced(
+  file: string,
+  content: string,
+): { ok: boolean; bytes?: number; error?: string } {
+  const resolved = path.resolve(file);
+  if (statSafe(resolved)?.isDirectory() === true) {
+    return { ok: false, error: 'Path is a directory' };
+  }
+  const bytes = Buffer.byteLength(content, 'utf8');
+  if (bytes > WRITE_FILE_MAX) return { ok: false, error: 'File exceeds the write size limit' };
+  const roots = allowedWriteRoots();
+  if (!roots.some((root) => isUnderRoot(root, resolved))) {
+    return { ok: false, error: 'Path is outside an allowed project or session folder' };
+  }
+  try {
+    fs.mkdirSync(path.dirname(resolved), { recursive: true });
+    fs.writeFileSync(resolved, content, 'utf8');
+    return { ok: true, bytes };
+  } catch (error) {
+    return { ok: false, error: (error as { message?: string })?.message ?? String(error) };
+  }
+}
+
 /** The fs channel implementations, spread into main.ts's registerIpcHandlers. */
 export const fsHandlers: {
   [K in keyof FsInvokeMap]: (req: FsInvokeMap[K]['request']) => FsInvokeMap[K]['response'];
@@ -319,4 +397,5 @@ export const fsHandlers: {
     tree: listTree(req.root, Math.min(req.depth ?? 3, TREE_MAX_DEPTH)),
   }),
   'fs:read-file': (req) => readFileBounded(req.path, req.maxBytes ?? READ_FILE_DEFAULT_MAX),
+  'fs:write-file': (req) => writeFileFenced(req.path, req.content),
 };

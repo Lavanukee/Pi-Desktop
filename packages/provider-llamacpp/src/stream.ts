@@ -28,6 +28,7 @@ import {
   repairToolCallArguments,
   type ToolCallFixer,
   type ToolSchemaLike,
+  validateAgainstSchema,
 } from './repair.js';
 import { parseSSE } from './sse.js';
 
@@ -52,6 +53,20 @@ export interface LlamaCppStreamDeps {
   readonly onTimings?: (t: LlamaCppTimings) => void;
   /** Called when a tool call needed repair (observability / W5 seam). */
   readonly onRepair?: (info: { toolName: string; rung: number | undefined; ok: boolean }) => void;
+  /**
+   * Live repair wiring resolved at stream time (the harness pushes this via the
+   * `pi.events` repair bridge). When present, its `fixer`/`extraRungs`/`onRepair`
+   * take precedence over the static ones above, so effort-slider changes and the
+   * harness's rungs 3–5 take effect without re-registering the provider. Absent
+   * (or returning undefined) → the static deps are used.
+   */
+  readonly repairProvider?: () =>
+    | {
+        fixer?: ToolCallFixer;
+        extraRungs?: readonly RepairRung[];
+        onRepair?: (info: { toolName: string; rung: number | undefined; ok: boolean }) => void;
+      }
+    | undefined;
 }
 
 /** streamSimple signature required by pi's ProviderConfig. */
@@ -364,20 +379,43 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
         for (const state of toolStates.values()) {
           const block = output.content[state.contentIndex];
           if (block?.type !== 'toolCall') continue;
-          let finalArgs: Record<string, unknown> | undefined;
+          const schema = schemaFor(state.name);
+
+          // Parse first; a parse failure OR a syntactically-valid but
+          // SCHEMA-invalid call both enter the repair ladder (rung 1 normalize →
+          // rung 2 fixer → rungs 3–5). A schema-clean parse skips repair entirely.
+          let parsed: Record<string, unknown> | undefined;
+          let parseOk = true;
           try {
-            finalArgs =
+            parsed =
               state.argStr.length > 0 ? (JSON.parse(state.argStr) as Record<string, unknown>) : {};
           } catch {
-            // RUNG 1–2 repair.
+            parseOk = false;
+          }
+          const schemaInvalid =
+            parseOk && parsed !== undefined && schema !== undefined
+              ? !validateAgainstSchema(parsed, schema).valid
+              : false;
+
+          let finalArgs: Record<string, unknown>;
+          if (!parseOk || schemaInvalid) {
+            // Resolve the live harness wiring (fixer + rungs 3–5 + telemetry),
+            // falling back to any static deps.
+            const live = deps.repairProvider?.();
             const result = await repairToolCallArguments(state.argStr, {
               toolName: state.name,
-              schema: schemaFor(state.name),
-              fixer: deps.fixer,
-              extraRungs: deps.extraRungs,
+              schema,
+              fixer: live?.fixer ?? deps.fixer,
+              extraRungs: live?.extraRungs ?? deps.extraRungs,
             });
-            deps.onRepair?.({ toolName: state.name, rung: result.rung, ok: result.ok });
-            finalArgs = result.value ?? {};
+            (live?.onRepair ?? deps.onRepair)?.({
+              toolName: state.name,
+              rung: result.rung,
+              ok: result.ok,
+            });
+            finalArgs = result.value ?? parsed ?? {};
+          } else {
+            finalArgs = parsed ?? {};
           }
           block.arguments = finalArgs;
           if (finishReason === 'stop') finishReason = 'toolUse';

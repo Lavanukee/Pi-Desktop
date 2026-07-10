@@ -106,8 +106,10 @@ function ProjectChip() {
 
 export function ChatApp({
   onOpenSettings,
+  onOpenConnectors,
 }: {
   onOpenSettings: (section: SettingsSection) => void;
+  onOpenConnectors: () => void;
 }) {
   const messageCount = usePiStore((s) => s.messages.length);
   const windowTitle = usePiStore((s) => s.windowTitle);
@@ -181,6 +183,7 @@ export function ChatApp({
             onExpand={() => setSidebarOpen(true)}
             onTruncated={() => setTruncatedNote(true)}
             onOpenSettings={onOpenSettings}
+            onOpenConnectors={onOpenConnectors}
             onOpenStub={setStub}
           />
         </div>

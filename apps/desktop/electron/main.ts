@@ -11,6 +11,7 @@ import {
   registerCanvasProtocol,
   registerCanvasSchemesAsPrivileged,
 } from './canvas/canvas-main';
+import { registerConnectorsIpc } from './connectors/connectors-main';
 import { fsHandlers } from './fs-handlers';
 import { registerImportIpc } from './import/import-main';
 import { registerLlmIpc } from './inference/llm-main';
@@ -190,6 +191,11 @@ function registerAppIpc(): void {
 
   // Projects (working folders): list/set/new/clear, persisted to projects.json.
   registerProjectIpc(ipcMain, allowSender);
+
+  // Connectors gallery: catalog + registry read/mutate + /Applications scan.
+  // Owns ~/.pi/desktop/mcp-connectors.json (the file the mcp-lite pi extension
+  // reads); the model sees changes on the next pi session/spawn.
+  registerConnectorsIpc(ipcMain, allowSender);
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();

@@ -112,6 +112,7 @@ export function SessionSidebar({
   onExpand,
   onTruncated,
   onOpenSettings,
+  onOpenConnectors,
   onOpenStub,
 }: {
   open: boolean;
@@ -120,6 +121,8 @@ export function SessionSidebar({
   onExpand: () => void;
   onTruncated: () => void;
   onOpenSettings: (section: SettingsSection) => void;
+  /** Open the Codex-style connectors gallery (its own top-level view). */
+  onOpenConnectors: () => void;
   onOpenStub: (stub: SidebarStub) => void;
 }) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -184,7 +187,7 @@ export function SessionSidebar({
       id: 'connectors',
       label: 'Connectors',
       icon: IconConnector,
-      onClick: () => onOpenSettings('connectors'),
+      onClick: onOpenConnectors,
       testid: 'nav-connectors',
     },
     {
@@ -237,6 +240,12 @@ export function SessionSidebar({
             testid="nav-model-management"
             onClick={() => onOpenSettings('models')}
             icon={<IconCpu size={18} />}
+          />
+          <RailButton
+            label="Connectors"
+            testid="nav-connectors"
+            onClick={onOpenConnectors}
+            icon={<IconConnector size={18} />}
           />
           <div className="pd-rail-spacer" />
           <RailButton

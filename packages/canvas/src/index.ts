@@ -58,7 +58,8 @@ export { sanitizeHtmlStatic, sanitizeSvg } from './sanitize.ts';
 export type { BrowserSurfaceProps } from './surfaces/browser-surface.tsx';
 export { BrowserSurface } from './surfaces/browser-surface.tsx';
 export { streamingUpdateSpec } from './surfaces/code-append.ts';
-export { CodeSurface } from './surfaces/code-surface.tsx';
+export type { CodeSurfaceProps } from './surfaces/code-surface.tsx';
+export { CodeSurface, rawSourceContent } from './surfaces/code-surface.tsx';
 // Content-slot / rect contract (native WebContentsView / PTY mounting)
 export type { ContentSlotOptions } from './surfaces/content-slot.ts';
 export { useContentSlot } from './surfaces/content-slot.ts';
@@ -103,7 +104,9 @@ export {
   CanvasOperationBar,
   deriveBreadcrumb,
   fileViewModeDefault,
+  hasViewToggle,
   isMarkdownFile,
+  viewModeDefault,
 } from './tabs/canvas-operation-bar.tsx';
 // Tabbed canvas (THEME 1)
 export type { CanvasTabsHandlers, CanvasTabsProps, NewTabKind } from './tabs/canvas-tabs.tsx';

@@ -1,7 +1,6 @@
 import {
   ArtifactPanel,
   type ArtifactPanelState,
-  CodeBlock,
   IconArrowUp,
   IconButton,
   IconCopy,
@@ -14,6 +13,7 @@ import { type CanvasConfig, CanvasConfigContext, defaultCanvasConfig } from './c
 import { downloadArtifact } from './export-artifact.ts';
 import type { Artifact, ArtifactContent } from './model.ts';
 import { defaultSurfaceRegistry, type SurfaceRegistry } from './registry.ts';
+import { CodeSurface, rawSourceContent } from './surfaces/code-surface.tsx';
 import { ensureDefaultSurfaces } from './surfaces/register-builtins.tsx';
 
 export type CanvasPlacement = 'inline' | 'side';
@@ -121,12 +121,13 @@ export function Canvas({
   let body: ReactNode = null;
   if (resolved) {
     if (showRaw) {
+      // Shared raw source editor — identical to the docked canvas's raw view.
       body = (
         <div className="pd-canvas-raw pd-scroll">
-          <CodeBlock
-            code={artifact.content.text}
-            language={artifact.content.language ?? artifact.content.kind}
-            showLineNumbers
+          <CodeSurface
+            content={rawSourceContent(artifact.content)}
+            streaming={streaming}
+            onCopy={copyText}
           />
         </div>
       );

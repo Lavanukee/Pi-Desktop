@@ -12,7 +12,11 @@ import type { TaskClass } from '../classify/classify.js';
 /** Models at or below this parameter count (billions) are "small". */
 export const SMALL_MODEL_THRESHOLD_B = 12;
 
-/** Task classes that meaningfully stress a small local model. */
+/**
+ * Task classes that meaningfully stress a small local model. `other` is
+ * included: its tool-search / connector / integration work is open-ended and
+ * multi-step, so a ≤12B model warrants the same small-model warning.
+ */
 export const ADVANCED_CLASSES: ReadonlySet<TaskClass> = new Set<TaskClass>([
   'full-shebang',
   'browser-use',
@@ -20,6 +24,7 @@ export const ADVANCED_CLASSES: ReadonlySet<TaskClass> = new Set<TaskClass>([
   'advanced-video',
   '3d',
   '2d-art',
+  'other',
 ]);
 
 /** Minimal structural view of a model (avoids depending on pi-ai's Model<any>). */

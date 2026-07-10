@@ -164,26 +164,24 @@ export function CanvasTabsPanel() {
   }
 
   return (
-    <>
-      <aside
-        className="pd-canvas-rail relative flex h-full shrink-0 flex-col overflow-hidden border-border-subtle border-l bg-bg-raised"
-        data-dragging={dragging ? 'true' : undefined}
-        data-open={open ? 'true' : 'false'}
-        style={{ width: renderWidth }}
-        data-testid="canvas-tabs-panel"
-      >
-        {open ? (
-          // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only resize affordance
-          <div
-            className="pd-canvas-rail-handle absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-accent-primary/40"
-            onMouseDown={onHandleDown}
-          />
-        ) : null}
-        {/* Fixed inner width so the surface doesn't reflow while the rail slides. */}
-        <div className="min-h-0 flex-1" style={{ width: sideWidth }}>
-          {surface}
-        </div>
-      </aside>
-    </>
+    <aside
+      className="pd-canvas-rail relative flex h-full shrink-0 flex-col overflow-hidden border-border-subtle border-l bg-bg-raised"
+      data-dragging={dragging ? 'true' : undefined}
+      data-open={open ? 'true' : 'false'}
+      style={{ width: renderWidth }}
+      data-testid="canvas-tabs-panel"
+    >
+      {open ? (
+        // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only resize affordance
+        <div
+          className="pd-canvas-rail-handle absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-accent-primary/40"
+          onMouseDown={onHandleDown}
+        />
+      ) : null}
+      {/* Fixed inner width so the surface doesn't reflow while the rail slides. */}
+      <div className="min-h-0 flex-1" style={{ width: sideWidth }}>
+        {surface}
+      </div>
+    </aside>
   );
 }

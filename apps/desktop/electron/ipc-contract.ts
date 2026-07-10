@@ -16,6 +16,10 @@ import {
   type BrowserEventMap,
   type BrowserInvokeMap,
 } from './canvas/browser-contract';
+import {
+  CONNECTORS_INVOKE_CHANNELS,
+  type ConnectorsInvokeMap,
+} from './connectors/connectors-contract';
 import { IMPORT_INVOKE_CHANNELS, type ImportInvokeMap } from './import/import-contract';
 import { PI_INVOKE_CHANNELS, type PiEventMap, type PiInvokeMap } from './pi/contract';
 import { PROJECT_INVOKE_CHANNELS, type ProjectInvokeMap } from './project/project-contract';
@@ -97,6 +101,13 @@ export type FsInvokeMap = {
       bytes: number;
     };
   };
+  /** Write UTF-8 contents back to a single file for live canvas editing.
+   * Fenced to allowed roots (cwd/project/session dirs); refuses paths outside
+   * them and refuses to create a file where a directory exists. */
+  'fs:write-file': {
+    request: { path: string; content: string };
+    response: { ok: boolean; bytes?: number; error?: string };
+  };
 };
 
 export const FS_INVOKE_CHANNELS = [
@@ -105,6 +116,7 @@ export const FS_INVOKE_CHANNELS = [
   'fs:read-session',
   'fs:list-tree',
   'fs:read-file',
+  'fs:write-file',
 ] as const satisfies readonly (keyof FsInvokeMap)[];
 
 // ---------------------------------------------------------------------------
@@ -376,6 +388,7 @@ export type AppInvokeMap = CoreInvokeMap &
   SettingsInvokeMap &
   CanvasInvokeMap &
   ProjectInvokeMap &
+  ConnectorsInvokeMap &
   ImportInvokeMap &
   BrowserInvokeMap &
   BrowserAgentInvokeMap &
@@ -395,6 +408,7 @@ export const APP_INVOKE_CHANNELS = [
   ...SETTINGS_INVOKE_CHANNELS,
   ...CANVAS_INVOKE_CHANNELS,
   ...PROJECT_INVOKE_CHANNELS,
+  ...CONNECTORS_INVOKE_CHANNELS,
   ...IMPORT_INVOKE_CHANNELS,
   ...BROWSER_INVOKE_CHANNELS,
   ...BROWSER_AGENT_INVOKE_CHANNELS,

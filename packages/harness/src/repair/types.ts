@@ -37,3 +37,15 @@ export interface RepairResult {
 }
 
 export type RepairRung = (ctx: RepairContext) => RepairResult | Promise<RepairResult>;
+
+/**
+ * One rung-2 fixer-model call. Mirrors the provider's `ToolCallFixer` (declared
+ * here too so the harness builds one without importing the provider). Returns a
+ * repaired arguments object, or `undefined` to let the ladder continue.
+ */
+export type ToolCallFixer = (input: {
+  readonly raw: string;
+  readonly toolName: string;
+  readonly schema: ToolSchemaLike | undefined;
+  readonly error: string;
+}) => Promise<Record<string, unknown> | undefined>;

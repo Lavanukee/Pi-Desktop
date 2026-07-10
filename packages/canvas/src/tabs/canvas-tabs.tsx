@@ -12,13 +12,14 @@ import { type CanvasConfig, CanvasConfigContext, defaultCanvasConfig } from '../
 import type { ArtifactContent } from '../model.ts';
 import { defaultSurfaceRegistry, type SurfaceRegistry } from '../registry.ts';
 import { BrowserSurface } from '../surfaces/browser-surface.tsx';
+import { CodeSurface, rawSourceContent } from '../surfaces/code-surface.tsx';
 import { FileSurface } from '../surfaces/file-surface.tsx';
 import { MediaPreviewSurface } from '../surfaces/media-preview-surface.tsx';
 import { ensureDefaultSurfaces } from '../surfaces/register-builtins.tsx';
 import { SubagentSurface } from '../surfaces/subagent-surface.tsx';
 import { TerminalSurface } from '../surfaces/terminal-surface.tsx';
 import { IconFolder, IconPanelRight, IconPopout } from '../tab-icons.tsx';
-import { CanvasOperationBar, fileViewModeDefault } from './canvas-operation-bar.tsx';
+import { CanvasOperationBar, hasViewToggle, viewModeDefault } from './canvas-operation-bar.tsx';
 import type { CanvasController } from './controller.ts';
 import { CANVAS_TAB_KINDS } from './tab-kinds.ts';
 import type { CanvasTab, FileTreeNode, FileViewMode } from './tab-model.ts';
@@ -72,6 +73,9 @@ export interface CanvasTabsHandlers {
   onFileTreeSelect?: (tabId: string, node: FileTreeNode) => void;
   /** File operation bar — the raw↔rendered toggle changed (persist per-tab). */
   onFileViewModeChange?: (tabId: string, mode: FileViewMode) => void;
+  /** Raw editor save-back (⌘/Ctrl-S) — persist the edited buffer of a file tab
+   * to disk. The app fences + writes via `fs:write-file`; omit to keep read-only. */
+  onFileSave?: (tabId: string, text: string) => void;
 }
 
 export interface CanvasTabsProps {
@@ -156,8 +160,8 @@ export function CanvasTabs({
     if (onNewTab) onNewTab(kind);
     else canvas.openTab({ kind, title: CANVAS_TAB_KINDS[kind].label });
   };
-  const fileViewMode = (tab: CanvasTab): FileViewMode =>
-    viewModes[tab.id] ?? tab.rawRendered ?? fileViewModeDefault(tab);
+  const viewModeFor = (tab: CanvasTab): FileViewMode =>
+    viewModes[tab.id] ?? tab.rawRendered ?? viewModeDefault(tab);
   // The single open/close affordance for the canvas panel. When the app wires
   // `onCollapse` it owns the slide; standalone, we collapse to the restore rail.
   const togglePanel = (): void => {
@@ -268,7 +272,7 @@ export function CanvasTabs({
             onOpenWith={(appId) => handlers?.onOpenWith?.(activeTab.id, appId)}
             onReveal={() => handlers?.onReveal?.(activeTab.id)}
             onFileTreeSelect={(node) => handlers?.onFileTreeSelect?.(activeTab.id, node)}
-            fileViewMode={activeTab.kind === 'file' ? fileViewMode(activeTab) : undefined}
+            fileViewMode={hasViewToggle(activeTab) ? viewModeFor(activeTab) : undefined}
             onFileViewModeChange={(nextMode) => {
               const id = activeTab.id;
               setViewModes((prev) => ({ ...prev, [id]: nextMode }));
@@ -294,7 +298,7 @@ export function CanvasTabs({
                 registry={activeRegistry}
                 handlers={handlers}
                 mediaNonce={mediaNonce[activeTab.id] ?? 0}
-                fileMode={activeTab.kind === 'file' ? fileViewMode(activeTab) : undefined}
+                viewMode={hasViewToggle(activeTab) ? viewModeFor(activeTab) : undefined}
                 onCopy={onCopy}
                 onExport={onExport}
               />
@@ -385,8 +389,8 @@ interface DefaultSurfaceProps {
   handlers?: CanvasTabsHandlers;
   /** Media reload counter for the active tab (bumped by the operation bar). */
   mediaNonce?: number;
-  /** Raw↔rendered view for a file tab (from the operation-bar toggle). */
-  fileMode?: FileViewMode;
+  /** Raw↔rendered view for a toggle-bearing tab (from the operation-bar toggle). */
+  viewMode?: FileViewMode;
   onCopy?: (text: string) => void;
   onExport?: (content: ArtifactContent) => void;
 }
@@ -401,7 +405,7 @@ function DefaultSurface({
   registry,
   handlers,
   mediaNonce = 0,
-  fileMode,
+  viewMode,
   onCopy,
   onExport,
 }: DefaultSurfaceProps) {
@@ -448,22 +452,41 @@ function DefaultSurface({
       // so fall back to empty content instead of a "no surface" placeholder.
       const content = tab.artifact?.content ?? { kind: 'text', text: '' };
       const filename = tab.artifact?.filename ?? basename(tab.filePath);
+      // A real on-disk file (has a path), not mid-write, is editable when the app
+      // wired a save handler — the raw/code editor persists ⌘S back to disk.
+      const editable =
+        tab.filePath !== undefined && !tab.streaming && handlers?.onFileSave !== undefined;
       return (
         <FileSurface
           content={content}
           filename={filename}
           streaming={tab.streaming}
-          mode={fileMode}
+          mode={viewMode}
           // The operation-bar breadcrumb already names the file — hide the
           // surface's own header so the filename isn't shown twice (round-8 #12).
           showFilename={false}
           onCopy={onCopy}
+          editable={editable}
+          onSave={editable ? (text) => handlers?.onFileSave?.(id, text) : undefined}
         />
       );
     }
     default: {
       // Artifact-backed surfaces (html | svg | markdown | code) via the registry.
       if (!tab.artifact) return <SurfaceMissing kind={tab.kind} />;
+      // RAW view → the shared syntax-highlighted source editor (read-only; these
+      // artifact tabs have no file path to persist to). Same path as <Canvas>.
+      if (viewMode === 'raw') {
+        return (
+          <div className="pd-canvas-raw pd-scroll">
+            <CodeSurface
+              content={rawSourceContent(tab.artifact.content)}
+              streaming={tab.streaming ?? false}
+              onCopy={onCopy}
+            />
+          </div>
+        );
+      }
       const resolved = registry.resolve(tab.artifact);
       if (!resolved) return <SurfaceMissing kind={tab.kind} />;
       const Surface = resolved.component;

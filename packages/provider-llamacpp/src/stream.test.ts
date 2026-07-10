@@ -160,4 +160,79 @@ describe('createLlamaCppStream — tool-call repair', () => {
     const call = final.content.find((c) => c.type === 'toolCall');
     expect(call?.type === 'toolCall' && call.arguments).toEqual({ path: '/fixed-by-model' });
   });
+
+  it('enters the ladder for a SCHEMA-invalid tool call that PARSED cleanly', async () => {
+    // Fully valid JSON, but missing the required "path" — parse succeeds, so this
+    // never reached repair before. Now it must enter the ladder and hit the fixer.
+    const { fetchImpl } = sseFetch([
+      {
+        choices: [{ delta: { tool_calls: [{ index: 0, id: 'c3', function: { name: 'read' } }] } }],
+      },
+      {
+        choices: [
+          { delta: { tool_calls: [{ index: 0, function: { arguments: '{"wrong":1}' } }] } },
+        ],
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+    const fixer = vi.fn(async () => ({ path: '/repaired' }));
+    const onRepair = vi.fn();
+    const stream = createLlamaCppStream({ fetchImpl, fixer, onRepair })(
+      makeModel(),
+      emptyContext(tools),
+    );
+    const { final } = await consume(stream);
+    expect(fixer).toHaveBeenCalledOnce();
+    expect(onRepair).toHaveBeenCalledWith({ toolName: 'read', ok: true, rung: 2 });
+    const call = final.content.find((c) => c.type === 'toolCall');
+    expect(call?.type === 'toolCall' && call.arguments).toEqual({ path: '/repaired' });
+  });
+
+  it('does NOT repair a schema-valid tool call', async () => {
+    const { fetchImpl } = sseFetch([
+      {
+        choices: [{ delta: { tool_calls: [{ index: 0, id: 'c4', function: { name: 'read' } }] } }],
+      },
+      {
+        choices: [
+          { delta: { tool_calls: [{ index: 0, function: { arguments: '{"path":"/ok"}' } }] } },
+        ],
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+    const onRepair = vi.fn();
+    const stream = createLlamaCppStream({ fetchImpl, onRepair })(makeModel(), emptyContext(tools));
+    const { final } = await consume(stream);
+    expect(onRepair).not.toHaveBeenCalled();
+    const call = final.content.find((c) => c.type === 'toolCall');
+    expect(call?.type === 'toolCall' && call.arguments).toEqual({ path: '/ok' });
+  });
+
+  it('resolves live deps from repairProvider (the harness bridge) over static deps', async () => {
+    const { fetchImpl } = sseFetch([
+      {
+        choices: [{ delta: { tool_calls: [{ index: 0, id: 'c5', function: { name: 'read' } }] } }],
+      },
+      {
+        choices: [
+          { delta: { tool_calls: [{ index: 0, function: { arguments: '{"wrong":1}' } }] } },
+        ],
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+    const staticFixer = vi.fn(async () => ({ path: '/static' }));
+    const liveFixer = vi.fn(async () => ({ path: '/live' }));
+    const liveOnRepair = vi.fn();
+    const stream = createLlamaCppStream({
+      fetchImpl,
+      fixer: staticFixer,
+      repairProvider: () => ({ fixer: liveFixer, onRepair: liveOnRepair }),
+    })(makeModel(), emptyContext(tools));
+    const { final } = await consume(stream);
+    expect(liveFixer).toHaveBeenCalledOnce();
+    expect(staticFixer).not.toHaveBeenCalled();
+    expect(liveOnRepair).toHaveBeenCalledWith({ toolName: 'read', ok: true, rung: 2 });
+    const call = final.content.find((c) => c.type === 'toolCall');
+    expect(call?.type === 'toolCall' && call.arguments).toEqual({ path: '/live' });
+  });
 });

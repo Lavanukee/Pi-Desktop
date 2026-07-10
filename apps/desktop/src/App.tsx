@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import type { AppInfo } from '../electron/ipc-contract';
 import { ChatApp } from './chat/ChatApp';
 import { CanvasPopoutView } from './chat/canvas/CanvasPopoutView';
+import { ConnectorsScreen } from './connectors/ConnectorsScreen';
 import { GalleryView } from './gallery/GalleryView';
 import { OnboardingWizard } from './onboarding/OnboardingWizard';
 import { type SettingsSection, SettingsView } from './settings/SettingsView';
@@ -48,7 +49,7 @@ function ProbeHooks() {
   );
 }
 
-type MainView = 'chat' | 'gallery' | 'settings';
+type MainView = 'chat' | 'gallery' | 'settings' | 'connectors';
 
 export function App() {
   const flavor = useThemeStore((s) => s.flavor);
@@ -112,7 +113,10 @@ export function App() {
               onSection={setSettingsSection}
               onClose={() => setView('chat')}
               onOpenGallery={() => setView('gallery')}
+              onOpenConnectors={() => setView('connectors')}
             />
+          ) : view === 'connectors' ? (
+            <ConnectorsScreen onClose={() => setView('chat')} />
           ) : view === 'gallery' ? (
             <div className="flex h-full flex-col">
               {/* Left inset clears the macOS traffic lights (titleBarStyle:
@@ -136,6 +140,7 @@ export function App() {
                 setSettingsSection(section);
                 setView('settings');
               }}
+              onOpenConnectors={() => setView('connectors')}
             />
           )}
         </div>

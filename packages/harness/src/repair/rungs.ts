@@ -29,7 +29,13 @@
 
 import type { RepairContext, RepairResult, RepairRung, ToolSchemaLike } from './types.js';
 
-export type { RepairContext, RepairResult, RepairRung, ToolSchemaLike } from './types.js';
+export type {
+  RepairContext,
+  RepairResult,
+  RepairRung,
+  ToolCallFixer,
+  ToolSchemaLike,
+} from './types.js';
 
 export interface HarnessRepairDeps {
   /** Called each time any harness rung is entered (telemetry / appendEntry). */

@@ -15,7 +15,11 @@ export type ThemeFlavor = 'claude' | 'codex';
 export type ThemeModePref = 'light' | 'dark' | 'system';
 export type PermissionMode = 'bypass' | 'reviewer' | 'review-all';
 export type EffortLevel = 'low' | 'medium' | 'high' | 'max';
-export type McpMode = 'lite' | 'native';
+/** Connector surfacing mode; mirrors @pi-desktop/mcp-lite's McpMode. `bash-cli`
+ * exposes connectors through the real bash tool via a generated `pi-tool`. */
+export type McpMode = 'lite' | 'native' | 'bash-cli';
+/** Valid MCP modes, in UI order. */
+export const MCP_MODES = ['lite', 'native', 'bash-cli'] as const satisfies readonly McpMode[];
 
 export interface GenerationCapabilities {
   image: boolean;

@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { EditorView } from '@codemirror/view';
+import { act } from 'react';
+import { describe, expect, it, vi } from 'vitest';
 import type { ArtifactContent } from '../model.ts';
 import { render } from '../test-utils.tsx';
-import { CodeSurface } from './code-surface.tsx';
+import { CodeSurface, rawSourceContent } from './code-surface.tsx';
 
 function code(text: string): ArtifactContent {
   return { kind: 'code', text, language: 'javascript' };
@@ -12,6 +14,10 @@ describe('CodeSurface', () => {
     const { container } = await render(<CodeSurface content={code('const a = 1;')} streaming />);
     expect(container.querySelector('.cm-editor')).toBeTruthy();
     expect(container.textContent).toContain('const a = 1;');
+    // Read-only by default: the content DOM is not editable.
+    expect(container.querySelector('.cm-content')?.getAttribute('contenteditable')).not.toBe(
+      'true',
+    );
   });
 
   it('streams appended text into the existing editor (no remount)', async () => {
@@ -23,5 +29,44 @@ describe('CodeSurface', () => {
     // Same editor element — appended, not rebuilt.
     expect(container.querySelector('.cm-editor')).toBe(editor);
     expect(container.textContent).toContain('const b = 2;');
+  });
+
+  it('is editable and emits onChange on a user edit when editable', async () => {
+    const onChange = vi.fn();
+    const { container } = await render(
+      <CodeSurface content={code('a')} streaming={false} editable onChange={onChange} />,
+    );
+    const dom = container.querySelector<HTMLElement>('.cm-editor');
+    expect(container.querySelector('.cm-content')?.getAttribute('contenteditable')).toBe('true');
+    const view = dom ? EditorView.findFromDOM(dom) : null;
+    expect(view).toBeTruthy();
+    await act(async () => {
+      view?.dispatch({ changes: { from: 1, insert: 'b' }, userEvent: 'input.type' });
+    });
+    expect(onChange).toHaveBeenCalledWith('ab');
+  });
+
+  it('does NOT echo a programmatic (streaming) change back through onChange', async () => {
+    const onChange = vi.fn();
+    const { container, rerender } = await render(
+      <CodeSurface content={code('a')} streaming={false} editable onChange={onChange} />,
+    );
+    // A prop-driven update (e.g. finalize-from-disk) is not a user edit.
+    await rerender(
+      <CodeSurface content={code('a-updated')} streaming={false} editable onChange={onChange} />,
+    );
+    expect(container.textContent).toContain('a-updated');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('coerces any content into a highlighted code payload for the raw view', () => {
+    expect(rawSourceContent({ kind: 'svg', text: '<svg/>' })).toEqual({
+      kind: 'code',
+      text: '<svg/>',
+      language: 'svg',
+    });
+    expect(rawSourceContent({ kind: 'html', text: '<b/>', language: 'html' }).language).toBe(
+      'html',
+    );
   });
 });

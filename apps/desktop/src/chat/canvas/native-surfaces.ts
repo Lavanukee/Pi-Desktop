@@ -25,7 +25,7 @@ import { Terminal } from '@xterm/xterm';
 import { useEffect, useRef } from 'react';
 import type { BrowserBounds } from '../../../electron/canvas/browser-contract';
 import { usePiStore } from '../../state/pi-slice';
-import { openFileInCanvas } from './file-tabs';
+import { fileArtifactFromText, openFileInCanvas } from './file-tabs';
 
 const MONO_STACK =
   'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
@@ -124,6 +124,9 @@ class NativeSurfaces {
       onFileViewModeChange: (tabId, mode) => {
         this.#controller.updateTab(tabId, { rawRendered: mode });
       },
+      // Live editing: persist the raw editor's buffer to disk (round-9). The
+      // main-process handler fences the path to allowed project/session roots.
+      onFileSave: (tabId, text) => this.#saveFile(tabId, text),
       // Media operation bar: download the current media src / expand to fullscreen.
       onMediaDownload: (tabId, format) => this.#downloadMedia(tabId, format),
       onMediaExpand: (tabId) => {
@@ -159,6 +162,39 @@ class NativeSurfaces {
     } else {
       canvasShellInvoke('canvas:open-external', { url: src });
     }
+  }
+
+  /**
+   * Persist the raw editor's buffer to the tab's file (round-9 live editing).
+   * The main-process `fs:write-file` handler fences the path to allowed
+   * project/session roots. On success we reflect the saved text on the tab so it
+   * survives tab switches AND the finalize-from-disk reload (both read the same
+   * bytes now on disk). Under E2E the real IPC is skipped — the call is recorded
+   * to `window.__pi_canvas_ipc` and the tab is updated so probes can assert both.
+   */
+  #saveFile(tabId: string, text: string): void {
+    const tab = this.#tab(tabId);
+    const filePath = tab?.filePath;
+    if (filePath === undefined) return;
+    const reflect = (): void => {
+      const current = this.#tab(tabId);
+      if (current !== undefined)
+        this.#controller.updateTab(tabId, { artifact: fileArtifactFromText(filePath, text) });
+    };
+    if (IS_E2E) {
+      if (window.__pi_canvas_ipc === undefined) window.__pi_canvas_ipc = [];
+      window.__pi_canvas_ipc.push({ channel: 'fs:write-file', req: { path: filePath, text } });
+      reflect();
+      return;
+    }
+    void window.piDesktop
+      .invoke('fs:write-file', { path: filePath, content: text })
+      .then((res) => {
+        if (res.ok) reflect();
+      })
+      .catch(() => {
+        // best-effort — a failed write leaves the on-screen buffer untouched.
+      });
   }
 
   // ── mount / rect ─────────────────────────────────────────────────────────

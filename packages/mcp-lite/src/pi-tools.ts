@@ -23,8 +23,9 @@ export interface McpToolResultDetails {
   isError: boolean;
 }
 
-/** Run a routed MCP call and shape it as a pi tool result. */
-async function runMcpCall(
+/** Run a routed MCP call and shape it as a pi tool result. Exported so the
+ * bash-cli bridge routes through the exact same call + error shaping. */
+export async function runMcpCall(
   host: ConnectorHost,
   serverId: string,
   toolName: string,
@@ -45,7 +46,8 @@ async function runMcpCall(
   }
 }
 
-function asArgs(params: unknown): Record<string, unknown> {
+/** Coerce loose tool params into a plain args record (reused by bash-cli). */
+export function asArgs(params: unknown): Record<string, unknown> {
   return params && typeof params === 'object' ? (params as Record<string, unknown>) : {};
 }
 

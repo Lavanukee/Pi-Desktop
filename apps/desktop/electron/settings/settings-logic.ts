@@ -12,6 +12,7 @@ import {
   ICON_STROKE_DEFAULT,
   ICON_STROKE_MAX,
   ICON_STROKE_MIN,
+  MCP_MODES,
   type McpMode,
   type PermissionMode,
   type ThemeFlavor,
@@ -22,7 +23,6 @@ const FLAVORS: readonly ThemeFlavor[] = ['claude', 'codex'];
 const MODES: readonly ThemeModePref[] = ['light', 'dark', 'system'];
 const PERMISSION_MODES: readonly PermissionMode[] = ['bypass', 'reviewer', 'review-all'];
 const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'max'];
-const MCP_MODES: readonly McpMode[] = ['lite', 'native'];
 
 export const DEFAULT_SETTINGS: DesktopSettings = {
   version: 1,

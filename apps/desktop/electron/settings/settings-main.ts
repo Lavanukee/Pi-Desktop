@@ -58,7 +58,9 @@ function readMcpMode(): McpMode | null {
   if (raw === null) return null;
   try {
     const parsed = JSON.parse(raw) as { mode?: unknown };
-    return parsed.mode === 'native' ? 'native' : parsed.mode === 'lite' ? 'lite' : null;
+    return parsed.mode === 'native' || parsed.mode === 'lite' || parsed.mode === 'bash-cli'
+      ? parsed.mode
+      : null;
   } catch {
     return null;
   }

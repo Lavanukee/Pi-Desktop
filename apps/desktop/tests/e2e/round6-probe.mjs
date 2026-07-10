@@ -69,14 +69,18 @@ try {
   await page.waitForFunction(() => typeof window.__pi_store === 'function', { timeout: 8000 });
   await page.waitForSelector('[data-testid="composer-input"]', { timeout: 8000 });
 
-  // ── (3) Settings gear cog — check BEFORE opening settings (sidebar visible) ──
-  // Round-8 #5: the redundant Workspace "Settings" nav row was removed; the gear
-  // now lives only in the bottom-left profile entry (data-testid="open-settings").
+  // ── (3) Settings gear cog — check inside the profile dropup (round-12 #4) ────
+  // Round-8 #5 removed the Workspace "Settings" nav row; round-12 #4 moved the
+  // gear onto the "Settings" row (data-testid="open-settings") of the bottom-left
+  // profile DROPUP. Open it, read the glyph, then close it again.
+  await page.click('[data-testid="profile-button"]');
+  await page.waitForSelector('[data-testid="profile-menu"]', { timeout: 8000 });
   const gearD = await page.getAttribute('[data-testid="open-settings"] svg path', 'd');
   assert(
     typeof gearD === 'string' && gearD.length > 150,
     `Settings profile icon is not the gear cog (path d length ${gearD?.length ?? 0})`,
   );
+  await page.keyboard.press('Escape');
 
   // ── (1) Streaming thought: expanded + live, then collapse on response text ──
   await send(page, 'reason about the answer');
@@ -157,6 +161,9 @@ try {
   );
 
   // ── (4) Settings open transition + (5) bottom-left Back to chat ──────────────
+  // Settings opens from the "Settings" row of the bottom-left profile dropup.
+  await page.click('[data-testid="profile-button"]');
+  await page.waitForSelector('[data-testid="profile-menu"]', { timeout: 8000 });
   await page.click('[data-testid="open-settings"]');
   await page.waitForSelector('[data-testid="settings-view"]', { timeout: 8000 });
   const settingsClass = await page.getAttribute('[data-testid="settings-view"]', 'class');

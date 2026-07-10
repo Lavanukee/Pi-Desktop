@@ -38,7 +38,9 @@ try {
   const page = await app.firstWindow();
   await page.waitForSelector('[data-testid="composer-input"]', { timeout: 12000 });
 
-  // ── Open the manager from the top-bar gear, then the Models section ─────────
+  // ── Open the manager from the bottom-left profile dropup, then Models ────────
+  await page.click('[data-testid="profile-button"]');
+  await page.waitForSelector('[data-testid="profile-menu"]', { timeout: 8000 });
   await page.click('[data-testid="open-settings"]');
   await page.waitForSelector('[data-testid="settings-view"]', { timeout: 8000 });
   await page.click('[data-testid="settings-nav-models"]');
@@ -84,6 +86,29 @@ try {
     (await page.locator('[data-pill-kind="mtp"]').count()) +
     (await page.locator('[data-pill-kind="eagle3"]').count());
   assert(fastPills >= 1, `expected a fast (MTP/EAGLE-3) pill, got ${fastPills}`);
+
+  // ── Round-12 W4: de-duplicated cards + variant/quant dropdowns + reliable ────
+  // The catalog ships Qwen3.6 27B twice (an MTP repo + an EAGLE-3 repo); the
+  // manager must collapse them into ONE card (primary = the MTP entry), so the
+  // EAGLE-3 entry never gets its own card.
+  const qwenCards = await page.locator('[data-testid="model-card-qwen3.6-27b-mtp"]').count();
+  assert(qwenCards === 1, `expected 1 collapsed Qwen3.6 27B card, got ${qwenCards}`);
+  const qwenDupCard = await page.locator('[data-testid="model-card-qwen3.6-27b-eagle3"]').count();
+  assert(qwenDupCard === 0, 'the EAGLE-3 variant must NOT get its own duplicate card');
+
+  // The collapsed card exposes a VARIANT dropdown [MTP / DFlash / EAGLE-3].
+  await page.waitForSelector('[data-testid="variant-qwen3.6-27b-mtp"]', { timeout: 8000 });
+  // A multi-quant model exposes a QUANT dropdown.
+  await page.waitForSelector('[data-testid="quant-gemma-4-12b-it"]', { timeout: 8000 });
+
+  // Every curated card carries a reliable-publisher badge (all are unsloth-hosted).
+  const reliableBadges = await page.locator('[data-testid^="reliable-badge-"]').count();
+  assert(reliableBadges >= 1, `expected reliable-publisher badges, got ${reliableBadges}`);
+
+  // Selecting the DFlash variant renders the (new) DFlash speed pill.
+  await page.click('[data-testid="variant-qwen3.6-27b-mtp"]');
+  await page.getByRole('option', { name: 'DFlash' }).click();
+  await page.waitForSelector('[data-pill-kind="dflash"]', { timeout: 8000 });
 
   // ── Drive download-progress → active WITHOUT a real download ─────────────────
   const modelId = await page.evaluate(() => window.__llm_store().getState().catalog[0].id);
@@ -147,6 +172,19 @@ try {
   // ── Advanced toggle → per-model default effort persists ─────────────────────
   await page.click('[data-testid="mm-advanced-toggle"]');
   await page.waitForSelector(`[data-testid="advanced-${modelId}"]`, { timeout: 8000 });
+
+  // ── Round-12 W4: the "Prefer MLX (experimental)" toggle persists + engine badge
+  // Advanced reveals the MLX engine-preference toggle and each card's engine badge.
+  await page.waitForSelector('[data-testid="mm-mlx-toggle"]', { timeout: 8000 });
+  const engineBadges = await page.locator('[data-testid^="engine-badge-"]').count();
+  assert(engineBadges >= 1, `expected engine badges in Advanced, got ${engineBadges}`);
+  await page.click('[data-testid="mm-mlx-toggle"]');
+  await page.waitForFunction(
+    () => window.__settings_store().getState().settings.enginePreference === 'mlx',
+    undefined,
+    { timeout: 8000 },
+  );
+
   await page.click(`[data-testid="effort-default-${modelId}"]`);
   await page.getByRole('option', { name: 'High' }).click();
   await page.waitForFunction(
@@ -282,15 +320,24 @@ try {
   // Back to chat (from the Browse tab of the manager).
   await page.click('[data-testid="settings-back"]');
   await page.waitForSelector('[data-testid="composer-input"]', { timeout: 8000 });
-  // Open the footer model menu → "Manage models…".
+  // "More models" in the footer is now a POWER-mode affordance (user mode — the
+  // default — shows just Auto + the 3 tiers, no manager push). Switch to power
+  // mode via the profile dropup, then the footer → manager deep-link appears.
+  await page.click('[data-testid="profile-button"]');
+  await page.waitForSelector('[data-testid="profile-menu"]', { timeout: 8000 });
+  await page.click('[data-testid="usermode-toggle"] >> text=Power');
+  await page.keyboard.press('Escape');
+  // Open the footer model menu → "More models…".
   await page.click('[data-testid="footer-model-chip"]');
   await page.waitForSelector('[data-testid="footer-open-manager"]', { timeout: 8000 });
   await page.click('[data-testid="footer-open-manager"]');
   await page.waitForSelector('[data-testid="model-manager"]', { timeout: 8000 });
 
   console.log(
-    `model-manager-probe OK — ${cardCount} cards + RAM badges + recommendation + colored pill tags; ` +
-      'progress→active UI; cancel-download clears the bar; advanced effort-default + favorite persist; ' +
+    `model-manager-probe OK — ${cardCount} de-duplicated cards + RAM badges + recommendation + colored pill tags; ` +
+      'Qwen3.6 27B collapsed to ONE card w/ variant+quant dropdowns + DFlash pill + reliable badges; ' +
+      'progress→active UI; cancel-download clears the bar; MLX preference toggle + engine badge persist; ' +
+      'advanced effort-default + favorite persist; ' +
       'Browse-HF trending-on-open header + capability pills, search→quant-list + HF favorite; ' +
       'footer deep-link verified',
   );

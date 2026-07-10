@@ -169,6 +169,21 @@ export interface SupervisorOptions {
   readonly extraArgs?: readonly string[];
   readonly env?: Record<string, string | undefined>;
 
+  /**
+   * Health endpoint path (default `/health`). A non-llama.cpp OpenAI-compatible
+   * server (the round-12 MLX `mlx_lm.server`, which has no `/health`) probes
+   * `/v1/models` instead — see {@link createMlxSupervisor}.
+   */
+  readonly healthPath?: string;
+  /**
+   * Override the launch args entirely (given the resolved port), bypassing
+   * {@link assembleServerArgs}. Lets an alternative engine (MLX via `uv run
+   * mlx_lm.server`) reuse this supervisor's crash-restart / health / dispose
+   * skeleton with its OWN argv. When set, `serverPath` is the command to spawn
+   * (e.g. the `uv` binary) and this builds its arguments. Unset → llama.cpp args.
+   */
+  readonly buildArgsFn?: (port: number) => string[];
+
   // -- lifecycle tuning ---------------------------------------------------
   readonly healthTimeoutMs?: number;
   readonly healthIntervalMs?: number;
@@ -250,7 +265,7 @@ export class LlamaServerSupervisor {
     return `http://${this.host}:${this.port}/v1`;
   }
   get healthUrl(): string {
-    return `http://${this.host}:${this.port}/health`;
+    return `http://${this.host}:${this.port}${this.opts.healthPath ?? '/health'}`;
   }
   get metrics(): ServerMetrics {
     return {
@@ -281,6 +296,9 @@ export class LlamaServerSupervisor {
   }
 
   private buildArgs(): string[] {
+    // An alternative engine (MLX) supplies its own argv builder; otherwise
+    // assemble the llama-server flags (enforcing the MTP⊥mmproj invariant).
+    if (this.opts.buildArgsFn !== undefined) return this.opts.buildArgsFn(this.port);
     return assembleServerArgs({
       modelPath: this.opts.modelPath,
       host: this.host,

@@ -14,13 +14,16 @@ import { rm, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
+  buildMlxProviderBlock,
   buildProviderBlock,
   CATALOG,
   type CatalogFile,
   type CatalogModel,
+  createMlxSupervisor,
   detectHardware,
   downloadModel,
   ensureLlamaCpp,
+  ensureMlx,
   estimateRamGB,
   getCatalogFile,
   getCatalogModel,
@@ -28,12 +31,17 @@ import {
   type HfModelHit,
   type HfSort,
   hfModelToCatalogEntry,
+  isMlxSupported,
+  type LaunchMode,
   LlamaServerSupervisor,
   listHfGgufFiles,
   modelDir,
+  modelEngine,
   probeServerFeatures,
   recommend,
+  resolveTierModels,
   searchHfModels,
+  type TierPick,
   writeModelsJson,
 } from '@pi-desktop/inference';
 import type {
@@ -43,6 +51,7 @@ import type {
   LlmCatalogEntry,
   LlmHardware,
   LlmStatus,
+  LlmTierPick,
 } from '../ipc-contract';
 import { DownloadCancellation, discardPartials, partialPaths } from './download-cancellation';
 import type {
@@ -63,6 +72,8 @@ const parentPort = (process as unknown as { parentPort: UtilityParentPort }).par
 const CONTEXT_CAP = 16_384;
 const MODELS_JSON = join(homedir(), '.pi', 'agent', 'models.json');
 const PROVIDER_NAME = 'llamacpp';
+/** models.json provider key for MLX models (bound to provider-mlx's mlx-stream). */
+const MLX_PROVIDER_NAME = 'mlx';
 
 /** Discovered Browse-HF models, adapted to the catalog shape. Persisted so a
  * downloaded HF model survives a supervisor restart and stays in the local set. */
@@ -121,6 +132,9 @@ interface CurrentServer {
   file: CatalogFile;
   contextWindow: number;
   baseUrl: string;
+  /** The launch mode this server came up in (fast-text speed, or multimodal
+   * vision). Surfaced in LlmStatus so the app knows if vision is already on. */
+  launchMode: LaunchMode;
 }
 
 let current: CurrentServer | null = null;
@@ -165,6 +179,7 @@ function status(): LlmStatus {
     downloadedModelIds: allModels()
       .filter((m) => m.files.some((f) => isDownloaded(m, f)))
       .map((m) => m.id),
+    launchMode: current?.launchMode,
     error: lastError,
   };
 }
@@ -184,13 +199,36 @@ function catalogEntry(model: CatalogModel, recommendedId: string | null): LlmCat
     license: model.license,
     mtp: model.mtpEmbedded === true || model.mtpFile !== undefined,
     spec: model.spec,
+    variants: model.variants?.map((v) => ({
+      method: v.method,
+      draftRepo: v.draftRepo,
+      embedded: v.embedded,
+    })),
     vision: model.input.includes('image'),
     downloaded: model.files.some((f) => isDownloaded(model, f)),
     recommended: model.id === recommendedId,
     hfRepo: model.hfRepo,
+    engine: modelEngine(model),
+    publisher: model.publisher,
+    tier: model.tier,
+    sharded: model.sharded,
     gated: model.gated === true,
     source: hfModels.has(model.id) ? 'hf' : 'curated',
     verified: model.verified,
+  };
+}
+
+/** Map a resolved {@link TierPick} → the renderer DTO, adding the downloaded flag. */
+function tierPickDto(pick: TierPick): LlmTierPick {
+  return {
+    modelId: pick.model.id,
+    displayName: pick.displayName,
+    quant: pick.file.quant,
+    launchMode: pick.launchMode,
+    spec: pick.spec,
+    vision: pick.vision,
+    bytes: pick.bytes,
+    downloaded: isDownloaded(pick.model, pick.file),
   };
 }
 
@@ -206,6 +244,7 @@ async function listCatalog(): Promise<LlmCatalogReply> {
   try {
     const rec = recommend(hw);
     recommendedModelId = rec.model.id;
+    const tiers = resolveTierModels(hw);
     recommendation = {
       modelId: rec.model.id,
       quant: rec.file.quant,
@@ -220,6 +259,11 @@ async function listCatalog(): Promise<LlmCatalogReply> {
         spec: p.spec,
         vision: p.vision,
       })),
+      tierModels: {
+        fast: tierPickDto(tiers.fast),
+        balanced: tierPickDto(tiers.balanced),
+        intelligent: tierPickDto(tiers.intelligent),
+      },
     };
   } catch {
     recommendedModelId = null;
@@ -462,14 +506,79 @@ function parseTps(line: string): number | undefined {
   return m ? Number(m[1]) : undefined;
 }
 
+/**
+ * Start the MLX server (round-12 foundation): `mlx_lm.server` via uv, health-
+ * probed on `/v1/models`, with an `mlx-stream` models.json block bound to
+ * provider-mlx. Gated on Apple Silicon. `mlx_lm.server` auto-downloads the
+ * `mlx-community/*` repo on first launch (the app-side multi-file downloader is
+ * a deferred follow-up). TPS surfaces client-side via provider-mlx, not here.
+ */
+async function startMlxServer(
+  model: CatalogModel,
+  file: CatalogFile,
+): Promise<{ success: boolean; baseUrl?: string; error?: string }> {
+  if (!isMlxSupported()) {
+    return { success: false, error: 'MLX models require Apple Silicon (darwin/arm64)' };
+  }
+  phase = 'starting';
+  lastError = undefined;
+  metrics = null;
+  emitStatus();
+  try {
+    if (current !== null) {
+      await current.supervisor.dispose();
+      current = null;
+    }
+    const uv = await ensureMlx();
+    const contextWindow = Math.min(model.contextWindow, CONTEXT_CAP);
+    const supervisor = createMlxSupervisor({ uvPath: uv.uvPath, repo: model.hfRepo });
+    supervisor.on((event) => {
+      if (event.type === 'metrics') {
+        metrics = { lastTps: event.metrics.lastTps, avgTps: event.metrics.avgTps };
+        emitStatus();
+      } else if (event.type === 'crash' || event.type === 'restart') {
+        phase = 'starting';
+        emitStatus();
+      } else if (event.type === 'exit' && event.reason === 'failed') {
+        phase = 'error';
+        lastError = event.detail ?? 'mlx_lm.server failed';
+        current = null;
+        emitStatus();
+      }
+    });
+    const started = await supervisor.start();
+    const baseUrl = supervisor.baseUrl;
+    current = { supervisor, model, file, contextWindow, baseUrl, launchMode: 'fast-text' };
+    phase = 'ready';
+    await writeModelsJson(
+      MODELS_JSON,
+      MLX_PROVIDER_NAME,
+      buildMlxProviderBlock(model, { baseUrl, servedModelId: model.hfRepo }),
+    );
+    emitStatus();
+    return { success: true, baseUrl: started.baseUrl };
+  } catch (error) {
+    phase = 'error';
+    lastError = String(error instanceof Error ? error.message : error);
+    current = null;
+    emitStatus();
+    return { success: false, error: lastError };
+  }
+}
+
 async function startServer(
   modelId: string,
   quant?: string,
+  launchMode: LaunchMode = 'fast-text',
 ): Promise<{ success: boolean; baseUrl?: string; error?: string }> {
   const model = getModel(modelId);
   if (model === undefined) return { success: false, error: `unknown model: ${modelId}` };
   const file = pickFile(model, quant);
   if (file === undefined) return { success: false, error: `unknown quant for ${modelId}` };
+
+  // MLX engine → the mlx_lm.server path (its artifact is not a local GGUF).
+  if (modelEngine(model) === 'mlx') return startMlxServer(model, file);
+
   const modelPath = modelPathFor(model, file);
   if (!existsSync(modelPath)) return { success: false, error: 'model not downloaded' };
 
@@ -477,6 +586,49 @@ async function startServer(
   lastError = undefined;
   metrics = null;
   emitStatus();
+
+  // On-demand vision (round-12 ask #3): a multimodal launch needs the mmproj
+  // sibling. Fetch it if missing — the main GGUF is already present, so that
+  // part is a cached no-op. (mmproj ⊥ MTP is enforced in assembleServerArgs.)
+  let mmprojPath: string | undefined;
+  if (launchMode === 'multimodal') {
+    if (model.mmproj === undefined) {
+      phase = 'error';
+      lastError = `${model.displayName} has no vision projector`;
+      emitStatus();
+      return { success: false, error: lastError };
+    }
+    mmprojPath = join(modelDir(model.id), model.mmproj.name);
+    if (!existsSync(mmprojPath)) {
+      phase = 'downloading';
+      emitStatus();
+      try {
+        await downloadModel(model, {
+          quant: file.quant,
+          launchMode: 'multimodal',
+          onProgress: (f, p) =>
+            post({
+              kind: 'download-progress',
+              progress: {
+                modelId: model.id,
+                file: f,
+                received: p.received,
+                total: p.total ?? null,
+                fraction: p.fraction ?? null,
+              },
+            }),
+        });
+      } catch (error) {
+        phase = 'error';
+        lastError = `failed to fetch vision projector: ${String(error instanceof Error ? error.message : error)}`;
+        current = null;
+        emitStatus();
+        return { success: false, error: lastError };
+      }
+      phase = 'starting';
+      emitStatus();
+    }
+  }
 
   try {
     if (current !== null) {
@@ -487,27 +639,29 @@ async function startServer(
     const features = await probeServerFeatures(install.serverPath);
     const contextWindow = Math.min(model.contextWindow, CONTEXT_CAP);
 
-    // Resolve the speed-decode sibling for a fast-text launch:
+    // Resolve the speed-decode sibling for a FAST-TEXT launch (a multimodal
+    // launch drops MTP/EAGLE — they are mutually exclusive with --mmproj):
     //   - Gemma4 MTP head (separate sibling in the same repo) → --model-draft.
     //   - EAGLE-3 draft (from draftRepo) → --spec-type draft-eagle3 --model-draft.
     // Both are downloaded alongside the main GGUF (see model-downloader).
     const dir = modelDir(model.id);
     const mtpSiblingPath =
-      model.mtpFile !== undefined && model.mtpEmbedded !== true
+      launchMode === 'fast-text' && model.mtpFile !== undefined && model.mtpEmbedded !== true
         ? join(dir, model.mtpFile.name)
         : undefined;
     const draftPath =
-      model.spec === 'eagle3' && model.draftModel !== undefined
+      launchMode === 'fast-text' && model.spec === 'eagle3' && model.draftModel !== undefined
         ? join(dir, model.draftModel.name)
         : undefined;
 
     const supervisor = new LlamaServerSupervisor({
       serverPath: install.serverPath,
       modelPath,
-      launchMode: 'fast-text',
+      launchMode,
       contextSize: contextWindow,
+      mmprojPath: launchMode === 'multimodal' ? mmprojPath : undefined,
       mtpSupported: features.mtp,
-      mtpEmbedded: model.mtpEmbedded,
+      mtpEmbedded: launchMode === 'fast-text' ? model.mtpEmbedded : undefined,
       mtpPath:
         mtpSiblingPath !== undefined && existsSync(mtpSiblingPath) ? mtpSiblingPath : undefined,
       specType: model.spec === 'eagle3' ? 'draft-eagle3' : 'draft-mtp',
@@ -537,7 +691,7 @@ async function startServer(
 
     const started = await supervisor.start();
     const baseUrl = supervisor.baseUrl;
-    current = { supervisor, model, file, contextWindow, baseUrl };
+    current = { supervisor, model, file, contextWindow, baseUrl, launchMode };
     phase = 'ready';
 
     await writeModelsJson(
@@ -585,7 +739,7 @@ async function handle(req: LlmRequest): Promise<unknown> {
     case 'verify-model':
       return verifyModel(req.modelId, req.quant);
     case 'start-server':
-      return startServer(req.modelId, req.quant);
+      return startServer(req.modelId, req.quant, req.launchMode);
     case 'stop-server':
       return stopServer();
     case 'hf-search':

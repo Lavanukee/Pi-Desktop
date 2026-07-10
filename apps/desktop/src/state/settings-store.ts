@@ -13,7 +13,11 @@ import type {
   DesktopSettings,
   DesktopSettingsPatch,
   EffortLevel,
+  EffortMode,
+  EnginePreference,
+  ModelSelection,
   ThemeModePref,
+  UserMode,
 } from '../../electron/settings/settings-contract';
 import { type ThemeFlavor, useThemeStore } from '../store/theme';
 import { applyHarnessConfig } from './pi-connect';
@@ -25,6 +29,10 @@ const DEFAULTS: DesktopSettings = {
   theme: { flavor: 'claude', mode: 'system' },
   permissionMode: 'reviewer',
   effort: 'medium',
+  userMode: 'user',
+  enginePreference: 'llamacpp',
+  modelSelection: { mode: 'auto' },
+  effortMode: 'auto',
   search: { brave: '', tavily: '' },
   mcpMode: 'lite',
   capabilities: { image: false, video: false, audio: false, threeD: false },
@@ -124,6 +132,79 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
     set({ settings });
   },
 }));
+
+/**
+ * userMode API (round-12 #4). The single source of truth for the app's
+ * experience level, persisted to settings.json and read by the model-dropdown
+ * / model-manager waves (W3/W4) to decide whether to surface friendly tiers
+ * (`user`) or real model names (`power`).
+ *
+ *   - `selectUserMode` — a plain selector for `useSettingsStore(selectUserMode)`
+ *     (reactive) or `selectUserMode(useSettingsStore.getState())` (imperative).
+ *   - `useUserMode`     — the ready-made reactive hook.
+ *   - `setUserMode`     — persist a new mode (via settings:set) + update state.
+ */
+export const selectUserMode = (state: SettingsStoreState): UserMode => state.settings.userMode;
+
+/** Reactive hook: the current experience level. */
+export function useUserMode(): UserMode {
+  return useSettingsStore(selectUserMode);
+}
+
+/** Persist the experience level (no-op re-write is harmless). */
+export async function setUserMode(userMode: UserMode): Promise<void> {
+  await useSettingsStore.getState().update({ userMode });
+}
+
+/**
+ * enginePreference API (round-12 #4 — the Model Manager's "Prefer MLX
+ * (experimental)" toggle). Follows the userMode pattern: a plain selector, a
+ * ready-made reactive hook, and a persist setter. `mlx` opts into the (later-wave)
+ * Apple-Silicon MLX backend; the toggle here persists the preference + drives the
+ * engine badge/note, without changing any launch path yet.
+ */
+export const selectEnginePreference = (state: SettingsStoreState): EnginePreference =>
+  state.settings.enginePreference;
+
+/** Reactive hook: the preferred local inference engine. */
+export function useEnginePreference(): EnginePreference {
+  return useSettingsStore(selectEnginePreference);
+}
+
+/** Persist the engine preference (no-op re-write is harmless). */
+export async function setEnginePreference(enginePreference: EnginePreference): Promise<void> {
+  await useSettingsStore.getState().update({ enginePreference });
+}
+
+/**
+ * modelSelection + effortMode API (round-12). Shared by W2 (composer-bar effort
+ * slider + tier display) and W3 (footer dropdown + Auto router) — both setters
+ * live here so neither wave has to edit this store file.
+ */
+export const selectModelSelection = (state: SettingsStoreState): ModelSelection =>
+  state.settings.modelSelection;
+export const selectEffortMode = (state: SettingsStoreState): EffortMode =>
+  state.settings.effortMode;
+
+/** Reactive hook: the current model selection (auto / a tier / an explicit model). */
+export function useModelSelection(): ModelSelection {
+  return useSettingsStore(selectModelSelection);
+}
+
+/** Reactive hook: the current effort mode ('auto' or an explicit level). */
+export function useEffortMode(): EffortMode {
+  return useSettingsStore(selectEffortMode);
+}
+
+/** Persist the model selection. */
+export async function setModelSelection(modelSelection: ModelSelection): Promise<void> {
+  await useSettingsStore.getState().update({ modelSelection });
+}
+
+/** Persist the effort mode. */
+export async function setEffortMode(effortMode: EffortMode): Promise<void> {
+  await useSettingsStore.getState().update({ effortMode });
+}
 
 /**
  * Re-push the saved permission-mode / effort into a freshly (re)started pi

@@ -15,17 +15,31 @@ import type { LlmCatalogEntry, LlmSimplePick } from '../../electron/ipc-contract
 import { afmAvailable, useAfmStore } from '../state/afm-store';
 import { useLlmStore } from '../state/llm-store';
 import { activateLocalModel } from '../state/local-model';
-import { applyModelEffortDefault, useSettingsStore } from '../state/settings-store';
+import {
+  applyModelEffortDefault,
+  setEnginePreference,
+  useEnginePreference,
+  useSettingsStore,
+} from '../state/settings-store';
 import { AFM_MODEL_ID, AfmModelCard } from './AfmModelCard';
 import { HfBrowseView } from './HfBrowseView';
 import { IconCpu, IconStar } from './icons';
 import { ModelCard } from './ModelCard';
-import { ModelTag } from './model-tags';
+import { categorizeByFamily, groupCatalog, type ModelGroup } from './model-manager-logic';
+import { ModelTag, SpecPill } from './model-tags';
 
 /** True when this entry is starred (by its id or, for an HF add, its repo id). */
 function isFavorite(entry: LlmCatalogEntry, favorites: string[]): boolean {
   return (
     favorites.includes(entry.id) || (entry.hfRepo !== undefined && favorites.includes(entry.hfRepo))
+  );
+}
+
+/** A grouped model is favorited when its (star-key) primary — or any collapsed
+ * entry — is starred. */
+function isGroupFavorite(group: ModelGroup, favorites: string[]): boolean {
+  return (
+    favorites.includes(group.primary.id) || group.entries.some((e) => isFavorite(e, favorites))
   );
 }
 
@@ -46,6 +60,7 @@ export function ModelManagerPanel() {
   const afmAvailability = useAfmStore((s) => s.availability);
   const refreshAfm = useAfmStore((s) => s.refresh);
   const favorites = useSettingsStore((s) => s.settings.favoriteModels);
+  const enginePref = useEnginePreference();
 
   const [recBusy, setRecBusy] = useState(false);
   const [pickBusy, setPickBusy] = useState<string | null>(null);
@@ -61,16 +76,17 @@ export function ModelManagerPanel() {
   const recommended = catalog.find((m) => m.id === recommendation?.modelId) ?? null;
   const recActive =
     recommended !== null && status.serverRunning && status.model?.id === recommended.id;
-  // Recommended first, then the rest in catalog order.
-  const ordered = [...catalog].sort(
-    (a, b) => Number(b.id === recommendation?.modelId) - Number(a.id === recommendation?.modelId),
-  );
+
+  // De-duplicate the catalog into ONE group per model, then categorize by family
+  // (sorted by size) for the power-user Recommended view.
+  const groups = groupCatalog(catalog);
+  const shownGroups = favoritesOnly ? groups.filter((g) => isGroupFavorite(g, favorites)) : groups;
+  const sections = categorizeByFamily(shownGroups);
 
   const afmVisible = afmAvailable(afmAvailability) && afmAvailability !== null;
   const afmFavorite = favorites.includes(AFM_MODEL_ID);
   const hasFavorites = favorites.length > 0;
 
-  const shownCards = favoritesOnly ? ordered.filter((e) => isFavorite(e, favorites)) : ordered;
   const showAfm = afmVisible && (!favoritesOnly || afmFavorite);
 
   const onOneClick = async () => {
@@ -201,11 +217,7 @@ export function ModelManagerPanel() {
                         <span className="truncate text-footnote font-medium text-text-primary">
                           {pick.displayName}
                         </span>
-                        {pick.spec === 'eagle3' ? (
-                          <ModelTag kind="eagle3">EAGLE-3</ModelTag>
-                        ) : pick.spec === 'mtp' ? (
-                          <ModelTag kind="mtp">MTP</ModelTag>
-                        ) : null}
+                        {pick.spec !== undefined ? <SpecPill method={pick.spec} /> : null}
                         {pick.vision ? <ModelTag kind="vision">Vision</ModelTag> : null}
                         <ModelTag kind="quant" icon={null}>
                           {pick.quant}
@@ -246,23 +258,76 @@ export function ModelManagerPanel() {
             </button>
           ) : null}
 
-          <div className="grid grid-cols-1 gap-3">
-            {/* Apple on-device model first when this machine supports it. */}
-            {showAfm ? <AfmModelCard advanced={advanced} availability={afmAvailability} /> : null}
-            {catalog.length === 0 ? (
-              <div className="flex items-center gap-2 py-8 text-footnote text-text-muted">
-                <Spinner size={14} /> Loading catalog…
+          {/* Advanced: the "Prefer MLX (experimental)" engine preference. The
+              MLX backend itself is a later wave — this persists the preference +
+              drives the per-card engine badge. */}
+          {advanced ? (
+            <div
+              className="flex flex-col gap-2 rounded-xl border border-border-default bg-bg-raised p-4"
+              data-testid="mm-advanced-panel"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <label
+                    id="mm-mlx-label"
+                    htmlFor="mm-mlx-toggle"
+                    className="text-body font-medium text-text-primary"
+                  >
+                    Prefer MLX (experimental)
+                  </label>
+                  <p className="mt-0.5 text-footnote text-text-muted">
+                    Use Apple&apos;s MLX engine on Apple Silicon where available. MLX uses different
+                    (non-GGUF) model files; the backend lands in a later update — this saves your
+                    preference and labels each model with its engine.
+                  </p>
+                </div>
+                <Switch
+                  id="mm-mlx-toggle"
+                  size="sm"
+                  checked={enginePref === 'mlx'}
+                  onCheckedChange={(on) => void setEnginePreference(on ? 'mlx' : 'llamacpp')}
+                  aria-labelledby="mm-mlx-label"
+                  data-testid="mm-mlx-toggle"
+                />
               </div>
-            ) : shownCards.length === 0 ? (
-              <div className="py-8 text-footnote text-text-muted">
-                No favorites yet — star a model to pin it here.
-              </div>
-            ) : (
-              shownCards.map((entry) => (
-                <ModelCard key={entry.id} entry={entry} advanced={advanced} />
-              ))
-            )}
-          </div>
+            </div>
+          ) : null}
+
+          {/* Apple on-device model first when this machine supports it. */}
+          {showAfm ? (
+            <div className="grid grid-cols-1 gap-3">
+              <AfmModelCard advanced={advanced} availability={afmAvailability} />
+            </div>
+          ) : null}
+
+          {/* De-duplicated models, categorized by family and sorted by size. */}
+          {catalog.length === 0 ? (
+            <div className="flex items-center gap-2 py-8 text-footnote text-text-muted">
+              <Spinner size={14} /> Loading catalog…
+            </div>
+          ) : sections.length === 0 ? (
+            <div className="py-8 text-footnote text-text-muted">
+              No favorites yet — star a model to pin it here.
+            </div>
+          ) : (
+            <div className="flex flex-col gap-5" data-testid="mm-family-sections">
+              {sections.map((section) => (
+                <div key={section.family} className="flex flex-col gap-3">
+                  <h3
+                    className="text-footnote font-medium uppercase tracking-wide text-text-muted"
+                    data-testid={`mm-family-${section.family}`}
+                  >
+                    {section.family}
+                  </h3>
+                  <div className="grid grid-cols-1 gap-3">
+                    {section.groups.map((group) => (
+                      <ModelCard key={group.key} group={group} advanced={advanced} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="browse" className="mt-4">

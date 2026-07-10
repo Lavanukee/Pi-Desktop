@@ -32,6 +32,7 @@
     "@pi-desktop/pi-mac": "workspace:*",
     "@pi-desktop/provider-afm": "workspace:*",
     "@pi-desktop/provider-llamacpp": "workspace:*",
+    "@pi-desktop/provider-mlx": "workspace:*",
     "@pi-desktop/shared": "workspace:*",
     "@pi-desktop/themes": "workspace:*",
     "@pi-desktop/ui": "workspace:*",

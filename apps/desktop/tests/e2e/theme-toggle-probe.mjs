@@ -69,7 +69,7 @@ const themeAttrs = (page) =>
   });
   try {
     const page = await app.firstWindow();
-    await page.waitForSelector('[data-testid="toggle-mode"]', { timeout: 12000 });
+    await page.waitForSelector('[data-testid="profile-button"]', { timeout: 12000 });
 
     let attrs = await themeAttrs(page);
     assert(
@@ -84,19 +84,23 @@ const themeAttrs = (page) =>
       'the "claude" flavor text toggle must be removed from the top bar (img32)',
     );
 
-    // Root-cause guard for the real bug: the top bar is a drag region and any
-    // interactive child MUST opt out, or real OS mouse clicks are swallowed. This
-    // is invisible to Playwright's synthetic clicks (they ignore
-    // -webkit-app-region), so assert the computed drag region directly.
-    const drag = await page.evaluate(() => {
-      const region = (sel) =>
-        getComputedStyle(document.querySelector(sel)).getPropertyValue('-webkit-app-region').trim();
-      return { bar: region('.pd-topbar'), mode: region('[data-testid="toggle-mode"]') };
-    });
-    assert(drag.bar === 'drag', `top bar should be a drag region, got "${drag.bar}"`);
-    assert(drag.mode === 'no-drag', `mode quick-toggle must opt out of drag, got "${drag.mode}"`);
+    // Root-cause guard for the real bug: the top bar is a drag region, or real OS
+    // mouse clicks on its interactive children are swallowed. Invisible to
+    // Playwright's synthetic clicks (they ignore -webkit-app-region), so assert
+    // the computed drag region directly. (The mode toggle moved out of the top
+    // bar into the bottom-left profile dropup in round-12 #4.)
+    const dragBar = await page.evaluate(() =>
+      getComputedStyle(document.querySelector('.pd-topbar'))
+        .getPropertyValue('-webkit-app-region')
+        .trim(),
+    );
+    assert(dragBar === 'drag', `top bar should be a drag region, got "${dragBar}"`);
 
-    // Mode quick-toggle: dark → light, live, and flavor untouched + persisted.
+    // Mode quick-toggle now lives in the bottom-left profile DROPUP (round-12 #4);
+    // open it, then flip dark → light, live, with flavor untouched + persisted.
+    // The theme row keeps the menu open on flip so settings opens from it next.
+    await page.click('[data-testid="profile-button"]');
+    await page.waitForSelector('[data-testid="profile-menu"]', { timeout: 8000 });
     await page.click('[data-testid="toggle-mode"]');
     await page.waitForFunction(
       () => document.documentElement.getAttribute('data-mode') === 'light',
@@ -106,7 +110,7 @@ const themeAttrs = (page) =>
     assert(attrs.flavor === 'claude', `mode toggle changed flavor: ${JSON.stringify(attrs)}`);
     await waitFor(() => readSettings().theme.mode === 'light', 'mode persisted to settings.json');
 
-    // Flavor via the settings menu (opened from the bottom-left profile row):
+    // Flavor via the settings menu (the "Settings" row of the same open dropup):
     // claude → codex, live, and mode untouched + persisted. Round-5 #23 moved
     // the flavor toggle out of Appearance into Interface → Advanced.
     await page.click('[data-testid="open-settings"]');
@@ -167,7 +171,7 @@ writeFileSync(
   });
   try {
     const page = await app.firstWindow();
-    await page.waitForSelector('[data-testid="toggle-mode"]', { timeout: 12000 });
+    await page.waitForSelector('[data-testid="profile-button"]', { timeout: 12000 });
     // The real app applies the persisted theme at boot (async, after settings:get).
     await page.waitForFunction(
       () =>

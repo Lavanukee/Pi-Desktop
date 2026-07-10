@@ -32,6 +32,7 @@ import {
   type TaskClass,
 } from './classify/classify.js';
 import { createClassifierEscalation } from './classify/escalation.js';
+import { modelTierForClass } from './classify/tier.js';
 import { effortKnobs, isEffortLevel } from './effort/effort.js';
 import { parseModelParams, smallModelWarning } from './model/model-size.js';
 import { type CallModel, callModelFromEnv } from './model-call/call-model.js';
@@ -437,6 +438,7 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     return {
       ...runtime.config,
       activeClass: runtime.activeClass,
+      activeTier: runtime.activeClass !== null ? modelTierForClass(runtime.activeClass) : null,
       title: runtime.title,
       activeTools: runtime.activeTools,
       model: runtime.model?.id ?? null,
@@ -736,6 +738,18 @@ export {
   type TaskTier,
 } from './classify/classify.js';
 export { createClassifierEscalation } from './classify/escalation.js';
+export {
+  COARSE_TIERS,
+  COARSE_TO_MODEL,
+  type CoarseTier,
+  coarseTier,
+  isCoarseTier,
+  isModelTier,
+  MODEL_TIERS,
+  type ModelTier,
+  modelTierForClass,
+  TIER_LABEL,
+} from './classify/tier.js';
 export {
   EFFORT_KNOBS,
   EFFORT_LEVELS,

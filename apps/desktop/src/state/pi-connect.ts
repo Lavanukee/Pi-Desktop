@@ -4,8 +4,25 @@
  * test hook and exposes the thin invoke wrappers the chat UI calls.
  */
 import { createEventRouter, type ImageContent, rehydrateSessionJsonl } from '@pi-desktop/engine';
+import { maybeRouteAuto } from '../chat/auto-router';
+import { ensureVisionMode } from './local-model';
 import { createPiSink, usePiStore } from './pi-slice';
 import { useSettingsStore } from './settings-store';
+
+/** An outgoing message's vision-relevant shape (pure helper input). */
+export interface OutgoingMessage {
+  /** `data:<mime>;base64,…` image attachments the composer produced. */
+  readonly imageDataUris?: readonly string[];
+}
+
+/**
+ * Pure: does this outgoing message carry an image attachment? An image can only
+ * be seen by a vision-capable model launched in multimodal mode, so a `true`
+ * here is the on-demand-vision trigger (see {@link ensureVisionMode}).
+ */
+export function messageNeedsVision(msg: OutgoingMessage): boolean {
+  return (msg.imageDataUris?.length ?? 0) > 0;
+}
 
 let disconnect: (() => void) | null = null;
 
@@ -131,6 +148,20 @@ export async function sendPrompt(
   agentMessage?: string,
 ) {
   usePiStore.getState().appendUser(message, imageDataUris);
+  if (messageNeedsVision({ imageDataUris })) {
+    // Round-12 on-demand VISION (ask #3): an image upload needs a multimodal
+    // model. Relaunch the current model (or a vision-capable pick) in vision mode
+    // BEFORE dispatch — sticky, restart-based, honest about the MTP tradeoff.
+    // This takes precedence over Auto tier-routing so an image turn does exactly
+    // ONE restart, not two. Awaited; never throws.
+    await ensureVisionMode();
+  } else {
+    // Round-12 Auto router (W3): when the selection is Auto, classify this prompt
+    // and (per the hysteresis) switch the running model to the routed tier BEFORE
+    // dispatch, so the turn runs on the picked model. Awaited so the send waits on
+    // the (surfaced) restart; a no-op unless mode==='auto'; never throws.
+    await maybeRouteAuto(agentMessage ?? message, { hasImages: false });
+  }
   const images = imageDataUris
     .map(dataUriToImage)
     .filter((img): img is ImageContent => img !== null);

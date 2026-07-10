@@ -137,12 +137,16 @@ try {
       ],
     });
   });
+  // Round-12 #4: the mode toggle lives in the bottom-left profile dropup now.
+  await page.click('[data-testid="profile-button"]');
+  await page.waitForSelector('[data-testid="profile-menu"]', { timeout: 6000 });
   await page.click('[data-testid="toggle-mode"]');
   await page.waitForFunction(
     (before) => document.documentElement.getAttribute('data-mode') !== before,
     beforeMode,
     { timeout: 6000 },
   );
+  await page.keyboard.press('Escape');
   await page.waitForTimeout(400);
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - window.innerWidth,

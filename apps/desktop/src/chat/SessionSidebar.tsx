@@ -4,17 +4,24 @@
  *     `CollapsibleSearch` (round-8 #1/#2), then New chat, the Workspace nav
  *     (Projects, Model management, Connectors, Scheduled, Skills — Artifacts +
  *     the redundant Settings entry removed, #4/#5), then the Chats history and
- *     the bottom-left profile/theme footer.
+ *     the bottom-left profile button (round-12 #4: one button → a dropup with
+ *     Settings / Toggle theme / the User–Power toggle).
  *   - COLLAPSED: a NARROW ICON RAIL (~64px) — the SVG icons stay visible; the
- *     search becomes just the magnifying glass; the profile/theme controls pin
- *     to the bottom. Never fully hidden. Width + label-hiding live in global.css.
+ *     search becomes just the magnifying glass; the same profile button (avatar
+ *     only) pins to the bottom. Never fully hidden. Width + label-hiding live in
+ *     global.css.
  * Sessions are read from the fs channels; mutations go through pi.
  */
 
 import {
   CollapsibleSearch,
-  IconButton,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
   IconChat,
+  IconChevronDown,
   IconClock,
   IconConnector,
   IconFolderPlus,
@@ -24,6 +31,7 @@ import {
   IconSidebar,
   IconSparkles,
   Kbd,
+  SegmentedControl,
   Sidebar,
   SidebarRow,
   SidebarScroll,
@@ -38,27 +46,120 @@ import {
   useState,
 } from 'react';
 import type { SessionSummary } from '../../electron/ipc-contract';
+import type { UserMode } from '../../electron/settings/settings-contract';
 import { IconCpu, IconMoon, IconSun } from '../settings/icons';
 import type { SettingsSection } from '../settings/SettingsView';
 import { listSessions, newSession, switchSession } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
-import { useSettingsStore } from '../state/settings-store';
+import { setUserMode, useSettingsStore, useUserMode } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
+import { PROFILE_MENU_ACTIONS, USER_MODE_OPTIONS, userModeBlurb } from './profile-menu';
 
 /** Nav destinations that don't have a real page yet — open a "coming soon" stub. */
 export type SidebarStub = 'projects' | 'scheduled' | 'skills';
 
 /**
- * Light/dark quick-toggle glyph (round-5 #15, relocated to the sidebar footer in
- * round-7): a sun (dark mode) and moon (light mode) cross-fade + rotate on flip.
- * Reduced-motion drops the transition (CSS).
+ * Bottom-left profile control (round-12 #4). ONE compact button — the avatar
+ * (rail) or the full "Pi Desktop · Local" row (expanded) — that opens a DROPUP
+ * (side="top") holding, top→bottom: Settings, Toggle theme, a divider, and — at
+ * the bottom — the User / Power-user segmented toggle. Replaces the old separate
+ * settings-gear + theme-toggle controls. Rendered in both sidebar shapes so both
+ * share one menu; the `open-settings` / `toggle-mode` testids move onto the menu
+ * rows (probes open the menu first, then click them).
  */
-function ThemeToggleIcon({ mode }: { mode: 'dark' | 'light' }) {
+function SidebarProfileMenu({
+  variant,
+  onOpenSettings,
+}: {
+  variant: 'full' | 'rail';
+  onOpenSettings: (section: SettingsSection) => void;
+}) {
+  const mode = useThemeStore((s) => s.mode);
+  const setTheme = useSettingsStore((s) => s.setTheme);
+  const userMode = useUserMode();
+
+  const trigger =
+    variant === 'rail' ? (
+      <button
+        type="button"
+        className="pd-rail-btn pd-focusable"
+        aria-label="Account, settings and theme"
+        title="Account, settings and theme"
+        data-testid="profile-button"
+      >
+        <span className="pd-sidebar-avatar">P</span>
+      </button>
+    ) : (
+      <button
+        type="button"
+        data-testid="profile-button"
+        aria-label="Account, settings and theme"
+        className="pd-sidebar-footer pd-focusable min-w-0 flex-1 cursor-pointer rounded-lg border-0 bg-transparent text-left font-[inherit] text-text-primary hover:bg-bg-hover"
+      >
+        <span className="pd-sidebar-avatar">P</span>
+        <span className="pd-sidebar-footer-name">
+          Pi Desktop<span className="pd-sidebar-footer-plan"> · Local</span>
+        </span>
+        <IconChevronDown size={16} className="shrink-0 text-text-muted" />
+      </button>
+    );
+
   return (
-    <span className="pd-theme-toggle" data-mode={mode} aria-hidden>
-      <IconSun className="pd-theme-toggle-sun" />
-      <IconMoon className="pd-theme-toggle-moon" />
-    </span>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+      <DropdownMenuContent
+        side="top"
+        align="start"
+        sideOffset={6}
+        className="min-w-[240px]"
+        data-testid="profile-menu"
+      >
+        {PROFILE_MENU_ACTIONS.map((action) =>
+          action.id === 'settings' ? (
+            <DropdownMenuItem
+              key={action.id}
+              data-testid={action.testid}
+              icon={<IconSettings size={16} />}
+              onSelect={() => onOpenSettings('personalization')}
+            >
+              {action.label}
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem
+              key={action.id}
+              data-testid={action.testid}
+              icon={mode === 'dark' ? <IconMoon size={16} /> : <IconSun size={16} />}
+              hint={mode === 'dark' ? 'Dark' : 'Light'}
+              // Keep the menu open on flip so the change is visible in place.
+              onSelect={(e) => {
+                e.preventDefault();
+                void setTheme({ mode: mode === 'dark' ? 'light' : 'dark' });
+              }}
+            >
+              {action.label}
+            </DropdownMenuItem>
+          ),
+        )}
+
+        <DropdownMenuSeparator />
+
+        {/* Bottom: the User / Power-user experience toggle. A plain segmented
+            control (not a menu item) so flipping it doesn't dismiss the dropup. */}
+        <div className="px-2 pt-1 pb-1.5" data-testid="usermode-toggle">
+          <div className="pd-menu-label px-0 pb-1">Mode</div>
+          <SegmentedControl
+            aria-label="Experience mode"
+            className="w-full"
+            value={userMode}
+            onValueChange={(v) => void setUserMode(v as UserMode)}
+            options={USER_MODE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+          />
+          <p className="mt-1.5 text-caption text-text-muted" data-testid="usermode-blurb">
+            {userModeBlurb(userMode)}
+          </p>
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -129,8 +230,6 @@ export function SessionSidebar({
   const [query, setQuery] = useState('');
   const currentFile = usePiStore((s) => s.session?.sessionFile ?? null);
   const sessionId = usePiStore((s) => s.session?.sessionId ?? null);
-  const mode = useThemeStore((s) => s.mode);
-  const setTheme = useSettingsStore((s) => s.setTheme);
 
   const refresh = useCallback(() => {
     void listSessions().then(setSessions);
@@ -248,18 +347,8 @@ export function SessionSidebar({
             icon={<IconConnector size={18} />}
           />
           <div className="pd-rail-spacer" />
-          <RailButton
-            label="Open settings"
-            testid="open-settings"
-            onClick={() => onOpenSettings('personalization')}
-            icon={<IconSettings size={18} />}
-          />
-          <RailButton
-            label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            testid="toggle-mode"
-            onClick={() => void setTheme({ mode: mode === 'dark' ? 'light' : 'dark' })}
-            icon={<ThemeToggleIcon mode={mode} />}
-          />
+          {/* One profile button → the shared Settings / theme / User-Power dropup. */}
+          <SidebarProfileMenu variant="rail" onOpenSettings={onOpenSettings} />
         </div>
       </Sidebar>
     );
@@ -333,31 +422,11 @@ export function SessionSidebar({
         </SidebarSection>
       </SidebarScroll>
 
-      {/* Bottom-left footer: the profile row (PRIMARY settings entry point) plus
-          the light/dark quick-toggle. `open-settings` + `toggle-mode` testids are
-          kept so the existing probes still reach them. */}
-      <div className="m-1 mt-0 flex items-center gap-1">
-        <button
-          type="button"
-          data-testid="open-settings"
-          aria-label="Open settings"
-          onClick={() => onOpenSettings('personalization')}
-          className="pd-sidebar-footer pd-focusable min-w-0 flex-1 cursor-pointer rounded-lg border-0 bg-transparent text-left font-[inherit] text-text-primary hover:bg-bg-hover"
-        >
-          <span className="pd-sidebar-avatar">P</span>
-          <span className="pd-sidebar-footer-name">
-            Pi Desktop<span className="pd-sidebar-footer-plan"> · Local</span>
-          </span>
-          <IconSettings size={16} className="shrink-0 text-text-muted" />
-        </button>
-        <IconButton
-          aria-label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          data-testid="toggle-mode"
-          className="shrink-0"
-          onClick={() => void setTheme({ mode: mode === 'dark' ? 'light' : 'dark' })}
-        >
-          <ThemeToggleIcon mode={mode} />
-        </IconButton>
+      {/* Bottom-left footer: ONE profile button that opens the dropup holding
+          Settings, Toggle theme, and the User / Power-user toggle (round-12 #4).
+          The `open-settings` / `toggle-mode` testids now live on the menu rows. */}
+      <div className="m-1 mt-0 flex">
+        <SidebarProfileMenu variant="full" onOpenSettings={onOpenSettings} />
       </div>
     </Sidebar>
   );

@@ -141,7 +141,20 @@ export interface LlmStatus {
   model: LlmModelInfo | null;
   metrics: { lastTps?: number; avgTps?: number } | null;
   downloadedModelIds: string[];
+  /** The launch mode of the currently-running server, so the app knows whether
+   * vision (multimodal) is already on before requesting an on-demand restart. */
+  launchMode?: 'fast-text' | 'multimodal';
   error?: string;
+}
+
+/** A speed variant a model can launch with (MTP / EAGLE3 / DFlash), surfaced for
+ * the model-manager variant dropdown. */
+export interface LlmSpecVariant {
+  method: 'mtp' | 'eagle3' | 'dflash';
+  /** HF repo the draft GGUF lives in (EAGLE3/DFlash), when separate. */
+  draftRepo?: string;
+  /** True when the head is embedded in the main GGUF (no separate draft). */
+  embedded?: boolean;
 }
 
 export interface LlmCatalogEntry {
@@ -154,18 +167,28 @@ export interface LlmCatalogEntry {
   license: string;
   /** Multi-token-prediction speedup (embedded head or sibling file). */
   mtp: boolean;
-  /** Speculative-decoding speed method this entry ships, if any. */
-  spec?: 'mtp' | 'eagle3';
+  /** DEFAULT speculative-decoding speed method this entry launches with, if any. */
+  spec?: 'mtp' | 'eagle3' | 'dflash';
+  /** All speed variants available (for the [MTP / EAGLE3 / DFlash] dropdown). */
+  variants?: LlmSpecVariant[];
   vision: boolean;
   downloaded: boolean;
   recommended: boolean;
   /** HF repo id (e.g. "unsloth/gemma-4-E2B-it-GGUF") — for the Advanced view. */
   hfRepo?: string;
+  /** Inference engine (llamacpp default; mlx is a later-wave, Apple-Silicon opt-in). */
+  engine?: 'llamacpp' | 'mlx';
+  /** HF publisher handle (e.g. "unsloth") + whether it is in the reliable allowlist. */
+  publisher?: { handle: string; reliable: boolean };
+  /** Coarse tier hint (fast / balanced / intelligent) for grouping/sorting. */
+  tier?: 'fast' | 'balanced' | 'intelligent';
+  /** True when the quants are multi-shard (shard-join download is a follow-up). */
+  sharded?: boolean;
   /** True when the source HF repo is gated (needs an accepted licence / token). */
   gated?: boolean;
   /** Where this entry came from: the hand-curated catalog or a Browse-HF add. */
   source?: 'curated' | 'hf';
-  /** True only for HEAD-verified curated repos; false for discovered HF adds. */
+  /** True only for HEAD-verified curated repos; false for discovered/reserved adds. */
   verified?: boolean;
 }
 
@@ -185,8 +208,23 @@ export interface LlmSimplePick {
   quant: string;
   launchMode: 'fast-text' | 'multimodal';
   /** Speed method this pick runs with (fast-text picks only). */
-  spec?: 'mtp' | 'eagle3';
+  spec?: 'mtp' | 'eagle3' | 'dflash';
   vision: boolean;
+}
+
+/** One tier resolved for this machine's RAM (from `resolveTierModels`), carried
+ * to the renderer so the Auto router + tier dropdown never re-derive it. */
+export interface LlmTierPick {
+  modelId: string;
+  displayName: string;
+  quant: string;
+  launchMode: 'fast-text' | 'multimodal';
+  spec?: 'mtp' | 'eagle3' | 'dflash';
+  vision: boolean;
+  /** Download size in bytes (0 = unverified) for the "N GB" auto-download copy. */
+  bytes: number;
+  /** Whether the pick's main file is already on disk. */
+  downloaded: boolean;
 }
 
 export interface LlmRecommendation {
@@ -196,6 +234,8 @@ export interface LlmRecommendation {
   rationale: string;
   /** 1–3 clearly-labelled picks for non-power-users (speed / vision / helper). */
   simpleSet: LlmSimplePick[];
+  /** The 3 tier picks resolved for this Mac (fast / balanced / intelligent). */
+  tierModels?: Record<'fast' | 'balanced' | 'intelligent', LlmTierPick>;
 }
 
 export type LlmInvokeMap = {
@@ -233,8 +273,11 @@ export type LlmInvokeMap = {
       error?: string;
     };
   };
+  /** Start the server for a model. `launchMode:'multimodal'` requests an
+   * on-demand vision launch (fetches the mmproj sibling, drops MTP); omitted /
+   * 'fast-text' is the default speed launch. */
   'llm:start-server': {
-    request: { modelId: string; quant?: string };
+    request: { modelId: string; quant?: string; launchMode?: 'fast-text' | 'multimodal' };
     response: { success: boolean; baseUrl?: string; error?: string };
   };
   'llm:stop-server': { request: undefined; response: { success: boolean } };

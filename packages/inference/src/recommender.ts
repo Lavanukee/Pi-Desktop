@@ -28,6 +28,7 @@ import {
   GEMMA4_E2B,
   getCatalogModel,
   type LaunchMode,
+  type ModelTier,
   type SpecMethod,
 } from './catalog.js';
 
@@ -200,5 +201,119 @@ export function recommend(hw: { totalRamGB: number }): Recommendation {
     utilityFile: utility.file,
     simpleSet,
     rationale,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Per-hardware 3-tier resolution (round-12 model-selection UX).
+//
+// resolveTierModels(hw) → { fast, balanced, intelligent }, each a concrete
+// catalog model + quant for THIS Mac's RAM. The three are always present; on a
+// tiny machine two tiers may resolve to the SAME model id (dedup at switch
+// time by comparing model ids, not tier names). The app resolves the harness's
+// published `activeTier` through this map and drives the llama-server switch.
+// ---------------------------------------------------------------------------
+
+/** One resolved tier pick: the model + quant to launch for a tier on this Mac. */
+export interface TierPick {
+  readonly tier: ModelTier;
+  readonly model: CatalogModel;
+  readonly file: CatalogFile;
+  /** 'fast-text' default; the app flips to 'multimodal' on-demand for vision. */
+  readonly launchMode: LaunchMode;
+  /** Speed method for a fast-text launch (mtp | eagle3 | dflash), if any. */
+  readonly spec?: SpecMethod;
+  /** True when the model can take image input (in a multimodal launch). */
+  readonly vision: boolean;
+  /** Grey display name for the dropdown, e.g. "gemma4 e2b". */
+  readonly displayName: string;
+  /** Download size of {@link file} in bytes (0 = unverified), for the "N GB" copy. */
+  readonly bytes: number;
+}
+
+/**
+ * Friendly grey name: `displayName` lowercased/condensed
+ * ("Gemma 4 E2B Instruct" → "gemma4 e2b", "Qwen3.6 27B (MTP)" → "qwen3.6 27b").
+ */
+export function tierDisplayName(model: CatalogModel): string {
+  return model.displayName
+    .toLowerCase()
+    .replace(/\binstruct\b/g, '')
+    .replace(/\s*\([^)]*\)/g, '') // drop "(MTP)" / "(EAGLE-3)"
+    .replace(/\bnvidia\b/g, '') // drop the vendor prefix on Nemotron
+    .replace(/gemma\s+4/g, 'gemma4')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Per-tier {modelId, quant} for a RAM budget (the round-12 resolution table). */
+function tierTable(tier: BudgetTier): Record<ModelTier, { modelId: string; quant: string }> {
+  switch (tier) {
+    case '<8GB':
+      return {
+        fast: { modelId: 'gemma-4-e2b-it', quant: 'Q4_K_M' },
+        balanced: { modelId: 'gemma-4-e2b-it', quant: 'Q4_K_M' },
+        intelligent: { modelId: 'gemma-4-e4b-it', quant: 'Q4_K_M' },
+      };
+    case '8GB':
+      return {
+        fast: { modelId: 'qwen3.5-4b-mtp', quant: 'Q4_K_M' },
+        balanced: { modelId: 'gemma-4-e4b-it', quant: 'Q4_K_M' },
+        intelligent: { modelId: 'gemma-4-12b-it', quant: 'Q4_K_M' },
+      };
+    case '16GB':
+      return {
+        fast: { modelId: 'qwen3.5-4b-mtp', quant: 'Q4_K_M' },
+        balanced: { modelId: 'gemma-4-12b-it', quant: 'Q4_K_M' },
+        intelligent: { modelId: 'gemma-4-12b-it', quant: 'Q4_K_M' },
+      };
+    case '24GB':
+      return {
+        fast: { modelId: 'gemma-4-e2b-it', quant: 'Q4_K_M' },
+        balanced: { modelId: 'gemma-4-12b-it', quant: 'Q4_K_M' },
+        intelligent: { modelId: 'qwen3.6-27b-mtp', quant: 'Q4_K_M' },
+      };
+    case '32GB':
+      return {
+        fast: { modelId: 'qwen3.5-4b-mtp', quant: 'Q4_K_M' },
+        balanced: { modelId: 'gemma-4-12b-it', quant: 'Q4_K_M' },
+        intelligent: { modelId: 'qwen3.6-35b-a3b-mtp', quant: 'UD-Q4_K_M' },
+      };
+    default:
+      // 48 / 64 / 96 / 128GB
+      return {
+        fast: { modelId: 'qwen3.5-9b-mtp', quant: 'Q4_K_M' },
+        balanced: { modelId: 'gemma-4-26b-a4b-it', quant: 'UD-Q4_K_M' },
+        intelligent: { modelId: 'qwen3.6-35b-a3b-mtp', quant: 'UD-Q4_K_M' },
+      };
+  }
+}
+
+function toTierPick(tier: ModelTier, spec: { modelId: string; quant: string }): TierPick {
+  const { model, file } = resolve({ ...spec, launchMode: 'fast-text' });
+  return {
+    tier,
+    model,
+    file,
+    launchMode: 'fast-text',
+    // A fast-text launch uses the model's speed head; vision (multimodal) drops it.
+    spec: model.spec,
+    vision: model.input.includes('image'),
+    displayName: tierDisplayName(model),
+    bytes: file.bytes,
+  };
+}
+
+/**
+ * The 3 tiers resolved for THIS machine's RAM. All three always present; a tiny
+ * machine may resolve two tiers to the SAME model id (dedup at switch time).
+ * Deterministic + pure.
+ */
+export function resolveTierModels(hw: { totalRamGB: number }): Record<ModelTier, TierPick> {
+  const table = tierTable(tierFor(hw.totalRamGB));
+  return {
+    fast: toTierPick('fast', table.fast),
+    balanced: toTierPick('balanced', table.balanced),
+    intelligent: toTierPick('intelligent', table.intelligent),
   };
 }

@@ -8,7 +8,7 @@
  * (#A3); the collapse control lives in the sidebar just right of the traffic
  * lights (#A5); files can be dropped anywhere in the window (#A8).
  */
-import { CanvasProvider, IconPanelRight, ProjectPicker } from '@pi-desktop/canvas';
+import { CanvasProvider, IconPanelRight } from '@pi-desktop/canvas';
 import type { Model } from '@pi-desktop/engine';
 import { IconButton, IconClose, MainSurface, TopBar } from '@pi-desktop/ui';
 import { useEffect, useState } from 'react';
@@ -79,29 +79,6 @@ function StubPanel({ stub, onClose }: { stub: SidebarStub; onClose: () => void }
         <p className="text-body text-text-muted">{body}</p>
       </div>
     </div>
-  );
-}
-
-/**
- * The project (working-folder) chip above the composer (round-8 #15). Selecting a
- * project switches the working folder (pi cwd + canvas file-tree root, owned by
- * the project store); "New project" opens a native folder picker in main.
- */
-function ProjectChip() {
-  const projects = useProjectStore((s) => s.projects);
-  const activeId = useProjectStore((s) => s.activeId);
-  const selectProject = useProjectStore((s) => s.selectProject);
-  const newProject = useProjectStore((s) => s.newProject);
-  const clearProject = useProjectStore((s) => s.clearProject);
-  return (
-    <ProjectPicker
-      projects={projects.map((p) => ({ id: p.id, name: p.name }))}
-      active={activeId}
-      onSelect={(id) => void selectProject(id)}
-      onNew={() => void newProject()}
-      onClear={() => void clearProject()}
-      placeholder="No project"
-    />
   );
 }
 
@@ -237,11 +214,9 @@ export function ChatApp({
                   Restored an earlier session; some history was truncated.
                 </div>
               ) : null}
-              {/* Round-8 #15: the project (working-folder) chip sits ABOVE the
-                  composer, left-aligned to the composer's max width. */}
-              <div className="mx-auto mb-1.5 flex w-full max-w-[700px] px-1">
-                <ProjectChip />
-              </div>
+              {/* Round-12 W2: the project (working-folder) chip moved OFF the
+                  top of the composer into the sticking-out ComposerBar below the
+                  input (mounted inside ChatComposer). */}
               {composer}
             </div>
           </div>

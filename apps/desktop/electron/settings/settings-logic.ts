@@ -8,27 +8,57 @@ import type { OnboardingChoices } from '../import/import-contract';
 import {
   type DesktopSettings,
   type DesktopSettingsPatch,
+  EFFORT_MODES,
   type EffortLevel,
+  ENGINE_PREFERENCES,
+  type EnginePreference,
   ICON_STROKE_DEFAULT,
   ICON_STROKE_MAX,
   ICON_STROKE_MIN,
   MCP_MODES,
   type McpMode,
+  MODEL_SELECTION_TIERS,
+  type ModelSelection,
+  type ModelSelectionTier,
   type PermissionMode,
   type ThemeFlavor,
   type ThemeModePref,
+  USER_MODES,
 } from './settings-contract';
 
 const FLAVORS: readonly ThemeFlavor[] = ['claude', 'codex'];
 const MODES: readonly ThemeModePref[] = ['light', 'dark', 'system'];
 const PERMISSION_MODES: readonly PermissionMode[] = ['bypass', 'reviewer', 'review-all'];
 const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'max'];
+const ENGINE_PREFS: readonly EnginePreference[] = ENGINE_PREFERENCES;
+
+/** Normalize an untrusted model-selection union, falling back on anything invalid. */
+function clampModelSelection(value: unknown, fallback: ModelSelection): ModelSelection {
+  if (typeof value !== 'object' || value === null) return fallback;
+  const v = value as Record<string, unknown>;
+  if (
+    v.mode === 'tier' &&
+    typeof v.tier === 'string' &&
+    (MODEL_SELECTION_TIERS as readonly string[]).includes(v.tier)
+  ) {
+    return { mode: 'tier', tier: v.tier as ModelSelectionTier };
+  }
+  if (v.mode === 'model' && typeof v.modelId === 'string' && v.modelId.length > 0) {
+    return { mode: 'model', modelId: v.modelId };
+  }
+  if (v.mode === 'auto') return { mode: 'auto' };
+  return fallback;
+}
 
 export const DEFAULT_SETTINGS: DesktopSettings = {
   version: 1,
   theme: { flavor: 'claude', mode: 'system' },
   permissionMode: 'reviewer',
   effort: 'medium',
+  userMode: 'user',
+  enginePreference: 'llamacpp',
+  modelSelection: { mode: 'auto' },
+  effortMode: 'auto',
   search: { brave: '', tavily: '' },
   mcpMode: 'lite',
   capabilities: { image: false, video: false, audio: false, threeD: false },
@@ -103,6 +133,10 @@ export function clampSettings(raw: unknown): DesktopSettings {
     },
     permissionMode: oneOf(o.permissionMode, PERMISSION_MODES, d.permissionMode),
     effort: oneOf(o.effort, EFFORT_LEVELS, d.effort),
+    userMode: oneOf(o.userMode, USER_MODES, d.userMode),
+    enginePreference: oneOf(o.enginePreference, ENGINE_PREFS, d.enginePreference),
+    modelSelection: clampModelSelection(o.modelSelection, d.modelSelection),
+    effortMode: oneOf(o.effortMode, EFFORT_MODES, d.effortMode),
     search: { brave: str(search.brave, ''), tavily: str(search.tavily, '') },
     mcpMode: oneOf(o.mcpMode, MCP_MODES, d.mcpMode),
     capabilities: {

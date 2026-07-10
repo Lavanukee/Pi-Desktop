@@ -54,9 +54,12 @@ try {
   const page = await app.firstWindow();
   await page.waitForSelector('[data-testid="composer-input"]', { timeout: 12000 });
 
-  // Round-4: the settings entry point is the bottom-left profile row (keeps the
-  // `open-settings` testid). It opens the menu at Custom instructions, so
-  // navigate to Appearance before exercising the theme controls.
+  // Round-12 #4: the settings entry point is the "Settings" row (keeps the
+  // `open-settings` testid) inside the bottom-left profile DROPUP — open it via
+  // `profile-button` first. It opens the settings menu at Custom instructions,
+  // so navigate to Appearance before exercising the theme controls.
+  await page.click('[data-testid="profile-button"]');
+  await page.waitForSelector('[data-testid="profile-menu"]', { timeout: 8000 });
   await page.click('[data-testid="open-settings"]');
   await page.waitForSelector('[data-testid="settings-view"]', { timeout: 8000 });
 

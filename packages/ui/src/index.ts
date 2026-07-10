@@ -137,6 +137,8 @@ export {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from './components/dropdown-menu.tsx';
+export type { EffortSliderProps } from './components/effort-slider.tsx';
+export { EffortSlider, pointerToIndex } from './components/effort-slider.tsx';
 export type { FileDropZoneProps } from './components/file-input.tsx';
 export { FileDropZone } from './components/file-input.tsx';
 export type { IconStrokeControlProps } from './components/icon-stroke-control.tsx';

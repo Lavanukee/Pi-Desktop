@@ -756,6 +756,21 @@ body {
   --pill-fg: #0e7490;
   --pill-border: #67e8f9;
 }
+.pd-mm-pill--dflash {
+  --pill-bg: #e0e7ff;
+  --pill-fg: #4338ca;
+  --pill-border: #a5b4fc;
+}
+.pd-mm-pill--reliable {
+  --pill-bg: #dcfce7;
+  --pill-fg: #15803d;
+  --pill-border: #86efac;
+}
+.pd-mm-pill--engine {
+  --pill-bg: #eef1f5;
+  --pill-fg: #475569;
+  --pill-border: #cbd5e1;
+}
 .pd-mm-pill--gated {
   --pill-bg: #e8ebf0;
   --pill-fg: #475569;
@@ -795,6 +810,21 @@ body {
   --pill-fg: #5fd6e6;
   --pill-border: #155e6b;
 }
+:root[data-mode="dark"] .pd-mm-pill--dflash {
+  --pill-bg: #1a1f45;
+  --pill-fg: #a5b4fc;
+  --pill-border: #35408a;
+}
+:root[data-mode="dark"] .pd-mm-pill--reliable {
+  --pill-bg: #0f2a1a;
+  --pill-fg: #5fd58a;
+  --pill-border: #1c5233;
+}
+:root[data-mode="dark"] .pd-mm-pill--engine {
+  --pill-bg: #23272e;
+  --pill-fg: #97a1ad;
+  --pill-border: #353b44;
+}
 :root[data-mode="dark"] .pd-mm-pill--gated {
   --pill-bg: #232933;
   --pill-fg: #9aa6b5;
@@ -822,4 +852,106 @@ body {
 }
 :root[data-mode="dark"] .pd-mm-trending-header svg {
   color: #fb923c;
+}
+
+/* -------------------------------------------------------------------------
+ * Round-12 W2 (#6) — the "sticking-out" composer bar.
+ *
+ * A THIN ledge fused to the bottom edge of the input card and protruding below
+ * it. The card (.pd-composer, z-index 1) paints over the bar's tucked-up top,
+ * so only the thin strip below the card shows — reading as a tab attached to the
+ * input, not a separate floating bar. Inset narrower than the card reinforces
+ * the ledge look; the bottom corners round to match the card.
+ * ------------------------------------------------------------------------- */
+.pd-composer-bar {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* Pulled UP by the card radius so the top tucks behind the card's rounded
+   * bottom (fused, seamless); inset on the sides so it reads as a ledge. */
+  margin: calc(-1 * var(--pd-radius-surface)) 14px 0;
+  /* Top padding hides the tucked region behind the card; the rest is the thin
+   * protruding strip that actually shows. */
+  padding: calc(var(--pd-radius-surface) + 5px) 12px 6px;
+  border-radius: 0 0 var(--pd-radius-surface) var(--pd-radius-surface);
+  background: var(--pd-bg-sidebar);
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-sm);
+}
+
+.pd-composer-bar-left {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.pd-composer-bar-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pd-composer-bar-right {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+/* CENTER — the active model tier (Fast/Balanced/Intelligent), with a small
+ * tier-colored dot; hover surfaces the underlying classification. */
+.pd-tier {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-secondary);
+  white-space: nowrap;
+  cursor: default;
+}
+
+.pd-tier--auto {
+  color: var(--pd-text-muted);
+}
+
+.pd-tier-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-text-muted);
+  flex: none;
+}
+
+.pd-tier-dot[data-tier="fast"] {
+  background: var(--pd-status-success-fg);
+}
+.pd-tier-dot[data-tier="balanced"] {
+  background: var(--pd-status-info-fg);
+}
+.pd-tier-dot[data-tier="intelligent"] {
+  background: var(--pd-accent-primary);
+}
+
+/* LEFT — the relocated project chip, slimmed to fit the thin bar: borderless +
+ * transparent so it reads as an inline control on the ledge (base chip lives in
+ * @pi-desktop/canvas; this only trims it for the bar). */
+.pd-composer-bar .pd-project-chip {
+  height: 24px;
+  max-width: 160px;
+  padding: 0 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--pd-text-muted);
+}
+
+.pd-composer-bar .pd-project-chip:hover {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-secondary);
+}
+
+.pd-composer-bar .pd-project-chip-label {
+  max-width: 130px;
 }

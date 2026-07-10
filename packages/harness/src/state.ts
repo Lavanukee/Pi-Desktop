@@ -5,6 +5,7 @@
  */
 
 import type { TaskClass } from './classify/classify.js';
+import type { ModelTier } from './classify/tier.js';
 import { type EffortLevel, isEffortLevel } from './effort/effort.js';
 import { isPermissionMode, type PermissionMode } from './permissions/modes.js';
 
@@ -63,6 +64,13 @@ export const DEFAULT_CONFIG: HarnessConfig = {
 export interface HarnessStatus extends HarnessConfig {
   /** The class chosen for the current/last task (null before first classify). */
   readonly activeClass: TaskClass | null;
+  /**
+   * The user-facing model-capability tier the {@link activeClass} maps to
+   * (`modelTierForClass`), or null before the first classify. This is the ONLY
+   * model-selection field the harness publishes — the app resolves it to a
+   * concrete model + drives the llama-server switch. Model-agnostic by design.
+   */
+  readonly activeTier: ModelTier | null;
   /**
    * The conversation title from the classify+title piggyback, or null before it
    * runs / when no utility model is configured. The app renders this as the

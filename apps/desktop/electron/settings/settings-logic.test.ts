@@ -35,6 +35,61 @@ describe('clampSettings', () => {
   it('always stamps version 1', () => {
     expect(clampSettings({ version: 99 }).version).toBe(1);
   });
+
+  it('defaults userMode to user and rejects an invalid one', () => {
+    expect(DEFAULT_SETTINGS.userMode).toBe('user');
+    expect(clampSettings({}).userMode).toBe('user');
+    expect(clampSettings({ userMode: 'wizard' }).userMode).toBe('user');
+    expect(clampSettings({ userMode: 'power' }).userMode).toBe('power');
+  });
+
+  it('defaults enginePreference to llamacpp and rejects an invalid one', () => {
+    expect(DEFAULT_SETTINGS.enginePreference).toBe('llamacpp');
+    expect(clampSettings({}).enginePreference).toBe('llamacpp');
+    expect(clampSettings({ enginePreference: 'cuda' }).enginePreference).toBe('llamacpp');
+    expect(clampSettings({ enginePreference: 'mlx' }).enginePreference).toBe('mlx');
+  });
+
+  it('defaults modelSelection to auto and effortMode to auto', () => {
+    expect(DEFAULT_SETTINGS.modelSelection).toEqual({ mode: 'auto' });
+    expect(DEFAULT_SETTINGS.effortMode).toBe('auto');
+    expect(clampSettings({}).modelSelection).toEqual({ mode: 'auto' });
+    expect(clampSettings({}).effortMode).toBe('auto');
+  });
+
+  it('clamps a valid modelSelection tier / model / auto and rejects junk', () => {
+    expect(
+      clampSettings({ modelSelection: { mode: 'tier', tier: 'intelligent' } }).modelSelection,
+    ).toEqual({ mode: 'tier', tier: 'intelligent' });
+    expect(
+      clampSettings({ modelSelection: { mode: 'model', modelId: 'gemma-4-e2b-it' } })
+        .modelSelection,
+    ).toEqual({ mode: 'model', modelId: 'gemma-4-e2b-it' });
+    expect(clampSettings({ modelSelection: { mode: 'auto' } }).modelSelection).toEqual({
+      mode: 'auto',
+    });
+    // Invalid tier / empty model id / missing fields / junk → default auto.
+    expect(
+      clampSettings({ modelSelection: { mode: 'tier', tier: 'wizard' } }).modelSelection,
+    ).toEqual({
+      mode: 'auto',
+    });
+    expect(
+      clampSettings({ modelSelection: { mode: 'model', modelId: '' } }).modelSelection,
+    ).toEqual({
+      mode: 'auto',
+    });
+    expect(clampSettings({ modelSelection: 'nope' }).modelSelection).toEqual({ mode: 'auto' });
+    expect(clampSettings({ modelSelection: { mode: 'bogus' } }).modelSelection).toEqual({
+      mode: 'auto',
+    });
+  });
+
+  it('clamps effortMode to auto|level, rejecting invalid values', () => {
+    expect(clampSettings({ effortMode: 'level' }).effortMode).toBe('level');
+    expect(clampSettings({ effortMode: 'auto' }).effortMode).toBe('auto');
+    expect(clampSettings({ effortMode: 'turbo' }).effortMode).toBe('auto');
+  });
 });
 
 describe('mergeSettingsPatch', () => {
@@ -55,6 +110,28 @@ describe('mergeSettingsPatch', () => {
       permissionMode: 'yolo' as never,
     });
     expect(next.permissionMode).toBe(DEFAULT_SETTINGS.permissionMode);
+  });
+
+  it('persists a userMode patch (round-trips power)', () => {
+    const powered = mergeSettingsPatch(DEFAULT_SETTINGS, { userMode: 'power' });
+    expect(powered.userMode).toBe('power');
+    // and back to user
+    expect(mergeSettingsPatch(powered, { userMode: 'user' }).userMode).toBe('user');
+  });
+
+  it('replaces the modelSelection union wholesale and re-clamps effortMode', () => {
+    const pinned = mergeSettingsPatch(DEFAULT_SETTINGS, {
+      modelSelection: { mode: 'tier', tier: 'fast' },
+      effortMode: 'level',
+    });
+    expect(pinned.modelSelection).toEqual({ mode: 'tier', tier: 'fast' });
+    expect(pinned.effortMode).toBe('level');
+    // back to auto
+    expect(mergeSettingsPatch(pinned, { modelSelection: { mode: 'auto' } }).modelSelection).toEqual(
+      {
+        mode: 'auto',
+      },
+    );
   });
 });
 

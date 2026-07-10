@@ -71,9 +71,14 @@ try {
   }
 
   // The always-visible status cluster surfaces the active class + running timer.
-  await page.locator('[data-testid="harness-class"]').waitFor({ timeout: 8000 });
-  const cls = await page.locator('[data-testid="harness-class"]').innerText();
-  assert(/coding/i.test(cls), `expected active class "coding", got ${JSON.stringify(cls)}`);
+  // Active class moved to the composer-bar tier display (class in its hover);
+  // verify the tier display renders + the harness status carries "coding".
+  await page.locator('[data-testid="composer-tier"]').waitFor({ timeout: 8000 });
+  const clsStatus = await harnessStatus(page);
+  assert(
+    clsStatus !== null && /coding/i.test(clsStatus.activeClass ?? ''),
+    `expected active class "coding", got ${JSON.stringify(clsStatus?.activeClass)}`,
+  );
   await page.locator('[data-testid="harness-timer"]').waitFor({ timeout: 8000 });
 
   // The fixture blocks on ask_user mid-plan → the plan is not yet all done, and

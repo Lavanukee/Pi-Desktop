@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { recommend } from './recommender.js';
+import { getCatalogModel, MODEL_TIERS } from './catalog.js';
+import { recommend, resolveTierModels, tierDisplayName } from './recommender.js';
 
 describe('recommend (speed-optimized budget tiers)', () => {
   it('8GB → Qwen3.5-4B MTP, fast-text', () => {
@@ -107,5 +108,88 @@ describe('recommend (speed-optimized budget tiers)', () => {
     expect(recommend({ totalRamGB: 23 }).tier).toBe('16GB');
     expect(recommend({ totalRamGB: 24 }).tier).toBe('24GB');
     expect(recommend({ totalRamGB: 7 }).tier).toBe('<8GB');
+  });
+});
+
+describe('resolveTierModels (per-hardware 3-tier resolution)', () => {
+  it('resolves all three tiers for every RAM tier, referencing real catalog files', () => {
+    for (const ram of [6, 8, 16, 24, 32, 48, 64, 96, 128]) {
+      const picks = resolveTierModels({ totalRamGB: ram });
+      for (const tier of MODEL_TIERS) {
+        const p = picks[tier];
+        expect(p.tier).toBe(tier);
+        // The pick references a catalog model + one of its quants.
+        const m = getCatalogModel(p.model.id);
+        expect(m).toBeDefined();
+        expect(m?.files.some((f) => f.quant === p.file.quant)).toBe(true);
+        expect(p.launchMode).toBe('fast-text');
+        expect(typeof p.vision).toBe('boolean');
+        expect(p.displayName.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('the dev M5 Pro 24GB resolves fast=e2b, balanced=gemma-12b (vision), intelligent=qwen3.6-27b', () => {
+    const p = resolveTierModels({ totalRamGB: 24 });
+    expect(p.fast.model.id).toBe('gemma-4-e2b-it');
+    expect(p.fast.file.quant).toBe('Q4_K_M');
+    expect(p.balanced.model.id).toBe('gemma-4-12b-it');
+    expect(p.balanced.vision).toBe(true);
+    expect(p.intelligent.model.id).toBe('qwen3.6-27b-mtp');
+    expect(p.intelligent.file.quant).toBe('Q4_K_M');
+    expect(p.intelligent.spec).toBe('mtp');
+  });
+
+  it('follows the round-12 resolution table across the RAM tiers', () => {
+    const id = (ram: number) => {
+      const p = resolveTierModels({ totalRamGB: ram });
+      return {
+        fast: p.fast.model.id,
+        balanced: p.balanced.model.id,
+        intel: p.intelligent.model.id,
+      };
+    };
+    expect(id(6)).toEqual({
+      fast: 'gemma-4-e2b-it',
+      balanced: 'gemma-4-e2b-it',
+      intel: 'gemma-4-e4b-it',
+    });
+    expect(id(8)).toEqual({
+      fast: 'qwen3.5-4b-mtp',
+      balanced: 'gemma-4-e4b-it',
+      intel: 'gemma-4-12b-it',
+    });
+    expect(id(16)).toEqual({
+      fast: 'qwen3.5-4b-mtp',
+      balanced: 'gemma-4-12b-it',
+      intel: 'gemma-4-12b-it',
+    });
+    expect(id(32)).toEqual({
+      fast: 'qwen3.5-4b-mtp',
+      balanced: 'gemma-4-12b-it',
+      intel: 'qwen3.6-35b-a3b-mtp',
+    });
+    expect(id(64)).toEqual({
+      fast: 'qwen3.5-9b-mtp',
+      balanced: 'gemma-4-26b-a4b-it',
+      intel: 'qwen3.6-35b-a3b-mtp',
+    });
+  });
+
+  it('is deterministic (same input → identical resolution)', () => {
+    expect(resolveTierModels({ totalRamGB: 24 })).toEqual(resolveTierModels({ totalRamGB: 24 }));
+  });
+
+  it('a tiny machine dedups two tiers onto the same model id', () => {
+    const p = resolveTierModels({ totalRamGB: 6 });
+    expect(p.fast.model.id).toBe(p.balanced.model.id); // both gemma-4-e2b-it at <8GB
+  });
+});
+
+describe('tierDisplayName', () => {
+  it('condenses the display name to the grey dropdown label', () => {
+    expect(tierDisplayName(getCatalogModel('gemma-4-e2b-it') as never)).toBe('gemma4 e2b');
+    expect(tierDisplayName(getCatalogModel('gemma-4-12b-it') as never)).toBe('gemma4 12b');
+    expect(tierDisplayName(getCatalogModel('qwen3.6-27b-mtp') as never)).toBe('qwen3.6 27b');
   });
 });

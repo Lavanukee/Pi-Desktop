@@ -70,19 +70,25 @@ try {
   });
   assert(hasGlass, 'the sidebar search field has no leading magnifying-glass icon');
 
-  // ── 2. Light/dark toggle is bottom-left + flips the theme ────────────────────
+  // ── 2. Bottom-left profile button → dropup with the light/dark toggle ────────
+  // Round-12 #4: the bottom-left is now ONE profile button; the light/dark toggle
+  // lives inside its dropup (data-testid="toggle-mode").
+  const profileBtn = page.locator('[data-testid="profile-button"]');
+  assert((await profileBtn.count()) === 1, 'expected exactly one bottom-left profile button');
+  const profileBox = await profileBtn.boundingBox();
+  assert(profileBox !== null, 'profile button has no bounding box');
+  assert(
+    profileBox.y > viewport.h * 0.5,
+    `profile button should be in the BOTTOM half (y=${Math.round(profileBox.y)}/${viewport.h})`,
+  );
+  assert(
+    profileBox.x < viewport.w * 0.4,
+    `profile button should be on the LEFT (x=${Math.round(profileBox.x)}/${viewport.w})`,
+  );
+  await profileBtn.click();
+  await page.waitForSelector('[data-testid="profile-menu"]', { timeout: 8000 });
   const modeBtn = page.locator('[data-testid="toggle-mode"]');
   assert((await modeBtn.count()) === 1, 'expected exactly one light/dark toggle');
-  const modeBox = await modeBtn.boundingBox();
-  assert(modeBox !== null, 'light/dark toggle has no bounding box');
-  assert(
-    modeBox.y > viewport.h * 0.5,
-    `light/dark toggle should be in the BOTTOM half (y=${Math.round(modeBox.y)}/${viewport.h})`,
-  );
-  assert(
-    modeBox.x < viewport.w * 0.4,
-    `light/dark toggle should be on the LEFT (x=${Math.round(modeBox.x)}/${viewport.w})`,
-  );
   const beforeMode = await page.evaluate(() => document.documentElement.getAttribute('data-mode'));
   await modeBtn.click();
   await page.waitForFunction(
@@ -90,6 +96,10 @@ try {
     beforeMode,
     { timeout: 8000 },
   );
+  // Close the dropup (it stays open on flip) before the next section interacts
+  // outside it — a modal Radix menu would otherwise swallow the first outside click.
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('[data-testid="profile-menu"]', { state: 'detached', timeout: 8000 });
 
   // ── 3. Persistent top-right canvas toggle opens/closes an EMPTY canvas ────────
   const canvasToggle = page.locator('[data-testid="canvas-toggle"]');

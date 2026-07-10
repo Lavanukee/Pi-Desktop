@@ -15,7 +15,7 @@ import { activateLocalModel } from '../state/local-model';
 import { applyModelEffortDefault } from '../state/settings-store';
 import { IconDownload, IconLock, IconPlay } from './icons';
 import { FavoriteStar } from './model-controls';
-import { formatBytes, percent, ramVerdict } from './model-manager-logic';
+import { formatBytes, isReliablePublisher, percent, ramVerdict } from './model-manager-logic';
 import { hfHasAudio, hfHasVision, ModelTag } from './model-tags';
 
 /** Context window HF repos are sized/registered against (HF doesn't expose it). */
@@ -104,6 +104,11 @@ export function HfResultCard({ hit }: { hit: HfModelHitDTO }) {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="truncate text-body font-medium text-text-primary">{hit.name}</span>
+            {isReliablePublisher(hit.author) ? (
+              <ModelTag kind="reliable" data-testid={`hf-reliable-${hit.id}`}>
+                Reliable
+              </ModelTag>
+            ) : null}
             {hit.gated ? (
               <ModelTag kind="gated" data-testid={`hf-gated-${hit.id}`}>
                 Gated

@@ -15,11 +15,59 @@ export type ThemeFlavor = 'claude' | 'codex';
 export type ThemeModePref = 'light' | 'dark' | 'system';
 export type PermissionMode = 'bypass' | 'reviewer' | 'review-all';
 export type EffortLevel = 'low' | 'medium' | 'high' | 'max';
+/**
+ * Experience level for the model-selection UI (round-12 #4). `user` = simple,
+ * automatic model selection (the friendly tier names + Auto); `power` = full
+ * control (real model names front-and-center). Read by the model-dropdown /
+ * model-manager waves via the settings-store `selectUserMode` selector.
+ */
+export type UserMode = 'user' | 'power';
+/** Valid user modes, in UI (segmented) order. */
+export const USER_MODES = ['user', 'power'] as const satisfies readonly UserMode[];
 /** Connector surfacing mode; mirrors @pi-desktop/mcp-lite's McpMode. `bash-cli`
  * exposes connectors through the real bash tool via a generated `pi-tool`. */
 export type McpMode = 'lite' | 'native' | 'bash-cli';
 /** Valid MCP modes, in UI order. */
 export const MCP_MODES = ['lite', 'native', 'bash-cli'] as const satisfies readonly McpMode[];
+
+/**
+ * Preferred local inference engine (round-12 #4 — the Model Manager's "Prefer MLX
+ * (experimental)" toggle). `llamacpp` = the default GGUF backend; `mlx` opts into
+ * the Apple-Silicon MLX backend (its foundation lands in a later wave — this is
+ * the persisted USER PREFERENCE + the engine badge/note only). Mirrors the
+ * catalog `Engine` type, inlined so this contract stays dependency-free. */
+export type EnginePreference = 'llamacpp' | 'mlx';
+/** Valid engine preferences. */
+export const ENGINE_PREFERENCES = [
+  'llamacpp',
+  'mlx',
+] as const satisfies readonly EnginePreference[];
+
+/** The model-capability tier a pinned selection targets. Structural mirror of
+ * `ModelTier` in @pi-desktop/harness (inlined so this contract stays dependency-free). */
+export type ModelSelectionTier = 'fast' | 'balanced' | 'intelligent';
+export const MODEL_SELECTION_TIERS = [
+  'fast',
+  'balanced',
+  'intelligent',
+] as const satisfies readonly ModelSelectionTier[];
+
+/**
+ * How the app chooses the local model (round-12 model-selection UX). Persisted as
+ * the user's DEFAULT and re-applied on each fresh pi session:
+ *   - `auto`  → the Auto router picks a tier per-turn (from the harness activeTier);
+ *   - `tier`  → pinned to a capability tier (router disabled);
+ *   - `model` → pinned to a specific catalog/HF model id (router disabled).
+ */
+export type ModelSelection =
+  | { mode: 'auto' }
+  | { mode: 'tier'; tier: ModelSelectionTier }
+  | { mode: 'model'; modelId: string };
+
+/** Effort resolution: `auto` derives the level from the active tier (fast→low,
+ * balanced→medium, intelligent→high); `level` pins the explicit {@link EffortLevel}. */
+export type EffortMode = 'auto' | 'level';
+export const EFFORT_MODES = ['auto', 'level'] as const satisfies readonly EffortMode[];
 
 export interface GenerationCapabilities {
   image: boolean;
@@ -44,6 +92,16 @@ export interface DesktopSettings {
   theme: { flavor: ThemeFlavor; mode: ThemeModePref };
   permissionMode: PermissionMode;
   effort: EffortLevel;
+  /** Experience level driving the model-selection UI (default `user`). */
+  userMode: UserMode;
+  /** Preferred local inference engine (default `llamacpp`). Set to `mlx` by the
+   * Model Manager's "Prefer MLX (experimental)" toggle. */
+  enginePreference: EnginePreference;
+  /** The model-selection mode (default `{ mode: 'auto' }`). */
+  modelSelection: ModelSelection;
+  /** Effort resolution mode (default `auto`). `effort` stays the explicit level +
+   * the last-resolved level for display. */
+  effortMode: EffortMode;
   search: SearchKeys;
   mcpMode: McpMode;
   capabilities: GenerationCapabilities;
@@ -70,6 +128,11 @@ export interface DesktopSettingsPatch {
   theme?: Partial<DesktopSettings['theme']>;
   permissionMode?: PermissionMode;
   effort?: EffortLevel;
+  userMode?: UserMode;
+  enginePreference?: EnginePreference;
+  /** Full replacement of the selection union (no deep-merge). */
+  modelSelection?: ModelSelection;
+  effortMode?: EffortMode;
   search?: Partial<SearchKeys>;
   mcpMode?: McpMode;
   capabilities?: Partial<GenerationCapabilities>;

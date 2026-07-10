@@ -59,19 +59,25 @@ try {
   const page = await app.firstWindow();
   await page.waitForSelector('[data-testid="composer-input"]', { timeout: 12000 });
 
-  // ── 4. Top bar cleanup: the raw text toggles are gone; mode is an icon button ─
+  // ── 4. Top bar cleanup: the raw text toggles are gone (mode + settings moved
+  //       into the bottom-left profile dropup, round-12 #4). ────────────────────
   assert(
     (await page.locator('[data-testid="toggle-flavor"]').count()) === 0,
     'top bar still has the "claude"/flavor text toggle (img32)',
   );
+
+  // ── 1. The bottom-left is ONE profile button opening a dropup that holds the
+  //       mode quick-toggle and the Settings entry. ────────────────────────────
+  const profileBtn = page.locator('[data-testid="profile-button"]');
+  assert((await profileBtn.count()) === 1, 'no bottom-left profile button');
+  await profileBtn.click();
+  await page.waitForSelector('[data-testid="profile-menu"]', { timeout: 8000 });
   assert(
     (await page.locator('[data-testid="toggle-mode"]').count()) === 1,
-    'expected the clean icon mode quick-toggle in the top bar',
+    'expected the clean icon mode quick-toggle in the profile dropup',
   );
-
-  // ── 1. Settings menu opens from the bottom-left profile row ───────────────────
   const entry = page.locator('[data-testid="open-settings"]');
-  assert((await entry.count()) === 1, 'no bottom-left settings entry (profile row)');
+  assert((await entry.count()) === 1, 'no Settings entry in the profile dropup');
   await entry.click();
   await page.waitForSelector('[data-testid="settings-view"]', { timeout: 8000 });
   // It lands on Custom instructions.

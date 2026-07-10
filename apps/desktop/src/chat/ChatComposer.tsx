@@ -16,6 +16,7 @@ import { useEffect, useRef, useState } from 'react';
 import { abortPi, getCommands, runBash, sendPrompt, steerPrompt } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { useThemeStore } from '../store/theme';
+import { ComposerBar } from './ComposerBar';
 import { ComposerFooter } from './ComposerFooter';
 import { type AcItem, Autocomplete } from './composer/Autocomplete';
 import {
@@ -459,7 +460,10 @@ export function ChatComposer({
   }, [text, placeholder]);
 
   return (
-    <div className="mx-auto w-full max-w-[700px]">
+    // Round-12 W2: the input group reserves a little room at the bottom so the
+    // sticking-out ComposerBar (mounted below the input card) protrudes cleanly
+    // — the whole input bar reads as nudged up to make room for the thin ledge.
+    <div className="mx-auto w-full max-w-[700px] pb-1.5">
       <div className="pd-composer-root relative">
         <Autocomplete
           items={token.mode !== null ? items : []}
@@ -564,6 +568,11 @@ export function ChatComposer({
             ) : null}
           </div>
         </div>
+
+        {/* Round-12 W2: the sticking-out bar — fused to the input card's bottom
+            edge (the card, z-index 1, overlaps its tucked top) and protruding
+            below it: project chip · active tier · effort slider. */}
+        <ComposerBar />
       </div>
     </div>
   );

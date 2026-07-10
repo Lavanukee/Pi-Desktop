@@ -21,7 +21,12 @@ export type LlmRequestBody =
   | { type: 'cancel-download' }
   | { type: 'delete-model'; modelId: string }
   | { type: 'verify-model'; modelId: string; quant?: string }
-  | { type: 'start-server'; modelId: string; quant?: string }
+  | {
+      type: 'start-server';
+      modelId: string;
+      quant?: string;
+      launchMode?: 'fast-text' | 'multimodal';
+    }
   | { type: 'stop-server' }
   | {
       type: 'hf-search';

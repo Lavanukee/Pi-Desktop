@@ -126,7 +126,12 @@ const handlers: IpcHandlers<LlmInvokeMap> = {
   'llm:verify-model': (req) =>
     request({ type: 'verify-model', modelId: req.modelId, quant: req.quant }),
   'llm:start-server': (req) =>
-    request({ type: 'start-server', modelId: req.modelId, quant: req.quant }),
+    request({
+      type: 'start-server',
+      modelId: req.modelId,
+      quant: req.quant,
+      launchMode: req.launchMode,
+    }),
   'llm:stop-server': () => request({ type: 'stop-server' }),
 };
 

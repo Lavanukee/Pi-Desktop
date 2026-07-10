@@ -88,14 +88,18 @@ try {
     );
   };
 
-  // Round-4: the raw text toggles are gone. Mode is a clean icon quick-toggle in
-  // the top bar (data-testid="toggle-mode"); flavor now lives in the settings
-  // menu (reached from the bottom-left profile row). Drive both to verify all 4
+  // Round-4: the raw text toggles are gone. Round-12 #4: mode + settings now live
+  // in the bottom-left profile DROPUP (opened via data-testid="profile-button");
+  // the mode item keeps data-testid="toggle-mode". Drive both to verify all 4
   // flavor/mode combos still restyle the surface.
   assert(
     (await page.locator('[data-testid="toggle-flavor"]').count()) === 0,
     'the dev "claude"/"theme" text toggles must be removed from the top bar (img32)',
   );
+
+  // Open the profile dropup; the theme item flips in place (menu stays open).
+  await page.click('[data-testid="profile-button"]');
+  await page.waitForSelector('[data-testid="profile-menu"]', { timeout: 8000 });
 
   // claude/dark → claude/light via the sun quick-toggle.
   await page.click('[data-testid="toggle-mode"]');
@@ -105,7 +109,7 @@ try {
   await assertTheme('claude', 'dark', 'rgb(38, 38, 36)', 'mode quick-toggle → claude/dark');
 
   // Flavor lives in Interface → Advanced now (round-5 #23); mode stays in
-  // Appearance. Open the settings menu from the bottom-left profile row.
+  // Appearance. Settings opens from the same dropup (still open from above).
   await page.click('[data-testid="open-settings"]');
   await page.waitForSelector('[data-testid="settings-view"]', { timeout: 8000 });
   await page.click('[data-testid="settings-nav-interface"]');

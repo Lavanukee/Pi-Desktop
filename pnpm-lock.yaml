@@ -68,6 +68,9 @@ importers:
       '@pi-desktop/provider-llamacpp':
         specifier: workspace:*
         version: link:../../packages/provider-llamacpp
+      '@pi-desktop/provider-mlx':
+        specifier: workspace:*
+        version: link:../../packages/provider-mlx
       '@pi-desktop/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -520,6 +523,34 @@ importers:
       '@pi-desktop/inference':
         specifier: workspace:*
         version: link:../inference
+      '@pi-desktop/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@types/node':
+        specifier: ^24.13.2
+        version: 24.13.2
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@24.13.2)(jsdom@29.1.1(@noble/hashes@2.2.0))(msw@2.14.6(@types/node@24.13.2)(typescript@6.0.3))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))
+
+  packages/provider-mlx:
+    dependencies:
+      '@mariozechner/pi-ai':
+        specifier: 0.68.1
+        version: 0.68.1(ws@8.21.0)(zod@4.4.3)
+      '@mariozechner/pi-coding-agent':
+        specifier: 0.68.1
+        version: 0.68.1(ws@8.21.0)(zod@4.4.3)
+      '@pi-desktop/provider-llamacpp':
+        specifier: workspace:*
+        version: link:../provider-llamacpp
+    devDependencies:
+      '@biomejs/biome':
+        specifier: ^2.5.2
+        version: 2.5.2
       '@pi-desktop/shared':
         specifier: workspace:*
         version: link:../shared

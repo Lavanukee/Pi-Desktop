@@ -37,6 +37,11 @@ const events = createIpcEventSender<AppEventMap>();
 const EXTENSION_PACKAGE_DIRS = [
   'provider-llamacpp',
   'provider-afm',
+  // provider-mlx (round-12 foundation) routes Apple-Silicon MLX models through
+  // its streamSimple (mlx-stream api). Loaded always, like provider-afm — it
+  // registers a harmless handler that is never invoked unless an MLX model is
+  // live (no mlx-stream block in models.json otherwise).
+  'provider-mlx',
   'harness',
   'web-tools',
   // browser-use drives the canvas browser via the browser-agent socket bridge;

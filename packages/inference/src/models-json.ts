@@ -31,8 +31,13 @@ export interface ModelsJsonCompat {
 
 export interface ProviderBlock {
   readonly baseUrl: string;
-  /** Binds to @pi-desktop/provider-llamacpp's streamSimple handler (repair + TPS). */
-  readonly api: 'llamacpp-stream';
+  /**
+   * The custom pi api this block binds to:
+   *   - `llamacpp-stream` → @pi-desktop/provider-llamacpp (repair + TPS from timings),
+   *   - `mlx-stream`      → @pi-desktop/provider-mlx (repair + CLIENT-side TPS; MLX
+   *     `mlx_lm.server` emits no `timings`). See {@link buildMlxProviderBlock}.
+   */
+  readonly api: 'llamacpp-stream' | 'mlx-stream';
   readonly apiKey: string;
   readonly compat: ModelsJsonCompat;
   readonly models: ModelsJsonModel[];
@@ -75,6 +80,43 @@ export function buildProviderBlock(
     models: [
       {
         id: opts.servedModelId ?? model.id,
+        name: model.displayName,
+        input: [...model.input],
+        contextWindow: model.contextWindow,
+        maxTokens,
+      },
+    ],
+  };
+}
+
+/**
+ * Build a provider block for one MLX model served by `mlx_lm.server`.
+ *
+ * Same OpenAI-compat shape as {@link buildProviderBlock}, but binds to
+ * `api:'mlx-stream'` (→ @pi-desktop/provider-mlx) and flips
+ * `supportsUsageInStreaming` ON: MLX emits `usage` in stream chunks (which the
+ * provider needs for CLIENT-side TPS, since MLX has no llama.cpp `timings`
+ * block). The served id is typically the `mlx-community/*` repo the server
+ * loaded. Round-12 MLX foundation.
+ */
+export function buildMlxProviderBlock(
+  model: CatalogModel,
+  opts: BuildProviderBlockOptions,
+): ProviderBlock {
+  const maxTokens = opts.maxTokens ?? Math.max(1024, model.contextWindow - 4096);
+  return {
+    baseUrl: opts.baseUrl,
+    api: 'mlx-stream',
+    apiKey: 'none',
+    compat: {
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      // MLX emits usage in streaming (unlike llama.cpp's default) → client TPS.
+      supportsUsageInStreaming: true,
+    },
+    models: [
+      {
+        id: opts.servedModelId ?? model.hfRepo,
         name: model.displayName,
         input: [...model.input],
         contextWindow: model.contextWindow,

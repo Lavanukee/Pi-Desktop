@@ -1,0 +1,36 @@
+{
+  "name": "@pi-desktop/provider-mlx",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "pi provider extension: MLX mlx_lm.server streamSimple (mlx-stream api) — reuses provider-llamacpp's SSE parser + tool-call repair ladder, with CLIENT-side TPS (MLX emits no timings).",
+  "keywords": [
+    "pi-package"
+  ],
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "0.68.1",
+    "@mariozechner/pi-coding-agent": "0.68.1",
+    "@pi-desktop/provider-llamacpp": "workspace:*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "@pi-desktop/shared": "workspace:*",
+    "@types/node": "^24.13.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

@@ -13,26 +13,40 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   IconButton,
+  IconCheck,
   IconChevronDown,
   IconChevronRight,
+  IconGauge,
   IconInfo,
+  IconSparkles,
+  IconSpeed,
   ProgressBar,
   Spinner,
   Tooltip,
 } from '@pi-desktop/ui';
-import { useState } from 'react';
-import { activateAppleModel } from '../state/afm-model';
-import { afmAvailable, useAfmStore } from '../state/afm-store';
+import type { ReactNode } from 'react';
+// Harness SOURCE import (not the barrel) — keeps the renderer bundle clean; see
+// auto-router.ts. tier.ts is pure + browser-safe.
+import { type ModelTier, TIER_LABEL } from '../../../../packages/harness/src/classify/tier.ts';
 import { useLlmStore } from '../state/llm-store';
-import { activateLocalModel } from '../state/local-model';
-import { setModel } from '../state/pi-connect';
+import { selectionTier } from '../state/model-selection';
+import { useModelSwitching } from '../state/model-selection-store';
 import { usePiStore } from '../state/pi-slice';
-import { downloadedCatalog, hasSwitchableModel } from './footer-models';
+import { useModelSelection, useUserMode } from '../state/settings-store';
+import { AutoDownloadPrompt } from './AutoDownloadPrompt';
+import { selectAuto, selectTier } from './auto-router';
+import { buildTierRows } from './footer-models';
 import { HarnessStatusCluster } from './HarnessStatus';
+
+/** Leading glyph per capability tier (fast=speed, balanced=gauge, smart=spark). */
+const TIER_ICON: Record<ModelTier, ReactNode> = {
+  fast: <IconSpeed size={14} />,
+  balanced: <IconGauge size={14} />,
+  intelligent: <IconSparkles size={14} />,
+};
 
 /** 73000 → "73,000"; small numbers pass through. */
 function fmtInt(n: number): string {
@@ -112,12 +126,19 @@ export function ComposerFooter({
   const agentModel = usePiStore((s) => s.agent.model);
   const messages = usePiStore((s) => s.messages);
   const status = useLlmStore((s) => s.status);
-  const catalog = useLlmStore((s) => s.catalog);
   const download = useLlmStore((s) => s.download);
   const refreshCatalog = useLlmStore((s) => s.refreshCatalog);
-  const afmAvailability = useAfmStore((s) => s.availability);
-  const refreshAfm = useAfmStore((s) => s.refresh);
-  const [busy, setBusy] = useState<string | null>(null);
+  const recommendation = useLlmStore((s) => s.recommendation);
+  // Round-12 (W3): the footer dropdown is mode-aware — Auto + the three
+  // capability tiers, with the real model name grey-secondary (user) or primary
+  // (power). tierModels resolves each tier → the concrete model for this Mac.
+  const userMode = useUserMode();
+  const selection = useModelSelection();
+  const switching = useModelSwitching();
+  const tierModels = recommendation?.tierModels;
+  const tierRows = buildTierRows(tierModels, userMode);
+  const activeTier = selectionTier(selection);
+  const isAuto = selection.mode === 'auto';
 
   const label =
     agentModel?.name ??
@@ -145,127 +166,101 @@ export function ComposerFooter({
   const inputPct = usage !== undefined ? fmtPct(usage.input, contextWindow) : null;
   const outputPct = usage !== undefined ? fmtPct(usage.output, contextWindow) : null;
 
-  // #20a: the footer popup surfaces ONLY models you can switch to immediately —
-  // pi's available models, on-device Apple Intelligence, and already-downloaded
-  // local models. Non-downloaded catalog entries are dropped here (they live in
-  // the Model Manager). `activeId` marks the current model in the list.
-  const activeId = agentModel?.id ?? null;
-  const downloadedModels = downloadedCatalog(catalog);
-  const hasAvailable = hasSwitchableModel(
-    piModels.length,
-    afmAvailable(afmAvailability),
-    downloadedModels.length,
-  );
-
-  const onUseLocal = async (modelId: string) => {
-    setBusy(modelId);
-    try {
-      await activateLocalModel(modelId);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const onUseApple = async () => {
-    setBusy('afm');
-    try {
-      await activateAppleModel();
-    } finally {
-      setBusy(null);
-    }
-  };
-
   return (
     <>
-      <DropdownMenu
-        onOpenChange={(open) => {
-          if (open) {
-            void refreshCatalog();
-            void refreshAfm();
-          }
-        }}
-      >
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="gap-1" data-testid="footer-model-chip">
-            <span className="max-w-[180px] truncate">{label}</span>
-            <IconChevronDown size={16} />
-          </Button>
-        </DropdownMenuTrigger>
-        {/* Round-10 (#20a): the footer popup lists ONLY the models you can switch
-            to RIGHT NOW — pi's available models, on-device Apple Intelligence, and
-            already-downloaded local models — then a divider and a single "More
-            models" row into the full Model Manager. The long "download these N GB"
-            catalog no longer lives here (that's the manager's job). (#11) opens
-            instantly, no animation. */}
-        <DropdownMenuContent
-          className="pd-menu--instant"
-          align="start"
-          side="top"
-          data-testid="footer-model-menu"
+      {/* Anchor for the friendly auto-download card, which floats just above the
+          model chip when Auto resolves to an un-downloaded tier. */}
+      <span className="relative flex items-center">
+        <AutoDownloadPrompt />
+        <DropdownMenu
+          onOpenChange={(open) => {
+            // Refresh the catalog so tierModels + downloaded flags are current.
+            if (open) void refreshCatalog();
+          }}
         >
-          {hasAvailable ? <DropdownMenuLabel>Models</DropdownMenuLabel> : null}
-
-          {piModels.map((m) => (
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="gap-1" data-testid="footer-model-chip">
+              {isAuto ? <IconSparkles size={14} /> : null}
+              <span className="max-w-[180px] truncate">{label}</span>
+              <IconChevronDown size={16} />
+            </Button>
+          </DropdownMenuTrigger>
+          {/* Round-12 (W3): mode-aware model picker. Both modes list Auto (top,
+              default) + the three capability tiers; USER mode leads each tier with
+              its friendly label (real model name grey underneath), POWER mode leads
+              with the real model name (tier label grey) and keeps a "More models"
+              path to the full manager. Opens instantly (no animation, #11). */}
+          <DropdownMenuContent
+            className="pd-menu--instant"
+            align="start"
+            side="top"
+            data-testid="footer-model-menu"
+          >
             <DropdownMenuItem
-              key={`${m.provider}/${m.id}`}
-              data-testid="footer-pi-model"
-              description={`${m.provider}/${m.id}`}
-              hint={m.id === activeId ? 'Current' : undefined}
-              onSelect={() => void setModel(m.provider, m.id)}
+              data-testid="footer-auto"
+              description="Picks the best model for each task"
+              hint={isAuto ? <IconCheck size={14} /> : undefined}
+              onSelect={() => void selectAuto()}
             >
-              {m.name ?? m.id}
+              <span className="flex items-center gap-1.5">
+                <IconSparkles size={14} />
+                Auto
+              </span>
             </DropdownMenuItem>
-          ))}
 
-          {afmAvailable(afmAvailability) ? (
-            <DropdownMenuItem
-              data-testid="footer-afm-item"
-              disabled={busy !== null}
-              description="On-device · no download · 4k context"
-              hint={busy === 'afm' ? <Spinner size={12} /> : 'Use'}
-              onSelect={(e) => {
-                e.preventDefault();
-                void onUseApple();
-              }}
-            >
-              Apple Intelligence
-            </DropdownMenuItem>
-          ) : null}
+            <DropdownMenuSeparator />
 
-          {downloadedModels.map((entry) => (
-            <DropdownMenuItem
-              key={entry.id}
-              data-testid="footer-downloaded-model"
-              disabled={busy !== null}
-              description={`${entry.minRamGB} GB RAM · downloaded${entry.recommended ? ' · recommended' : ''}`}
-              hint={busy === entry.id ? <Spinner size={12} /> : 'Start'}
-              onSelect={(e) => {
-                e.preventDefault();
-                void onUseLocal(entry.id);
-              }}
-            >
-              {entry.displayName}
-            </DropdownMenuItem>
-          ))}
-
-          {!hasAvailable && catalog.length === 0 ? (
-            <DropdownMenuItem disabled>Loading models…</DropdownMenuItem>
-          ) : null}
-
-          {onOpenModels !== undefined ? (
-            <>
-              {hasAvailable ? <DropdownMenuSeparator /> : null}
+            {tierRows.map((row) => (
               <DropdownMenuItem
-                data-testid="footer-open-manager"
-                hint={<IconChevronRight size={14} />}
-                onSelect={() => onOpenModels()}
+                key={row.tier}
+                data-testid="footer-tier"
+                description={
+                  row.secondary === null
+                    ? undefined
+                    : row.downloaded
+                      ? row.secondary
+                      : `${row.secondary} · download`
+                }
+                hint={activeTier === row.tier ? <IconCheck size={14} /> : undefined}
+                onSelect={(e) => {
+                  e.preventDefault();
+                  void selectTier(row.tier);
+                }}
               >
-                More models
+                <span className="flex items-center gap-1.5">
+                  {TIER_ICON[row.tier]}
+                  {row.primary}
+                </span>
               </DropdownMenuItem>
-            </>
-          ) : null}
-        </DropdownMenuContent>
-      </DropdownMenu>
+            ))}
+
+            {userMode === 'power' && onOpenModels !== undefined ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  data-testid="footer-open-manager"
+                  hint={<IconChevronRight size={14} />}
+                  onSelect={() => onOpenModels()}
+                >
+                  More models
+                </DropdownMenuItem>
+              </>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </span>
+
+      {/* Honest about the (seconds-long) restart when Auto/a tier pick switches
+          the running model — a live, always-visible "switching…" pill. */}
+      {switching !== null ? (
+        <span
+          className="flex items-center gap-1 text-footnote text-text-muted"
+          data-testid="footer-switching"
+        >
+          <Spinner size={12} />
+          Switching to {TIER_LABEL[switching.toTier]}…
+        </span>
+      ) : null}
 
       {download !== null ? (
         <div className="flex w-28 items-center gap-1">

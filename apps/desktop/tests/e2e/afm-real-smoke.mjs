@@ -68,7 +68,9 @@ try {
   console.log('afm:check →', JSON.stringify(availability));
   if (availability.available !== true) fail(`afm:check not available: ${availability.reason}`);
 
-  // 2. Open the Model Manager and assert the AFM entry renders (no download).
+  // 2. Open the Model Manager (Settings row of the bottom-left profile dropup).
+  await page.click('[data-testid="profile-button"]');
+  await page.waitForSelector('[data-testid="profile-menu"]', { timeout: 8000 });
   await page.click('[data-testid="open-settings"]');
   await page.waitForSelector('[data-testid="settings-view"]', { timeout: 8000 });
   await page.click('[data-testid="settings-nav-models"]');

@@ -81,10 +81,16 @@ try {
   await page.keyboard.press('Enter');
 
   // ── #8 STATUS CLUSTER + REPAIR ───────────────────────────────────────────────
-  await page.locator('[data-testid="harness-class"]').waitFor({ timeout: 10000 });
+  // The active class moved from the footer chip to the composer-bar tier display
+  // (tier shown; class in its hover). Verify the tier display renders + the
+  // harness status carries "coding" (read from the store — robust vs a tooltip).
+  await page.locator('[data-testid="composer-tier"]').waitFor({ timeout: 10000 });
+  const clsRaw = await page.evaluate(
+    () => window.__pi_store().getState().extensionStatus.harness ?? '{}',
+  );
   assert(
-    /coding/i.test(await page.locator('[data-testid="harness-class"]').innerText()),
-    'active-class chip should read "coding"',
+    /coding/i.test(JSON.parse(clsRaw).activeClass ?? ''),
+    `harness status active class should be "coding", got ${clsRaw}`,
   );
   await page.locator('[data-testid="harness-timer"]').waitFor({ timeout: 8000 });
   await page.locator('[data-testid="harness-repairs"]').waitFor({ timeout: 8000 });

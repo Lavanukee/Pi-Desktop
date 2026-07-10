@@ -2,8 +2,9 @@ import { readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { GEMMA4_E2B } from './catalog.js';
+import { GEMMA4_E2B, getCatalogModel } from './catalog.js';
 import {
+  buildMlxProviderBlock,
   buildProviderBlock,
   type ModelsJson,
   mergeProviderBlock,
@@ -49,6 +50,19 @@ describe('models-json', () => {
     expect(Object.keys(merged.providers).sort()).toEqual(['anthropic', 'llamacpp']);
     // Original object is not mutated.
     expect(existing.providers.llamacpp).toBeUndefined();
+  });
+
+  it('builds an mlx-stream provider block with usage-in-streaming ON', () => {
+    const mlx = getCatalogModel('mlx-qwen3.5-4b-4bit');
+    expect(mlx).toBeDefined();
+    const block = buildMlxProviderBlock(mlx as NonNullable<typeof mlx>, {
+      baseUrl: 'http://127.0.0.1:8181/v1',
+      servedModelId: 'mlx-community/Qwen3.5-4B-MLX-4bit',
+    });
+    expect(block.api).toBe('mlx-stream');
+    // MLX emits usage in streaming (client-side TPS depends on it).
+    expect(block.compat.supportsUsageInStreaming).toBe(true);
+    expect(block.models[0]?.id).toBe('mlx-community/Qwen3.5-4B-MLX-4bit');
   });
 
   it('writes and re-reads, preserving other providers', async () => {

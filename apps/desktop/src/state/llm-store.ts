@@ -56,7 +56,13 @@ interface LlmStoreState {
   cancelDownload: () => Promise<void>;
   deleteModel: (modelId: string) => Promise<void>;
   verifyModel: (modelId: string, quant?: string) => Promise<LlmVerifyResult>;
-  startServer: (modelId: string, quant?: string) => Promise<{ success: boolean; error?: string }>;
+  /** Start the server for a model. `launchMode:'multimodal'` requests an
+   * on-demand vision launch (fetches the mmproj sibling, drops MTP). */
+  startServer: (
+    modelId: string,
+    quant?: string,
+    launchMode?: 'fast-text' | 'multimodal',
+  ) => Promise<{ success: boolean; error?: string }>;
   stopServer: () => Promise<void>;
 }
 
@@ -177,8 +183,12 @@ export const useLlmStore = create<LlmStoreState>((set, get) => ({
   verifyModel: async (modelId, quant) =>
     window.piDesktop.invoke('llm:verify-model', { modelId, quant }),
 
-  startServer: async (modelId, quant) => {
-    const res = await window.piDesktop.invoke('llm:start-server', { modelId, quant });
+  startServer: async (modelId, quant, launchMode) => {
+    const res = await window.piDesktop.invoke('llm:start-server', {
+      modelId,
+      quant,
+      ...(launchMode !== undefined ? { launchMode } : {}),
+    });
     return { success: res.success, error: res.error };
   },
 

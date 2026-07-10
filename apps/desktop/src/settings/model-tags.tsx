@@ -6,15 +6,26 @@
  * COLORED pills instead of the old tiny grey text — one distinct hue per
  * attribute so a card's capabilities read at a glance:
  *   vision → violet · recommended → green · audio → amber · MTP → blue ·
- *   EAGLE-3 → teal · gated → neutral/locked · size & quant → neutral.
- * (MTP + EAGLE-3 are the speculative-decoding "fast" pills; both use the bolt.)
+ *   EAGLE-3 → teal · DFlash → indigo · reliable → green · engine → slate ·
+ *   gated → neutral/locked · size & quant → neutral.
+ * (MTP + EAGLE-3 + DFlash are the speculative-decoding "fast" pills; all use the
+ * bolt. round-12: DFlash is real upstream now, reliable-publisher + engine pills.)
  * The pill chrome + per-hue colours live app-locally in `styles/global.css`
  * (`.pd-mm-pill*`) — deliberately NOT in @pi-desktop/ui (Wave B owns that) — and
  * are tuned for AA contrast in both light and dark modes.
  */
 import type { ReactNode } from 'react';
 import type { HfModelHitDTO } from '../../electron/ipc-contract';
-import { IconBolt, IconEye, IconLock, IconSparkle, IconWaveform } from './icons';
+import {
+  IconBolt,
+  IconCpu,
+  IconEye,
+  IconLock,
+  IconShield,
+  IconSparkle,
+  IconWaveform,
+} from './icons';
+import { type SpecMethod, VARIANT_LABEL } from './model-manager-logic';
 
 /** The attribute a pill represents; drives its colour class + default glyph. */
 export type ModelTagKind =
@@ -23,6 +34,9 @@ export type ModelTagKind =
   | 'audio'
   | 'mtp'
   | 'eagle3'
+  | 'dflash'
+  | 'reliable'
+  | 'engine'
   | 'gated'
   | 'size'
   | 'quant'
@@ -39,7 +53,12 @@ function defaultIcon(kind: ModelTagKind): ReactNode {
       return <IconWaveform size={12} />;
     case 'mtp':
     case 'eagle3':
+    case 'dflash':
       return <IconBolt size={12} />;
+    case 'reliable':
+      return <IconShield size={12} />;
+    case 'engine':
+      return <IconCpu size={12} />;
     case 'gated':
       return <IconLock size={11} />;
     default:
@@ -69,6 +88,23 @@ export function ModelTag({ kind, children, icon, title, ...rest }: ModelTagProps
       {glyph}
       {children}
     </span>
+  );
+}
+
+/** Human-readable title per speed method (hovered on the pill). */
+const SPEC_TITLE: Record<SpecMethod, string> = {
+  mtp: 'Multi-token prediction (faster decode)',
+  eagle3: 'EAGLE-3 speculative decoding (faster)',
+  dflash: 'DFlash speculative decoding (faster)',
+};
+
+/** A colored speed-method pill (MTP / DFlash / EAGLE-3). The `data-pill-kind`
+ * matches the method so each hue reads at a glance. */
+export function SpecPill({ method }: { method: SpecMethod }) {
+  return (
+    <ModelTag kind={method} title={SPEC_TITLE[method]}>
+      {VARIANT_LABEL[method]}
+    </ModelTag>
   );
 }
 

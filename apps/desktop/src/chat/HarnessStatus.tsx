@@ -19,7 +19,6 @@ import {
   Tooltip,
 } from '@pi-desktop/ui';
 import {
-  classLabel,
   type PlanItem,
   repairTotal,
   useHarnessStatus,
@@ -35,18 +34,19 @@ function toTaskState(item: PlanItem): TaskState {
 }
 
 /**
- * The consolidated harness status cluster for the composer footer: active class,
- * running timer, and repair-activity count. Renders nothing until the harness
- * publishes its status.
+ * The consolidated harness status cluster for the composer footer: running timer
+ * + repair-activity count. Renders nothing until the harness publishes its
+ * status. (Round-12 W3: the active task-class / tier chip moved to the composer
+ * bar, so it no longer duplicates here — the footer keeps only the timer and the
+ * repair indicator alongside the model chip.)
  */
 export function HarnessStatusCluster() {
   const status = useHarnessStatus();
   const timer = useHarnessTaskTimer();
   const repairs = repairTotal(status);
-  const cls = classLabel(status?.activeClass ?? null);
 
   if (status === null) return null;
-  const hasAny = cls !== null || timer !== null || repairs > 0;
+  const hasAny = timer !== null || repairs > 0;
   if (!hasAny) return null;
 
   const repairTools = Object.entries(status.repairFailures ?? {})
@@ -55,16 +55,6 @@ export function HarnessStatusCluster() {
 
   return (
     <span className="flex items-center gap-2" data-testid="harness-status">
-      {cls !== null ? (
-        <span
-          className="rounded-full border border-border-subtle px-1.5 py-0.5 text-caption text-text-muted capitalize"
-          data-testid="harness-class"
-          title="Active task class (classifier)"
-        >
-          {cls}
-        </span>
-      ) : null}
-
       {timer !== null ? (
         <span
           className="flex items-center gap-1 text-footnote text-text-muted tabular-nums"

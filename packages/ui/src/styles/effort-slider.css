@@ -1,0 +1,111 @@
+/*
+ * EffortSlider (round-12 #6) — the composer effort control: a chunky BLUE
+ * fill-pill (least → most), a leftmost Auto affordance, and a level readout.
+ * Presentational; the app maps detents ↔ effort levels and Auto ↔ the active
+ * model tier. Tokens only (styles-hygiene): the fill is the shared focus-blue
+ * (`--pd-border-focus`) so it reads BLUE in every flavor/mode — deliberately
+ * distinct from the terracotta `--pd-accent-*`.
+ */
+
+.pd-effort {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-secondary);
+}
+
+/* Leftmost Auto affordance: a subtle reset in level mode; a blue-tinted active
+ * pill (carrying the "Auto · <tier>" readout) in auto mode. */
+.pd-effort-auto {
+  flex: none;
+  height: 22px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--pd-radius-full);
+  background: transparent;
+  color: var(--pd-text-muted);
+  font: inherit;
+  font-size: var(--pd-font-size-caption);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--pd-duration-fast) var(--pd-easing-standard),
+    background var(--pd-duration-fast) var(--pd-easing-standard);
+}
+
+.pd-effort-auto:hover {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-secondary);
+}
+
+.pd-effort-auto[data-active] {
+  background: var(--pd-status-info-bg);
+  color: var(--pd-status-info-fg);
+}
+
+.pd-effort-auto:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--pd-status-info-bg);
+}
+
+/* The pill track — real thickness so the blue fill reads as a pill, not a line. */
+.pd-effort-track {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 96px;
+  max-width: 168px;
+  height: 22px;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-bg-track);
+  box-shadow: inset 0 0 0 1px var(--pd-border-subtle);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.pd-effort-track:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--pd-border-focus),
+    0 0 0 3px var(--pd-status-info-bg);
+}
+
+/* The BLUE fill that grows left→right with effort. A min-width keeps a rounded
+ * nub (and the knob) visible at the "least" end. */
+.pd-effort-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 22px;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-border-focus);
+  transition: width var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+/* The grab knob rides the fill's right edge (always visible via the fill nub). */
+.pd-effort-knob {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-bg-raised);
+  box-shadow:
+    var(--pd-shadow-sm),
+    0 0 0 1px var(--pd-border-default);
+}
+
+.pd-effort-value {
+  flex: none;
+  min-width: 3.25em;
+  color: var(--pd-text-secondary);
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-effort-fill {
+    transition: none;
+  }
+}

@@ -7,6 +7,11 @@
 import type { IpcClient, IpcEventMap, IpcInvokeMap } from '@pi-desktop/shared';
 import { AFM_INVOKE_CHANNELS, type AfmInvokeMap } from './afm/afm-contract';
 import {
+  BROWSER_AGENT_INVOKE_CHANNELS,
+  type BrowserAgentEventMap,
+  type BrowserAgentInvokeMap,
+} from './canvas/browser-agent-contract';
+import {
   BROWSER_INVOKE_CHANNELS,
   type BrowserEventMap,
   type BrowserInvokeMap,
@@ -263,6 +268,7 @@ export type AppInvokeMap = CoreInvokeMap &
   CanvasInvokeMap &
   ImportInvokeMap &
   BrowserInvokeMap &
+  BrowserAgentInvokeMap &
   PtyInvokeMap &
   PiInvokeMap;
 
@@ -279,6 +285,7 @@ export const APP_INVOKE_CHANNELS = [
   ...CANVAS_INVOKE_CHANNELS,
   ...IMPORT_INVOKE_CHANNELS,
   ...BROWSER_INVOKE_CHANNELS,
+  ...BROWSER_AGENT_INVOKE_CHANNELS,
   ...PTY_INVOKE_CHANNELS,
   ...PI_INVOKE_CHANNELS,
 ] as const satisfies readonly (keyof AppInvokeMap)[];
@@ -304,6 +311,7 @@ export type AppEventMap = {
    * is already open, so the standalone canvas re-renders without a reload. */
   'canvas:popout-artifact': CanvasArtifactPayload;
 } & BrowserEventMap &
+  BrowserAgentEventMap &
   PtyEventMap &
   PiEventMap;
 

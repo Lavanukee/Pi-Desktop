@@ -3,6 +3,7 @@ import { createIpcEventSender, createLogger, registerIpcHandlers } from '@pi-des
 import { app, BrowserWindow, ipcMain, type WebPreferences } from 'electron';
 import { registerAfmIpc } from './afm/afm-main';
 import { resolveBundledPackageAsset } from './app-paths';
+import { registerBrowserAgentIpc } from './canvas/browser-agent';
 import { registerBrowserIpc } from './canvas/browser-manager';
 import {
   harnessAssetsPresent,
@@ -176,6 +177,12 @@ function registerAppIpc(): void {
   // Apple Foundation Models (on-device) capability gate + set-active. Also
   // publishes PI_AFM_HELPER_PATH so the pi child's provider-afm finds the helper.
   registerAfmIpc(ipcMain, allowSender);
+
+  // Browser-agent bridge: stands up the local socket the browser-use extension
+  // drives the canvas browser through, publishing PI_BROWSER_AGENT_SOCK/_TOKEN
+  // for the pi child BEFORE its first spawn. Targets the main window for the
+  // agent's browser tab.
+  registerBrowserAgentIpc(() => (mainWindow !== null ? mainWindow.webContents : null));
 
   // Desktop settings (theme/permissions/effort/search keys/mcp mode/capabilities).
   registerSettingsIpc(ipcMain, allowSender);

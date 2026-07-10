@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "lint": "biome check .",
     "test": "vitest run",
-    "e2e": "node tests/e2e/probe.mjs && node tests/e2e/pi-probe.mjs && node tests/e2e/chat-ui-probe.mjs && node tests/e2e/session-switch-probe.mjs && node tests/e2e/canvas-probe.mjs && node tests/e2e/browser-probe.mjs && node tests/e2e/terminal-probe.mjs && node tests/e2e/onboarding-probe.mjs && node tests/e2e/model-manager-probe.mjs && node tests/e2e/settings-probe.mjs && node tests/e2e/round3-probe.mjs && node tests/e2e/round4-probe.mjs && node tests/e2e/round5-probe.mjs && node tests/e2e/round6-probe.mjs && node tests/e2e/round7-probe.mjs",
+    "e2e": "node tests/e2e/probe.mjs && node tests/e2e/pi-probe.mjs && node tests/e2e/chat-ui-probe.mjs && node tests/e2e/session-switch-probe.mjs && node tests/e2e/canvas-probe.mjs && node tests/e2e/browser-probe.mjs && node tests/e2e/browser-use-probe.mjs && node tests/e2e/terminal-probe.mjs && node tests/e2e/onboarding-probe.mjs && node tests/e2e/model-manager-probe.mjs && node tests/e2e/settings-probe.mjs && node tests/e2e/round3-probe.mjs && node tests/e2e/round4-probe.mjs && node tests/e2e/round5-probe.mjs && node tests/e2e/round6-probe.mjs && node tests/e2e/round7-probe.mjs",
     "rebuild:native": "electron-rebuild -f -w node-pty"
   },
   "dependencies": {
@@ -20,11 +20,13 @@
     "@lexical/text": "^0.46.0",
     "@mariozechner/pi-coding-agent": "0.68.1",
     "@pi-desktop/afm": "workspace:*",
+    "@pi-desktop/browser-use": "workspace:*",
     "@pi-desktop/canvas": "workspace:*",
     "@pi-desktop/engine": "workspace:*",
     "@pi-desktop/harness": "workspace:*",
     "@pi-desktop/importers": "workspace:*",
     "@pi-desktop/inference": "workspace:*",
+    "@pi-desktop/mac-connectors": "workspace:*",
     "@pi-desktop/provider-afm": "workspace:*",
     "@pi-desktop/provider-llamacpp": "workspace:*",
     "@pi-desktop/shared": "workspace:*",

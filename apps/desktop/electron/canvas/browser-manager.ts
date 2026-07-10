@@ -179,8 +179,134 @@ function click(tabId: string, x: number, y: number): void {
   const entry = entries.get(tabId);
   if (entry === undefined) return;
   const wc = entry.view.webContents;
+  wc.sendInputEvent({ type: 'mouseMove', x, y });
   wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
   wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+}
+
+// ── browser-use agent surface (driven by the browser-agent bridge) ──────────
+// These are the low-level primitives the browser-use extension reaches through
+// the local socket bridge (electron/canvas/browser-agent.ts): run a script,
+// press a key, navigate + await load, and read basic state. All are no-ops /
+// null for an unknown tab so the bridge can call them without racing lifecycle.
+
+/** Basic live state of an agent-driven tab. */
+export interface AgentTabState {
+  tabId: string;
+  url: string;
+  title: string;
+}
+
+/** Named keys → Electron `sendInputEvent` keyCodes. */
+const KEY_MAP: Record<string, string> = {
+  enter: 'Return',
+  return: 'Return',
+  tab: 'Tab',
+  escape: 'Escape',
+  esc: 'Escape',
+  backspace: 'Backspace',
+  delete: 'Delete',
+  space: 'Space',
+  arrowup: 'Up',
+  up: 'Up',
+  arrowdown: 'Down',
+  down: 'Down',
+  arrowleft: 'Left',
+  left: 'Left',
+  arrowright: 'Right',
+  right: 'Right',
+  home: 'Home',
+  end: 'End',
+  pageup: 'PageUp',
+  pagedown: 'PageDown',
+};
+
+function has(tabId: string): boolean {
+  const entry = entries.get(tabId);
+  return entry !== undefined && !entry.view.webContents.isDestroyed();
+}
+
+function stateOf(tabId: string): AgentTabState | null {
+  const entry = entries.get(tabId);
+  if (entry === undefined) return null;
+  const wc = entry.view.webContents;
+  return { tabId, url: wc.getURL(), title: wc.getTitle() };
+}
+
+/** Run a script in the page and return its (JSON-cloneable) value. `true` marks
+ * it as a user gesture so gesture-gated actions (some submits) go through. */
+async function evaluate(tabId: string, script: string): Promise<unknown> {
+  const entry = entries.get(tabId);
+  if (entry === undefined) return null;
+  return entry.view.webContents.executeJavaScript(script, true);
+}
+
+function sendKey(tabId: string, key: string): void {
+  const entry = entries.get(tabId);
+  if (entry === undefined) return;
+  const wc = entry.view.webContents;
+  const code = KEY_MAP[key.toLowerCase()] ?? key;
+  wc.sendInputEvent({ type: 'keyDown', keyCode: code });
+  if (code === 'Return' || code === 'Space') wc.sendInputEvent({ type: 'char', keyCode: code });
+  wc.sendInputEvent({ type: 'keyUp', keyCode: code });
+}
+
+/** Resolve after the next `did-stop-loading`, or `timeoutMs` — whichever first. */
+function waitForStop(wc: WebContents, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      wc.removeListener('did-stop-loading', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    timer.unref?.();
+    wc.on('did-stop-loading', finish);
+  });
+}
+
+async function navigateAndWait(
+  tabId: string,
+  url: string,
+  timeoutMs: number,
+): Promise<AgentTabState | null> {
+  const entry = entries.get(tabId);
+  if (entry === undefined) return null;
+  const wc = entry.view.webContents;
+  const target = normalizeUrl(url);
+  if (target === '') return stateOf(tabId);
+  const stopped = waitForStop(wc, timeoutMs);
+  // loadURL rejects on redirects/aborts (ERR_ABORTED) but did-stop-loading
+  // still fires — lean on the event, not the promise.
+  await wc.loadURL(target).catch(() => undefined);
+  await stopped;
+  return stateOf(tabId);
+}
+
+async function waitForLoad(tabId: string, timeoutMs: number): Promise<AgentTabState | null> {
+  const entry = entries.get(tabId);
+  if (entry === undefined) return null;
+  if (entry.view.webContents.isLoading()) await waitForStop(entry.view.webContents, timeoutMs);
+  return stateOf(tabId);
+}
+
+async function historyAndWait(
+  tabId: string,
+  op: 'back' | 'forward' | 'reload',
+  timeoutMs: number,
+): Promise<AgentTabState | null> {
+  const entry = entries.get(tabId);
+  if (entry === undefined) return null;
+  const wc = entry.view.webContents;
+  const stopped = waitForStop(wc, timeoutMs);
+  if (op === 'back') wc.navigationHistory.goBack();
+  else if (op === 'forward') wc.navigationHistory.goForward();
+  else wc.reload();
+  await stopped;
+  return stateOf(tabId);
 }
 
 /**
@@ -197,6 +323,14 @@ export const browserManager = {
   forward: (tabId: string) => entries.get(tabId)?.view.webContents.navigationHistory.goForward(),
   reload: (tabId: string) => entries.get(tabId)?.view.webContents.reload(),
   stop: (tabId: string) => entries.get(tabId)?.view.webContents.stop(),
+  // browser-use agent surface (see electron/canvas/browser-agent.ts):
+  has,
+  stateOf,
+  evaluate,
+  sendKey,
+  navigateAndWait,
+  waitForLoad,
+  historyAndWait,
 };
 
 /** Register the trusted-sender-gated `browser:*` channels. */

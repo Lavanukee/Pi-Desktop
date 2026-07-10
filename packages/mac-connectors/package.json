@@ -1,0 +1,27 @@
+{
+  "name": "@pi-desktop/mac-connectors",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "pi extension: macOS app connectors (Calendar, Reminders, Contacts, Mail, Messages) via osascript + chat.db.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "@pi-desktop/shared": "workspace:*",
+    "@types/node": "^24.13.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "0.68.1",
+    "@sinclair/typebox": "^0.34.49"
+  }
+}

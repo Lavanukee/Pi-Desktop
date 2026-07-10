@@ -38,6 +38,12 @@ const EXTENSION_PACKAGE_DIRS = [
   'provider-afm',
   'harness',
   'web-tools',
+  // browser-use drives the canvas browser via the browser-agent socket bridge;
+  // mac-connectors (built by a parallel workstream) is referenced by dir even if
+  // not shipped yet — an absent/placeholder extension is tolerated by the
+  // export-default probe below, so both land automatically once present.
+  'browser-use',
+  'mac-connectors',
 ] as const;
 
 function resolveExtensionPaths(): string[] {

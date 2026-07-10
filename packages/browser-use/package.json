@@ -1,0 +1,30 @@
+{
+  "name": "@pi-desktop/browser-use",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "pi extension: browser_* tools that let the model drive the canvas browser (efficient indexed DOM perception + index/coordinate acting) over a local RPC bridge to the app.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": "./src/protocol.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "@pi-desktop/shared": "workspace:*",
+    "@types/jsdom": "^28.0.3",
+    "@types/node": "^24.13.2",
+    "jsdom": "^29.1.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "0.68.1",
+    "@sinclair/typebox": "^0.34.49"
+  }
+}

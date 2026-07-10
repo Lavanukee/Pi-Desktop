@@ -19,6 +19,7 @@ import { IconButton, IconClose } from '@pi-desktop/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CANVAS_MAX_WIDTH, CANVAS_MIN_WIDTH, useCanvasStore } from '../../state/canvas-store';
 import { artifactToPayload } from './artifacts';
+import { useBrowserAgent } from './browser-agent';
 import { useFileWriteCanvasRouting } from './file-tabs';
 import { useNativeSurfaces } from './native-surfaces';
 import { useArtifactCanvasRouting } from './tabs-routing';
@@ -42,6 +43,9 @@ export function CanvasTabsPanel() {
 
   // Phase 2b: the real WebContentsView / PTY handlers for the live surfaces.
   const surfaceHandlers = useNativeSurfaces(controller);
+  // browser-use: open/focus + register the agent browser tab on request from
+  // the main-process bridge, and reflect its "driving" chrome.
+  useBrowserAgent(controller);
 
   // Keep the canvas in sync with the streamed-artifact detector (THEME 2), the
   // file-write → live file tab router, and the interactive-bash → terminal

@@ -1,0 +1,34 @@
+[
+  {
+    "date": "2026-07-09 05:59:16",
+    "sender": "+12014108963",
+    "is_from_me": 0,
+    "chat": "Weekend Trip",
+    "text": "See you at six!",
+    "has_attachment": 0
+  },
+  {
+    "date": "2026-07-09 00:37:13",
+    "sender": "me",
+    "is_from_me": 1,
+    "chat": "+13104909620",
+    "text": "On my way",
+    "has_attachment": 0
+  },
+  {
+    "date": "2026-07-08 20:00:00",
+    "sender": "+13104909620",
+    "is_from_me": 0,
+    "chat": "+13104909620",
+    "text": "",
+    "has_attachment": 1
+  },
+  {
+    "date": "2026-07-08 19:00:00",
+    "sender": "+13104909620",
+    "is_from_me": 0,
+    "chat": "+13104909620",
+    "text": "",
+    "has_attachment": 0
+  }
+]

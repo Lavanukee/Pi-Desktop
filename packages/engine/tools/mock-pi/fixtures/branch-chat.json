@@ -1,0 +1,565 @@
+{
+  "name": "branch-chat",
+  "state": {
+    "model": {
+      "id": "qwen3.6-27b",
+      "name": "Qwen3.6 27B Q6",
+      "api": "openai-completions",
+      "provider": "llamacpp",
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "reasoning": true,
+      "input": ["text", "image"],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 131072,
+      "maxTokens": 16384
+    },
+    "sessionFile": "/mock/sessions/branch-chat-0.jsonl",
+    "sessionId": "mock-session-branch-chat"
+  },
+  "models": [
+    {
+      "id": "qwen3.6-27b",
+      "name": "Qwen3.6 27B Q6",
+      "api": "openai-completions",
+      "provider": "llamacpp",
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "reasoning": true,
+      "input": ["text", "image"],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      },
+      "contextWindow": 131072,
+      "maxTokens": 16384
+    }
+  ],
+  "prompts": [
+    {
+      "match": "three",
+      "response": {
+        "success": true
+      },
+      "steps": [
+        {
+          "emit": {
+            "type": "agent_start"
+          }
+        },
+        {
+          "delayMs": 3,
+          "emit": {
+            "type": "turn_start"
+          }
+        },
+        {
+          "emit": {
+            "type": "message_start",
+            "message": {
+              "role": "assistant",
+              "content": []
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": ""
+                }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "text_start",
+              "contentIndex": 0,
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": ""
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 5,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Original branch: counting one, two, three."
+                }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "text_delta",
+              "contentIndex": 0,
+              "delta": "Original branch: counting one, two, three.",
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Original branch: counting one, two, three."
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Original branch: counting one, two, three."
+                }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "text_end",
+              "contentIndex": 0,
+              "content": "Original branch: counting one, two, three.",
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Original branch: counting one, two, three."
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Original branch: counting one, two, three."
+                }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "done",
+              "reason": "stop",
+              "message": {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Original branch: counting one, two, three."
+                  }
+                ],
+                "api": "openai-completions",
+                "provider": "llamacpp",
+                "model": "qwen3.6-27b",
+                "usage": {
+                  "input": 20,
+                  "output": 10,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 30,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "stop",
+                "timestamp": 1770000000000
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Original branch: counting one, two, three."
+                }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 20,
+                "output": 10,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 30,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1770000000000
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "turn_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Original branch: counting one, two, three."
+                }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 20,
+                "output": 10,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 30,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1770000000000
+            },
+            "toolResults": []
+          }
+        },
+        {
+          "emit": {
+            "type": "agent_end",
+            "messages": [
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Original branch: counting one, two, three."
+                  }
+                ],
+                "api": "openai-completions",
+                "provider": "llamacpp",
+                "model": "qwen3.6-27b",
+                "usage": {
+                  "input": 20,
+                  "output": 10,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 30,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "stop",
+                "timestamp": 1770000000000
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "match": "five",
+      "response": {
+        "success": true
+      },
+      "steps": [
+        {
+          "emit": {
+            "type": "agent_start"
+          }
+        },
+        {
+          "delayMs": 3,
+          "emit": {
+            "type": "turn_start"
+          }
+        },
+        {
+          "emit": {
+            "type": "message_start",
+            "message": {
+              "role": "assistant",
+              "content": []
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": ""
+                }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "text_start",
+              "contentIndex": 0,
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": ""
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 5,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Edited branch: counting one, two, three, four, five."
+                }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "text_delta",
+              "contentIndex": 0,
+              "delta": "Edited branch: counting one, two, three, four, five.",
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Edited branch: counting one, two, three, four, five."
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Edited branch: counting one, two, three, four, five."
+                }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "text_end",
+              "contentIndex": 0,
+              "content": "Edited branch: counting one, two, three, four, five.",
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Edited branch: counting one, two, three, four, five."
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Edited branch: counting one, two, three, four, five."
+                }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "done",
+              "reason": "stop",
+              "message": {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Edited branch: counting one, two, three, four, five."
+                  }
+                ],
+                "api": "openai-completions",
+                "provider": "llamacpp",
+                "model": "qwen3.6-27b",
+                "usage": {
+                  "input": 20,
+                  "output": 10,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 30,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "stop",
+                "timestamp": 1770000000000
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Edited branch: counting one, two, three, four, five."
+                }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 20,
+                "output": 10,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 30,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1770000000000
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "turn_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Edited branch: counting one, two, three, four, five."
+                }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 20,
+                "output": 10,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 30,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1770000000000
+            },
+            "toolResults": []
+          }
+        },
+        {
+          "emit": {
+            "type": "agent_end",
+            "messages": [
+              {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Edited branch: counting one, two, three, four, five."
+                  }
+                ],
+                "api": "openai-completions",
+                "provider": "llamacpp",
+                "model": "qwen3.6-27b",
+                "usage": {
+                  "input": 20,
+                  "output": 10,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 30,
+                  "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                    "total": 0
+                  }
+                },
+                "stopReason": "stop",
+                "timestamp": 1770000000000
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Build-script decisions (pnpm >= 11 blocks dependency postinstall scripts by
+# default and requires an explicit call per package here — the pnpm 10
+# `onlyBuiltDependencies` list is no longer honored).
+# esbuild needs its binary install script (vite/vitest). electron@43 ships no
+# install script (its binary downloads lazily at first require, or explicitly
+# via `node node_modules/electron/install.js` as CI does); the allow entry
+# guards against a future electron install script being silently skipped.
+# The rest are pi-coding-agent transitive deps whose postinstall scripts are
+# not needed: @swc/core + koffi ship prebuilt binaries as optional deps /
+# in-package, msw's script only sets up its browser worker, protobufjs and
+# @google/genai only emit telemetry/codegen we never use.
+allowBuilds:
+  '@google/genai': false
+  '@swc/core': false
+  electron: true
+  electron-winstaller: false
+  esbuild: true
+  koffi: false
+  msw: false
+  # node-pty builds from source (no prebuilds) and, crucially, against the wrong
+  # ABI here: pnpm's install-time node-gyp targets Node, not Electron. So the
+  # Electron-ABI binary is produced by the explicit `pnpm --filter
+  # @pi-desktop/desktop rebuild:native` (@electron/rebuild) step instead, and a
+  # fresh install ships no binary — the PTY manager then uses its piped-shell
+  # fallback until rebuild:native runs. Kept false to keep install deterministic.
+  node-pty: false
+  protobufjs: false
+
+minimumReleaseAgeExclude:
+  - electron@43.1.0

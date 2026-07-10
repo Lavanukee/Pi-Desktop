@@ -1,0 +1,172 @@
+{
+  "name": "abort-during-tool",
+  "state": {
+    "sessionFile": "/tmp/mock-pi/sessions/abort-during-tool.jsonl",
+    "sessionId": "mock-session-abort-during-tool"
+  },
+  "prompts": [
+    {
+      "match": "abort-tool",
+      "response": { "success": true },
+      "steps": [
+        { "emit": { "type": "agent_start" } },
+        { "emit": { "type": "turn_start" } },
+        {
+          "emit": {
+            "type": "message_start",
+            "message": { "role": "assistant", "content": [] }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_start",
+              "contentIndex": 0,
+              "id": "call_ab_1",
+              "name": "write",
+              "arguments": {}
+            }
+          }
+        },
+        {
+          "delayMs": 5,
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 0,
+              "id": "call_ab_1",
+              "argsDelta": "{\"path\":\"/tmp/abort/x.html\",\"content\":\""
+            }
+          }
+        },
+        {
+          "delayMs": 5,
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 0,
+              "id": "call_ab_1",
+              "argsDelta": "partial content tha"
+            }
+          }
+        },
+        { "delayMs": 5000 }
+      ],
+      "abortSteps": [
+        {
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "error",
+              "reason": "aborted",
+              "error": {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call_ab_1",
+                    "name": "write",
+                    "arguments": { "path": "/tmp/abort/x.html", "content": "partial content tha" }
+                  }
+                ],
+                "api": "openai-completions",
+                "provider": "llamacpp",
+                "model": "qwen3.6-27b",
+                "usage": {
+                  "input": 9,
+                  "output": 14,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "totalTokens": 23,
+                  "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+                },
+                "stopReason": "aborted",
+                "errorMessage": "aborted by user",
+                "timestamp": 1770000040000
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call_ab_1",
+                  "name": "write",
+                  "arguments": { "path": "/tmp/abort/x.html", "content": "partial content tha" }
+                }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 9,
+                "output": 14,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 23,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+              },
+              "stopReason": "aborted",
+              "errorMessage": "aborted by user",
+              "timestamp": 1770000040000
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "turn_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call_ab_1",
+                  "name": "write",
+                  "arguments": { "path": "/tmp/abort/x.html", "content": "partial content tha" }
+                }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 9,
+                "output": 14,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 23,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+              },
+              "stopReason": "aborted",
+              "errorMessage": "aborted by user",
+              "timestamp": 1770000040000
+            },
+            "toolResults": []
+          }
+        },
+        { "emit": { "type": "agent_end", "messages": [] } },
+        {
+          "delayMs": 5,
+          "emit": {
+            "type": "tool_execution_end",
+            "toolCallId": "call_ab_1",
+            "toolName": "write",
+            "result": { "content": [{ "type": "text", "text": "write aborted" }] },
+            "isError": true
+          }
+        }
+      ]
+    }
+  ]
+}

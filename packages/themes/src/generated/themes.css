@@ -1,0 +1,726 @@
+/* biome-ignore-all format: generated file */
+/* biome-ignore-all lint: generated file */
+/*
+ * GENERATED FILE — DO NOT EDIT.
+ * Source of truth: packages/themes/src/tokens.ts
+ * Regenerate with: pnpm --filter @pi-desktop/themes generate
+ */
+
+/* Open-licensed (OFL) fonts for the claude flavor, via fontsource. */
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/source-serif-4';
+
+:root[data-flavor='claude'][data-mode='light'] {
+  color-scheme: light;
+  --pd-bg-base: #faf9f5;
+  --pd-bg-raised: #ffffff;
+  --pd-bg-overlay: #ffffff;
+  --pd-bg-inset: #f5f4ed;
+  --pd-bg-hover: #0b0b0b0d;
+  --pd-bg-active: #0b0b0b1a;
+  --pd-bg-backdrop: #00000066;
+  --pd-bg-sidebar: #ffffff;
+  --pd-bg-selected: #e7e7e7;
+  --pd-bg-track: #f3f3f3;
+  --pd-text-primary: #141413;
+  --pd-text-secondary: #3d3d3a;
+  --pd-text-muted: #73726c;
+  --pd-text-inverse: #ffffff;
+  --pd-text-on-accent: #ffffff;
+  --pd-text-link: #2c84db;
+  --pd-text-placeholder: #7b7a75;
+  --pd-text-ghost: #1414134d;
+  --pd-border-subtle: #0b0b0b1a;
+  --pd-border-default: #706b5726;
+  --pd-border-strong: #706b5761;
+  --pd-border-focus: #2c84db;
+  --pd-accent-primary: #d97757;
+  --pd-accent-hover: #c86848;
+  --pd-accent-active: #c6613f;
+  --pd-accent-subtle: #d977571f;
+  --pd-status-info-bg: #cde2fb;
+  --pd-status-info-fg: #184f95;
+  --pd-status-info-border: #86b6ef;
+  --pd-status-success-bg: #caeac7;
+  --pd-status-success-fg: #006300;
+  --pd-status-success-border: #73cb6d;
+  --pd-status-warning-bg: #f9dca4;
+  --pd-status-warning-fg: #734500;
+  --pd-status-warning-border: #eda100;
+  --pd-status-danger-bg: #fad6d6;
+  --pd-status-danger-fg: #8e2626;
+  --pd-status-danger-border: #f09595;
+  --pd-user-bubble-bg: #14141314;
+  --pd-user-bubble-fg: #141413;
+  --pd-tooltip-bg: #000000cc;
+  --pd-tooltip-fg: #ffffff;
+  --pd-inline-code-bg: #3d3d3a0d;
+  --pd-inline-code-fg: #8e2626;
+  --pd-inline-code-border: #706b5740;
+  --pd-code-block-bg: #ffffff80;
+  --pd-code-block-border: #706b5726;
+  --pd-diff-added-fg: #006300;
+  --pd-diff-deleted-fg: #8e2626;
+  --pd-diff-modified-fg: #734500;
+  --pd-scrollbar-thumb: #7b7a75cc;
+  --pd-scrollbar-thumb-hover: #7b7a75;
+  --pd-sidebar-border: #0b0b0b1a;
+  --pd-sidebar-shadow: 0 6px 20px -6px rgba(11, 11, 11, 0.14);
+  --pd-sidebar-translucency: 1;
+  --pd-sidebar-blur: 0px;
+  --pd-shimmer-base: #14141373;
+  --pd-shimmer-highlight: #141413c7;
+  --pd-font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --pd-font-serif: 'Source Serif 4 Variable', ui-serif, Georgia, 'Times New Roman', serif;
+  --pd-font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --pd-font-size-caption: 12px;
+  --pd-leading-caption: 14px;
+  --pd-font-size-footnote: 14px;
+  --pd-leading-footnote: 19px;
+  --pd-font-size-body: 14px;
+  --pd-leading-body: 20px;
+  --pd-font-size-code: 13px;
+  --pd-leading-code: 19px;
+  --pd-font-size-heading: 15px;
+  --pd-leading-heading: 20px;
+  --pd-font-size-title: 22px;
+  --pd-leading-title: 26px;
+  --pd-font-weight-regular: 400;
+  --pd-font-weight-medium: 500;
+  --pd-font-weight-semibold: 600;
+  --pd-font-weight-bold: 700;
+  --pd-font-weight-body: 400;
+  --pd-font-response-family: 'Source Serif 4 Variable', ui-serif, Georgia, 'Times New Roman', serif;
+  --pd-font-response-size: 16px;
+  --pd-leading-response: 24px;
+  --pd-font-response-variation: normal;
+  --pd-radius-xs: 4px;
+  --pd-radius-sm: 6px;
+  --pd-radius-md: 8px;
+  --pd-radius-lg: 12px;
+  --pd-radius-full: 9999px;
+  --pd-radius-surface: 16px;
+  --pd-radius-popover: 8px;
+  --pd-radius-row: 8px;
+  --pd-radius-bubble: 10px;
+  --pd-radius-button: 8px;
+  --pd-radius-menu-item: 4px;
+  --pd-shadow-sm: 0 1px 2px 0 rgba(11, 11, 11, 0.06), 0 2px 8px 0 rgba(11, 11, 11, 0.08);
+  --pd-shadow-md: 0 2px 4px 0 rgba(11, 11, 11, 0.07), 0 6px 16px 0 rgba(11, 11, 11, 0.08);
+  --pd-shadow-lg: 0 4px 8px 0 rgba(11, 11, 11, 0.08), 0 12px 28px -2px rgba(11, 11, 11, 0.08);
+  --pd-shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08);
+  --pd-shadow-hairline: 0 0 0 0.5px rgba(0, 0, 0, 0.1);
+  --pd-surface-translucency: 1;
+  --pd-blur-overlay: 0px;
+  --pd-blur-backdrop: 2px;
+  --pd-duration-fast: 100ms;
+  --pd-duration-base: 150ms;
+  --pd-duration-slow: 250ms;
+  --pd-duration-dialog-in: 250ms;
+  --pd-duration-dialog-out: 125ms;
+  --pd-duration-menu: 200ms;
+  --pd-duration-toast: 200ms;
+  --pd-easing-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --pd-easing-enter: cubic-bezier(0.165, 0.84, 0.44, 1);
+  --pd-easing-exit: cubic-bezier(0.4, 0, 1, 1);
+  --pd-easing-press: cubic-bezier(0.165, 0.85, 0.45, 1);
+  --pd-easing-spring: linear(0, 0.3505, 0.7432, 0.9336, 0.9951, 1.0062, 1.0045, 1.0019, 1.0005, 1);
+  --pd-easing-toast: cubic-bezier(0.16, 1, 0.3, 1);
+  --pd-press-scale: 0.98;
+  --pd-press-scale-small: 0.96;
+  --pd-shimmer-duration: 2.25s;
+  --pd-shimmer-easing: ease-in-out;
+  --pd-menu-enter-distance: 4px;
+  --pd-menu-enter-scale: 1;
+  --pd-menu-stagger: 30ms;
+  --pd-menu-item-resting-opacity: 1;
+  --pd-dialog-enter-scale: 0.95;
+  --pd-dialog-enter-translate: 0px;
+  --pd-dialog-origin: center;
+  --pd-toast-enter-x: 16px;
+  --pd-toast-enter-y: 0px;
+  --pd-space-xs: 4px;
+  --pd-space-sm: 8px;
+  --pd-space-md: 12px;
+  --pd-space-lg: 16px;
+  --pd-space-xl: 24px;
+  --pd-space-xxl: 32px;
+  --pd-space-xxxl: 40px;
+  --pd-control-sm: 24px;
+  --pd-control-md: 32px;
+  --pd-control-lg: 40px;
+  --pd-icon-size: 20px;
+  --pd-icon-stroke: 1.25;
+  --pd-row-height: 32px;
+  --pd-sidebar-width: 288px;
+  --pd-height-topbar: 46px;
+  --pd-thread-width: 840px;
+  --pd-thread-prose-width: 576px;
+  --pd-thinking-preview-height: 72px;
+  --pd-menu-padding: 0px;
+}
+
+:root[data-flavor='claude'][data-mode='dark'] {
+  color-scheme: dark;
+  --pd-bg-base: #262624;
+  --pd-bg-raised: #30302e;
+  --pd-bg-overlay: #383835;
+  --pd-bg-inset: #1f1e1d;
+  --pd-bg-hover: #ffffff0d;
+  --pd-bg-active: #ffffff1a;
+  --pd-bg-backdrop: #00000080;
+  --pd-bg-sidebar: #1f1e1df2;
+  --pd-bg-selected: #ffffff1a;
+  --pd-bg-track: #ffffff14;
+  --pd-text-primary: #faf9f5;
+  --pd-text-secondary: #c2c0b6;
+  --pd-text-muted: #9c9a92;
+  --pd-text-inverse: #0b0b0b;
+  --pd-text-on-accent: #ffffff;
+  --pd-text-link: #74abe2;
+  --pd-text-placeholder: #a6a39b;
+  --pd-text-ghost: #faf9f54d;
+  --pd-border-subtle: #eaddd81a;
+  --pd-border-default: #6c6a602e;
+  --pd-border-strong: #6c6a6061;
+  --pd-border-focus: #74abe2;
+  --pd-accent-primary: #d97757;
+  --pd-accent-hover: #c86848;
+  --pd-accent-active: #c6613f;
+  --pd-accent-subtle: #d9775726;
+  --pd-status-info-bg: #032042;
+  --pd-status-info-fg: #6da7ec;
+  --pd-status-info-border: #0d366b;
+  --pd-status-success-bg: #11260f;
+  --pd-status-success-fg: #0ca30c;
+  --pd-status-success-border: #074506;
+  --pd-status-warning-bg: #311a00;
+  --pd-status-warning-fg: #db9300;
+  --pd-status-warning-border: #512e00;
+  --pd-status-danger-bg: #3c0e0e;
+  --pd-status-danger-fg: #ec7e7e;
+  --pd-status-danger-border: #641919;
+  --pd-user-bubble-bg: #faf9f51a;
+  --pd-user-bubble-fg: #faf9f5;
+  --pd-tooltip-bg: #000000cc;
+  --pd-tooltip-fg: #ffffff;
+  --pd-inline-code-bg: #c2c0b60d;
+  --pd-inline-code-fg: #ec7e7e;
+  --pd-inline-code-border: #6c6a6040;
+  --pd-code-block-bg: #30302e80;
+  --pd-code-block-border: #6c6a602e;
+  --pd-diff-added-fg: #0ca30c;
+  --pd-diff-deleted-fg: #ec7e7e;
+  --pd-diff-modified-fg: #db9300;
+  --pd-scrollbar-thumb: #a6a39bcc;
+  --pd-scrollbar-thumb-hover: #a6a39b;
+  --pd-sidebar-border: #eaddd81a;
+  --pd-sidebar-shadow: 0 6px 20px -6px rgba(0, 0, 0, 0.4);
+  --pd-sidebar-translucency: 1;
+  --pd-sidebar-blur: 0px;
+  --pd-shimmer-base: #faf9f573;
+  --pd-shimmer-highlight: #faf9f5c7;
+  --pd-font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --pd-font-serif: 'Source Serif 4 Variable', ui-serif, Georgia, 'Times New Roman', serif;
+  --pd-font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --pd-font-size-caption: 12px;
+  --pd-leading-caption: 14px;
+  --pd-font-size-footnote: 14px;
+  --pd-leading-footnote: 19px;
+  --pd-font-size-body: 14px;
+  --pd-leading-body: 20px;
+  --pd-font-size-code: 13px;
+  --pd-leading-code: 19px;
+  --pd-font-size-heading: 15px;
+  --pd-leading-heading: 20px;
+  --pd-font-size-title: 22px;
+  --pd-leading-title: 26px;
+  --pd-font-weight-regular: 400;
+  --pd-font-weight-medium: 500;
+  --pd-font-weight-semibold: 600;
+  --pd-font-weight-bold: 700;
+  --pd-font-weight-body: 400;
+  --pd-font-response-family: 'Source Serif 4 Variable', ui-serif, Georgia, 'Times New Roman', serif;
+  --pd-font-response-size: 16px;
+  --pd-leading-response: 24px;
+  --pd-font-response-variation: 'wght' 360;
+  --pd-radius-xs: 4px;
+  --pd-radius-sm: 6px;
+  --pd-radius-md: 8px;
+  --pd-radius-lg: 12px;
+  --pd-radius-full: 9999px;
+  --pd-radius-surface: 16px;
+  --pd-radius-popover: 8px;
+  --pd-radius-row: 8px;
+  --pd-radius-bubble: 10px;
+  --pd-radius-button: 8px;
+  --pd-radius-menu-item: 4px;
+  --pd-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.06), 0 2px 8px 0 rgba(0, 0, 0, 0.24);
+  --pd-shadow-md: 0 2px 4px 0 rgba(0, 0, 0, 0.07), 0 6px 16px 0 rgba(0, 0, 0, 0.24);
+  --pd-shadow-lg: 0 4px 8px 0 rgba(0, 0, 0, 0.08), 0 12px 28px -2px rgba(0, 0, 0, 0.24);
+  --pd-shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.32), 0 2px 6px rgba(0, 0, 0, 0.2);
+  --pd-shadow-hairline: 0 0 0 0.5px rgba(234, 221, 216, 0.1);
+  --pd-surface-translucency: 1;
+  --pd-blur-overlay: 0px;
+  --pd-blur-backdrop: 2px;
+  --pd-duration-fast: 100ms;
+  --pd-duration-base: 150ms;
+  --pd-duration-slow: 250ms;
+  --pd-duration-dialog-in: 250ms;
+  --pd-duration-dialog-out: 125ms;
+  --pd-duration-menu: 200ms;
+  --pd-duration-toast: 200ms;
+  --pd-easing-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --pd-easing-enter: cubic-bezier(0.165, 0.84, 0.44, 1);
+  --pd-easing-exit: cubic-bezier(0.4, 0, 1, 1);
+  --pd-easing-press: cubic-bezier(0.165, 0.85, 0.45, 1);
+  --pd-easing-spring: linear(0, 0.3505, 0.7432, 0.9336, 0.9951, 1.0062, 1.0045, 1.0019, 1.0005, 1);
+  --pd-easing-toast: cubic-bezier(0.16, 1, 0.3, 1);
+  --pd-press-scale: 0.98;
+  --pd-press-scale-small: 0.96;
+  --pd-shimmer-duration: 2.25s;
+  --pd-shimmer-easing: ease-in-out;
+  --pd-menu-enter-distance: 4px;
+  --pd-menu-enter-scale: 1;
+  --pd-menu-stagger: 30ms;
+  --pd-menu-item-resting-opacity: 1;
+  --pd-dialog-enter-scale: 0.95;
+  --pd-dialog-enter-translate: 0px;
+  --pd-dialog-origin: center;
+  --pd-toast-enter-x: 16px;
+  --pd-toast-enter-y: 0px;
+  --pd-space-xs: 4px;
+  --pd-space-sm: 8px;
+  --pd-space-md: 12px;
+  --pd-space-lg: 16px;
+  --pd-space-xl: 24px;
+  --pd-space-xxl: 32px;
+  --pd-space-xxxl: 40px;
+  --pd-control-sm: 24px;
+  --pd-control-md: 32px;
+  --pd-control-lg: 40px;
+  --pd-icon-size: 20px;
+  --pd-icon-stroke: 1.25;
+  --pd-row-height: 32px;
+  --pd-sidebar-width: 288px;
+  --pd-height-topbar: 46px;
+  --pd-thread-width: 840px;
+  --pd-thread-prose-width: 576px;
+  --pd-thinking-preview-height: 72px;
+  --pd-menu-padding: 0px;
+}
+
+:root[data-flavor='codex'][data-mode='light'] {
+  color-scheme: light;
+  --pd-bg-base: #ffffff;
+  --pd-bg-raised: #ffffff;
+  --pd-bg-overlay: #ffffff;
+  --pd-bg-inset: #1a1c1f05;
+  --pd-bg-hover: #1a1c1f0d;
+  --pd-bg-active: #1a1c1f1a;
+  --pd-bg-backdrop: #0000001a;
+  --pd-bg-sidebar: #f6f6f6;
+  --pd-bg-selected: #1a1c1f0d;
+  --pd-bg-track: #ffffff;
+  --pd-text-primary: #1a1c1f;
+  --pd-text-secondary: #1a1c1fb3;
+  --pd-text-muted: #1a1c1f80;
+  --pd-text-inverse: #ffffff;
+  --pd-text-on-accent: #ffffff;
+  --pd-text-link: #339cff;
+  --pd-text-placeholder: #1a1c1f7e;
+  --pd-text-ghost: #1a1c1f4d;
+  --pd-border-subtle: #1a1c1f0d;
+  --pd-border-default: #1a1c1f14;
+  --pd-border-strong: #1a1c1f1f;
+  --pd-border-focus: #339cff;
+  --pd-accent-primary: #1a1c1f;
+  --pd-accent-hover: #2c2e31;
+  --pd-accent-active: #3f4043;
+  --pd-accent-subtle: #e5f3ff;
+  --pd-status-info-bg: #e5f3ff;
+  --pd-status-info-fg: #0285ff;
+  --pd-status-info-border: #339cff26;
+  --pd-status-success-bg: #00a24012;
+  --pd-status-success-fg: #00a240;
+  --pd-status-success-border: #00a24026;
+  --pd-status-warning-bg: #ffe7d9;
+  --pd-status-warning-fg: #e25507;
+  --pd-status-warning-border: #e2550726;
+  --pd-status-danger-bg: #ffd9d9;
+  --pd-status-danger-fg: #e02e2a;
+  --pd-status-danger-border: #e02e2a26;
+  --pd-user-bubble-bg: #1a1c1f0d;
+  --pd-user-bubble-fg: #1a1c1f;
+  --pd-tooltip-bg: #ffffff;
+  --pd-tooltip-fg: #1a1c1f;
+  --pd-inline-code-bg: #1a1c1f17;
+  --pd-inline-code-fg: #1a1c1f;
+  --pd-inline-code-border: #00000000;
+  --pd-code-block-bg: #1a1c1f08;
+  --pd-code-block-border: #1a1c1f0d;
+  --pd-diff-added-fg: #00a240;
+  --pd-diff-deleted-fg: #ba2623;
+  --pd-diff-modified-fg: #923b0f;
+  --pd-scrollbar-thumb: #1a1c1f14;
+  --pd-scrollbar-thumb-hover: #1a1c1f1e;
+  --pd-sidebar-border: #1a1c1f0d;
+  --pd-sidebar-shadow: none;
+  --pd-sidebar-translucency: 0.72;
+  --pd-sidebar-blur: 18px;
+  --pd-shimmer-base: #1a1c1f8c;
+  --pd-shimmer-highlight: #1a1c1fc7;
+  --pd-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --pd-font-serif: ui-serif, Georgia, 'Times New Roman', serif;
+  --pd-font-mono: ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --pd-font-size-caption: 11px;
+  --pd-leading-caption: 15px;
+  --pd-font-size-footnote: 13px;
+  --pd-leading-footnote: 18px;
+  --pd-font-size-body: 14px;
+  --pd-leading-body: 21px;
+  --pd-font-size-code: 12px;
+  --pd-leading-code: 17px;
+  --pd-font-size-heading: 16px;
+  --pd-leading-heading: 25px;
+  --pd-font-size-title: 24px;
+  --pd-leading-title: 30px;
+  --pd-font-weight-regular: 400;
+  --pd-font-weight-medium: 500;
+  --pd-font-weight-semibold: 600;
+  --pd-font-weight-bold: 700;
+  --pd-font-weight-body: 430;
+  --pd-font-response-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --pd-font-response-size: 14px;
+  --pd-leading-response: 22px;
+  --pd-font-response-variation: normal;
+  --pd-radius-xs: 4px;
+  --pd-radius-sm: 6px;
+  --pd-radius-md: 8px;
+  --pd-radius-lg: 10px;
+  --pd-radius-full: 9999px;
+  --pd-radius-surface: 20px;
+  --pd-radius-popover: 12px;
+  --pd-radius-row: 9999px;
+  --pd-radius-bubble: 16px;
+  --pd-radius-button: 9999px;
+  --pd-radius-menu-item: 8px;
+  --pd-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --pd-shadow-md: 0 2px 4px -1px rgba(0, 0, 0, 0.08);
+  --pd-shadow-lg: 0 8px 16px -4px rgba(0, 0, 0, 0.12);
+  --pd-shadow-popover: 0 16px 32px -8px rgba(0, 0, 0, 0.19);
+  --pd-shadow-hairline: 0 0 0 0.5px rgba(26, 28, 31, 0.12);
+  --pd-surface-translucency: 0.9;
+  --pd-blur-overlay: 8px;
+  --pd-blur-backdrop: 0px;
+  --pd-duration-fast: 100ms;
+  --pd-duration-base: 150ms;
+  --pd-duration-slow: 300ms;
+  --pd-duration-dialog-in: 300ms;
+  --pd-duration-dialog-out: 150ms;
+  --pd-duration-menu: 150ms;
+  --pd-duration-toast: 250ms;
+  --pd-easing-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --pd-easing-enter: cubic-bezier(0.19, 1, 0.22, 1);
+  --pd-easing-exit: cubic-bezier(0.65, 0, 0.4, 1);
+  --pd-easing-press: cubic-bezier(0.65, 0, 0.4, 1);
+  --pd-easing-spring: cubic-bezier(0.19, 1, 0.22, 1);
+  --pd-easing-toast: cubic-bezier(0.175, 0.885, 0.32, 1);
+  --pd-press-scale: 1;
+  --pd-press-scale-small: 1;
+  --pd-shimmer-duration: 2s;
+  --pd-shimmer-easing: steps(48, end);
+  --pd-menu-enter-distance: 2px;
+  --pd-menu-enter-scale: 0.98;
+  --pd-menu-stagger: 0ms;
+  --pd-menu-item-resting-opacity: 0.75;
+  --pd-dialog-enter-scale: 0.98;
+  --pd-dialog-enter-translate: 8px;
+  --pd-dialog-origin: top;
+  --pd-toast-enter-x: 0px;
+  --pd-toast-enter-y: -4px;
+  --pd-space-xs: 4px;
+  --pd-space-sm: 8px;
+  --pd-space-md: 12px;
+  --pd-space-lg: 16px;
+  --pd-space-xl: 24px;
+  --pd-space-xxl: 32px;
+  --pd-space-xxxl: 40px;
+  --pd-control-sm: 24px;
+  --pd-control-md: 28px;
+  --pd-control-lg: 36px;
+  --pd-icon-size: 16px;
+  --pd-icon-stroke: 1.25;
+  --pd-row-height: 30px;
+  --pd-sidebar-width: 240px;
+  --pd-height-topbar: 46px;
+  --pd-thread-width: 736px;
+  --pd-thread-prose-width: 640px;
+  --pd-thinking-preview-height: 72px;
+  --pd-menu-padding: 4px;
+}
+
+:root[data-flavor='codex'][data-mode='dark'] {
+  color-scheme: dark;
+  --pd-bg-base: #181818;
+  --pd-bg-raised: #212121;
+  --pd-bg-overlay: #282828;
+  --pd-bg-inset: #ffffff08;
+  --pd-bg-hover: #ffffff14;
+  --pd-bg-active: #ffffff1f;
+  --pd-bg-backdrop: #00000066;
+  --pd-bg-sidebar: #181818;
+  --pd-bg-selected: #ffffff14;
+  --pd-bg-track: #282828;
+  --pd-text-primary: #ffffff;
+  --pd-text-secondary: #ffffffb3;
+  --pd-text-muted: #ffffff80;
+  --pd-text-inverse: #0d0d0d;
+  --pd-text-on-accent: #0d0d0d;
+  --pd-text-link: #99ceff;
+  --pd-text-placeholder: #ffffff80;
+  --pd-text-ghost: #ffffff4d;
+  --pd-border-subtle: #ffffff0a;
+  --pd-border-default: #ffffff14;
+  --pd-border-strong: #ffffff29;
+  --pd-border-focus: #339cffb3;
+  --pd-accent-primary: #ffffff;
+  --pd-accent-hover: #f0f0f0;
+  --pd-accent-active: #e7e7e7;
+  --pd-accent-subtle: #00284d;
+  --pd-status-info-bg: #00284d;
+  --pd-status-info-fg: #99ceff;
+  --pd-status-info-border: #339cff66;
+  --pd-status-success-bg: #04b84c29;
+  --pd-status-success-fg: #40c977;
+  --pd-status-success-border: #40c97766;
+  --pd-status-warning-bg: #4a2206;
+  --pd-status-warning-fg: #ff8549;
+  --pd-status-warning-border: #ff854966;
+  --pd-status-danger-bg: #4d100e;
+  --pd-status-danger-fg: #ff6764;
+  --pd-status-danger-border: #fa423e66;
+  --pd-user-bubble-bg: #ffffff0d;
+  --pd-user-bubble-fg: #ffffff;
+  --pd-tooltip-bg: #282828;
+  --pd-tooltip-fg: #ffffff;
+  --pd-inline-code-bg: #ffffff17;
+  --pd-inline-code-fg: #ffffff;
+  --pd-inline-code-border: #00000000;
+  --pd-code-block-bg: #ffffff08;
+  --pd-code-block-border: #ffffff0a;
+  --pd-diff-added-fg: #40c977;
+  --pd-diff-deleted-fg: #fa423e;
+  --pd-diff-modified-fg: #ff8549;
+  --pd-scrollbar-thumb: #ffffff14;
+  --pd-scrollbar-thumb-hover: #ffffff1f;
+  --pd-sidebar-border: #ffffff0a;
+  --pd-sidebar-shadow: none;
+  --pd-sidebar-translucency: 0.55;
+  --pd-sidebar-blur: 18px;
+  --pd-shimmer-base: #ffffff94;
+  --pd-shimmer-highlight: #ffffffc7;
+  --pd-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --pd-font-serif: ui-serif, Georgia, 'Times New Roman', serif;
+  --pd-font-mono: ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --pd-font-size-caption: 11px;
+  --pd-leading-caption: 15px;
+  --pd-font-size-footnote: 13px;
+  --pd-leading-footnote: 18px;
+  --pd-font-size-body: 14px;
+  --pd-leading-body: 21px;
+  --pd-font-size-code: 12px;
+  --pd-leading-code: 17px;
+  --pd-font-size-heading: 16px;
+  --pd-leading-heading: 25px;
+  --pd-font-size-title: 24px;
+  --pd-leading-title: 30px;
+  --pd-font-weight-regular: 400;
+  --pd-font-weight-medium: 500;
+  --pd-font-weight-semibold: 600;
+  --pd-font-weight-bold: 700;
+  --pd-font-weight-body: 430;
+  --pd-font-response-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --pd-font-response-size: 14px;
+  --pd-leading-response: 22px;
+  --pd-font-response-variation: normal;
+  --pd-radius-xs: 4px;
+  --pd-radius-sm: 6px;
+  --pd-radius-md: 8px;
+  --pd-radius-lg: 10px;
+  --pd-radius-full: 9999px;
+  --pd-radius-surface: 20px;
+  --pd-radius-popover: 12px;
+  --pd-radius-row: 9999px;
+  --pd-radius-bubble: 16px;
+  --pd-radius-button: 9999px;
+  --pd-radius-menu-item: 8px;
+  --pd-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --pd-shadow-md: 0 2px 4px -1px rgba(0, 0, 0, 0.08);
+  --pd-shadow-lg: 0 8px 16px -4px rgba(0, 0, 0, 0.12);
+  --pd-shadow-popover: 0 16px 32px -8px rgba(0, 0, 0, 0.19);
+  --pd-shadow-hairline: 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+  --pd-surface-translucency: 0.9;
+  --pd-blur-overlay: 8px;
+  --pd-blur-backdrop: 0px;
+  --pd-duration-fast: 100ms;
+  --pd-duration-base: 150ms;
+  --pd-duration-slow: 300ms;
+  --pd-duration-dialog-in: 300ms;
+  --pd-duration-dialog-out: 150ms;
+  --pd-duration-menu: 150ms;
+  --pd-duration-toast: 250ms;
+  --pd-easing-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --pd-easing-enter: cubic-bezier(0.19, 1, 0.22, 1);
+  --pd-easing-exit: cubic-bezier(0.65, 0, 0.4, 1);
+  --pd-easing-press: cubic-bezier(0.65, 0, 0.4, 1);
+  --pd-easing-spring: cubic-bezier(0.19, 1, 0.22, 1);
+  --pd-easing-toast: cubic-bezier(0.175, 0.885, 0.32, 1);
+  --pd-press-scale: 1;
+  --pd-press-scale-small: 1;
+  --pd-shimmer-duration: 2s;
+  --pd-shimmer-easing: steps(48, end);
+  --pd-menu-enter-distance: 2px;
+  --pd-menu-enter-scale: 0.98;
+  --pd-menu-stagger: 0ms;
+  --pd-menu-item-resting-opacity: 0.75;
+  --pd-dialog-enter-scale: 0.98;
+  --pd-dialog-enter-translate: 8px;
+  --pd-dialog-origin: top;
+  --pd-toast-enter-x: 0px;
+  --pd-toast-enter-y: -4px;
+  --pd-space-xs: 4px;
+  --pd-space-sm: 8px;
+  --pd-space-md: 12px;
+  --pd-space-lg: 16px;
+  --pd-space-xl: 24px;
+  --pd-space-xxl: 32px;
+  --pd-space-xxxl: 40px;
+  --pd-control-sm: 24px;
+  --pd-control-md: 28px;
+  --pd-control-lg: 36px;
+  --pd-icon-size: 16px;
+  --pd-icon-stroke: 1.25;
+  --pd-row-height: 30px;
+  --pd-sidebar-width: 240px;
+  --pd-height-topbar: 46px;
+  --pd-thread-width: 736px;
+  --pd-thread-prose-width: 640px;
+  --pd-thinking-preview-height: 72px;
+  --pd-menu-padding: 4px;
+}
+
+@supports (corner-shape: superellipse(1.5)) {
+  :root[data-flavor='codex'][data-mode='light'] {
+    --pd-radius-xs: 5px;
+    --pd-radius-sm: 7.5px;
+    --pd-radius-md: 10px;
+    --pd-radius-lg: 12.5px;
+    --pd-radius-surface: 25px;
+    --pd-radius-popover: 15px;
+    --pd-radius-bubble: 20px;
+    --pd-radius-menu-item: 10px;
+  }
+  :root[data-flavor='codex'][data-mode='dark'] {
+    --pd-radius-xs: 5px;
+    --pd-radius-sm: 7.5px;
+    --pd-radius-md: 10px;
+    --pd-radius-lg: 12.5px;
+    --pd-radius-surface: 25px;
+    --pd-radius-popover: 15px;
+    --pd-radius-bubble: 20px;
+    --pd-radius-menu-item: 10px;
+  }
+}
+
+/* Shared animation keyframes. Flavor timing/easing comes from tokens:
+ * animation: pd-shimmer-sweep var(--pd-shimmer-duration) var(--pd-shimmer-easing) infinite; */
+
+/* Thinking shimmer: masked 50%-width sweep with counter-translating highlight. */
+@keyframes pd-shimmer-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(250%); }
+}
+@keyframes pd-shimmer-highlight {
+  0% { transform: translateX(50%); }
+  100% { transform: translateX(-125%); }
+}
+/* Generic background-position shimmer for skeletons. */
+@keyframes pd-shimmer-bg {
+  0% { background-position: -100% 0; }
+  100% { background-position: 250% 0; }
+}
+
+@keyframes pd-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes pd-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Popover/dialog entrances: codex dialog translateY(8px) scale(.98) -> rest. */
+@keyframes pd-pop-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes pd-pop-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+/* Claude modal zoom. */
+@keyframes pd-zoom-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes pd-zoom-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.96); }
+}
+
+/* Toast entrance (codex toast-open). */
+@keyframes pd-slide-down-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes pd-slide-up-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Press/settle: quick dip to press-scale, settle back. */
+@keyframes pd-press-settle {
+  0% { transform: scale(1); }
+  35% { transform: scale(var(--pd-press-scale, 0.98)); }
+  100% { transform: scale(1); }
+}
+
+@keyframes pd-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes pd-pulse {
+  50% { opacity: 0.5; }
+}
+/* Indeterminate progress bar sweep. */
+@keyframes pd-slide-bar {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(350%); }
+}
+
+/* Reduced motion: collapse transition/animation durations to near-zero.
+ * Infinite animations (pd-shimmer-*, pd-slide-bar, pd-pulse) are exempt and
+ * must be disabled by component CSS under this same media query; pd-spin may
+ * keep running as essential loading feedback. */
+@media (prefers-reduced-motion: reduce) {
+  :root[data-flavor][data-mode] {
+    --pd-duration-fast: 0.01ms;
+    --pd-duration-base: 0.01ms;
+    --pd-duration-slow: 0.01ms;
+    --pd-duration-dialog-in: 0.01ms;
+    --pd-duration-dialog-out: 0.01ms;
+    --pd-duration-menu: 0.01ms;
+    --pd-duration-toast: 0.01ms;
+    --pd-menu-stagger: 0ms;
+  }
+}

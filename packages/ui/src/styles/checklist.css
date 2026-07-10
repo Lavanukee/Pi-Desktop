@@ -1,0 +1,164 @@
+/*
+ * Animated task-progress checklist — feedback #3 (Aside "Task progress").
+ * A subtle raised card; each step's marker encodes its state. Only the done
+ * check animates (a spring pop-in) and the in-progress ring spins; everything
+ * else is static, so the panel stays non-intrusive.
+ */
+
+.pd-task-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-raised);
+  box-shadow: var(--pd-shadow-hairline);
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+}
+
+.pd-task-title {
+  margin-bottom: 2px;
+  font-size: var(--pd-font-size-heading);
+  line-height: var(--pd-leading-heading);
+  font-weight: var(--pd-font-weight-semibold);
+}
+
+.pd-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pd-task-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.pd-task-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+/* Done: green check, springs in on mount. */
+.pd-task-marker--done {
+  color: var(--pd-status-success-fg);
+  animation: pd-task-check var(--pd-duration-slow) var(--pd-easing-spring);
+}
+
+@keyframes pd-task-check {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Pending: hollow ring. Roadmap: dimmer dashed ring. */
+.pd-task-marker--pending::before,
+.pd-task-marker--roadmap::before {
+  content: "";
+  border-radius: var(--pd-radius-full);
+}
+
+.pd-task-marker--pending::before {
+  width: 10px;
+  height: 10px;
+  box-shadow: inset 0 0 0 1.5px var(--pd-border-strong);
+}
+
+.pd-task-marker--roadmap::before {
+  width: 9px;
+  height: 9px;
+  border: 1.5px dashed var(--pd-border-default);
+}
+
+.pd-task-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pd-task-item--pending .pd-task-label {
+  color: var(--pd-text-muted);
+}
+
+.pd-task-item--roadmap .pd-task-label {
+  color: var(--pd-text-ghost);
+}
+
+/* ---- collapsible subagents subsection ---- */
+
+.pd-task-subagents {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--pd-border-subtle);
+}
+
+.pd-task-subagents-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: var(--pd-control-sm);
+  margin: 0;
+  padding: 0 2px;
+  border: none;
+  border-radius: var(--pd-radius-sm);
+  background: transparent;
+  color: var(--pd-text-secondary);
+  font: inherit;
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-footnote);
+  font-weight: var(--pd-font-weight-medium);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pd-task-subagents-toggle:hover {
+  color: var(--pd-text-primary);
+}
+
+.pd-task-subagents-chevron {
+  display: inline-flex;
+  color: var(--pd-text-muted);
+  transform: rotate(-90deg);
+  transition: transform var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-task-subagents-chevron[data-open] {
+  transform: rotate(0deg);
+}
+
+.pd-task-subagents-count {
+  margin-left: auto;
+  color: var(--pd-text-muted);
+  font-weight: var(--pd-font-weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+.pd-task-subagents .pd-task-list {
+  margin-top: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-task-marker--done {
+    animation: none;
+  }
+}

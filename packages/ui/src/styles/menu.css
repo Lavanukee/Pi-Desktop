@@ -1,0 +1,269 @@
+/*
+ * The shared .pd-menu* family — spec-dropdown-menu.md. ONE row recipe powers
+ * DropdownMenu, ContextMenu, Select, the model picker and (later) cmdk, so a
+ * single fix propagates app-wide.
+ *
+ * Surface: overlay bg at flavor translucency + blur, hairline ring drawn as
+ * box-shadow (never a border), radius --pd-radius-popover (claude 8 / codex
+ * 12->15 squircle).
+ *
+ * Motion: one parameterized keyframe; the tokens make it claude `panel-in`
+ * (4px rise, 200ms, 30ms child stagger) or codex `dropdown-enter` (2px slide +
+ * scale .98, 150ms expo-out, no stagger).
+ */
+
+.pd-menu {
+  z-index: 50;
+  min-width: 180px;
+  max-height: var(--pd-menu-max-height, 24rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin: 1px;
+  padding: var(--pd-menu-padding);
+  border-radius: var(--pd-radius-popover);
+  background: color-mix(
+    in srgb,
+    var(--pd-bg-overlay) calc(var(--pd-surface-translucency) * 100%),
+    transparent
+  );
+  -webkit-backdrop-filter: blur(var(--pd-blur-overlay));
+  backdrop-filter: blur(var(--pd-blur-overlay));
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-popover);
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  /*
+   * THEME 6 (round-3 redo): the panel REVEALS in the direction it opens instead
+   * of popping full-size then populating. A clip-path inset uncovers the surface
+   * from the edge nearest the trigger while a matching transform-origin keeps the
+   * growth anchored there — a dropdown ([data-side=bottom]) unrolls DOWNWARD from
+   * its top edge, a dropup ([data-side=top]) unrolls UPWARD from its bottom edge.
+   * The visible box grows as its content is revealed (per-item stagger removed so
+   * the whole panel reads as one smooth roll, not a top-down fill). Side-specific
+   * keyframes below; default is the dropdown direction.
+   */
+  transform-origin: var(--radix-popper-transform-origin, center top);
+  animation: pd-menu-reveal-down var(--pd-duration-menu) var(--pd-easing-enter);
+  scrollbar-width: none;
+}
+
+.pd-menu::-webkit-scrollbar {
+  display: none;
+}
+
+/* Each side reveals from the edge nearest its trigger, anchored by origin so the
+ * subtle directional slide + clip growth read as "rolling out" that direction. */
+.pd-menu[data-side="bottom"] {
+  transform-origin: center top;
+  animation-name: pd-menu-reveal-down;
+}
+.pd-menu[data-side="top"] {
+  transform-origin: center bottom;
+  animation-name: pd-menu-reveal-up;
+}
+.pd-menu[data-side="right"] {
+  transform-origin: left center;
+  animation-name: pd-menu-reveal-right;
+}
+.pd-menu[data-side="left"] {
+  transform-origin: right center;
+  animation-name: pd-menu-reveal-left;
+}
+
+.pd-menu[data-state="closed"] {
+  animation: pd-fade-out var(--pd-duration-fast) var(--pd-easing-exit) forwards;
+}
+
+/*
+ * Clip-reveal keyframes. inset(top right bottom left): the collapsed edge starts
+ * at 100% (fully clipped away from that side) and shrinks to 0, so the container
+ * appears to unroll from the opposite (trigger-side) edge outward. A small
+ * token-sized slide (--pd-menu-enter-distance) adds the flavor's entry nudge.
+ */
+@keyframes pd-menu-reveal-down {
+  from {
+    opacity: 0;
+    clip-path: inset(0 0 100% 0 round var(--pd-radius-popover));
+    transform: translateY(calc(-1 * var(--pd-menu-enter-distance)));
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0 round var(--pd-radius-popover));
+    transform: translateY(0);
+  }
+}
+@keyframes pd-menu-reveal-up {
+  from {
+    opacity: 0;
+    clip-path: inset(100% 0 0 0 round var(--pd-radius-popover));
+    transform: translateY(var(--pd-menu-enter-distance));
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0 round var(--pd-radius-popover));
+    transform: translateY(0);
+  }
+}
+@keyframes pd-menu-reveal-right {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0 round var(--pd-radius-popover));
+    transform: translateX(calc(-1 * var(--pd-menu-enter-distance)));
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0 round var(--pd-radius-popover));
+    transform: translateX(0);
+  }
+}
+@keyframes pd-menu-reveal-left {
+  from {
+    opacity: 0;
+    clip-path: inset(0 0 0 100% round var(--pd-radius-popover));
+    transform: translateX(var(--pd-menu-enter-distance));
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0 round var(--pd-radius-popover));
+    transform: translateX(0);
+  }
+}
+
+/* ---- rows ---- */
+
+.pd-menu-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: calc(var(--pd-row-height) - 2px);
+  padding: 4px 10px;
+  border-radius: var(--pd-radius-menu-item);
+  color: var(--pd-text-primary);
+  opacity: var(--pd-menu-item-resting-opacity);
+  cursor: default;
+  user-select: none;
+  outline: none;
+  /*
+   * Round-3: the per-item entrance stagger was removed. It made the panel read
+   * as "populate top-down" (fighting the dropup's bottom-up reveal); the panel's
+   * own clip-reveal above is now the single, direction-correct entrance motion.
+   * The highlight wash still transitions (plus the one-shot hover-nudge transform,
+   * values in hover.css) so it fades in and reverses.
+   */
+  transition:
+    background-color var(--pd-duration-base) var(--pd-easing-standard),
+    opacity var(--pd-duration-base) var(--pd-easing-standard),
+    transform var(--pd-duration-base) var(--pd-easing-spring);
+}
+
+/* hover / keyboard highlight / listbox selection are one wash (codex measured
+ * them identical; claude classic swaps text a step lighter — token covers it). */
+.pd-menu-item[data-highlighted],
+.pd-menu-item:hover,
+.pd-menu-item:focus-visible,
+.pd-menu-item[aria-selected="true"] {
+  background: var(--pd-bg-hover);
+  opacity: 1;
+}
+
+/* Disabled: claude .5 / codex ~.25 — derived from the resting-opacity token. */
+.pd-menu-item[data-disabled],
+.pd-menu-item[aria-disabled="true"] {
+  opacity: calc(var(--pd-menu-item-resting-opacity) / 2);
+  pointer-events: none;
+}
+
+.pd-menu-item--danger {
+  color: var(--pd-status-danger-fg);
+}
+
+.pd-menu-item--danger[data-highlighted],
+.pd-menu-item--danger:hover {
+  background: var(--pd-status-danger-bg);
+}
+
+/* Descriptive wide rows (codex access picker / claude checkbox rows). */
+.pd-menu-item--descriptive {
+  align-items: flex-start;
+  padding-block: 8px;
+}
+
+.pd-menu-item-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pd-menu-item-title {
+  font-weight: var(--pd-font-weight-medium);
+}
+
+.pd-menu-item-description {
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+  color: var(--pd-text-muted);
+  white-space: normal;
+}
+
+.pd-menu-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--pd-text-muted);
+}
+
+.pd-menu-check {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  margin-left: auto;
+}
+
+/* Trailing shortcut hint: bare muted glyphs in menu rows (both flavors). */
+.pd-menu-hint {
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-caption);
+}
+
+.pd-menu-check + .pd-menu-hint {
+  margin-left: 0;
+}
+
+.pd-menu-label {
+  padding: 6px 10px 2px;
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+  color: var(--pd-text-muted);
+}
+
+.pd-menu-separator {
+  height: 1px;
+  margin: 4px calc(-1 * var(--pd-menu-padding));
+  background: var(--pd-border-default);
+}
+
+/*
+ * Trigger-open affordance (spec-dropdown-menu ADAPTATION): codex relies on the
+ * data-[state=open] hover wash (button.css); claude additionally draws an
+ * accent border on the open trigger.
+ */
+:root[data-flavor="claude"] .pd-menu-trigger[data-state="open"] {
+  --pd-btn-ring: 0 0 0 1px var(--pd-border-focus);
+}
+
+/* Select trigger chevron. */
+.pd-select-chevron {
+  display: inline-flex;
+  margin-left: 4px;
+  color: var(--pd-text-muted);
+}

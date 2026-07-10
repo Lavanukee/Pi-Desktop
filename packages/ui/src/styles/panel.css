@@ -1,0 +1,128 @@
+/*
+ * Artifact / canvas panel chrome — spec-artifact-panel.md. Claude's
+ * frame-shell is the literal template (●●● self-contained source): header bar
+ * + floating content pane with top-only radius + hairline/soft shadow,
+ * loading skeletons, error state. The codex flavor is just different token
+ * values (its analog panels are MED evidence).
+ */
+
+.pd-artifact {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 240px;
+  background: var(--pd-bg-base);
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-footnote);
+  line-height: 1.4;
+}
+
+.pd-artifact-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 12px;
+  flex: none;
+}
+
+.pd-artifact-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--pd-radius-md);
+  box-shadow: 0 0 0 0.5px var(--pd-border-strong);
+  color: var(--pd-text-secondary);
+  flex: none;
+  transition: background-color var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-artifact-logo:hover {
+  background: var(--pd-bg-hover);
+}
+
+.pd-artifact-title {
+  font-weight: var(--pd-font-weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pd-artifact-byline {
+  flex: 1;
+  min-width: 0;
+  max-width: 24rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-caption);
+}
+
+.pd-artifact-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  flex: none;
+}
+
+/* Content pane: floating sheet, radius on the TOP corners only. */
+.pd-artifact-content {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--pd-radius-md) var(--pd-radius-md) 0 0;
+  background: var(--pd-bg-raised);
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-md);
+}
+
+/* Ready reveal: iframe/content fades in over .12s. */
+.pd-artifact-content > * {
+  opacity: 1;
+  transition: opacity 120ms var(--pd-easing-standard);
+}
+
+.pd-artifact--loading .pd-artifact-content > *,
+.pd-artifact--error .pd-artifact-content > * {
+  opacity: 0;
+}
+
+.pd-artifact-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  align-content: center;
+  color: var(--pd-text-muted);
+}
+
+/* Header skeletons while loading. */
+.pd-skeleton {
+  border-radius: var(--pd-radius-xs);
+  background: var(--pd-bg-hover);
+  animation: pd-pulse 2s var(--pd-easing-standard) infinite;
+}
+
+/* Infinite pulse must stop under reduced motion (themes emit.ts convention). */
+@media (prefers-reduced-motion: reduce) {
+  .pd-skeleton {
+    animation: none;
+  }
+}
+
+.pd-skeleton--logo {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--pd-radius-md);
+}
+
+.pd-skeleton--title {
+  width: 8em;
+  height: 1em;
+}

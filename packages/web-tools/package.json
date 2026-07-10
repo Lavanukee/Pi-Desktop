@@ -1,0 +1,31 @@
+{
+  "name": "@pi-desktop/web-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "pi extension: web_search (pluggable backends), web_fetch with readability, python_run.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "@pi-desktop/shared": "workspace:*",
+    "@types/node": "^24.13.2",
+    "@types/turndown": "^5.0.6",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "0.68.1",
+    "@mozilla/readability": "^0.6.0",
+    "@sinclair/typebox": "^0.34.49",
+    "linkedom": "^0.18.13",
+    "turndown": "^7.2.4"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@pi-desktop/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "tsconfig base, typed IPC helpers, Result type, and logger shared by all Pi Desktop packages. Imports nothing.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tsconfig.base.json": "./tsconfig.base.json"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

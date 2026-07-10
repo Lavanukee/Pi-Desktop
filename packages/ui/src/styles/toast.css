@@ -1,0 +1,112 @@
+/*
+ * Toast — spec-dialog.md toast section. Enter offset is tokenized: claude
+ * slides in on x (Radix translateX 200ms), codex drops in from -4px on y
+ * (toast-open 250ms back-out).
+ */
+
+.pd-toast-viewport {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 22rem;
+  max-width: calc(100vw - 32px);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  outline: none;
+}
+
+.pd-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--pd-radius-popover);
+  background: var(--pd-bg-overlay);
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-md);
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+}
+
+.pd-toast[data-state="open"] {
+  animation: pd-toast-in var(--pd-duration-toast) var(--pd-easing-toast);
+}
+
+.pd-toast[data-state="closed"] {
+  animation: pd-fade-out var(--pd-duration-toast) var(--pd-easing-standard) forwards;
+}
+
+.pd-toast[data-swipe="move"] {
+  transform: translateX(var(--radix-toast-swipe-move-x));
+}
+
+.pd-toast[data-swipe="cancel"] {
+  transform: translateX(0);
+  transition: transform var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-toast[data-swipe="end"] {
+  animation: pd-toast-swipe-out 100ms var(--pd-easing-exit) forwards;
+}
+
+@keyframes pd-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(var(--pd-toast-enter-x), var(--pd-toast-enter-y));
+  }
+}
+
+@keyframes pd-toast-swipe-out {
+  from {
+    transform: translateX(var(--radix-toast-swipe-end-x));
+  }
+  to {
+    transform: translateX(calc(100% + 16px));
+    opacity: 0;
+  }
+}
+
+.pd-toast-icon {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+}
+
+.pd-toast--info .pd-toast-icon {
+  color: var(--pd-status-info-fg);
+}
+.pd-toast--success .pd-toast-icon {
+  color: var(--pd-status-success-fg);
+}
+.pd-toast--warning .pd-toast-icon {
+  color: var(--pd-status-warning-fg);
+}
+.pd-toast--danger .pd-toast-icon {
+  color: var(--pd-status-danger-fg);
+}
+
+.pd-toast-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pd-toast-title {
+  margin: 0;
+  font-weight: var(--pd-font-weight-medium);
+}
+
+.pd-toast-description {
+  margin: 0;
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-footnote);
+}

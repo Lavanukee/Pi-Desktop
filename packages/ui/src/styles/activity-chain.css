@@ -1,0 +1,330 @@
+/*
+ * Collapsed activity chain (THEME 3, match Claude img8–11). A run of steps
+ * collapses to one dim past-tense summary line (chevron on hover); expanding
+ * reveals a vertical stacked step list threaded by a left connector line; a
+ * step expands once more to its content (thought / diff / terminal / search).
+ */
+
+.pd-chain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  font-family: var(--pd-font-sans);
+}
+
+/* ---- collapsed summary line ---- */
+
+.pd-chain-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  max-width: 100%;
+  margin: 0;
+  padding: 2px 4px;
+  border: none;
+  border-radius: var(--pd-radius-xs);
+  background: transparent;
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pd-chain-summary:hover {
+  color: var(--pd-text-secondary);
+}
+
+.pd-chain-summary-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-chain-summary-chevron {
+  display: inline-flex;
+  flex: none;
+  opacity: 0;
+  transition:
+    opacity var(--pd-duration-base) var(--pd-easing-standard),
+    rotate var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-chain-summary:hover .pd-chain-summary-chevron,
+.pd-chain-summary:focus-visible .pd-chain-summary-chevron,
+.pd-chain[data-expanded="true"] .pd-chain-summary-chevron {
+  opacity: 1;
+}
+
+.pd-chain-summary-chevron[data-expanded="true"] {
+  rotate: 90deg;
+}
+
+/* ---- expanded step list ---- */
+
+/*
+ * Height-roll reveal: a grid-rows 0fr -> 1fr transition rolls content open and
+ * closed smoothly in BOTH directions (content stays mounted). Used for the whole
+ * step list and for each pill-gated step's body. Reduced-motion drops the ease.
+ */
+.pd-chain-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-chain-reveal[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+
+.pd-chain-reveal-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-chain-reveal {
+    transition: none;
+  }
+}
+
+.pd-chain-steps {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* Buffer spacing between steps (round-3: rows were too tight). */
+  gap: 8px;
+  padding: 4px 0;
+}
+
+/* The left connector line; step icons sit on it (their bg cuts it into links). */
+.pd-chain-steps::before {
+  content: "";
+  position: absolute;
+  top: 16px;
+  bottom: 16px;
+  left: 11px;
+  width: 1px;
+  background: var(--pd-border-strong);
+}
+
+.pd-chain-step {
+  position: relative;
+}
+
+/* The row is a plain div for inline/pill steps; only canvas steps are buttons. */
+.pd-chain-step-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 24px;
+  margin: 0;
+  padding: 2px 4px 2px 0;
+  border: none;
+  background: transparent;
+  color: var(--pd-text-secondary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  text-align: left;
+}
+
+/* Only canvas rows are interactive buttons. */
+button.pd-chain-step-row {
+  cursor: pointer;
+}
+
+button.pd-chain-step-row:hover {
+  color: var(--pd-text-primary);
+}
+
+.pd-chain-step-icon {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  /* Opaque, so the connector line reads as segmented between icons. */
+  background: var(--pd-bg-base);
+  color: var(--pd-text-muted);
+}
+
+.pd-chain-step-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ±stat beside the step label (round-5 #12): slightly smaller than the label,
+ * never shrinks, sits just after the text (row gap does the spacing). */
+.pd-chain-step-diffstat {
+  flex: none;
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+  font-weight: var(--pd-font-weight-medium);
+}
+
+.pd-chain-step-tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--pd-radius-sm);
+  background: var(--pd-bg-inset);
+  box-shadow: var(--pd-shadow-hairline);
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+  white-space: nowrap;
+}
+
+.pd-chain-step-canvas {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+  color: var(--pd-text-muted);
+}
+
+/* ---- pill affordance (bash/edit/read/file: click to reveal content) ---- */
+
+/* Sits directly BELOW the step line, indented past the icon+connector. The pill
+ * hugs its parent label line (round-5 #5: the old 4px gap read as detached);
+ * the 8px inter-step gap between different steps is untouched. */
+.pd-chain-step-pillbox {
+  margin: 0 0 0 30px;
+}
+
+.pd-chain-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 2px 6px 2px 8px;
+  border: none;
+  border-radius: var(--pd-radius-sm);
+  background: var(--pd-bg-inset);
+  box-shadow: var(--pd-shadow-hairline);
+  color: var(--pd-text-secondary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+  cursor: pointer;
+  transition:
+    background-color var(--pd-duration-base) var(--pd-easing-standard),
+    color var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-chain-pill:hover {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-primary);
+}
+
+.pd-chain-pill-chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--pd-text-muted);
+  transition: rotate var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-chain-pill-chevron[data-expanded="true"] {
+  rotate: 90deg;
+}
+
+/* final "Done" row: bold, neutral check. */
+.pd-chain-done .pd-chain-step-label {
+  color: var(--pd-text-primary);
+  font-weight: var(--pd-font-weight-semibold);
+}
+
+.pd-chain-done-icon {
+  color: var(--pd-text-primary);
+}
+
+/* ---- step content ---- */
+
+/* Inline content (thinking / search) sits directly under the row, indented past
+ * the icon + connector — always visible once the chain is open (no click). */
+.pd-chain-step-inline {
+  margin: 2px 0 2px 30px;
+}
+
+/* Search results keep a bounded scroll; thoughts NEVER scroll (round-5 #3) —
+ * they fade + Show more instead (see .pd-chain-thought below). */
+.pd-chain-step-inline--scroll {
+  max-height: 360px;
+  overflow: auto;
+}
+
+/* Pill-gated content lives inside the reveal; the pillbox already indents it. */
+.pd-chain-step-content {
+  margin: 6px 0 2px;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.pd-chain-thought {
+  color: var(--pd-text-secondary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-footnote);
+}
+
+.pd-chain-thought-text {
+  white-space: pre-wrap;
+}
+
+/* Long in-chain thought: clamp + bottom fade (never a scrollbar). The shared
+ * .pd-showmore sits below the fade so it never overlaps the text (round-5 #4). */
+.pd-chain-thought-text[data-clamped="true"] {
+  max-height: 7.5rem;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+}
+
+.pd-chain-preview {
+  color: var(--pd-text-secondary);
+  font-size: var(--pd-font-size-body);
+}
+
+.pd-chain-terminal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pd-chain-output-label {
+  margin-bottom: 4px;
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Frame carries the light border + radius (round-5 #6); the <pre> scrolls
+ * inside it, so the border stays crisp on all sides under horizontal scroll. */
+.pd-chain-output-frame {
+  overflow: hidden;
+  border: 1px solid var(--pd-code-block-border);
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-code-block-bg);
+}
+
+.pd-chain-output-body {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-mono);
+  font-size: var(--pd-font-size-code);
+  line-height: var(--pd-leading-code);
+  white-space: pre;
+  overflow-x: auto;
+}

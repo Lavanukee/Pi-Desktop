@@ -1,0 +1,577 @@
+{
+  "name": "tool-use",
+  "state": {
+    "sessionFile": "/tmp/mock-pi/sessions/tool-use.jsonl",
+    "sessionId": "mock-session-tool-use"
+  },
+  "prompts": [
+    {
+      "response": { "success": true },
+      "steps": [
+        { "emit": { "type": "agent_start" } },
+        { "emit": { "type": "turn_start" } },
+        {
+          "emit": {
+            "type": "message_start",
+            "message": { "role": "assistant", "content": [] }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [{ "type": "text", "text": "Let me look around." }]
+            },
+            "assistantMessageEvent": {
+              "type": "text_delta",
+              "contentIndex": 0,
+              "delta": "Let me look around.",
+              "partial": {
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "Let me look around." }]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 5,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                { "type": "text", "text": "Let me look around." },
+                { "type": "toolCall", "id": "call_bash_1", "name": "bash", "arguments": {} }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "toolcall_start",
+              "contentIndex": 1,
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "text", "text": "Let me look around." },
+                  { "type": "toolCall", "id": "call_bash_1", "name": "bash", "arguments": {} }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 5,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                { "type": "text", "text": "Let me look around." },
+                { "type": "toolCall", "id": "call_bash_1", "name": "bash", "arguments": {} }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 1,
+              "delta": "{\"command\":",
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "text", "text": "Let me look around." },
+                  { "type": "toolCall", "id": "call_bash_1", "name": "bash", "arguments": {} }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 5,
+          "splitChunks": 2,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                { "type": "text", "text": "Let me look around." },
+                { "type": "toolCall", "id": "call_bash_1", "name": "bash", "arguments": {} }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 1,
+              "delta": "\"ls -la /tmp/demo\"",
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "text", "text": "Let me look around." },
+                  { "type": "toolCall", "id": "call_bash_1", "name": "bash", "arguments": {} }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 5,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                { "type": "text", "text": "Let me look around." },
+                { "type": "toolCall", "id": "call_bash_1", "name": "bash", "arguments": {} }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 1,
+              "delta": "}",
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "text", "text": "Let me look around." },
+                  { "type": "toolCall", "id": "call_bash_1", "name": "bash", "arguments": {} }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                { "type": "text", "text": "Let me look around." },
+                {
+                  "type": "toolCall",
+                  "id": "call_bash_1",
+                  "name": "bash",
+                  "arguments": { "command": "ls -la /tmp/demo" }
+                }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "toolcall_end",
+              "contentIndex": 1,
+              "toolCall": {
+                "type": "toolCall",
+                "id": "call_bash_1",
+                "name": "bash",
+                "arguments": { "command": "ls -la /tmp/demo" }
+              },
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "text", "text": "Let me look around." },
+                  {
+                    "type": "toolCall",
+                    "id": "call_bash_1",
+                    "name": "bash",
+                    "arguments": { "command": "ls -la /tmp/demo" }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                { "type": "text", "text": "Let me look around." },
+                {
+                  "type": "toolCall",
+                  "id": "call_bash_1",
+                  "name": "bash",
+                  "arguments": { "command": "ls -la /tmp/demo" }
+                }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 40,
+                "output": 22,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 62,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1770000001000
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "tool_execution_start",
+            "toolCallId": "call_bash_1",
+            "toolName": "bash",
+            "args": { "command": "ls -la /tmp/demo" }
+          }
+        },
+        {
+          "delayMs": 10,
+          "emit": {
+            "type": "tool_execution_update",
+            "toolCallId": "call_bash_1",
+            "toolName": "bash",
+            "args": { "command": "ls -la /tmp/demo" },
+            "partialResult": {
+              "content": [{ "type": "text", "text": "total 8\n" }],
+              "details": { "truncation": null, "fullOutputPath": null }
+            }
+          }
+        },
+        {
+          "delayMs": 10,
+          "emit": {
+            "type": "tool_execution_end",
+            "toolCallId": "call_bash_1",
+            "toolName": "bash",
+            "result": {
+              "content": [
+                { "type": "text", "text": "total 8\n-rw-r--r--  1 user  staff  6 hello.txt" }
+              ],
+              "details": { "truncation": null, "fullOutputPath": null }
+            },
+            "isError": false
+          }
+        },
+        {
+          "emit": {
+            "type": "turn_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                { "type": "text", "text": "Let me look around." },
+                {
+                  "type": "toolCall",
+                  "id": "call_bash_1",
+                  "name": "bash",
+                  "arguments": { "command": "ls -la /tmp/demo" }
+                }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 40,
+                "output": 22,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 62,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1770000001000
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call_bash_1",
+                "toolName": "bash",
+                "content": [
+                  { "type": "text", "text": "total 8\n-rw-r--r--  1 user  staff  6 hello.txt" }
+                ],
+                "isError": false,
+                "timestamp": 1770000001200
+              }
+            ]
+          }
+        },
+        { "emit": { "type": "turn_start" } },
+        {
+          "emit": {
+            "type": "message_start",
+            "message": { "role": "assistant", "content": [] }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                { "type": "toolCall", "id": "call_edit_1", "name": "edit", "arguments": {} }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "toolcall_start",
+              "contentIndex": 0,
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "toolCall", "id": "call_edit_1", "name": "edit", "arguments": {} }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 5,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                { "type": "toolCall", "id": "call_edit_1", "name": "edit", "arguments": {} }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 0,
+              "delta": "{\"path\":\"/tmp/demo/hello.txt\",",
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "toolCall", "id": "call_edit_1", "name": "edit", "arguments": {} }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 5,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                { "type": "toolCall", "id": "call_edit_1", "name": "edit", "arguments": {} }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 0,
+              "delta": "\"oldText\":\"Hello\",",
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "toolCall", "id": "call_edit_1", "name": "edit", "arguments": {} }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 5,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                { "type": "toolCall", "id": "call_edit_1", "name": "edit", "arguments": {} }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 0,
+              "delta": "\"newText\":\"Hello, world\"}",
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "toolCall", "id": "call_edit_1", "name": "edit", "arguments": {} }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call_edit_1",
+                  "name": "edit",
+                  "arguments": {
+                    "path": "/tmp/demo/hello.txt",
+                    "oldText": "Hello",
+                    "newText": "Hello, world"
+                  }
+                }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "toolcall_end",
+              "contentIndex": 0,
+              "toolCall": {
+                "type": "toolCall",
+                "id": "call_edit_1",
+                "name": "edit",
+                "arguments": {
+                  "path": "/tmp/demo/hello.txt",
+                  "oldText": "Hello",
+                  "newText": "Hello, world"
+                }
+              },
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "toolCall",
+                    "id": "call_edit_1",
+                    "name": "edit",
+                    "arguments": {
+                      "path": "/tmp/demo/hello.txt",
+                      "oldText": "Hello",
+                      "newText": "Hello, world"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call_edit_1",
+                  "name": "edit",
+                  "arguments": {
+                    "path": "/tmp/demo/hello.txt",
+                    "oldText": "Hello",
+                    "newText": "Hello, world"
+                  }
+                }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 80,
+                "output": 30,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 110,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1770000002000
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "tool_execution_start",
+            "toolCallId": "call_edit_1",
+            "toolName": "edit",
+            "args": {
+              "path": "/tmp/demo/hello.txt",
+              "oldText": "Hello",
+              "newText": "Hello, world"
+            }
+          }
+        },
+        {
+          "delayMs": 10,
+          "emit": {
+            "type": "tool_execution_end",
+            "toolCallId": "call_edit_1",
+            "toolName": "edit",
+            "result": {
+              "content": [{ "type": "text", "text": "Edited /tmp/demo/hello.txt" }],
+              "details": { "diff": "-Hello\n+Hello, world" }
+            },
+            "isError": false
+          }
+        },
+        {
+          "emit": {
+            "type": "turn_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call_edit_1",
+                  "name": "edit",
+                  "arguments": {
+                    "path": "/tmp/demo/hello.txt",
+                    "oldText": "Hello",
+                    "newText": "Hello, world"
+                  }
+                }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 80,
+                "output": 30,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 110,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1770000002000
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call_edit_1",
+                "toolName": "edit",
+                "content": [{ "type": "text", "text": "Edited /tmp/demo/hello.txt" }],
+                "isError": false,
+                "timestamp": 1770000002200
+              }
+            ]
+          }
+        },
+        { "emit": { "type": "turn_start" } },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [{ "type": "text", "text": "Done — hello.txt now greets the world." }]
+            },
+            "assistantMessageEvent": {
+              "type": "text_delta",
+              "contentIndex": 0,
+              "delta": "Done — hello.txt now greets the world.",
+              "partial": {
+                "role": "assistant",
+                "content": [{ "type": "text", "text": "Done — hello.txt now greets the world." }]
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "turn_end",
+            "message": {
+              "role": "assistant",
+              "content": [{ "type": "text", "text": "Done — hello.txt now greets the world." }],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 120,
+                "output": 12,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 132,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+              },
+              "stopReason": "stop",
+              "timestamp": 1770000003000
+            },
+            "toolResults": []
+          }
+        },
+        { "emit": { "type": "agent_end", "messages": [] } }
+      ]
+    }
+  ]
+}

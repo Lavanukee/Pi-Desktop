@@ -1,0 +1,44 @@
+/*
+ * @pi-desktop/ui component styles. Consumers load this once at the root,
+ * after @pi-desktop/themes/themes.css (which defines every --pd-* token and
+ * the shared pd-* keyframes these rules animate with).
+ *
+ * Rules consume ONLY var(--pd-*) values (enforced by styles-hygiene.test.ts);
+ * flavor-scoped selectors appear solely where the spec book names a genuine
+ * structural divergence.
+ */
+
+@import "./styles/base.css";
+@import "./styles/icons.css";
+@import "./styles/button.css";
+@import "./styles/input.css";
+@import "./styles/slider.css";
+@import "./styles/menu.css";
+@import "./styles/dialog.css";
+@import "./styles/toast.css";
+@import "./styles/tooltip.css";
+@import "./styles/controls.css";
+@import "./styles/indicators.css";
+@import "./styles/chips.css";
+@import "./styles/shimmer.css";
+@import "./styles/scroll.css";
+@import "./styles/composer.css";
+@import "./styles/suggestion-list.css";
+@import "./styles/thread.css";
+@import "./styles/tool-icons.css";
+@import "./styles/activity-chain.css";
+@import "./styles/web-search.css";
+@import "./styles/sidebar.css";
+@import "./styles/prose.css";
+@import "./styles/markdown.css";
+@import "./styles/diff.css";
+@import "./styles/panel.css";
+@import "./styles/model-picker.css";
+@import "./styles/checklist.css";
+@import "./styles/message-actions.css";
+@import "./styles/file-input.css";
+@import "./styles/question-card.css";
+@import "./styles/icon-stroke-control.css";
+/* One-shot reverse-on-leave hover system — imported last so its :hover
+ * transform/wash rules layer over each family's own hover grammar. */
+@import "./styles/hover.css";

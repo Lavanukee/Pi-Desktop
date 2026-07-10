@@ -1,0 +1,127 @@
+/*
+ * Dialog / curtain — spec-dialog.md. One structure; the motion tokens make the
+ * entrance claude `zoom` (scale .95->1, 250ms in / 125ms out — asymmetric
+ * close) or codex `rise` (8px + scale .98 from top origin, 300/150ms).
+ */
+
+.pd-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--pd-bg-backdrop);
+  -webkit-backdrop-filter: blur(var(--pd-blur-backdrop));
+  backdrop-filter: blur(var(--pd-blur-backdrop));
+  animation: pd-fade-in var(--pd-duration-dialog-in) var(--pd-easing-standard);
+}
+
+.pd-dialog-overlay[data-state="closed"] {
+  animation: pd-fade-out var(--pd-duration-dialog-out) var(--pd-easing-standard) forwards;
+}
+
+.pd-dialog {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 20rem;
+  max-width: min(92vw, 34rem);
+  max-height: 85vh;
+  border-radius: var(--pd-radius-surface);
+  background: color-mix(
+    in srgb,
+    var(--pd-bg-overlay) calc(var(--pd-surface-translucency) * 100%),
+    transparent
+  );
+  /* Codex dialogs blur at 24px = 3x the popover blur; claude stays 0. */
+  -webkit-backdrop-filter: blur(calc(var(--pd-blur-overlay) * 3));
+  backdrop-filter: blur(calc(var(--pd-blur-overlay) * 3));
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-lg);
+  color: var(--pd-text-primary);
+  transform-origin: var(--pd-dialog-origin);
+  animation: pd-dialog-in var(--pd-duration-dialog-in) var(--pd-easing-enter);
+  overflow: hidden;
+  outline: none;
+}
+
+.pd-dialog[data-state="closed"] {
+  animation: pd-dialog-out var(--pd-duration-dialog-out) var(--pd-easing-exit) forwards;
+}
+
+@keyframes pd-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--pd-dialog-enter-translate)) scale(var(--pd-dialog-enter-scale));
+  }
+}
+
+@keyframes pd-dialog-out {
+  to {
+    opacity: 0;
+    transform: translateY(var(--pd-dialog-enter-translate)) scale(var(--pd-dialog-enter-scale));
+  }
+}
+
+.pd-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 0;
+}
+
+/* Codex heading-dialog: 20px/28px w500 tracking -0.36px; claude title serif-adjacent
+ * scale rides the title tokens. */
+.pd-dialog-title {
+  margin: 0;
+  font-size: var(--pd-font-size-title);
+  line-height: var(--pd-leading-title);
+  font-weight: var(--pd-font-weight-medium);
+  letter-spacing: -0.02em;
+}
+
+.pd-dialog-description {
+  margin: 0;
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+}
+
+.pd-dialog-body {
+  min-height: 0;
+  padding: 12px 20px;
+  overflow-y: auto;
+}
+
+.pd-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+/*
+ * Curtain (codex-only pattern, adopted for both flavors per spec-dialog
+ * ADAPTATION): app-level blocking scrim, blur(12) + 74% base mix.
+ */
+.pd-curtain {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--pd-bg-base) 74%, transparent);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  color: var(--pd-text-primary);
+  animation: pd-curtain-raise var(--pd-duration-fast) var(--pd-easing-enter);
+}
+
+@keyframes pd-curtain-raise {
+  from {
+    opacity: 0;
+    transform: scale(1.01);
+  }
+}

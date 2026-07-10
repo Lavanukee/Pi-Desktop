@@ -1,0 +1,126 @@
+/*
+ * Diff view — spec-diff-view.md. ONE renderer with the codex variable API:
+ * the row-tint math is formula-driven, so each flavor supplies exactly the
+ * 6 knobs (surface, fg, added/deleted/modified hues) — all from --pd-* tokens.
+ * CLAUDE flavor composition is DERIVED (no source diff UI — _gaps.md §5);
+ * its token values are HIGH (own status ramps + code-block chrome).
+ */
+
+.pd-diff {
+  --pd-diff-surface: var(--pd-bg-raised);
+  overflow: hidden;
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-code-block-bg);
+  box-shadow: 0 0 0 0.5px var(--pd-code-block-border);
+  font-family: var(--pd-font-mono);
+  font-size: var(--pd-font-size-code);
+  /* Codex readability signature for diffs. */
+  line-height: 1.8;
+  font-variant-ligatures: none;
+}
+
+/* Claude flavor drops to its code-block leading-relaxed (spec ADAPTATION). */
+:root[data-flavor="claude"] .pd-diff {
+  line-height: 1.625;
+}
+
+.pd-diff-file-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--pd-diff-surface) 98%, var(--pd-text-primary));
+  border-bottom: 1px solid color-mix(in srgb, var(--pd-diff-surface) 95%, var(--pd-text-primary));
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-footnote);
+  font-weight: var(--pd-font-weight-bold);
+}
+
+.pd-diff-body {
+  overflow-x: auto;
+}
+
+/* Grid: number column + code (codex layout). */
+.pd-diff-row {
+  display: grid;
+  grid-template-columns: minmax(4ch, max-content) 1fr;
+}
+
+/* Copy-safe line numbers (claude ::after + attr() idiom). */
+.pd-diff-gutter {
+  padding: 0 10px;
+  text-align: right;
+  color: color-mix(in srgb, var(--pd-text-primary) 65%, var(--pd-diff-surface));
+  user-select: none;
+}
+
+.pd-diff-gutter::after {
+  content: attr(data-line-number);
+}
+
+/* The ported color math: rows tint at bg 88% / hue 12%. */
+.pd-diff-row--add {
+  background: color-mix(in lab, var(--pd-diff-surface) 88%, var(--pd-diff-added-fg));
+}
+
+.pd-diff-row--del {
+  background: color-mix(in lab, var(--pd-diff-surface) 88%, var(--pd-diff-deleted-fg));
+}
+
+/* Left edge bars on changed rows (observed in the codex popover). */
+.pd-diff-row--add .pd-diff-gutter {
+  box-shadow: inset 2px 0 0 var(--pd-diff-added-fg);
+}
+
+.pd-diff-row--del .pd-diff-gutter {
+  box-shadow: inset 2px 0 0 var(--pd-diff-deleted-fg);
+}
+
+@media (pointer: fine) {
+  .pd-diff-row--context:hover {
+    background: color-mix(in lab, var(--pd-diff-surface) 94%, var(--pd-text-primary));
+  }
+}
+
+.pd-diff-row--hunk {
+  padding: 4px 12px;
+  color: var(--pd-text-muted);
+  background: color-mix(in srgb, var(--pd-diff-surface) 96%, var(--pd-text-primary));
+  grid-template-columns: 1fr;
+}
+
+.pd-diff-text {
+  padding-right: 12px;
+  white-space: pre;
+}
+
+.pd-diff-marker {
+  display: inline-block;
+  width: 2ch;
+  user-select: none;
+}
+
+.pd-diff-row--add .pd-diff-marker {
+  color: var(--pd-diff-added-fg);
+}
+
+.pd-diff-row--del .pd-diff-marker {
+  color: var(--pd-diff-deleted-fg);
+}
+
+/* Intra-line emphasis: hue at 15% alpha. */
+.pd-diff-emph--add {
+  background: color-mix(in srgb, var(--pd-diff-added-fg) 15%, transparent);
+}
+
+.pd-diff-emph--del {
+  background: color-mix(in srgb, var(--pd-diff-deleted-fg) 15%, transparent);
+}
+
+.pd-diff ::selection {
+  background: var(--pd-text-link);
+  color: var(--pd-text-inverse);
+}

@@ -1,0 +1,287 @@
+/*
+ * Sidebar + session rows — spec-sidebar.md. Claude's parametric row system
+ * ported: --pd-row-height / --pd-radius-row / --pd-sidebar-width drive all
+ * slots, so codex = {30px, pill, 240} and claude = {32px, 8px, 288} purely via
+ * tokens. Selected is a persistent wash distinct from hover (--pd-bg-selected).
+ *
+ * Round-3 #P5 treatments (token-driven): claude floats a bordered, rounded panel
+ * over the page bg; codex frosts it into translucent glass. Both slide in/out.
+ */
+
+.pd-sidebar {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: var(--pd-sidebar-width);
+  height: 100%;
+  background: var(--pd-bg-sidebar);
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  user-select: none;
+  /* Slide in/out (both flavors); reduced-motion collapses the duration. */
+  transition:
+    transform var(--pd-duration-slow) var(--pd-easing-standard),
+    opacity var(--pd-duration-slow) var(--pd-easing-standard);
+}
+
+/* Collapsed: slide off the left edge (the shell clips it). */
+.pd-sidebar[data-open="false"] {
+  transform: translateX(-100%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Claude: a floating, bordered, rounded panel lifted off the page bg. */
+:root[data-flavor="claude"] .pd-sidebar {
+  height: calc(100% - 16px);
+  margin: 8px;
+  border-radius: var(--pd-radius-lg);
+  box-shadow:
+    0 0 0 1px var(--pd-sidebar-border),
+    var(--pd-sidebar-shadow);
+}
+
+/* Slide clears the 8px float margin too. */
+:root[data-flavor="claude"] .pd-sidebar[data-open="false"] {
+  transform: translateX(calc(-100% - 8px));
+}
+
+/* Codex: frosted glass — translucent surface + backdrop blur, hairline edge. */
+:root[data-flavor="codex"] .pd-sidebar {
+  background: color-mix(
+    in srgb,
+    var(--pd-bg-sidebar) calc(var(--pd-sidebar-translucency) * 100%),
+    transparent
+  );
+  box-shadow: inset -1px 0 0 0 var(--pd-sidebar-border);
+  -webkit-backdrop-filter: blur(var(--pd-sidebar-blur));
+  backdrop-filter: blur(var(--pd-sidebar-blur));
+}
+
+.pd-sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.pd-sidebar-section {
+  padding-top: 16px;
+}
+
+.pd-sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 25px;
+  padding: 0 8px;
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+}
+
+.pd-sidebar-section-actions {
+  display: inline-flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-sidebar-section:hover .pd-sidebar-section-actions,
+.pd-sidebar-section:focus-within .pd-sidebar-section-actions {
+  opacity: 1;
+}
+
+/* The row atom: nav items and session rows share it. */
+.pd-sidebar-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: var(--pd-row-height);
+  margin: 0;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--pd-radius-row);
+  background: transparent;
+  color: var(--pd-text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  /* transform is the one-shot hover-nudge channel (values in hover.css). */
+  transition:
+    background-color var(--pd-duration-base) var(--pd-easing-standard),
+    color var(--pd-duration-base) var(--pd-easing-standard),
+    transform var(--pd-duration-base) var(--pd-easing-spring);
+}
+
+.pd-sidebar-row:hover,
+.pd-sidebar-row[data-menu-open="true"] {
+  background: var(--pd-bg-hover);
+}
+
+.pd-sidebar-row:focus-visible {
+  outline-color: var(--pd-border-focus);
+}
+
+.pd-sidebar-row[data-selected="true"],
+.pd-sidebar-row[aria-current="page"] {
+  background: var(--pd-bg-selected);
+  color: var(--pd-text-primary);
+}
+
+.pd-sidebar-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--pd-icon-size);
+  color: inherit;
+  flex: none;
+}
+
+.pd-sidebar-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Trailing meta (timestamp / kbd hint) swaps to hover-revealed controls —
+ * the shared mechanism behind claude "…" and codex Pin/Archive. */
+.pd-sidebar-row-meta {
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-caption);
+  flex: none;
+}
+
+.pd-sidebar-row-controls {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.pd-sidebar-row:hover:has(.pd-sidebar-row-controls) .pd-sidebar-row-meta,
+.pd-sidebar-row:focus-within:has(.pd-sidebar-row-controls) .pd-sidebar-row-meta {
+  display: none;
+}
+
+.pd-sidebar-row:hover .pd-sidebar-row-controls,
+.pd-sidebar-row:focus-within .pd-sidebar-row-controls,
+.pd-sidebar-row[data-selected="true"] .pd-sidebar-row-controls {
+  display: inline-flex;
+}
+
+.pd-sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 12px;
+  flex: none;
+}
+
+.pd-sidebar-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-bg-active);
+  color: var(--pd-text-primary);
+  font-size: var(--pd-font-size-caption);
+  font-weight: var(--pd-font-weight-semibold);
+  flex: none;
+  overflow: hidden;
+}
+
+.pd-sidebar-footer-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--pd-font-weight-medium);
+}
+
+.pd-sidebar-footer-plan {
+  color: var(--pd-text-muted);
+  font-weight: var(--pd-font-weight-regular);
+}
+
+/*
+ * Top bar — spec-top-bar.md: 46px in both flavors, whole bar draggable, every
+ * interactive child .nc-no-drag (button.css sets it on .pd-btn).
+ */
+
+.pd-topbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: var(--pd-height-topbar);
+  padding: 0 8px;
+  background: var(--pd-bg-sidebar);
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  user-select: none;
+  -webkit-app-region: drag;
+  flex: none;
+}
+
+/* Round-3 #P5: claude's top bar takes the CHAT-AREA color so it flows into the
+ * conversation surface rather than reading as sidebar chrome (the sidebar is now
+ * a floating panel below it). Codex keeps the sidebar-tinted bar. */
+:root[data-flavor="claude"] .pd-topbar {
+  background: var(--pd-bg-base);
+}
+
+.pd-topbar--traffic-lights {
+  /* macOS hiddenInset traffic-light clearance (claude ~78px, codex x~82). */
+  padding-left: 80px;
+}
+
+.pd-topbar-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pd-topbar-section--center {
+  flex: 1;
+  justify-content: center;
+}
+
+.pd-topbar-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--pd-font-weight-body);
+}
+
+/*
+ * Codex "app as floating card": main surface rides on the sidebar layer with a
+ * hairline + soft glow and rounded corners; claude is a flat two-pane split.
+ * Shell-level flavor conditional named in spec-top-bar ADAPTATION.
+ */
+.pd-main-surface {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--pd-bg-base);
+}
+
+:root[data-flavor="codex"] .pd-main-surface {
+  overflow: hidden;
+  border-radius: var(--pd-radius-lg);
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-md);
+}

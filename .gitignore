@@ -1,0 +1,18 @@
+node_modules/
+dist/
+dist-electron/
+.turbo/
+*.local
+.DS_Store
+scripts/capture-tokens/.capture/
+scripts/capture-tokens/raw-*.json
+coverage/
+playwright-report/
+test-results/
+packages/ui/build/
+*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
+
+# local packaging output
+apps/desktop/release/

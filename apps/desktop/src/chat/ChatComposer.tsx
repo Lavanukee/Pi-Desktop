@@ -1,0 +1,535 @@
+/**
+ * The real chat composer: a Lexical editor inside the design-system composer
+ * shell, wired to pi. Enter submits (Shift+Enter newline), `@` fuzzy-file
+ * mentions (fs:list-files), `/` slash commands (pi get_commands), `!` bash mode
+ * (PiBridge.bash), image drop/paste attachments (with thumbnail previews), and
+ * the model/TPS/context footer. Honors the claude flavor rule (hide send while
+ * empty, no top tray).
+ *
+ * Round-3: the rule-based suggestion overlay was removed (#A7 — jedd disliked
+ * it); the `@`/`/` autocomplete stays. Drag-drop attach is handled by the
+ * window-level fullscreen overlay (#A8) which feeds files through `useDropStore`.
+ */
+import type { Model } from '@pi-desktop/engine';
+import { ComposerAddMenu, IconArrowUp, IconButton, IconClose } from '@pi-desktop/ui';
+import { useEffect, useRef, useState } from 'react';
+import { abortPi, getCommands, runBash, sendPrompt, steerPrompt } from '../state/pi-connect';
+import { usePiStore } from '../state/pi-slice';
+import { useThemeStore } from '../store/theme';
+import { ComposerFooter } from './ComposerFooter';
+import { type AcItem, Autocomplete } from './composer/Autocomplete';
+import {
+  ComposerEditor,
+  type ComposerEditorApi,
+  type ComposerKeymap,
+} from './composer/ComposerEditor';
+import { useDropStore } from './composer/drop-store';
+import { type AcToken, EMPTY_TOKEN } from './composer/tokens';
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+interface SlashCommand {
+  name: string;
+  description?: string;
+}
+
+interface Attachment {
+  id: string;
+  name: string;
+  /** Image attachments carry a data URI (sent to pi as ImageContent); text
+   * attachments carry their decoded contents (folded into the prompt text). */
+  kind: 'image' | 'text';
+  dataUri?: string;
+  text?: string;
+}
+
+/** Text files we accept + read into the prompt (by MIME or extension). */
+const TEXT_EXTENSIONS = new Set([
+  'txt',
+  'text',
+  'md',
+  'markdown',
+  'rst',
+  'json',
+  'jsonc',
+  'csv',
+  'tsv',
+  'yaml',
+  'yml',
+  'toml',
+  'ini',
+  'cfg',
+  'conf',
+  'env',
+  'xml',
+  'html',
+  'htm',
+  'css',
+  'scss',
+  'less',
+  'js',
+  'jsx',
+  'ts',
+  'tsx',
+  'mjs',
+  'cjs',
+  'py',
+  'rb',
+  'go',
+  'rs',
+  'java',
+  'kt',
+  'swift',
+  'c',
+  'h',
+  'cc',
+  'cpp',
+  'hpp',
+  'cs',
+  'php',
+  'sh',
+  'bash',
+  'zsh',
+  'fish',
+  'sql',
+  'log',
+  'gitignore',
+  'dockerfile',
+  'makefile',
+  'gradle',
+  'properties',
+]);
+/** Cap the per-file size we inline into a prompt (256 KB). */
+const TEXT_MAX_BYTES = 256 * 1024;
+
+function isTextFile(file: File): boolean {
+  if (file.type.startsWith('text/')) return true;
+  if (file.type === 'application/json' || file.type === 'application/xml') return true;
+  const dot = file.name.lastIndexOf('.');
+  const ext = dot >= 0 ? file.name.slice(dot + 1).toLowerCase() : file.name.toLowerCase();
+  return TEXT_EXTENSIONS.has(ext);
+}
+
+/** Built-in commands shown unconditionally — so `/` always offers something,
+ * even before pi's session RPC is live enough to answer `get_commands`. */
+const BUILTIN_COMMANDS: SlashCommand[] = [
+  { name: 'help', description: 'Show help' },
+  { name: 'new', description: 'Start a new session' },
+  { name: 'compact', description: 'Compact the conversation' },
+];
+
+async function fileToDataUri(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+/** `foo.tar.gz` → `GZ`; `README` → `FILE`. */
+function extLabel(name: string): string {
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot + 1) : '';
+  return (ext || 'file').toUpperCase().slice(0, 4);
+}
+
+/** A slight attachment preview (#A8c): image thumbnail, else a filename+ext chip. */
+function AttachmentPreview({
+  name,
+  dataUri,
+  onRemove,
+}: {
+  name: string;
+  dataUri?: string;
+  onRemove: () => void;
+}) {
+  const isImage = (dataUri ?? '').startsWith('data:image/');
+  return (
+    <div className="pd-attach" title={name}>
+      {isImage ? (
+        // biome-ignore lint/a11y/useAltText: decorative attachment thumbnail; name is in the title
+        <img className="pd-attach-thumb" src={dataUri} />
+      ) : (
+        <span className="pd-attach-ext">{extLabel(name)}</span>
+      )}
+      <span className="pd-attach-name">{name}</span>
+      <button
+        type="button"
+        className="pd-attach-remove pd-focusable"
+        aria-label={`Remove ${name}`}
+        onClick={onRemove}
+      >
+        <IconClose size={12} />
+      </button>
+    </div>
+  );
+}
+
+export function ChatComposer({
+  piModels,
+  onOpenModels,
+}: {
+  piModels: Model[];
+  onOpenModels?: () => void;
+}) {
+  const flavor = useThemeStore((s) => s.flavor);
+  const isStreaming = usePiStore((s) => s.agent.isStreaming);
+  const cwd = usePiStore((s) => s.session?.cwd ?? '');
+
+  const apiRef = useRef<ComposerEditorApi | null>(null);
+  const [text, setText] = useState('');
+  const [token, setToken] = useState<AcToken>(EMPTY_TOKEN);
+  const [items, setItems] = useState<AcItem[]>([]);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [skipped, setSkipped] = useState<string[]>([]);
+  const [commands, setCommands] = useState<SlashCommand[]>(BUILTIN_COMMANDS);
+  const [webSearch, setWebSearch] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const editorScrollRef = useRef<HTMLDivElement>(null);
+  const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Composer overflow (round-5 #3/#8): the editor never shows a hard scrollbar
+  // (hidden in CSS). When typed content overflows the max height and the caret
+  // scrolls it, mark the scroll container so a top gradient MASK fades the text
+  // sliding under the top edge instead of a harsh cut. At rest (scrollTop 0) the
+  // mask is off, so the placeholder and first line never fade.
+  const onEditorScroll = () => {
+    const el = editorScrollRef.current;
+    if (el !== null) el.dataset.scrolled = el.scrollTop > 1 ? 'true' : 'false';
+  };
+
+  // Apply composer text pushed from elsewhere: a message's Edit action and pi's
+  // extension `setComposerText` both land in the store; drain it into the editor.
+  const composerText = usePiStore((s) => s.composerText);
+  useEffect(() => {
+    if (composerText.length === 0) return;
+    apiRef.current?.setText(composerText);
+    apiRef.current?.focus();
+    usePiStore.setState({ composerText: '' });
+  }, [composerText]);
+
+  const canSend = text.trim().length > 0 || attachments.length > 0;
+  const bashMode = text.trim().startsWith('!');
+
+  // Accept images (sent to pi as ImageContent) AND text files (read + folded
+  // into the prompt text on send). Anything else — binary the prompt can't carry
+  // (pdf, zip, …) — is NOT silently dropped: its name shows in an inline note.
+  const addFiles = async (files: File[]) => {
+    const added: Attachment[] = [];
+    const rejected: string[] = [];
+    for (const f of files) {
+      if (f.type.startsWith('image/')) {
+        added.push({
+          id: crypto.randomUUID(),
+          name: f.name,
+          kind: 'image',
+          dataUri: await fileToDataUri(f),
+        });
+      } else if (isTextFile(f) && f.size <= TEXT_MAX_BYTES) {
+        added.push({ id: crypto.randomUUID(), name: f.name, kind: 'text', text: await f.text() });
+      } else {
+        rejected.push(f.name);
+      }
+    }
+    if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
+    if (rejected.length > 0) {
+      setSkipped(rejected);
+      if (skipTimer.current !== null) clearTimeout(skipTimer.current);
+      skipTimer.current = setTimeout(() => setSkipped([]), 6000);
+    }
+  };
+
+  // Drain files dropped on the window-level fullscreen overlay (#A8b) into our
+  // attachment list, then clear the hand-off store.
+  const droppedFiles = useDropStore((s) => s.files);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: droppedFiles is the trigger; addFiles reads only setState
+  useEffect(() => {
+    if (droppedFiles.length === 0) return;
+    void addFiles(droppedFiles);
+    useDropStore.getState().clear();
+  }, [droppedFiles]);
+
+  // Fetch slash commands whenever the session becomes ready. get_commands
+  // resolves `{success:false}` until pi's RPC is live, so the original
+  // mount-only fetch silently lost the race and `/` showed nothing. Re-fetch on
+  // model readiness, retry on failure, and always keep the built-ins so `/`
+  // works from the first keystroke.
+  const modelReady = usePiStore((s) => s.agent.model !== null || s.session !== null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: modelReady is a re-fetch trigger, not read in the effect
+  useEffect(() => {
+    let cancelled = false;
+    let attempts = 0;
+    const merge = (fetched: SlashCommand[]): void => {
+      const seen = new Set(BUILTIN_COMMANDS.map((b) => b.name));
+      setCommands([...BUILTIN_COMMANDS, ...fetched.filter((c) => !seen.has(c.name))]);
+    };
+    const scheduleRetry = (): void => {
+      if (cancelled || attempts >= 6) return;
+      attempts += 1;
+      setTimeout(load, 400 * attempts);
+    };
+    const load = (): void => {
+      getCommands()
+        .then((res) => {
+          if (cancelled) return;
+          if (res.success) merge(res.commands);
+          else scheduleRetry();
+        })
+        .catch(() => {
+          if (!cancelled) scheduleRetry();
+        });
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [modelReady]);
+
+  // Resolve autocomplete suggestions for the active token.
+  useEffect(() => {
+    let cancelled = false;
+    setSelectedIndex(0);
+    if (token.mode === null) {
+      setItems([]);
+      return;
+    }
+    void (async () => {
+      if (token.mode === 'mention') {
+        const files = await window.piDesktop
+          .invoke('fs:list-files', { cwd, query: token.query, limit: 12 })
+          .catch(() => []);
+        if (cancelled) return;
+        setItems(
+          files.map(
+            (f): AcItem => ({
+              id: `@${f.rel}`,
+              label: f.rel.split('/').pop() ?? f.rel,
+              subtitle: f.rel,
+              section: 'Files',
+              kind: 'file',
+            }),
+          ),
+        );
+      } else {
+        const q = token.query.toLowerCase();
+        setItems(
+          commands
+            .filter(
+              (c) =>
+                c.name.toLowerCase().includes(q) || (c.description ?? '').toLowerCase().includes(q),
+            )
+            .slice(0, 12)
+            .map(
+              (c): AcItem => ({
+                id: `/${c.name} `,
+                label: `/${c.name}`,
+                subtitle: c.description,
+                section: 'Commands',
+                kind: 'command',
+              }),
+            ),
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token.mode, token.query, cwd, commands]);
+
+  // Stable keymap object: methods read the latest state through refs so the
+  // editor never has to re-register its commands.
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const selRef = useRef(selectedIndex);
+  selRef.current = selectedIndex;
+
+  const keymap = useRef<ComposerKeymap>({
+    isAcOpen: () => tokenRef.current.mode !== null && itemsRef.current.length > 0,
+    moveSelection: (delta) =>
+      setSelectedIndex((i) => clamp(i + delta, 0, Math.max(0, itemsRef.current.length - 1))),
+    acceptAc: () => {
+      const item = itemsRef.current[selRef.current];
+      if (item === undefined) return false;
+      apiRef.current?.insertToken(tokenRef.current.tokenStart, item.id);
+      setToken(EMPTY_TOKEN);
+      return true;
+    },
+    // Suggestion overlay removed (#A7): these keymap hooks are inert no-ops so
+    // arrow/Tab/Esc fall through to the editor's native behavior.
+    moveSuggestion: () => false,
+    acceptSuggestion: () => false,
+    dismissSuggestions: () => false,
+    close: () => setToken(EMPTY_TOKEN),
+  }).current;
+
+  const submit = async () => {
+    const raw = text.trim();
+    if (raw === '' && attachments.length === 0) return;
+    const imageUris = attachments
+      .filter((a) => a.kind === 'image')
+      .map((a) => a.dataUri)
+      .filter((uri): uri is string => uri !== undefined);
+    const textFiles = attachments.filter((a) => a.kind === 'text');
+    apiRef.current?.clear();
+    setAttachments([]);
+    setToken(EMPTY_TOKEN);
+    // Keep focus in the editor after a send (adversarial finding): with the
+    // composer now mounted across the empty→thread transition, this refocus makes
+    // the caret sticky even if the browser blurred on submit.
+    apiRef.current?.focus();
+    if (raw.startsWith('!')) {
+      await runBash(raw.slice(1).trim());
+      return;
+    }
+    // Fold attached text-file contents into pi's copy of the message (the send
+    // path is otherwise images-only); the visible bubble echoes only the typed
+    // text (or the filenames when nothing was typed).
+    const fileBlocks = textFiles
+      .map((a) => `Attached file \`${a.name}\`:\n\`\`\`\n${a.text ?? ''}\n\`\`\``)
+      .join('\n\n');
+    const agentMessage =
+      fileBlocks.length > 0 ? (raw.length > 0 ? `${fileBlocks}\n\n${raw}` : fileBlocks) : raw;
+    const echo =
+      raw.length > 0 ? raw : textFiles.length > 0 ? textFiles.map((a) => a.name).join(', ') : raw;
+
+    if (usePiStore.getState().agent.isStreaming) await steerPrompt(echo, agentMessage);
+    else await sendPrompt(echo, imageUris, agentMessage);
+  };
+
+  // THEME 4 click-target fix: clicking any blank area of the composer focuses
+  // the editor. Skip when the press lands on an interactive control (the send
+  // button, add-menu, model picker) or on the editor itself (let Lexical place
+  // the caret). preventDefault keeps focus from bouncing off the blank target.
+  const focusEditorFromBlank = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (
+      target.closest(
+        'button, a, input, textarea, select, [contenteditable="true"], [role="button"], [role="menu"], [role="menuitem"], [role="listbox"], [role="option"]',
+      ) !== null
+    ) {
+      return;
+    }
+    e.preventDefault();
+    apiRef.current?.focus();
+  };
+
+  const showSend = flavor === 'codex' || canSend || isStreaming;
+  const placeholder = isStreaming
+    ? 'Send another to steer…'
+    : bashMode
+      ? 'Run a shell command…'
+      : 'Ask Pi anything. @ to mention files, / for commands, ! to run bash.';
+
+  return (
+    <div className="mx-auto w-full max-w-[700px]">
+      <div className="pd-composer-root relative">
+        <Autocomplete
+          items={token.mode !== null ? items : []}
+          selectedIndex={selectedIndex}
+          onPick={(item) => {
+            apiRef.current?.insertToken(token.tokenStart, item.id);
+            setToken(EMPTY_TOKEN);
+            apiRef.current?.focus();
+          }}
+          onHover={setSelectedIndex}
+        />
+
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: click-to-focus target; the editor owns keyboard entry */}
+        <div
+          className="pd-composer"
+          data-bash={bashMode ? '' : undefined}
+          onMouseDown={focusEditorFromBlank}
+        >
+          {attachments.length > 0 ? (
+            <div className="pd-composer-attachments" data-testid="composer-attachments">
+              {attachments.map((a) => (
+                <AttachmentPreview
+                  key={a.id}
+                  name={a.name}
+                  dataUri={a.dataUri}
+                  onRemove={() => setAttachments((prev) => prev.filter((p) => p.id !== a.id))}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {skipped.length > 0 ? (
+            <div
+              className="px-3 pt-2 text-footnote text-text-muted"
+              data-testid="composer-skipped-note"
+            >
+              Only images and text files can be attached — skipped {skipped.join(', ')}.
+            </div>
+          ) : null}
+
+          <div
+            ref={editorScrollRef}
+            className="pd-composer-editor pd-scroll"
+            onScroll={onEditorScroll}
+          >
+            <ComposerEditor
+              placeholder={placeholder}
+              onTextChange={setText}
+              onTokenChange={setToken}
+              onSubmit={() => void submit()}
+              keymap={keymap}
+              apiRef={apiRef}
+            />
+          </div>
+
+          <div className="pd-composer-footer">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,text/*"
+              multiple
+              hidden
+              onChange={(e) => {
+                void addFiles(Array.from(e.target.files ?? []));
+                e.target.value = '';
+              }}
+            />
+            <ComposerAddMenu
+              variant="full"
+              side="top"
+              align="start"
+              onAddFiles={() => fileInputRef.current?.click()}
+              webSearch={webSearch}
+              onWebSearchChange={setWebSearch}
+            />
+            <div className="pd-composer-footer-spacer" />
+            <ComposerFooter piModels={piModels} onOpenModels={onOpenModels} />
+            {showSend ? (
+              isStreaming ? (
+                <IconButton
+                  aria-label="Stop"
+                  variant="primary"
+                  circle
+                  onClick={() => void abortPi()}
+                  data-testid="composer-stop"
+                >
+                  <IconClose size={14} />
+                </IconButton>
+              ) : (
+                <IconButton
+                  aria-label="Send message"
+                  variant="primary"
+                  circle
+                  disabled={!canSend}
+                  onClick={() => void submit()}
+                  data-testid="composer-send"
+                >
+                  <IconArrowUp size={14} />
+                </IconButton>
+              )
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

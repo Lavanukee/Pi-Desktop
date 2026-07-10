@@ -1,0 +1,198 @@
+/*
+ * Chips / badges / kbd hints — spec-chips-kbd.md.
+ * Suggestion chip = outline pill (claude Home row, MED/LOW border confidence).
+ * Kbd hint: codex chip chrome vs claude bare muted glyphs — flavor-defaulted
+ * via the --auto class, explicit --chip/--bare override.
+ */
+
+.pd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--pd-control-md);
+  margin: 0;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--pd-radius-full);
+  background: transparent;
+  box-shadow: 0 0 0 1px var(--pd-border-subtle);
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  white-space: nowrap;
+  user-select: none;
+  /* transform is the one-shot hover-lift channel (values in hover.css). */
+  transition:
+    background-color var(--pd-duration-base) var(--pd-easing-standard),
+    transform var(--pd-duration-base) var(--pd-easing-spring);
+}
+
+button.pd-chip {
+  cursor: pointer;
+}
+
+button.pd-chip:hover {
+  background: var(--pd-bg-hover);
+}
+
+.pd-chip-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--pd-text-secondary);
+}
+
+/* Mount overshoot (codex chip-enter; on-brand with claude springs — adopted
+ * for both per spec-chips-kbd ADAPTATION). */
+.pd-chip--enter {
+  animation: pd-chip-enter var(--pd-duration-slow) var(--pd-easing-enter);
+}
+
+@keyframes pd-chip-enter {
+  0% {
+    opacity: 0;
+    transform: translate(-8px, 4px) scale(0.92);
+  }
+  70% {
+    opacity: 1;
+    transform: translate(1px, -1px) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-chip--enter {
+    animation: none;
+  }
+}
+
+/* Attachment pill: concentric-radius formula max(0, surface-radius - inset)
+ * is flavor-neutral math — ported exactly (spec-chips-kbd / spec-composer). */
+.pd-attachment-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 16rem;
+  padding: 6px 8px;
+  border-radius: max(var(--pd-radius-xs), calc(var(--pd-radius-surface) - 8px));
+  background: var(--pd-bg-raised);
+  box-shadow: var(--pd-shadow-hairline);
+  color: var(--pd-text-primary);
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-footnote);
+}
+
+.pd-attachment-pill-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-attachment-pill-meta {
+  color: var(--pd-text-muted);
+  flex: none;
+}
+
+/* Floating dismissable suggestion pill (codex-evidenced; claude re-skins via
+ * tokens — LOW claude evidence, visual-QA flagged in spec-chips-kbd). */
+.pd-float-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 8px 8px 12px;
+  border-radius: var(--pd-radius-surface);
+  background: color-mix(
+    in srgb,
+    var(--pd-bg-overlay) calc(var(--pd-surface-translucency) * 100%),
+    transparent
+  );
+  -webkit-backdrop-filter: blur(var(--pd-blur-overlay));
+  backdrop-filter: blur(var(--pd-blur-overlay));
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-md);
+}
+
+.pd-float-pill-title {
+  font-weight: var(--pd-font-weight-medium);
+  font-size: var(--pd-font-size-body);
+}
+
+.pd-float-pill-description {
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-body);
+}
+
+/* ---- badge (claude sizes: base 16px / small 12px) ---- */
+
+.pd-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 16px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: var(--pd-radius-xs);
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-secondary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-caption);
+  line-height: 1;
+  font-weight: var(--pd-font-weight-medium);
+  white-space: nowrap;
+}
+
+.pd-badge--sm {
+  height: 12px;
+  min-width: 12px;
+  padding: 0 3px;
+  font-size: 10px;
+}
+
+.pd-badge--info {
+  background: var(--pd-status-info-bg);
+  color: var(--pd-status-info-fg);
+}
+.pd-badge--success {
+  background: var(--pd-status-success-bg);
+  color: var(--pd-status-success-fg);
+}
+.pd-badge--warning {
+  background: var(--pd-status-warning-bg);
+  color: var(--pd-status-warning-fg);
+}
+.pd-badge--danger {
+  background: var(--pd-status-danger-bg);
+  color: var(--pd-status-danger-fg);
+}
+.pd-badge--accent {
+  background: var(--pd-accent-subtle);
+  color: var(--pd-accent-primary);
+}
+
+/* ---- kbd hint ---- */
+
+.pd-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-family: var(--pd-font-mono);
+  font-variant-ligatures: none;
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+  color: var(--pd-text-muted);
+}
+
+/* Chip chrome: explicit, or flavor-default for codex (spec-chips-kbd
+ * ADAPTATION: claude defaults to bare glyphs, codex to the chip). */
+.pd-kbd--chip,
+:root[data-flavor="codex"] .pd-kbd--auto {
+  padding: 1px 6px;
+  border-radius: var(--pd-radius-sm);
+  background: var(--pd-bg-inset);
+  box-shadow: 0 0 0 1px var(--pd-border-default);
+  color: var(--pd-text-secondary);
+  font-weight: var(--pd-font-weight-medium);
+}

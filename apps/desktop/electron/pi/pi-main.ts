@@ -1,0 +1,110 @@
+/**
+ * Main-process pi wiring: one PiBridge child per window (WebContents), every
+ * bridge event multiplexed to that window over the shared event wire.
+ *
+ * The engine never imports electron; session lifecycle/handler logic lives in
+ * the electron-free ./pi-sessions module, and this module is the seam where
+ * Electron specifics (app path, ipcMain, webContents) are injected.
+ */
+
+import { readFileSync } from 'node:fs';
+import { PiBridge } from '@pi-desktop/engine/main';
+import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
+import { app, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
+import { resolveBundledPackageAsset } from '../app-paths';
+import type { AppEventMap } from '../ipc-contract';
+import { isTrustedIpcEvent } from '../trusted-senders';
+import { createPiSessions, type PiSessionHandlers } from './pi-sessions';
+import { installPiQuitHold } from './quit-hold';
+
+const log = createLogger('desktop:pi');
+const events = createIpcEventSender<AppEventMap>();
+
+/**
+ * The three bundled pi extension packages, loaded via repeated `-e` flags.
+ * provider-llamacpp routes local models through its streamSimple provider
+ * (llamacpp-stream api); harness (W5) and web-tools (W6) add tools/commands.
+ * Each is resolved to its `<pkg>/src/index.ts` — repo-relative in dev,
+ * bundle-relative (inside the asar) when packaged — via the shared app-paths
+ * resolver, and only those that actually `export default` an activate are
+ * included, so an absent/placeholder extension is tolerated and lands
+ * automatically once its workstream ships.
+ */
+const EXTENSION_PACKAGE_DIRS = ['provider-llamacpp', 'harness', 'web-tools'] as const;
+
+function resolveExtensionPaths(): string[] {
+  const out: string[] = [];
+  for (const pkgDir of EXTENSION_PACKAGE_DIRS) {
+    const abs = resolveBundledPackageAsset(pkgDir, 'src/index.ts');
+    try {
+      if (/export\s+default/.test(readFileSync(abs, 'utf8'))) out.push(abs);
+    } catch {
+      // Absent — tolerated; the workstream building it hasn't shipped yet.
+    }
+  }
+  log.info('pi extensions resolved', { count: out.length, paths: out, packaged: app.isPackaged });
+  return out;
+}
+
+const EXTENSION_PATHS: string[] = resolveExtensionPaths();
+
+/** SIGTERM → SIGKILL grace for every bridge; the quit hold caps at this plus
+ * a margin, so the two must not drift apart. */
+const KILL_GRACE_MS = 1500;
+
+const sessions = createPiSessions<WebContents>({
+  createBridge: (req, onEvent, opts) =>
+    new PiBridge(
+      {
+        cwd: req.cwd,
+        sessionPath: req.sessionPath,
+        // Extensions are skipped on a post-crash retry (a broken/WIP extension
+        // that exits pi at startup degrades to a working extension-free session).
+        extensionPaths: opts?.extensionsDisabled === true ? [] : EXTENSION_PATHS,
+        // Load ONLY our bundled `-e` extensions; never pi's auto-discovered
+        // `~/.pi/agent/extensions/*.ts` (and `<cwd>/.pi/extensions`). A stale
+        // user copy of any tool (e.g. web-tools.ts) there registers a duplicate
+        // tool name → pi exits 1 at startup → the self-heal respawns
+        // extension-free, which leaves models.json's `llamacpp-stream` api
+        // UNHANDLED and dead-ends chat. `--no-extensions` (pi 0.68.1) disables
+        // discovery only; explicit `-e` paths still load, so this guarantees the
+        // primary path and makes the extension-free respawn a true last resort.
+        extraArgs: ['--no-extensions'],
+        killGraceMs: KILL_GRACE_MS,
+        // Bundled resolution root; PI_BIN (E2E/mock) and explicit binPath
+        // still take precedence inside the engine.
+        appRoot: app.getAppPath(),
+      },
+      onEvent,
+    ),
+  sendEvent: (sender, event) => events.send(sender, 'pi:event', event),
+  log,
+});
+
+/** Sender-aware variant of the shared register helper: pi channels route to a
+ * per-window bridge, so handlers need event.sender. Exhaustive by type, and
+ * gated on the trusted-sender registry — pi is an exec-capable agent, so only
+ * main frames of app-created windows may reach a bridge. */
+function registerAll(handlers: PiSessionHandlers<WebContents>): void {
+  for (const [channel, handler] of Object.entries(handlers) as Array<
+    [string, (sender: WebContents, request: unknown) => unknown]
+  >) {
+    ipcMain.handle(channel, (event: IpcMainInvokeEvent, request: unknown) => {
+      if (!isTrustedIpcEvent(event)) {
+        log.warn('rejected invoke from untrusted sender', { channel, wcId: event.sender.id });
+        throw new Error(`[pi] rejected "${channel}": untrusted sender`);
+      }
+      return handler(event.sender, request);
+    });
+  }
+}
+
+export function registerPiIpc(): void {
+  registerAll(sessions.handlers);
+
+  installPiQuitHold(app, {
+    bridges: () => sessions.bridges(),
+    disposeAll: () => sessions.disposeAll(),
+    graceMs: KILL_GRACE_MS,
+  });
+}

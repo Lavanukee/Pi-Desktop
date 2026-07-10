@@ -1,0 +1,45 @@
+{
+  "name": "@pi-desktop/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Shared design system: components built from the Claude/Codex component spec book, styled on --pd-* tokens.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "ladle": "ladle serve",
+    "ladle:build": "ladle build",
+    "screenshot": "node scripts/screenshot-stories.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "@ladle/react": "^5.1.1",
+    "@pi-desktop/shared": "workspace:*",
+    "@pi-desktop/themes": "workspace:*",
+    "@types/katex": "^0.16.8",
+    "@types/node": "^26.1.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "playwright-core": "^1.61.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "katex": "^0.17.0",
+    "motion": "^12.42.2",
+    "radix-ui": "^1.6.2",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
+  }
+}

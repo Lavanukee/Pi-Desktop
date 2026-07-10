@@ -1,0 +1,98 @@
+/*
+ * Inputs / textareas — spec-composer (editor + placeholder recipes) and
+ * spec-settings (standalone control fields). Hairline drawn as box-shadow
+ * (design DNA), placeholder on --pd-text-placeholder.
+ */
+
+.pd-input,
+.pd-textarea {
+  display: block;
+  width: 100%;
+  margin: 0;
+  border: none;
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-raised);
+  box-shadow: 0 0 0 1px var(--pd-border-default);
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  font-weight: var(--pd-font-weight-body);
+  outline: none;
+  transition: box-shadow var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-input {
+  height: var(--pd-control-md);
+  padding: 0 10px;
+}
+
+.pd-textarea {
+  min-height: calc(var(--pd-control-md) * 2);
+  padding: 8px 10px;
+  resize: none;
+}
+
+.pd-input::placeholder,
+.pd-textarea::placeholder {
+  color: var(--pd-text-placeholder);
+}
+
+.pd-input:focus-visible,
+.pd-textarea:focus-visible {
+  box-shadow: 0 0 0 1.5px var(--pd-border-focus);
+}
+
+.pd-input:disabled,
+.pd-textarea:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/*
+ * Auto-grow mirror (claude composer trick, spec-composer motion notes: growth
+ * is layout-driven via an invisible grid-cell replica, no animation).
+ */
+.pd-autogrow {
+  display: grid;
+  width: 100%;
+}
+
+.pd-autogrow::after {
+  content: attr(data-value) " ";
+  visibility: hidden;
+  grid-area: 1 / 1;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pd-autogrow > .pd-textarea,
+.pd-autogrow > textarea {
+  grid-area: 1 / 1;
+  overflow: hidden;
+}
+
+/* The replica must inherit the exact text metrics of the textarea. */
+.pd-autogrow::after,
+.pd-autogrow > .pd-textarea,
+.pd-autogrow > textarea {
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  font-weight: var(--pd-font-weight-body);
+  padding: 8px 10px;
+}
+
+/* Bare editor look (composer hosts its own chrome). */
+.pd-autogrow--bare::after,
+.pd-autogrow--bare > .pd-textarea,
+.pd-autogrow--bare > textarea {
+  padding: 0;
+}
+
+.pd-autogrow--bare > .pd-textarea {
+  min-height: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}

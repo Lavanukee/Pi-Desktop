@@ -1,0 +1,25 @@
+{
+  "name": "pi-desktop-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.10.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "ship:local": "bash scripts/ship-local.sh",
+    "dev": "pnpm --filter @pi-desktop/desktop dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "check": "turbo run lint typecheck test build",
+    "e2e": "pnpm --filter @pi-desktop/desktop e2e",
+    "format": "biome check --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "turbo": "^2.10.4"
+  }
+}

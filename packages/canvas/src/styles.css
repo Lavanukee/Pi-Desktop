@@ -1,0 +1,621 @@
+/*
+ * @pi-desktop/canvas surface styles. Consumers load this once at the root,
+ * after @pi-desktop/themes/themes.css and @pi-desktop/ui/styles.css. Rules
+ * consume ONLY var(--pd-*) tokens; the surfaces render inside <ArtifactPanel>.
+ */
+
+.pd-canvas-code {
+  position: relative;
+  height: 100%;
+}
+
+.pd-canvas-code-host,
+.pd-canvas-code-host .cm-editor {
+  height: 100%;
+}
+
+.pd-canvas-code-rail {
+  position: absolute;
+  top: var(--pd-space-xs);
+  right: var(--pd-space-xs);
+  z-index: 1;
+}
+
+.pd-canvas-markdown {
+  height: 100%;
+  overflow: auto;
+  padding: var(--pd-space-lg);
+}
+
+.pd-canvas-svg {
+  height: 100%;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: var(--pd-space-lg);
+}
+
+.pd-canvas-svg svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Sandboxed interactive HTML fills the pane; the iframe IS the trust boundary. */
+.pd-canvas-html {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--pd-bg-raised);
+}
+
+.pd-canvas-raw {
+  height: 100%;
+  overflow: auto;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Tabbed multi-surface canvas (THEME 1 — Aside img7)
+ * ────────────────────────────────────────────────────────────────────── */
+
+.pd-canvas-tabs {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--pd-bg-raised);
+  border-radius: var(--pd-radius-surface);
+  overflow: hidden;
+}
+
+.pd-canvas-tabs--collapsed {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  height: auto;
+  padding: var(--pd-space-xs);
+}
+
+.pd-canvas-tabbar {
+  display: flex;
+  align-items: center;
+  gap: var(--pd-space-sm);
+  height: 40px;
+  padding: 0 var(--pd-space-xs);
+  border-bottom: 1px solid var(--pd-border-subtle);
+  flex: 0 0 auto;
+}
+
+.pd-canvas-tablist {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.pd-canvas-tablist::-webkit-scrollbar {
+  display: none;
+}
+
+.pd-canvas-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 200px;
+  padding: 2px 2px 2px 4px;
+  border-radius: var(--pd-radius-md);
+  color: var(--pd-text-secondary);
+  transition: background var(--pd-duration-fast) var(--pd-easing-standard);
+}
+
+.pd-canvas-tab:hover {
+  background: var(--pd-bg-hover);
+}
+
+.pd-canvas-tab[data-active] {
+  background: var(--pd-bg-selected);
+  color: var(--pd-text-primary);
+}
+
+.pd-canvas-tab-main {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pd-space-xs);
+  min-width: 0;
+  padding: 4px 4px;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: var(--pd-font-size-caption);
+  cursor: pointer;
+}
+
+.pd-canvas-tab-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--pd-text-muted);
+}
+
+.pd-canvas-tab[data-active] .pd-canvas-tab-icon {
+  color: var(--pd-text-secondary);
+}
+
+.pd-canvas-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-canvas-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--pd-radius-sm);
+  background: none;
+  color: var(--pd-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--pd-duration-fast) var(--pd-easing-standard);
+}
+
+.pd-canvas-tab:hover .pd-canvas-tab-close,
+.pd-canvas-tab[data-active] .pd-canvas-tab-close {
+  opacity: 1;
+}
+
+.pd-canvas-tab-close:hover {
+  background: var(--pd-bg-active);
+  color: var(--pd-text-primary);
+}
+
+.pd-canvas-tabbar-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.pd-canvas-tabpanel {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pd-canvas-tabpanel > * {
+  height: 100%;
+}
+
+.pd-canvas-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pd-space-sm);
+  height: 100%;
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-caption);
+}
+
+/* ── Browser surface ─────────────────────────────────────────────────── */
+
+.pd-browser {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.pd-browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--pd-space-xs);
+  padding: var(--pd-space-xs) var(--pd-space-sm);
+  border-bottom: 1px solid var(--pd-border-subtle);
+  flex: 0 0 auto;
+}
+
+.pd-browser-nav {
+  display: inline-flex;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.pd-browser-urlform {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--pd-space-xs);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pd-browser-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 var(--pd-space-md);
+  border: 1px solid var(--pd-border-default);
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-bg-inset);
+  color: var(--pd-text-primary);
+  font-size: var(--pd-font-size-caption);
+}
+
+.pd-browser-url::placeholder {
+  color: var(--pd-text-placeholder);
+}
+
+.pd-browser-url:focus {
+  outline: none;
+  border-color: var(--pd-border-focus);
+}
+
+.pd-browser-driving {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-accent-subtle);
+  color: var(--pd-accent-primary);
+  font-size: var(--pd-font-size-footnote);
+}
+
+.pd-browser-driving-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--pd-radius-full);
+  background: currentColor;
+  animation: pd-browser-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pd-browser-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-browser-driving-dot {
+    animation: none;
+  }
+}
+
+.pd-browser-content {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: var(--pd-bg-base);
+}
+
+.pd-browser-slot {
+  position: absolute;
+  inset: 0;
+}
+
+.pd-browser-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--pd-space-xs);
+  color: var(--pd-text-muted);
+  pointer-events: none;
+}
+
+.pd-browser-empty-title {
+  margin: var(--pd-space-sm) 0 0;
+  color: var(--pd-text-secondary);
+  font-size: var(--pd-font-size-body);
+}
+
+.pd-browser-empty-sub {
+  margin: 0;
+  font-size: var(--pd-font-size-caption);
+}
+
+/* ── Terminal surface ────────────────────────────────────────────────── */
+
+.pd-terminal {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--pd-code-block-bg);
+}
+
+.pd-terminal-header {
+  display: flex;
+  align-items: center;
+  gap: var(--pd-space-xs);
+  padding: var(--pd-space-xs) var(--pd-space-md);
+  border-bottom: 1px solid var(--pd-border-subtle);
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-footnote);
+  flex: 0 0 auto;
+}
+
+.pd-terminal-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--pd-space-md);
+  font-family: var(--pd-font-mono);
+  font-size: var(--pd-font-size-code);
+  line-height: var(--pd-leading-code);
+  color: var(--pd-text-primary);
+  white-space: pre-wrap;
+}
+
+/* ── Media preview surface ───────────────────────────────────────────── */
+
+.pd-media {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.pd-media-header {
+  display: flex;
+  align-items: center;
+  gap: var(--pd-space-xs);
+  padding: var(--pd-space-xs) var(--pd-space-sm);
+  border-bottom: 1px solid var(--pd-border-subtle);
+  flex: 0 0 auto;
+}
+
+.pd-media-title {
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-secondary);
+}
+
+.pd-media-type {
+  color: var(--pd-text-muted);
+}
+
+.pd-media-spacer {
+  flex: 1 1 auto;
+}
+
+.pd-media-download {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.pd-media-download .pd-btn {
+  gap: 4px;
+}
+
+.pd-media-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 2;
+  min-width: 120px;
+  padding: var(--pd-space-xs);
+  border: 1px solid var(--pd-border-default);
+  border-radius: var(--pd-radius-popover);
+  background: var(--pd-bg-overlay);
+  box-shadow: var(--pd-shadow-popover);
+}
+
+.pd-media-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--pd-radius-menu-item);
+  background: none;
+  color: var(--pd-text-primary);
+  font: inherit;
+  font-size: var(--pd-font-size-caption);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pd-media-menu-item:hover {
+  background: var(--pd-bg-hover);
+}
+
+.pd-media-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--pd-space-lg);
+  background: var(--pd-bg-inset);
+}
+
+.pd-media-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.pd-media-pdf {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--pd-bg-raised);
+}
+
+.pd-media-status {
+  display: grid;
+  place-items: center;
+}
+
+.pd-media-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--pd-space-md);
+  color: var(--pd-text-muted);
+}
+
+.pd-media-error-title {
+  margin: 0;
+  font-size: var(--pd-font-size-caption);
+}
+
+/* ── Subagent surface ────────────────────────────────────────────────── */
+
+.pd-subagent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 100%;
+  overflow: auto;
+  padding: var(--pd-space-sm);
+}
+
+.pd-subagent-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-caption);
+}
+
+.pd-subagent-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pd-space-sm);
+  width: 100%;
+  padding: var(--pd-space-sm);
+  border: none;
+  border-radius: var(--pd-radius-row);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pd-subagent-row:hover {
+  background: var(--pd-bg-hover);
+}
+
+.pd-subagent-glyph {
+  display: inline-flex;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--pd-text-muted);
+}
+
+.pd-subagent-row[data-status="done"] .pd-subagent-glyph {
+  color: var(--pd-status-success-fg);
+}
+
+.pd-subagent-row[data-status="error"] .pd-subagent-glyph {
+  color: var(--pd-status-danger-fg);
+}
+
+.pd-subagent-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.pd-subagent-name {
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-primary);
+}
+
+.pd-subagent-step {
+  font-size: var(--pd-font-size-footnote);
+  color: var(--pd-text-muted);
+}
+
+/* ── File surface ────────────────────────────────────────────────────── */
+
+.pd-file {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.pd-file-name {
+  padding: var(--pd-space-xs) var(--pd-space-md);
+  border-bottom: 1px solid var(--pd-border-subtle);
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-mono);
+  font-size: var(--pd-font-size-footnote);
+  flex: 0 0 auto;
+}
+
+.pd-file-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Inline widget (THEME 2 — size-capped, NEVER scrollable)
+ * ────────────────────────────────────────────────────────────────────── */
+
+.pd-inline-widget {
+  position: relative;
+  border: 1px solid var(--pd-border-subtle);
+  border-radius: var(--pd-radius-lg);
+  background: var(--pd-bg-raised);
+  overflow: hidden;
+  /* A2: shrink to the widget's intrinsic width (a small badge stays a badge)
+   * and never fill the whole ~800px column; cap the growth at a modest max. */
+  width: fit-content;
+  max-width: min(100%, 40rem);
+}
+
+.pd-inline-widget-box {
+  /* overflow:hidden + max-height set inline; NEVER scrollable by design. */
+  width: 100%;
+}
+
+.pd-inline-widget-move {
+  position: absolute;
+  top: var(--pd-space-xs);
+  right: var(--pd-space-xs);
+  z-index: 2;
+  opacity: 0;
+  transition: opacity var(--pd-duration-fast) var(--pd-easing-standard);
+}
+
+.pd-inline-widget:hover .pd-inline-widget-move,
+.pd-inline-widget:focus-within .pd-inline-widget-move {
+  opacity: 1;
+}
+
+.pd-inline-widget-overflow {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: var(--pd-space-md);
+  padding-top: var(--pd-space-xxl);
+  background: linear-gradient(to bottom, transparent, var(--pd-bg-raised) 70%);
+  pointer-events: none;
+}
+
+.pd-inline-widget-open {
+  pointer-events: auto;
+}

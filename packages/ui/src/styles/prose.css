@@ -1,0 +1,261 @@
+/*
+ * Markdown / typography — spec-markdown.md. Voice + width are tokens
+ * (--pd-font-response-*, --pd-thread-prose-width); the rhythm scales are the
+ * ONE place the spec recommends a small flavor-scoped stylesheet over tokens.
+ * Inline code diverges hard by design: claude danger-tinted + hairline border
+ * vs codex neutral wash chip — both carried by --pd-inline-code-* tokens.
+ */
+
+.pd-prose {
+  max-width: var(--pd-thread-prose-width);
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-response-family);
+  font-size: var(--pd-font-response-size);
+  line-height: var(--pd-leading-response);
+  font-weight: var(--pd-font-weight-body);
+  font-variation-settings: var(--pd-font-response-variation);
+  overflow-wrap: anywhere;
+}
+
+.pd-prose > :first-child {
+  margin-top: 0;
+}
+
+.pd-prose > :last-child {
+  margin-bottom: 0;
+}
+
+.pd-prose p {
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+}
+
+.pd-prose :is(h1, h2, h3, h4, h5, h6) {
+  margin: 20px 0 10px;
+  font-family: var(--pd-font-response-family);
+  font-weight: var(--pd-font-weight-semibold);
+  line-height: 1.25;
+}
+
+.pd-prose h1 {
+  font-size: 1.6em;
+}
+.pd-prose h2 {
+  font-size: 1.35em;
+}
+.pd-prose h3 {
+  font-size: 1.15em;
+}
+.pd-prose :is(h4, h5, h6) {
+  font-size: 1em;
+}
+
+.pd-prose a {
+  color: var(--pd-text-link);
+  font-weight: var(--pd-font-weight-medium);
+  text-decoration: none;
+}
+
+.pd-prose a:hover {
+  text-decoration: underline;
+}
+
+/* Restore list markers explicitly: some hosts (e.g. a Tailwind preflight)
+ * reset `list-style: none`, which strips the 1./• markers. `outside` markers
+ * plus the indent below keep them visible and unclipped. */
+.pd-prose :is(ul, ol) {
+  margin: 0 0 12px;
+  padding-left: 24px;
+  list-style-position: outside;
+}
+
+.pd-prose ul {
+  list-style-type: disc;
+}
+
+.pd-prose ol {
+  list-style-type: decimal;
+}
+
+.pd-prose hr {
+  height: 1px;
+  margin: 28px 0;
+  border: none;
+  background: var(--pd-border-default);
+}
+
+/* Claude rhythm: 28px list indent, 10px item gap, serif headings w500,
+ * 2px-border blockquote (spec-markdown claude element map). */
+:root[data-flavor="claude"] .pd-prose :is(ul, ol) {
+  padding-left: 28px;
+}
+
+:root[data-flavor="claude"] .pd-prose li + li {
+  margin-top: 10px;
+}
+
+:root[data-flavor="claude"] .pd-prose :is(h1, h2, h3, h4, h5, h6) {
+  font-weight: var(--pd-font-weight-medium);
+}
+
+:root[data-flavor="claude"] .pd-prose blockquote {
+  margin: 0 0 12px;
+  padding-left: 8px;
+  border-left: 2px solid var(--pd-border-subtle);
+}
+
+/* Codex rhythm: 21px indent, 8px item gap, 11px paragraph margin, floating
+ * 4px rounded blockquote bar, NOT italic (spec-markdown codex element map). */
+:root[data-flavor="codex"] .pd-prose p {
+  margin-bottom: 11px;
+}
+
+:root[data-flavor="codex"] .pd-prose :is(ul, ol) {
+  padding-left: 21px;
+}
+
+:root[data-flavor="codex"] .pd-prose li + li {
+  margin-top: 8px;
+}
+
+:root[data-flavor="codex"] .pd-prose blockquote {
+  position: relative;
+  margin: 0 0 12px;
+  padding: 8px 0 8px 24px;
+  font-style: normal;
+}
+
+:root[data-flavor="codex"] .pd-prose blockquote::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-border-default);
+}
+
+/* Inline code chip. */
+.pd-prose code:not(pre code),
+.pd-inline-code {
+  padding: 1px 6px;
+  border-radius: var(--pd-radius-sm);
+  background: var(--pd-inline-code-bg);
+  box-shadow: 0 0 0 0.5px var(--pd-inline-code-border);
+  color: var(--pd-inline-code-fg);
+  font-family: var(--pd-font-mono);
+  font-size: 0.92em;
+  font-variant-ligatures: none;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* Tables break out of the prose column into their own scroll container
+ * (codex pattern, adopted for both per spec ADAPTATION). */
+.pd-prose-table-wrap {
+  margin: 0 0 12px;
+  overflow-x: auto;
+}
+
+.pd-prose table {
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+.pd-prose th {
+  border-bottom: 1px solid var(--pd-border-strong);
+  font-weight: var(--pd-font-weight-semibold);
+  text-align: left;
+}
+
+.pd-prose :is(th, td) {
+  padding: 6px 24px 6px 0;
+}
+
+.pd-prose tr + tr td {
+  border-top: 1px solid var(--pd-border-subtle);
+}
+
+/*
+ * Code block — spec-markdown.md. Claude's zero-width sticky copy rail is
+ * strictly better for long blocks: adopted for both flavors (ADAPTATION).
+ * Panel chrome rides --pd-code-block-* tokens.
+ */
+
+/* jedd round-5 #6: the frame + radius live on this container (overflow clipped);
+ * the <pre> inside owns the horizontal scroll, so a real 1px border stays crisp
+ * on ALL sides regardless of scroll — an outset box-shadow could be clipped by
+ * an ancestor's own overflow. Border weight rides the lightened box token. */
+.pd-code-block {
+  position: relative;
+  overflow: hidden;
+  margin: 0 0 14px;
+  border: 1px solid var(--pd-code-block-border);
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-code-block-bg);
+  font-family: var(--pd-font-mono);
+  font-size: var(--pd-font-size-code);
+  line-height: var(--pd-leading-code);
+  font-variant-ligatures: none;
+}
+
+.pd-code-block-rail {
+  position: sticky;
+  top: 8px;
+  float: right;
+  width: 0;
+  height: 32px;
+}
+
+.pd-code-block-copy {
+  position: absolute;
+  right: 8px;
+  top: 0;
+  opacity: 0;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  transition: opacity var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-code-block:hover .pd-code-block-copy,
+.pd-code-block:focus-within .pd-code-block-copy {
+  opacity: 1;
+}
+
+.pd-code-block-lang {
+  padding: 12px 14px 0;
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+  user-select: none;
+}
+
+.pd-code-block pre {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+
+.pd-code-block code {
+  font: inherit;
+  color: var(--pd-text-primary);
+}
+
+/* Copy-safe line numbers: rendered from a data attribute, never selectable
+ * (claude idiom, spec-markdown). */
+.pd-code-line::before {
+  content: attr(data-line-number);
+  display: inline-block;
+  width: 3ch;
+  margin-right: 14px;
+  color: var(--pd-text-ghost);
+  text-align: right;
+  user-select: none;
+}
+
+.pd-code-block ::selection {
+  background: var(--pd-text-link);
+  color: var(--pd-text-inverse);
+}

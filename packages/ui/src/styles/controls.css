@@ -1,0 +1,158 @@
+/*
+ * Selection controls — Switch geometry from spec-settings CLAUDE section
+ * (documented to the pixel: 36x20 track, 16px thumb, travel = width - height),
+ * used for both flavors per its ADAPTATION notes. Segmented control from
+ * spec-model-picker (claude track/pill recipe; codex analog identical anatomy).
+ */
+
+.pd-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-bg-active);
+  box-shadow: inset 0 0 0 0.5px var(--pd-border-default);
+  cursor: pointer;
+  flex: none;
+  transition: background-color var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+/* On-fill: both apps color checked switches with their accent blue (claude
+ * accent-100 / codex #339CFF) = --pd-text-link family, NOT the inverted mono. */
+.pd-switch[data-state="checked"] {
+  background: var(--pd-text-link);
+  box-shadow: none;
+}
+
+.pd-switch:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.pd-switch-thumb {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--pd-radius-full);
+  /* iOS-style thumb is white in both reference apps and both modes
+   * (spec-settings) — deliberately theme-invariant, like the claude tooltip. */
+  background: #fff;
+  box-shadow: var(--pd-shadow-sm);
+  transform: translateX(2px);
+  transition: transform var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-switch[data-state="checked"] .pd-switch-thumb {
+  transform: translateX(18px);
+}
+
+.pd-switch--sm {
+  width: 28px;
+  height: 16px;
+}
+
+.pd-switch--sm .pd-switch-thumb {
+  width: 12px;
+  height: 12px;
+}
+
+.pd-switch--sm[data-state="checked"] .pd-switch-thumb {
+  transform: translateX(14px);
+}
+
+/* ---- checkbox: 16px, radius 4 (claude spec-settings) ---- */
+
+.pd-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--pd-radius-xs);
+  background: var(--pd-bg-raised);
+  box-shadow: inset 0 0 0 1px var(--pd-border-strong);
+  color: transparent;
+  cursor: pointer;
+  flex: none;
+  transition:
+    background-color var(--pd-duration-base) var(--pd-easing-standard),
+    color var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-checkbox[data-state="checked"],
+.pd-checkbox[data-state="indeterminate"] {
+  background: var(--pd-text-link);
+  box-shadow: none;
+  color: var(--pd-text-on-accent);
+}
+
+.pd-checkbox:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ---- segmented control / tabs (spec-model-picker segmented section):
+ * recessed --pd-bg-track well, active segment = raised pill + hairline +
+ * soft shadow. Radius derives from --pd-radius-button so codex goes full-pill. ---- */
+
+.pd-segmented {
+  display: inline-flex;
+  gap: 2px;
+  margin: 0;
+  border: none;
+  min-width: 0;
+  padding: 3px;
+  border-radius: calc(min(var(--pd-radius-button), 24px) + 3px);
+  background: var(--pd-bg-track);
+  box-shadow: inset 0 0 0 0.5px var(--pd-border-default);
+}
+
+.pd-segment {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: calc(var(--pd-control-md) - 6px);
+  margin: 0;
+  padding: 0 12px;
+  border: none;
+  border-radius: min(var(--pd-radius-button), 24px);
+  background: transparent;
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  font-weight: var(--pd-font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    color var(--pd-duration-base) var(--pd-easing-standard),
+    background-color var(--pd-duration-base) var(--pd-easing-standard),
+    box-shadow var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-segment:hover {
+  color: var(--pd-text-secondary);
+}
+
+.pd-segment[data-state="active"],
+.pd-segment[data-state="on"],
+.pd-segment[aria-pressed="true"] {
+  background: var(--pd-bg-raised);
+  color: var(--pd-text-primary);
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-sm);
+}
+
+/* Tab panels carry no chrome of their own. */
+.pd-tab-panel {
+  outline: none;
+}

@@ -1,0 +1,45 @@
+/*
+ * IconStrokeControl — the settings control that drives the global
+ * --pd-icon-stroke token. The preview row scopes --pd-icon-stroke inline (set
+ * by the component) so its glyphs reflect the slider value live.
+ */
+
+.pd-icon-stroke-control {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 22rem;
+}
+
+.pd-icon-stroke-control-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pd-icon-stroke-control-label {
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  font-weight: var(--pd-font-weight-medium);
+}
+
+.pd-icon-stroke-control-value {
+  color: var(--pd-text-secondary);
+  font-family: var(--pd-font-mono);
+  font-size: var(--pd-font-size-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.pd-icon-stroke-control-preview {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 14px;
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-inset);
+  box-shadow: inset 0 0 0 0.5px var(--pd-border-subtle);
+  color: var(--pd-text-secondary);
+}

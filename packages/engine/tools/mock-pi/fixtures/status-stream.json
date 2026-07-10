@@ -1,0 +1,149 @@
+{
+  "name": "status-stream",
+  "state": {
+    "sessionFile": "/tmp/mock-pi/sessions/status-stream.jsonl",
+    "sessionId": "mock-session-status-stream"
+  },
+  "prompts": [
+    {
+      "match": "status",
+      "response": { "success": true },
+      "steps": [
+        { "emit": { "type": "agent_start" } },
+        {
+          "emit": {
+            "type": "queue_update",
+            "steering": ["look at the tests too"],
+            "followUp": ["then summarize"]
+          }
+        },
+        { "emit": { "type": "compaction_start", "reason": "threshold" } },
+        {
+          "delayMs": 5,
+          "emit": {
+            "type": "compaction_end",
+            "reason": "threshold",
+            "aborted": false,
+            "willRetry": false
+          }
+        },
+        {
+          "emit": {
+            "type": "auto_retry_start",
+            "attempt": 1,
+            "maxAttempts": 3,
+            "delayMs": 50,
+            "errorMessage": "529 overloaded"
+          }
+        },
+        { "delayMs": 5, "emit": { "type": "auto_retry_end", "success": true, "attempt": 1 } },
+        {
+          "emit": {
+            "type": "model_change",
+            "modelId": "gemma4-e4b",
+            "modelName": "Gemma 4 E4B",
+            "provider": "llamacpp"
+          }
+        },
+        { "emit": { "type": "thinking_level_change", "thinkingLevel": "high" } },
+        {
+          "emit": {
+            "type": "session_changed",
+            "cwd": "/tmp/mock-pi",
+            "sessionFile": "/tmp/mock-pi/sessions/status-stream-2.jsonl",
+            "sessionId": "mock-session-status-stream-2"
+          }
+        },
+        {
+          "emit": {
+            "type": "extension_ui_request",
+            "id": "ui-status-set",
+            "method": "setStatus",
+            "statusKey": "harness",
+            "statusText": "warming up"
+          }
+        },
+        {
+          "emit": {
+            "type": "extension_ui_request",
+            "id": "ui-widget-set",
+            "method": "setWidget",
+            "widgetKey": "harness",
+            "widgetLines": ["--- status ---", "attempt 1/3"],
+            "widgetPlacement": "belowEditor"
+          }
+        },
+        {
+          "emit": {
+            "type": "extension_ui_request",
+            "id": "ui-status-clear",
+            "method": "setStatus",
+            "statusKey": "harness"
+          }
+        },
+        {
+          "emit": {
+            "type": "extension_ui_request",
+            "id": "ui-widget-clear",
+            "method": "setWidget",
+            "widgetKey": "harness"
+          }
+        },
+        {
+          "emit": {
+            "type": "extension_ui_request",
+            "id": "ui-select-1",
+            "method": "select",
+            "title": "Pick a flavor",
+            "options": ["claude", "codex"],
+            "timeout": 5000
+          }
+        },
+        { "emit": { "type": "turn_start" } },
+        {
+          "emit": {
+            "type": "message_start",
+            "message": { "role": "assistant", "content": [] }
+          }
+        },
+        {
+          "delayMs": 5,
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "text_delta",
+              "contentIndex": 0,
+              "delta": "Status stream complete.",
+              "partial": { "role": "assistant", "content": [] }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "turn_end",
+            "message": {
+              "role": "assistant",
+              "content": [{ "type": "text", "text": "Status stream complete." }],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "gemma4-e4b",
+              "usage": {
+                "input": 25,
+                "output": 6,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 31,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+              },
+              "stopReason": "stop",
+              "timestamp": 1770000050000
+            },
+            "toolResults": []
+          }
+        },
+        { "emit": { "type": "agent_end", "messages": [] } }
+      ]
+    }
+  ]
+}

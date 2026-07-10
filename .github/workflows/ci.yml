@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      TURBO_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reads the pinned pnpm version from the packageManager field.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # Electron's install script downloads the platform binary; cache it so
+      # runs on an unchanged lockfile skip the download.
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - run: pnpm install --frozen-lockfile
+
+      # electron@43 ships no postinstall — its binary otherwise downloads
+      # ad hoc at first require('electron'). Fetch it explicitly (idempotent,
+      # hits the cache above) so the probes never download mid-test, and fail
+      # here if the binary did not materialize.
+      - run: node apps/desktop/node_modules/electron/install.js
+      - run: test -e apps/desktop/node_modules/electron/dist
+
+      - run: pnpm turbo run lint typecheck test build
+
+      # Electron smoke probes — macOS runners run headed Electron directly.
+      - run: pnpm e2e
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-test-results
+          path: apps/desktop/test-results/
+          if-no-files-found: ignore
+
+  # Packaging regression gate: the app is only "done" when the SHIPPED bundle
+  # (not `pnpm dev`) loads its bundled pi extensions, spawns pi from the bundled
+  # cli.js, and serves the pd-preview canvas harness. This packages an unsigned
+  # --dir build, ad-hoc signs it (required for locally-built Apple Silicon
+  # binaries to launch), and runs the deterministic packaged smoke. The
+  # real-model streaming path is left to `SMOKE_MODEL=1` locally (CI has no
+  # cached Gemma/llama.cpp).
+  package:
+    runs-on: macos-14
+    timeout-minutes: 30
+    env:
+      TURBO_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm install --frozen-lockfile
+      - run: node apps/desktop/node_modules/electron/install.js
+      - run: test -e apps/desktop/node_modules/electron/dist
+
+      # Build only the desktop app + its deps, then package unsigned (mirrors
+      # scripts/ship-local.sh so CI and local ship stay in lockstep).
+      - run: pnpm turbo run build --filter @pi-desktop/desktop
+      - run: pnpm --filter @pi-desktop/desktop exec electron-builder --dir --config electron-builder.yml
+
+      - name: Ad-hoc sign + packaged smoke
+        run: |
+          APP="apps/desktop/release/mac-arm64/Pi Desktop.app"
+          [ -d "$APP" ] || APP="apps/desktop/release/mac/Pi Desktop.app"
+          codesign --force --deep --sign - "$APP"
+          (cd apps/desktop && node tests/e2e/packaged-probe.mjs "../../$APP")
+          (cd apps/desktop && node tests/e2e/packaged-smoke.mjs "../../$APP")

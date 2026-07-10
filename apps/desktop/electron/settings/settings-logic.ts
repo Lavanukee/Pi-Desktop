@@ -1,0 +1,128 @@
+/**
+ * Pure settings normalization/merge/seed logic — kept electron-free and
+ * IO-free so it is unit-testable in plain Node (settings-main.ts does the fs).
+ * Every field is guarded on read so a hand-edited or partially-written
+ * settings.json can never brick the app; unknown values fall back to defaults.
+ */
+import type { OnboardingChoices } from '../import/import-contract';
+import {
+  type DesktopSettings,
+  type DesktopSettingsPatch,
+  type EffortLevel,
+  ICON_STROKE_DEFAULT,
+  ICON_STROKE_MAX,
+  ICON_STROKE_MIN,
+  type McpMode,
+  type PermissionMode,
+  type ThemeFlavor,
+  type ThemeModePref,
+} from './settings-contract';
+
+const FLAVORS: readonly ThemeFlavor[] = ['claude', 'codex'];
+const MODES: readonly ThemeModePref[] = ['light', 'dark', 'system'];
+const PERMISSION_MODES: readonly PermissionMode[] = ['bypass', 'reviewer', 'review-all'];
+const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'max'];
+const MCP_MODES: readonly McpMode[] = ['lite', 'native'];
+
+export const DEFAULT_SETTINGS: DesktopSettings = {
+  version: 1,
+  theme: { flavor: 'claude', mode: 'system' },
+  permissionMode: 'reviewer',
+  effort: 'medium',
+  search: { brave: '', tavily: '' },
+  mcpMode: 'lite',
+  capabilities: { image: false, video: false, audio: false, threeD: false },
+  customInstructions: '',
+  iconStroke: ICON_STROKE_DEFAULT,
+};
+
+function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : fallback;
+}
+
+function str(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function bool(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function num(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+/** Normalize an untrusted parsed object into a fully-valid DesktopSettings. */
+export function clampSettings(raw: unknown): DesktopSettings {
+  const o = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  const theme = (typeof o.theme === 'object' && o.theme !== null ? o.theme : {}) as Record<
+    string,
+    unknown
+  >;
+  const search = (typeof o.search === 'object' && o.search !== null ? o.search : {}) as Record<
+    string,
+    unknown
+  >;
+  const caps = (
+    typeof o.capabilities === 'object' && o.capabilities !== null ? o.capabilities : {}
+  ) as Record<string, unknown>;
+  const d = DEFAULT_SETTINGS;
+  return {
+    version: 1,
+    theme: {
+      flavor: oneOf(theme.flavor, FLAVORS, d.theme.flavor),
+      mode: oneOf(theme.mode, MODES, d.theme.mode),
+    },
+    permissionMode: oneOf(o.permissionMode, PERMISSION_MODES, d.permissionMode),
+    effort: oneOf(o.effort, EFFORT_LEVELS, d.effort),
+    search: { brave: str(search.brave, ''), tavily: str(search.tavily, '') },
+    mcpMode: oneOf(o.mcpMode, MCP_MODES, d.mcpMode),
+    capabilities: {
+      image: bool(caps.image, d.capabilities.image),
+      video: bool(caps.video, d.capabilities.video),
+      audio: bool(caps.audio, d.capabilities.audio),
+      threeD: bool(caps.threeD, d.capabilities.threeD),
+    },
+    customInstructions: str(o.customInstructions, d.customInstructions),
+    iconStroke: num(o.iconStroke, d.iconStroke, ICON_STROKE_MIN, ICON_STROKE_MAX),
+  };
+}
+
+/** Merge a one-level-deep patch over a valid document, re-clamping the result. */
+export function mergeSettingsPatch(
+  current: DesktopSettings,
+  patch: DesktopSettingsPatch,
+): DesktopSettings {
+  return clampSettings({
+    ...current,
+    ...patch,
+    theme: { ...current.theme, ...patch.theme },
+    search: { ...current.search, ...patch.search },
+    capabilities: { ...current.capabilities, ...patch.capabilities },
+  });
+}
+
+/**
+ * Build the initial document when no settings.json exists yet, carrying the
+ * onboarding choices forward so the two stay coherent (theme, starting
+ * permission mode, generation capabilities). `mcpMode` comes from the existing
+ * mcp-lite registry when present so an imported connector setup is respected.
+ */
+export function seedFromOnboarding(
+  choices: OnboardingChoices | null,
+  mcpMode: McpMode | null,
+): DesktopSettings {
+  if (choices === null) {
+    return mcpMode === null ? DEFAULT_SETTINGS : { ...DEFAULT_SETTINGS, mcpMode };
+  }
+  return clampSettings({
+    ...DEFAULT_SETTINGS,
+    theme: { flavor: choices.theme.flavor, mode: choices.theme.mode },
+    permissionMode: choices.permissionMode,
+    capabilities: choices.capabilities,
+    ...(mcpMode === null ? {} : { mcpMode }),
+  });
+}

@@ -1,0 +1,59 @@
+{
+  "name": "@pi-desktop/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pi Desktop Electron app. dist-electron artifacts are CJS (sandboxed preloads must be CommonJS); all source is ESM TypeScript.",
+  "license": "MIT",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "lint": "biome check .",
+    "test": "vitest run",
+    "e2e": "node tests/e2e/probe.mjs && node tests/e2e/pi-probe.mjs && node tests/e2e/chat-ui-probe.mjs && node tests/e2e/session-switch-probe.mjs && node tests/e2e/canvas-probe.mjs && node tests/e2e/browser-probe.mjs && node tests/e2e/terminal-probe.mjs && node tests/e2e/onboarding-probe.mjs && node tests/e2e/model-manager-probe.mjs && node tests/e2e/settings-probe.mjs && node tests/e2e/round3-probe.mjs && node tests/e2e/round4-probe.mjs && node tests/e2e/round5-probe.mjs && node tests/e2e/round6-probe.mjs",
+    "rebuild:native": "electron-rebuild -f -w node-pty"
+  },
+  "dependencies": {
+    "@lexical/history": "^0.46.0",
+    "@lexical/react": "^0.46.0",
+    "@lexical/text": "^0.46.0",
+    "@mariozechner/pi-coding-agent": "0.68.1",
+    "@pi-desktop/canvas": "workspace:*",
+    "@pi-desktop/engine": "workspace:*",
+    "@pi-desktop/harness": "workspace:*",
+    "@pi-desktop/importers": "workspace:*",
+    "@pi-desktop/inference": "workspace:*",
+    "@pi-desktop/provider-llamacpp": "workspace:*",
+    "@pi-desktop/shared": "workspace:*",
+    "@pi-desktop/themes": "workspace:*",
+    "@pi-desktop/ui": "workspace:*",
+    "@pi-desktop/web-tools": "workspace:*",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "lexical": "^0.46.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "zustand": "^5.0.14"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "@electron/rebuild": "^4.0.1",
+    "@tailwindcss/vite": "^4.3.2",
+    "@types/node": "^24.10.9",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
+    "playwright-core": "^1.61.1",
+    "tailwindcss": "^4.3.2",
+    "typescript": "^6.0.3",
+    "vite": "^8.1.3",
+    "vite-plugin-electron": "^1.1.0",
+    "vitest": "^4.1.10"
+  }
+}

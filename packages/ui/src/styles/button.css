@@ -1,0 +1,244 @@
+/*
+ * Buttons — spec-buttons.md (claude ●●● authored / codex ●●● authored+runtime).
+ * ONE anatomy for both flavors: the claude trick of a separate ::before fill
+ * layer (border-radius: inherit) that carries press-scale and hover fill.
+ * Codex degrades to a flat pill purely via tokens: --pd-press-scale: 1 and
+ * --pd-easing-spring = expo-out, --pd-radius-button = 9999px.
+ * Both primaries are INVERTED MONOCHROME (design DNA) — clay/blue stay on the
+ * accent variant only.
+ */
+
+.pd-btn {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--pd-control-md);
+  margin: 0;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--pd-radius-button);
+  background: transparent;
+  color: var(--pd-btn-fg, var(--pd-text-primary));
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  font-weight: var(--pd-font-weight-medium);
+  white-space: nowrap;
+  text-decoration: none;
+  user-select: none;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  /* transform is the one-shot hover-lift channel (values in hover.css). */
+  transition:
+    outline-color 200ms var(--pd-easing-standard),
+    color var(--pd-duration-base) var(--pd-easing-standard),
+    opacity var(--pd-duration-base) var(--pd-easing-standard),
+    transform var(--pd-duration-base) var(--pd-easing-spring);
+}
+
+.pd-btn:focus-visible {
+  outline-color: var(--pd-border-focus);
+}
+
+/* The fill layer. Press dips fast, releases on the flavor spring. */
+.pd-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--pd-btn-bg, transparent);
+  box-shadow: var(--pd-btn-ring, 0 0 0 0 transparent);
+  transition:
+    background-color var(--pd-duration-base) var(--pd-easing-standard),
+    opacity var(--pd-duration-base) var(--pd-easing-standard),
+    transform 350ms var(--pd-easing-spring);
+}
+
+.pd-btn:active:not(:disabled)::before {
+  transform: scale(var(--pd-press-scale));
+  transition:
+    background-color var(--pd-duration-base) var(--pd-easing-standard),
+    opacity var(--pd-duration-base) var(--pd-easing-standard),
+    transform 80ms var(--pd-easing-press);
+}
+
+/* Disabled: claude 0.5 / codex 0.4 — shared at claude's value. */
+.pd-btn:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ---- variants ---- */
+
+.pd-btn--primary {
+  --pd-btn-bg: var(--pd-text-primary);
+  --pd-btn-fg: var(--pd-bg-raised);
+}
+
+/* Bottom-anchored radial glow layer (claude primary hover). */
+.pd-btn--primary::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(
+    80% 60% at 50% 100%,
+    color-mix(in srgb, var(--pd-bg-raised) 20%, transparent),
+    transparent
+  );
+  opacity: 0;
+  transition: opacity 200ms var(--pd-easing-enter);
+}
+
+/*
+ * Flavor split (spec-buttons ADAPTATION): claude primary hover = asymmetric
+ * grow + rising radial glow; codex primary hover = fill at 80%, no transform.
+ */
+:root[data-flavor="claude"] .pd-btn--primary:hover:not(:disabled, :active)::before {
+  transform: scale(1.005, 1.015);
+}
+
+:root[data-flavor="claude"] .pd-btn--primary:hover:not(:disabled)::after {
+  opacity: 1;
+}
+
+:root[data-flavor="codex"] .pd-btn--primary:hover:not(:disabled)::before {
+  opacity: 0.8;
+}
+
+.pd-btn--accent {
+  --pd-btn-bg: var(--pd-accent-primary);
+  --pd-btn-fg: var(--pd-text-on-accent);
+}
+
+.pd-btn--accent:hover:not(:disabled) {
+  --pd-btn-bg: var(--pd-accent-hover);
+}
+
+.pd-btn--accent:active:not(:disabled) {
+  --pd-btn-bg: var(--pd-accent-active);
+}
+
+.pd-btn--secondary {
+  --pd-btn-bg: var(--pd-bg-hover);
+}
+
+.pd-btn--secondary:hover:not(:disabled),
+.pd-btn--secondary[data-state="open"] {
+  --pd-btn-bg: var(--pd-bg-active);
+}
+
+.pd-btn--outline {
+  --pd-btn-ring: 0 0 0 0.5px var(--pd-border-default);
+  --pd-btn-bg: var(--pd-bg-inset);
+}
+
+.pd-btn--outline:hover:not(:disabled),
+.pd-btn--outline[data-state="open"] {
+  --pd-btn-bg: var(--pd-bg-hover);
+}
+
+.pd-btn--ghost {
+  --pd-btn-fg: var(--pd-text-secondary);
+}
+
+/* data-[state=open] mirrors hover so dropdown triggers stay lit (codex rule,
+ * adopted for both flavors per spec-buttons ADAPTATION). Same for
+ * aria-expanded/pressed (claude selected-look rule). */
+.pd-btn--ghost:hover:not(:disabled),
+.pd-btn--ghost[data-state="open"],
+.pd-btn--ghost[aria-expanded="true"],
+.pd-btn--ghost[aria-pressed="true"] {
+  --pd-btn-bg: var(--pd-bg-hover);
+  --pd-btn-fg: var(--pd-text-primary);
+}
+
+.pd-btn--ghost-muted {
+  --pd-btn-fg: var(--pd-text-muted);
+}
+
+.pd-btn--ghost-muted:hover:not(:disabled),
+.pd-btn--ghost-muted[data-state="open"] {
+  --pd-btn-fg: var(--pd-text-primary);
+}
+
+.pd-btn--danger {
+  --pd-btn-bg: var(--pd-status-danger-bg);
+  --pd-btn-fg: var(--pd-status-danger-fg);
+}
+
+.pd-btn--danger:hover:not(:disabled) {
+  --pd-btn-bg: color-mix(in srgb, var(--pd-status-danger-fg) 12%, var(--pd-status-danger-bg));
+}
+
+/* Claude danger buttons are solid danger-200 + oncolor; codex keeps the tinted
+ * recipe (spec-buttons variant tables genuinely diverge here). */
+:root[data-flavor="claude"] .pd-btn--danger {
+  --pd-btn-bg: var(--pd-status-danger-fg);
+  --pd-btn-fg: var(--pd-text-on-accent);
+}
+
+:root[data-flavor="claude"] .pd-btn--danger:hover:not(:disabled) {
+  --pd-btn-bg: color-mix(in srgb, var(--pd-status-danger-fg) 92%, var(--pd-bg-base));
+}
+
+/* ---- sizes (heights ride --pd-control-*; claude radius scales 0.75/1/1.2,
+ * codex stays pill because min() clamps the 9999px token) ---- */
+
+.pd-btn--sm {
+  height: var(--pd-control-sm);
+  padding: 0 10px;
+  border-radius: calc(min(var(--pd-radius-button), 24px) * 0.75);
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+}
+
+.pd-btn--lg {
+  height: var(--pd-control-lg);
+  padding: 0 18px;
+  border-radius: calc(min(var(--pd-radius-button), 24px) * 1.2);
+  font-size: var(--pd-font-size-heading);
+  line-height: var(--pd-leading-heading);
+}
+
+/* CTA variants keep claude's min-widths; ghost/outline flow with content. */
+.pd-btn--primary,
+.pd-btn--accent,
+.pd-btn--secondary,
+.pd-btn--danger {
+  min-width: 4rem;
+}
+
+/* ---- icon button: 28px square in both apps' top bars (spec-top-bar);
+ * radius stays --pd-radius-md per spec-buttons ADAPTATION ---- */
+
+.pd-icon-btn {
+  width: 28px;
+  height: 28px;
+  min-width: 0;
+  padding: 0;
+  border-radius: var(--pd-radius-md);
+  flex: none;
+}
+
+.pd-icon-btn.pd-btn--sm {
+  width: var(--pd-control-sm);
+  height: var(--pd-control-sm);
+}
+
+.pd-icon-btn.pd-btn--lg {
+  width: var(--pd-control-lg);
+  height: var(--pd-control-lg);
+}
+
+/* Round icon buttons (composer send circle, scroll FAB). */
+.pd-btn--circle {
+  border-radius: var(--pd-radius-full);
+}

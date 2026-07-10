@@ -1,0 +1,167 @@
+/*
+ * Shimmer + thinking block — spec-thinking-block.md.
+ * ONE gradient-clipped text component; the stepped-vs-smooth cadence is THE
+ * flavor split and is already tokenized: --pd-shimmer-easing (claude
+ * ease-in-out sweep vs codex steps(48, end)) and --pd-shimmer-duration.
+ */
+
+.pd-shimmer {
+  display: inline-block;
+  color: transparent;
+  background-image: linear-gradient(
+    90deg,
+    var(--pd-shimmer-base) 0%,
+    var(--pd-shimmer-highlight) 50%,
+    var(--pd-shimmer-base) 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: pd-shimmer-bg var(--pd-shimmer-duration) var(--pd-shimmer-easing) infinite;
+}
+
+/* Codex hover-un-shimmer nicety, flavor-neutral per spec ADAPTATION. */
+.pd-shimmer:hover {
+  animation: none;
+  background: none;
+  color: var(--pd-text-primary);
+}
+
+/* Both apps kill the shimmer under reduced motion, explicitly. */
+@media (prefers-reduced-motion: reduce) {
+  .pd-shimmer {
+    animation: none;
+    background: none;
+    color: var(--pd-shimmer-base);
+  }
+}
+
+/* ---- thinking block (jedd round-5 #3 rework) ----
+ * A standalone thought is a COLLAPSED "Thought for X" pill; clicking rolls it
+ * open (grid-rows height roll, reduced-motion safe). Once open, a LONG thought
+ * clamps with a bottom fade + a small "Show more" below the fade (never a
+ * scrollbar). Labels flip to past tense on completion (component logic). */
+
+.pd-thinking {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The collapsed pill / dropdown header — the whole thing is the click target. */
+.pd-thinking-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  max-width: 100%;
+  margin: 0;
+  padding: 2px 4px;
+  border: none;
+  border-radius: var(--pd-radius-xs);
+  background: transparent;
+  color: var(--pd-text-ghost);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-thinking-pill:hover {
+  color: var(--pd-text-secondary);
+}
+
+.pd-thinking-pill-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-thinking-pill-chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--pd-text-muted);
+  transition: rotate var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-thinking-pill-chevron[data-expanded="true"] {
+  rotate: 90deg;
+}
+
+/* Height-roll reveal (0fr -> 1fr) so open/close both animate; content stays
+ * mounted. Mirrors the activity-chain reveal. */
+.pd-thinking-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-thinking-reveal[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+
+.pd-thinking-reveal-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-thinking-reveal {
+    transition: none;
+  }
+}
+
+/* Bare variant (hideLabel): no pill, the thought sits as plain dim text. */
+.pd-thinking--bare {
+  gap: 0;
+}
+
+.pd-thinking-well {
+  position: relative;
+  padding: 2px 0 0;
+}
+
+/* Reasoning prose: dim, in the assistant response voice. */
+.pd-thinking-content {
+  color: var(--pd-text-secondary);
+  font-family: var(--pd-font-response-family);
+  font-size: var(--pd-font-response-size);
+  line-height: var(--pd-leading-response);
+  font-variation-settings: var(--pd-font-response-variation);
+  white-space: pre-wrap;
+}
+
+/* Long + not-yet-shown-more: clamp height + fade the bottom to transparent.
+ * The "Show more" sits BELOW this faded text, so it never overlaps content. */
+.pd-thinking-content[data-clamped="true"] {
+  max-height: 9rem;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
+}
+
+/* ---- shared "Show more / less" affordance (jedd round-5 #4) ----
+ * Small, lighter (muted), and always in normal flow BELOW the faded text so it
+ * never overlaps visible content. Used by ThinkingBlock + in-chain thoughts. */
+.pd-showmore {
+  display: inline-block;
+  margin: 4px 0 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+  font-weight: var(--pd-font-weight-medium);
+  cursor: pointer;
+  transition: color var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-showmore:hover {
+  color: var(--pd-text-secondary);
+}

@@ -1,0 +1,37 @@
+/*
+ * Model picker trigger — spec-model-picker.md. Identical in both apps: ghost
+ * text button [model w500] [effort muted] [chevron], truncating behind a
+ * right-edge fade mask at max-w 12rem (codex recipe, adopted for both).
+ * The dropdown itself is the shared .pd-menu family.
+ */
+
+.pd-model-trigger-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 12rem;
+  overflow: hidden;
+  white-space: nowrap;
+  mask-image: linear-gradient(to right, black calc(100% - 12px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 12px), transparent 100%);
+}
+
+.pd-model-trigger-model {
+  font-weight: var(--pd-font-weight-medium);
+}
+
+.pd-model-trigger-effort {
+  color: var(--pd-text-muted);
+  transition: color var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-btn:hover .pd-model-trigger-effort,
+.pd-btn[data-state="open"] .pd-model-trigger-effort {
+  color: var(--pd-text-primary);
+}
+
+.pd-model-trigger-chevron {
+  display: inline-flex;
+  color: var(--pd-text-muted);
+  flex: none;
+}

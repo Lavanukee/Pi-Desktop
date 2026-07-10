@@ -1,0 +1,74 @@
+/*
+ * Composer suggestions (THEME 4). An OVERLAY floated off the composer's top
+ * edge — position:absolute + bottom:100% — so it never reserves layout or snaps
+ * the input bar downward. It rolls out UPWARD (origin bottom) like a dropup.
+ * The active row (Tab target) gets a clear wash + a "tab" Kbd hint.
+ */
+
+.pd-suggestions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  padding: var(--pd-menu-padding);
+  border-radius: var(--pd-radius-popover);
+  background: color-mix(
+    in srgb,
+    var(--pd-bg-overlay) calc(var(--pd-surface-translucency) * 100%),
+    transparent
+  );
+  -webkit-backdrop-filter: blur(var(--pd-blur-overlay));
+  backdrop-filter: blur(var(--pd-blur-overlay));
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-popover);
+  transform-origin: center bottom;
+  animation: pd-menu-enter var(--pd-duration-menu) var(--pd-easing-enter);
+}
+
+.pd-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  margin: 0;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--pd-radius-menu-item);
+  background: transparent;
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-suggestion-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-suggestion-hint {
+  flex: none;
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-footnote);
+}
+
+.pd-suggestion-tab {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+/* The active suggestion (what Tab accepts): clear highlight. */
+.pd-suggestion--active {
+  background: var(--pd-bg-hover);
+}

@@ -1,0 +1,16 @@
+/*
+ * Stroked-icon weight. Every stroked glyph from icons.tsx carries `.pd-icon`;
+ * its stroke-width resolves from the global --pd-icon-stroke token (defined by
+ * @pi-desktop/themes), so the whole set thins/thickens from one value. The
+ * app's settings can override --pd-icon-stroke live on the document root, and
+ * IconStrokeControl scopes it inline on its preview row.
+ *
+ * A CSS `stroke-width` here beats the svg's `stroke-width` presentation
+ * attribute (attrs sit below author rules in the cascade), so the token wins;
+ * the attribute's 1.5 only shows through if the token is undefined (no theme
+ * scope loaded). stroke-width is inherited, so child paths pick it up. Filled
+ * glyphs (fill=currentColor, stroke=none) are unaffected.
+ */
+.pd-icon {
+  stroke-width: var(--pd-icon-stroke, 1.5);
+}

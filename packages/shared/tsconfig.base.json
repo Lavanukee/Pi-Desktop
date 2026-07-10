@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "types": [],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    // Some packages (themes) import with explicit .ts extensions so their
+    // scripts run directly on Node's native type stripping (no build step).
+    // Hoisted here because consumers' `tsc --noEmit` type-checks dependency
+    // .ts sources under the consumer's compilerOptions in this source-exports
+    // monorepo. Requires noEmit (set below).
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  }
+}

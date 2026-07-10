@@ -1,0 +1,145 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`rehydrateSessionJsonl round trip > is stable as a snapshot (regression net for W3) 1`] = `
+{
+  "messages": [
+    {
+      "id": "u-h0",
+      "kind": "user",
+      "text": "find the assets folder and list what is inside",
+      "timestamp": 1776825699954,
+    },
+    {
+      "blocks": [
+        {
+          "thinking": "The user wants me to locate a folder named assets and list its contents. I will search with find.",
+          "type": "thinking",
+        },
+        {
+          "arguments": {
+            "command": "find ~ -maxdepth 3 -type d -iname "*assets*" 2>/dev/null | head -5",
+          },
+          "id": "ZpCILfZc7nFWEQzfsGlFgubamgHnobj3",
+          "name": "bash",
+          "type": "toolCall",
+        },
+      ],
+      "errorMessage": undefined,
+      "id": "a-h1",
+      "isStreaming": false,
+      "kind": "assistant",
+      "model": "qwen3.6-35b-a3b",
+      "provider": "llamacpp",
+      "stopReason": "toolUse",
+      "timestamp": 1776825699980,
+      "usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0,
+          "output": 0,
+          "total": 0,
+        },
+        "input": 1200,
+        "output": 95,
+        "totalTokens": 1295,
+      },
+    },
+    {
+      "id": "tr-h2",
+      "isError": false,
+      "kind": "toolResult",
+      "text": "/Users/dev/project/Assets
+/Users/dev/Desktop/Asset Images
+",
+      "timestamp": 1776825703154,
+      "toolCallId": "ZpCILfZc7nFWEQzfsGlFgubamgHnobj3",
+      "toolName": "bash",
+    },
+    {
+      "blocks": [
+        {
+          "text": "Found it: \`/Users/dev/project/Assets\`. It contains textures and two models.",
+          "type": "text",
+        },
+      ],
+      "errorMessage": undefined,
+      "id": "a-h3",
+      "isStreaming": false,
+      "kind": "assistant",
+      "model": "qwen3.6-35b-a3b",
+      "provider": "llamacpp",
+      "stopReason": "stop",
+      "timestamp": 1776825705980,
+      "usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0,
+          "output": 0,
+          "total": 0,
+        },
+        "input": 1400,
+        "output": 30,
+        "totalTokens": 1430,
+      },
+    },
+    {
+      "command": "ls Assets | wc -l",
+      "exitCode": 0,
+      "id": "be-h4",
+      "kind": "bashExec",
+      "output": "14
+",
+      "timestamp": 1776825730000,
+    },
+    {
+      "id": "u-h5",
+      "kind": "user",
+      "text": "now summarize the texture naming scheme",
+      "timestamp": 1776825780000,
+    },
+    {
+      "blocks": [
+        {
+          "text": "Textures follow \`<surface>_<variant>_<res>.png\` — e.g. \`brick_mossy_2k.png\`.",
+          "type": "text",
+        },
+      ],
+      "errorMessage": undefined,
+      "id": "a-h6",
+      "isStreaming": false,
+      "kind": "assistant",
+      "model": "qwen3.6-35b-a3b",
+      "provider": "llamacpp",
+      "stopReason": "stop",
+      "timestamp": 1776825800000,
+      "usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0,
+          "output": 0,
+          "total": 0,
+        },
+        "input": 1600,
+        "output": 40,
+        "totalTokens": 1640,
+      },
+    },
+    {
+      "id": "u-h7",
+      "kind": "user",
+      "text": "great, thanks",
+      "timestamp": 1776826020000,
+    },
+  ],
+  "truncated": false,
+}
+`;

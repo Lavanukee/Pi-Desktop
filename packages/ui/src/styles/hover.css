@@ -1,0 +1,75 @@
+/*
+ * App-wide one-shot reverse-on-leave hover system (jedd round-1 feedback #2).
+ *
+ * "lots of subtle but noticeable hover animations — nothing looping, just once
+ *  on hovering a button and it plays in reverse when you leave."
+ *
+ * A CSS transition IS one-shot-and-reverse: it runs forward toward the :hover
+ * state and, when the pointer leaves, runs the same interpolation back to rest.
+ * No keyframes, no persistent state. So every interactive family here gets a
+ * tokenized transform on :hover layered on top of its existing "ink at low
+ * alpha" bg wash (the hover grammar in each component's own CSS).
+ *
+ * Timing/easing are 100% tokenized so the flavor split falls out for free:
+ *   - duration = --pd-duration-base
+ *   - easing   = --pd-easing-spring  (claude = linear() overshoot spring,
+ *                                      codex  = expo-out cubic-bezier)
+ * The transform PROPERTY is added to each family's `transition` list in that
+ * family's own CSS file (button.css / chips.css / sidebar.css / menu.css); the
+ * transform VALUES live here so the whole system reads in one place.
+ *
+ * Reduced motion: --pd-duration-* already collapse to ~0 via themes.css, and
+ * the guard at the bottom drops the positional transforms entirely so nothing
+ * jumps — the bg wash (not motion) still gives hover feedback.
+ */
+
+/* Buttons, icon buttons, and the dropdown/select/model triggers (all .pd-btn)
+ * lift a hair; the press (:active) settles them back to the baseline so the
+ * dip reads as a press against the lift. */
+.pd-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.pd-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* Suggestion chips are button-shaped pills — same lift. */
+button.pd-chip:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+button.pd-chip:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* List rows lean toward the pointer instead of lifting (a vertical stack reads
+ * better nudged than raised). Sidebar rows nudge on pointer hover only, never
+ * on the keyboard/selected wash, so keyboard nav stays still. */
+.pd-sidebar-row:hover {
+  transform: translateX(2px);
+}
+
+/* Menu rows: the added transition already fades the highlight wash in/out
+ * (previously instant); pointer hover also nudges. data-highlighted (keyboard)
+ * deliberately does NOT nudge. */
+.pd-menu-item:hover {
+  transform: translateX(2px);
+}
+
+/* Inactive segmented-control tabs pick up a faint wash on hover (they only
+ * shifted text color before) — the transition already covers background. */
+.pd-segment:hover:not([data-state="active"]):not([data-state="on"]):not([aria-pressed="true"]) {
+  background: var(--pd-bg-hover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-btn:hover:not(:disabled),
+  .pd-btn:active:not(:disabled),
+  button.pd-chip:hover:not(:disabled),
+  button.pd-chip:active:not(:disabled),
+  .pd-sidebar-row:hover,
+  .pd-menu-item:hover {
+    transform: none;
+  }
+}

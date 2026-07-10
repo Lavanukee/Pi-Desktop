@@ -1,0 +1,81 @@
+/*
+ * Shared foundations (spec-book "Cross-cutting design DNA").
+ * Every color/radius/motion value resolves through --pd-* tokens so flipping
+ * data-flavor/data-mode restyles everything live. Flavor-scoped rules appear
+ * ONLY where the spec book names a genuine structural divergence, each with a
+ * citation comment.
+ */
+
+[class^="pd-"],
+[class*=" pd-"],
+[class^="pd-"]::before,
+[class*=" pd-"]::before,
+[class^="pd-"]::after,
+[class*=" pd-"]::after {
+  box-sizing: border-box;
+}
+
+/*
+ * Focus grammar (spec-buttons ADAPTATION): claude's always-present transparent
+ * outline that colors in via transition is the shared mechanism; each flavor
+ * colors it with its own --pd-border-focus.
+ */
+.pd-focusable {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color 200ms var(--pd-easing-standard);
+}
+
+.pd-focusable:focus-visible {
+  outline-color: var(--pd-border-focus);
+}
+
+/* Screen-reader-only text (rolling counters expose their value here). */
+.pd-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Window-chrome drag discipline (spec-top-bar: claude .nc-drag idiom adopted). */
+.nc-drag {
+  -webkit-app-region: drag;
+}
+
+.nc-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * Codex squircle signature: themes.css scales codex radii x1.25 under this
+ * same @supports; primitives must pair that with superellipse corners or the
+ * scaled radii just read as bigger circles (packages/themes emit.ts note).
+ */
+@supports (corner-shape: superellipse(1.5)) {
+  :root[data-flavor="codex"]
+    :is(
+      .pd-btn,
+      .pd-menu,
+      .pd-dialog,
+      .pd-toast,
+      .pd-tooltip,
+      .pd-composer,
+      .pd-msg-bubble,
+      .pd-activity-card,
+      .pd-code-block,
+      .pd-diff,
+      .pd-input,
+      .pd-textarea,
+      .pd-chip,
+      .pd-float-pill,
+      .pd-attachment-pill
+    ) {
+    corner-shape: superellipse(1.5);
+  }
+}

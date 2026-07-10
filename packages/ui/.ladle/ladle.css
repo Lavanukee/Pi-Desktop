@@ -1,0 +1,50 @@
+/* Ladle chrome only — components themselves never read these rules. */
+
+html {
+  background: var(--pd-bg-base);
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  font-weight: var(--pd-font-weight-body);
+}
+
+.ladle-flavor-toggle {
+  position: fixed;
+  right: 12px;
+  top: 12px;
+  z-index: 100;
+  padding: 4px 10px;
+  border: 1px solid var(--pd-border-default);
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-bg-raised);
+  color: var(--pd-text-primary);
+  font: inherit;
+  font-size: var(--pd-font-size-caption);
+  cursor: pointer;
+}
+
+/* Story canvas: a padded grid on the app background. */
+.pd-story {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 24px;
+  max-width: 860px;
+}
+
+.pd-story-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.pd-story-label {
+  width: 100%;
+  margin: 4px 0 0;
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}

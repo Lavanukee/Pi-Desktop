@@ -1,0 +1,331 @@
+{
+  "name": "thinking-stream",
+  "state": {
+    "model": {
+      "id": "qwen3.6-27b",
+      "name": "Qwen3.6 27B Q6",
+      "api": "openai-completions",
+      "provider": "llamacpp",
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "reasoning": true,
+      "input": ["text", "image"],
+      "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+      "contextWindow": 131072,
+      "maxTokens": 16384
+    },
+    "sessionFile": "/tmp/mock-pi/sessions/thinking-stream.jsonl",
+    "sessionId": "mock-session-thinking-stream"
+  },
+  "models": [
+    {
+      "id": "qwen3.6-27b",
+      "name": "Qwen3.6 27B Q6",
+      "api": "openai-completions",
+      "provider": "llamacpp",
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "reasoning": true,
+      "input": ["text", "image"],
+      "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+      "contextWindow": 131072,
+      "maxTokens": 16384
+    }
+  ],
+  "prompts": [
+    {
+      "match": "reason",
+      "response": { "success": true },
+      "steps": [
+        { "emit": { "type": "agent_start" } },
+        { "delayMs": 5, "emit": { "type": "turn_start" } },
+        { "emit": { "type": "message_start", "message": { "role": "assistant", "content": [] } } },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [{ "type": "thinking", "thinking": "" }] },
+            "assistantMessageEvent": {
+              "type": "thinking_start",
+              "contentIndex": 0,
+              "partial": {
+                "role": "assistant",
+                "content": [{ "type": "thinking", "thinking": "" }]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 50,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [
+                { "type": "thinking", "thinking": "Let me reason about this carefully. " }
+              ]
+            },
+            "assistantMessageEvent": {
+              "type": "thinking_delta",
+              "contentIndex": 0,
+              "delta": "Let me reason about this carefully. ",
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "thinking", "thinking": "Let me reason about this carefully. " }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 50,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [{ "type": "thinking", "thinking": "…" }]
+            },
+            "assistantMessageEvent": {
+              "type": "thinking_delta",
+              "contentIndex": 0,
+              "delta": "First I weigh the options one by one, then I settle on the best. ",
+              "partial": {
+                "role": "assistant",
+                "content": [{ "type": "thinking", "thinking": "…" }]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 50,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [{ "type": "thinking", "thinking": "…" }]
+            },
+            "assistantMessageEvent": {
+              "type": "thinking_delta",
+              "contentIndex": 0,
+              "delta": "That is enough deliberation to be visibly streaming for the probe. ",
+              "partial": {
+                "role": "assistant",
+                "content": [{ "type": "thinking", "thinking": "…" }]
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [{ "type": "thinking", "thinking": "…" }]
+            },
+            "assistantMessageEvent": {
+              "type": "thinking_end",
+              "contentIndex": 0,
+              "content": "…",
+              "partial": {
+                "role": "assistant",
+                "content": [{ "type": "thinking", "thinking": "…" }]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 900,
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "text_start",
+              "contentIndex": 1,
+              "partial": { "role": "assistant", "content": [] }
+            }
+          }
+        },
+        {
+          "delayMs": 20,
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "text_delta",
+              "contentIndex": 1,
+              "delta": "Here is my answer: 42.",
+              "partial": { "role": "assistant", "content": [] }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "done",
+              "reason": "stop",
+              "message": { "role": "assistant", "content": [] }
+            }
+          }
+        },
+        { "emit": { "type": "message_end", "message": { "role": "assistant", "content": [] } } },
+        {
+          "emit": {
+            "type": "turn_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                { "type": "thinking", "thinking": "Let me reason about this carefully. (…)" },
+                { "type": "text", "text": "Here is my answer: 42." }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 12,
+                "output": 40,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 52,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+              },
+              "stopReason": "stop",
+              "timestamp": 1770000020000
+            },
+            "toolResults": []
+          }
+        },
+        { "emit": { "type": "agent_end", "messages": [] } }
+      ]
+    },
+    {
+      "match": "ponder",
+      "response": { "success": true },
+      "steps": [
+        { "emit": { "type": "agent_start" } },
+        { "delayMs": 5, "emit": { "type": "turn_start" } },
+        { "emit": { "type": "message_start", "message": { "role": "assistant", "content": [] } } },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [{ "type": "thinking", "thinking": "" }] },
+            "assistantMessageEvent": {
+              "type": "thinking_start",
+              "contentIndex": 0,
+              "partial": {
+                "role": "assistant",
+                "content": [{ "type": "thinking", "thinking": "" }]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 40,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [{ "type": "thinking", "thinking": "Just pondering quietly. " }]
+            },
+            "assistantMessageEvent": {
+              "type": "thinking_delta",
+              "contentIndex": 0,
+              "delta": "Just pondering quietly. ",
+              "partial": {
+                "role": "assistant",
+                "content": [{ "type": "thinking", "thinking": "Just pondering quietly. " }]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 40,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [{ "type": "thinking", "thinking": "…" }]
+            },
+            "assistantMessageEvent": {
+              "type": "thinking_delta",
+              "contentIndex": 0,
+              "delta": "No tools and no reply text — this whole turn is only thought. ",
+              "partial": {
+                "role": "assistant",
+                "content": [{ "type": "thinking", "thinking": "…" }]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 200,
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [{ "type": "thinking", "thinking": "…" }]
+            },
+            "assistantMessageEvent": {
+              "type": "thinking_end",
+              "contentIndex": 0,
+              "content": "…",
+              "partial": {
+                "role": "assistant",
+                "content": [{ "type": "thinking", "thinking": "…" }]
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": {
+              "role": "assistant",
+              "content": [{ "type": "thinking", "thinking": "Just pondering quietly. (…)" }]
+            },
+            "assistantMessageEvent": {
+              "type": "done",
+              "reason": "stop",
+              "message": {
+                "role": "assistant",
+                "content": [{ "type": "thinking", "thinking": "Just pondering quietly. (…)" }]
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_end",
+            "message": {
+              "role": "assistant",
+              "content": [{ "type": "thinking", "thinking": "Just pondering quietly. (…)" }]
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "turn_end",
+            "message": {
+              "role": "assistant",
+              "content": [{ "type": "thinking", "thinking": "Just pondering quietly. (…)" }],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 8,
+                "output": 20,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 28,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+              },
+              "stopReason": "stop",
+              "timestamp": 1770000030000
+            },
+            "toolResults": []
+          }
+        },
+        { "emit": { "type": "agent_end", "messages": [] } }
+      ]
+    }
+  ]
+}

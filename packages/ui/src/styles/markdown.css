@@ -1,0 +1,38 @@
+/*
+ * Markdown renderer extras (round-3 #P4). The Markdown component renders into a
+ * `.pd-prose` container, so headings/lists/inline-code/tables inherit the prose
+ * rhythm from prose.css; only the round-3 additions live here: the inline hex
+ * color swatch and KaTeX block layout. Token-only (KaTeX's own vendored CSS is
+ * pulled through a JS import in markdown.tsx, outside this token-checked dir).
+ */
+
+/* Inline hex-color swatch: a small chip shown before a `#rrggbb` code token. The
+ * fill color is applied inline (the actual hex); only the frame is tokenized. */
+.pd-md-swatch {
+  display: inline-block;
+  width: 0.82em;
+  height: 0.82em;
+  margin-right: 0.35em;
+  vertical-align: -0.08em;
+  border-radius: var(--pd-radius-xs);
+  box-shadow: 0 0 0 1px var(--pd-border-strong);
+}
+
+/* The swatch rides inside the existing inline-code chip; keep it from wrapping
+ * away from its text. */
+.pd-md-code {
+  white-space: nowrap;
+}
+
+/* KaTeX block math: center-scroll long expressions instead of overflowing the
+ * column; inline math tracks the surrounding size. */
+.pd-markdown .katex-display {
+  margin: 12px 0;
+  padding: 2px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.pd-markdown .katex {
+  font-size: 1.02em;
+}

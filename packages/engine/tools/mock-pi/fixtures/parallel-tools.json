@@ -1,0 +1,260 @@
+{
+  "name": "parallel-tools",
+  "state": {
+    "sessionFile": "/tmp/mock-pi/sessions/parallel-tools.jsonl",
+    "sessionId": "mock-session-parallel-tools"
+  },
+  "prompts": [
+    {
+      "match": "parallel",
+      "response": { "success": true },
+      "steps": [
+        { "emit": { "type": "agent_start" } },
+        { "emit": { "type": "turn_start" } },
+        {
+          "emit": {
+            "type": "message_start",
+            "message": { "role": "assistant", "content": [] }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_start",
+              "contentIndex": 0,
+              "id": "call_par_a",
+              "name": "write",
+              "arguments": {}
+            }
+          }
+        },
+        {
+          "delayMs": 2,
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_start",
+              "contentIndex": 1,
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "toolCall", "id": "call_par_a", "name": "write", "arguments": {} },
+                  { "type": "toolCall", "id": "call_par_b", "name": "write", "arguments": {} }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 2,
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 0,
+              "id": "call_par_a",
+              "argsDelta": "{\"path\":\"/tmp/par/a.html\",\"content\":\""
+            }
+          }
+        },
+        {
+          "delayMs": 2,
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 1,
+              "delta": "{\"path\":\"/tmp/par/b.html\",\"content\":\"",
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "toolCall", "id": "call_par_a", "name": "write", "arguments": {} },
+                  { "type": "toolCall", "id": "call_par_b", "name": "write", "arguments": {} }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 2,
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 0,
+              "id": "call_par_a",
+              "argsDelta": "AAA\"}"
+            }
+          }
+        },
+        {
+          "delayMs": 2,
+          "splitChunks": 4,
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 1,
+              "delta": "$repeat:70:0123456789",
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "toolCall", "id": "call_par_a", "name": "write", "arguments": {} },
+                  { "type": "toolCall", "id": "call_par_b", "name": "write", "arguments": {} }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "delayMs": 2,
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 1,
+              "delta": "\"}",
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "toolCall", "id": "call_par_a", "name": "write", "arguments": {} },
+                  { "type": "toolCall", "id": "call_par_b", "name": "write", "arguments": {} }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_end",
+              "contentIndex": 0,
+              "toolCall": {
+                "type": "toolCall",
+                "id": "call_par_a",
+                "name": "write",
+                "arguments": { "path": "/tmp/par/a.html", "content": "AAA" }
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_end",
+              "contentIndex": 1,
+              "toolCall": {
+                "type": "toolCall",
+                "id": "call_par_b",
+                "name": "write",
+                "arguments": { "path": "/tmp/par/b.html", "content": "0123456789" }
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "tool_execution_start",
+            "toolCallId": "call_par_a",
+            "toolName": "write",
+            "args": { "path": "/tmp/par/a.html", "content": "AAA" }
+          }
+        },
+        {
+          "emit": {
+            "type": "tool_execution_start",
+            "toolCallId": "call_par_b",
+            "toolName": "write",
+            "args": { "path": "/tmp/par/b.html", "content": "0123456789" }
+          }
+        },
+        {
+          "delayMs": 2,
+          "emit": {
+            "type": "tool_execution_end",
+            "toolCallId": "call_par_b",
+            "toolName": "write",
+            "result": { "content": [{ "type": "text", "text": "Wrote /tmp/par/b.html" }] },
+            "isError": false
+          }
+        },
+        {
+          "delayMs": 2,
+          "emit": {
+            "type": "tool_execution_end",
+            "toolCallId": "call_par_a",
+            "toolName": "write",
+            "result": { "content": [{ "type": "text", "text": "Wrote /tmp/par/a.html" }] },
+            "isError": false
+          }
+        },
+        {
+          "emit": {
+            "type": "turn_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call_par_a",
+                  "name": "write",
+                  "arguments": { "path": "/tmp/par/a.html", "content": "AAA" }
+                },
+                {
+                  "type": "toolCall",
+                  "id": "call_par_b",
+                  "name": "write",
+                  "arguments": { "path": "/tmp/par/b.html", "content": "0123456789" }
+                }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 30,
+                "output": 60,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 90,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1770000020000
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call_par_a",
+                "toolName": "write",
+                "content": [{ "type": "text", "text": "Wrote /tmp/par/a.html" }],
+                "isError": false,
+                "timestamp": 1770000020100
+              },
+              {
+                "role": "toolResult",
+                "toolCallId": "call_par_b",
+                "toolName": "write",
+                "content": [{ "type": "text", "text": "Wrote /tmp/par/b.html" }],
+                "isError": false,
+                "timestamp": 1770000020200
+              }
+            ]
+          }
+        },
+        { "emit": { "type": "agent_end", "messages": [] } }
+      ]
+    }
+  ]
+}

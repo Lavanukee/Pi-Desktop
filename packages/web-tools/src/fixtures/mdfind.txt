@@ -1,0 +1,8 @@
+/Users/jedd/Documents/quarterly-report.pdf
+/Users/jedd/Documents/invoices/invoice-2026-01.pdf
+/Users/jedd/Documents/invoices/invoice-2026-02.pdf
+/Users/jedd/Desktop/notes/meeting notes.txt
+/Applications/Safari.app
+/System/Library/CoreServices/Finder.app
+
+/Users/jedd/Library/Caches/some cached file.dat

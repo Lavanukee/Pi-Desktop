@@ -1,0 +1,548 @@
+import { clsx } from 'clsx';
+import type { HTMLAttributes, ReactNode } from 'react';
+import { forwardRef, useState } from 'react';
+import { DiffStat } from './activity.tsx';
+import { CodeBlock } from './code-block.tsx';
+import { type DiffFileData, DiffView } from './diff-view.tsx';
+import { IconCheck, IconChevronRight, IconExternal } from './icons.tsx';
+import { ShimmerText } from './shimmer.tsx';
+import { Spinner } from './spinner.tsx';
+import { ToolIcon, type ToolIconKind } from './tool-icons.tsx';
+import { type WebSearchResultData, WebSearchResults } from './web-search.tsx';
+
+/*
+ * Collapsed activity chain (THEME 3, match Claude img8–11). A run of tool/
+ * thinking steps collapses to ONE dim summary line that AGGREGATES the whole
+ * chain by kind ("Ran 10 commands, thought for 1h 20m, read 3 files"); a
+ * trailing chevron appears on hover. Click rolls the chain open to a vertical
+ * stacked step list threaded by a left connector line.
+ *
+ * Round-3 step anatomy:
+ *   - thinking / search steps are ALWAYS-EXPANDED inside the open chain — the
+ *     thought text / web-search list render directly under the row, no click.
+ *   - bash / edit / read / file steps show a small PILL below the row ('Script'
+ *     / filename.ext); the pill is the click-to-reveal affordance for their
+ *     content (command+output / diff / preview).
+ *   - media/preview steps carry `opensInCanvas` and route to the canvas.
+ * Every open/collapse is a smooth height roll (reduced-motion safe).
+ */
+
+export type ActivityStepKind = ToolIconKind;
+export type ActivityStatus = 'running' | 'done';
+
+interface ActivityStepCommon {
+  /** Stable key for lists; derived from kind+label when omitted. */
+  id?: string;
+  /** Present/past-tense row label ("Rewriting the plan…" / "Ran a command"). */
+  label: string;
+  /** Small pill/subtitle ("Script", or a filename). */
+  tag?: ReactNode;
+  /** Drives the file-extension icon badge and the default pill/tag. */
+  filename?: string;
+  /** `running` shimmers the row + spins; defaults to `done`. */
+  status?: ActivityStatus;
+  /**
+   * Wall-clock this step took, in milliseconds. Summed per kind for the
+   * aggregated summary line (thinking → "thought for 1h 20m").
+   */
+  durationMs?: number;
+  /**
+   * Media/preview steps (image/pdf/rendered file) do NOT expand inline —
+   * activating them opens the canvas. The app reads this flag and routes.
+   */
+  opensInCanvas?: boolean;
+}
+
+export type ActivityStepData =
+  | (ActivityStepCommon & { kind: 'thinking'; thought?: string })
+  | (ActivityStepCommon & { kind: 'bash'; command?: string; output?: string })
+  | (ActivityStepCommon & {
+      kind: 'edit';
+      diff?: DiffFileData[];
+      /** Explicit change counts for the label stat; derived from `diff` when omitted. */
+      added?: number;
+      deleted?: number;
+    })
+  | (ActivityStepCommon & { kind: 'read' | 'file'; preview?: ReactNode })
+  | (ActivityStepCommon & {
+      kind: 'search';
+      query?: string;
+      results?: WebSearchResultData[];
+    })
+  | (ActivityStepCommon & { kind: 'image' | 'pdf' | 'canvas-open' });
+
+/* ------------------------------------------------------------------ */
+/* Summary derivation (pure — unit-tested)                             */
+/* ------------------------------------------------------------------ */
+
+interface VerbSpec {
+  verb: string;
+  singular: string;
+  /** Empty = non-countable phrase (e.g. "searched the web"), never pluralized. */
+  plural: string;
+}
+
+const VERBS: Record<ActivityStepKind, VerbSpec> = {
+  thinking: { verb: 'Thought', singular: '', plural: '' },
+  bash: { verb: 'Ran', singular: 'a command', plural: 'commands' },
+  edit: { verb: 'Edited', singular: 'a file', plural: 'files' },
+  read: { verb: 'Read', singular: 'a file', plural: 'files' },
+  file: { verb: 'Presented', singular: 'a file', plural: 'files' },
+  search: { verb: 'Searched', singular: 'the web', plural: '' },
+  image: { verb: 'Generated', singular: 'an image', plural: 'images' },
+  pdf: { verb: 'Created', singular: 'a PDF', plural: 'PDFs' },
+  'canvas-open': { verb: 'Opened', singular: 'the canvas', plural: '' },
+};
+
+/**
+ * Canonical phrase order for the aggregated summary. The summary is
+ * order-INDEPENDENT (input order is discarded); kinds always read in this fixed
+ * order so "ran, thought, ran, read" collapses to "Ran … thought … read …".
+ */
+const KIND_ORDER: ActivityStepKind[] = [
+  'bash',
+  'thinking',
+  'edit',
+  'read',
+  'file',
+  'search',
+  'image',
+  'pdf',
+  'canvas-open',
+];
+
+/** Format a millisecond duration as "Xh Ym" / "Ym Zs" / "Zs". */
+export function formatDuration(ms: number): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function phrase(kind: ActivityStepKind, count: number, durationMs: number): string {
+  // Thinking is duration-first when we have one ("thought for 1h 20m").
+  if (kind === 'thinking') {
+    return durationMs > 0 ? `Thought for ${formatDuration(durationMs)}` : 'Thought';
+  }
+  const spec = VERBS[kind];
+  if (!spec.plural) {
+    return spec.singular ? `${spec.verb} ${spec.singular}` : spec.verb;
+  }
+  const noun = count > 1 ? `${count} ${spec.plural}` : spec.singular;
+  return `${spec.verb} ${noun}`;
+}
+
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+/**
+ * Derive the collapsed summary line (past tense) by aggregating the ENTIRE chain
+ * by kind — order-independent, each kind appearing once with its total count and
+ * summed duration ("Ran 10 commands, thought for 1h 20m, read 3 files"). The
+ * first phrase is capitalized, the rest lower-cased. Pure + deterministic.
+ */
+export function summarizeActivity(steps: ActivityStepData[]): string {
+  const agg = new Map<ActivityStepKind, { count: number; durationMs: number }>();
+  for (const step of steps) {
+    const cur = agg.get(step.kind) ?? { count: 0, durationMs: 0 };
+    cur.count += 1;
+    cur.durationMs += step.durationMs ?? 0;
+    agg.set(step.kind, cur);
+  }
+  const phrases: string[] = [];
+  for (const kind of KIND_ORDER) {
+    const entry = agg.get(kind);
+    if (entry) phrases.push(phrase(kind, entry.count, entry.durationMs));
+  }
+  return phrases.map((p, i) => (i === 0 ? p : lowerFirst(p))).join(', ');
+}
+
+/** Present-tense phrase for the step currently in flight (B3). */
+const RUNNING_PHRASE: Record<ActivityStepKind, string> = {
+  thinking: 'Thinking…',
+  bash: 'Running a command',
+  edit: 'Editing a file',
+  read: 'Reading a file',
+  file: 'Presenting a file',
+  search: 'Searching the web',
+  image: 'Generating an image',
+  pdf: 'Creating a PDF',
+  'canvas-open': 'Opening the canvas',
+};
+
+/**
+ * The collapsed summary line for the chain. While ANY step is still running it
+ * reads in the PRESENT tense (the in-flight step's label, else "Working…") so a
+ * live chain never claims past-tense completion; once every step is done it
+ * flips to the past-tense {@link summarizeActivity} roll-up. Pure + unit-tested.
+ */
+export function activitySummary(steps: ActivityStepData[]): string {
+  if (steps.length === 0) return 'Working…';
+  const running = steps.some((s) => s.status === 'running');
+  if (!running) return summarizeActivity(steps);
+  const current = [...steps].reverse().find((s) => s.status === 'running');
+  return current ? RUNNING_PHRASE[current.kind] : 'Working…';
+}
+
+/* ------------------------------------------------------------------ */
+/* Step classification + content by kind                               */
+/* ------------------------------------------------------------------ */
+
+/** thinking + search render their content inline (no click) inside an open chain. */
+function isInlineKind(kind: ActivityStepKind): boolean {
+  return kind === 'thinking' || kind === 'search';
+}
+
+function basename(path: string): string {
+  return path.split(/[/\\]/).pop() ?? path;
+}
+
+/** Default pill text for a pill-gated (bash/edit/read/file) step. */
+const PILL_LABEL: Partial<Record<ActivityStepKind, string>> = {
+  bash: 'Script',
+  edit: 'Diff',
+  read: 'File',
+  file: 'File',
+};
+
+/** Char count past which an in-chain thought fades + offers "Show more". */
+const CHAIN_THOUGHT_LONG = 240;
+
+/**
+ * An in-chain thought (jedd round-5 #3): renders inline (no click) but NEVER
+ * scrolls — a long one clamps with a bottom fade + a small "Show more" below.
+ */
+function ChainThought({ text, live = false }: { text: string; live?: boolean }) {
+  const [showMore, setShowMore] = useState(false);
+  const long = text.trim().length > CHAIN_THOUGHT_LONG;
+  // While the thought is streaming live, never clamp — the newest tokens stay
+  // visible so the user watches it generate (the thread auto-scrolls to follow).
+  const clamped = long && !showMore && !live;
+  return (
+    <div className="pd-chain-thought">
+      <div className="pd-chain-thought-text" data-clamped={clamped}>
+        {text}
+      </div>
+      {long && !live ? (
+        <button
+          type="button"
+          className="pd-showmore pd-focusable"
+          aria-expanded={showMore}
+          onClick={() => setShowMore((v) => !v)}
+        >
+          {showMore ? 'Show less' : 'Show more'}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Sum per-file ± counts for the `edit` step label stat. */
+function editTotals(step: Extract<ActivityStepData, { kind: 'edit' }>): {
+  added: number;
+  deleted: number;
+} {
+  if (step.added !== undefined || step.deleted !== undefined) {
+    return { added: step.added ?? 0, deleted: step.deleted ?? 0 };
+  }
+  let added = 0;
+  let deleted = 0;
+  for (const file of step.diff ?? []) {
+    added += file.added ?? 0;
+    deleted += file.deleted ?? 0;
+  }
+  return { added, deleted };
+}
+
+function StepContent({ step, live = false }: { step: ActivityStepData; live?: boolean }) {
+  switch (step.kind) {
+    case 'thinking':
+      return step.thought ? <ChainThought text={step.thought} live={live} /> : null;
+    case 'bash':
+      return (
+        <div className="pd-chain-terminal">
+          {step.command !== undefined ? <CodeBlock code={step.command} language="bash" /> : null}
+          {step.output !== undefined ? (
+            <div className="pd-chain-output">
+              <div className="pd-chain-output-label">Output</div>
+              {/* Border + radius ride the frame (overflow clipped); the <pre>
+               * scrolls inside, so the frame never gets cut off (round-5 #6). */}
+              <div className="pd-chain-output-frame">
+                <pre className="pd-chain-output-body pd-scroll">{step.output}</pre>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      );
+    case 'edit':
+      return step.diff ? <DiffView files={step.diff} /> : null;
+    case 'search':
+      return step.results ? (
+        <WebSearchResults query={step.query ?? step.label} results={step.results} />
+      ) : null;
+    case 'read':
+    case 'file':
+      return step.preview !== undefined ? (
+        <div className="pd-chain-preview">{step.preview}</div>
+      ) : null;
+    default:
+      return null;
+  }
+}
+
+/** Whether a step has inline content worth a reveal (pill) or inline render. */
+function hasInlineContent(step: ActivityStepData): boolean {
+  if (step.opensInCanvas) return false;
+  switch (step.kind) {
+    case 'thinking':
+      return step.thought !== undefined;
+    case 'bash':
+      return step.command !== undefined || step.output !== undefined;
+    case 'edit':
+      return step.diff !== undefined && step.diff.length > 0;
+    case 'search':
+      return step.results !== undefined;
+    case 'read':
+    case 'file':
+      return step.preview !== undefined;
+    default:
+      return false;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* ActivityStep                                                        */
+/* ------------------------------------------------------------------ */
+
+export interface ActivityStepProps {
+  data: ActivityStepData;
+  /** Toggles a pill-gated step's content (bash/edit/read/file). */
+  expanded?: boolean;
+  /** This step is streaming live — thought content shows un-clamped. */
+  live?: boolean;
+  /** Toggles inline content (kinds without `opensInCanvas`). */
+  onToggle?: () => void;
+  /** Fired for `opensInCanvas` steps instead of toggling. */
+  onOpenCanvas?: () => void;
+}
+
+/** One row of the expanded chain: icon + label, then inline content or a pill. */
+export const ActivityStep = forwardRef<HTMLDivElement, ActivityStepProps>(function ActivityStep(
+  { data, expanded = false, live = false, onToggle, onOpenCanvas },
+  ref,
+) {
+  const running = data.status === 'running';
+  const canvas = data.opensInCanvas === true;
+  const inline = isInlineKind(data.kind);
+  const pillGated = !canvas && !inline && hasInlineContent(data);
+  const canvasTag = data.tag ?? (data.filename ? basename(data.filename) : undefined);
+  const pillLabel =
+    data.tag ?? (data.filename ? basename(data.filename) : (PILL_LABEL[data.kind] ?? 'Details'));
+  // The edit step carries its ±stat right beside the label (round-5 #12).
+  const editStat = data.kind === 'edit' ? editTotals(data) : null;
+
+  const rowInner = (
+    <>
+      <span className="pd-chain-step-icon">
+        {running ? <Spinner size={14} /> : <ToolIcon kind={data.kind} filename={data.filename} />}
+      </span>
+      <span className="pd-chain-step-label">
+        {running ? <ShimmerText>{data.label}</ShimmerText> : data.label}
+      </span>
+      {editStat ? (
+        <DiffStat
+          className="pd-chain-step-diffstat"
+          added={editStat.added}
+          deleted={editStat.deleted}
+        />
+      ) : null}
+      {canvas && canvasTag !== undefined ? (
+        <span className="pd-chain-step-tag">{canvasTag}</span>
+      ) : null}
+      {canvas ? (
+        <span className="pd-chain-step-canvas" role="img" aria-label="Opens in canvas">
+          <IconExternal size={13} />
+        </span>
+      ) : null}
+    </>
+  );
+
+  return (
+    <div
+      ref={ref}
+      className="pd-chain-step"
+      data-expanded={pillGated ? expanded : undefined}
+      data-kind={data.kind}
+    >
+      {canvas ? (
+        <button type="button" className="pd-chain-step-row pd-focusable" onClick={onOpenCanvas}>
+          {rowInner}
+        </button>
+      ) : (
+        <div className="pd-chain-step-row">{rowInner}</div>
+      )}
+
+      {inline && hasInlineContent(data) ? (
+        // Thoughts never scroll (they fade + Show more); search keeps a bounded scroll.
+        <div
+          className={clsx(
+            'pd-chain-step-inline',
+            data.kind !== 'thinking' && 'pd-chain-step-inline--scroll pd-scroll',
+          )}
+        >
+          <StepContent step={data} live={live} />
+        </div>
+      ) : null}
+
+      {pillGated ? (
+        <div className="pd-chain-step-pillbox">
+          <button
+            type="button"
+            className="pd-chain-pill pd-focusable"
+            aria-expanded={expanded}
+            onClick={onToggle}
+          >
+            <span className="pd-chain-pill-label">{pillLabel}</span>
+            <span className="pd-chain-pill-chevron" data-expanded={expanded}>
+              <IconChevronRight size={12} />
+            </span>
+          </button>
+          <div className="pd-chain-reveal" data-open={expanded}>
+            <div className="pd-chain-reveal-inner">
+              <div className="pd-chain-step-content pd-scroll">
+                <StepContent step={data} />
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+});
+
+/* ------------------------------------------------------------------ */
+/* ActivityChain                                                       */
+/* ------------------------------------------------------------------ */
+
+export interface ActivityChainProps extends Omit<HTMLAttributes<HTMLDivElement>, 'onSelect'> {
+  steps: ActivityStepData[];
+  /** Controlled chain expansion (collapsed summary <-> step list). */
+  expanded?: boolean;
+  defaultExpanded?: boolean;
+  /**
+   * Streaming/live: while true the chain is FORCE-EXPANDED and its thoughts show
+   * un-clamped so the user watches the run generate; the moment it flips false
+   * (the run's response text begins, or the turn ends) the chain COLLAPSES to its
+   * summary. Overrides `defaultExpanded`/user toggles for the duration. Collapse
+   * animates via the existing height roll (reduced-motion safe).
+   */
+  active?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+  /** Seed which pill-gated step's content is open on mount (index into `steps`). */
+  defaultOpenStep?: number;
+  /** Override the derived past-tense summary line. */
+  summary?: ReactNode;
+  /** Activated for a step whose `opensInCanvas` is set. */
+  onOpenCanvas?: (step: ActivityStepData, index: number) => void;
+}
+
+/** Collapsed/expandable run of tool + thinking steps. */
+export const ActivityChain = forwardRef<HTMLDivElement, ActivityChainProps>(function ActivityChain(
+  {
+    steps,
+    expanded,
+    defaultExpanded = false,
+    active = false,
+    onExpandedChange,
+    defaultOpenStep,
+    summary,
+    onOpenCanvas,
+    className,
+    ...rest
+  },
+  ref,
+) {
+  const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
+  // While streaming (active), force open; when the run ends, active→false and the
+  // chain falls back to internalExpanded (collapsed by default) → it collapses.
+  const isExpanded = expanded ?? (active ? true : internalExpanded);
+  const [openStep, setOpenStep] = useState<number | null>(defaultOpenStep ?? null);
+
+  const running = steps.some((s) => s.status === 'running');
+  const toggleChain = () => {
+    // No manual toggle while streaming — the live run stays open until it's done.
+    if (active) return;
+    const next = !isExpanded;
+    if (expanded === undefined) setInternalExpanded(next);
+    onExpandedChange?.(next);
+  };
+  const toggleStep = (index: number) => setOpenStep((cur) => (cur === index ? null : index));
+
+  const summaryText = summary ?? activitySummary(steps);
+
+  // Stable, index-free keys (dedupe repeated content with an occurrence suffix).
+  const seen = new Map<string, number>();
+  const renderSteps = steps.map((step, index) => {
+    const base = step.id ?? `${step.kind}:${step.label}`;
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    return { step, index, key: n === 0 ? base : `${base}#${n}` };
+  });
+
+  return (
+    <div
+      ref={ref}
+      className={clsx('pd-chain', className)}
+      data-expanded={isExpanded}
+      data-running={running}
+      {...rest}
+    >
+      <button
+        type="button"
+        className="pd-chain-summary pd-focusable"
+        aria-expanded={isExpanded}
+        onClick={toggleChain}
+      >
+        <span className="pd-chain-summary-text">
+          {running ? <ShimmerText>{summaryText}</ShimmerText> : summaryText}
+        </span>
+        <span className="pd-chain-summary-chevron" data-expanded={isExpanded}>
+          <IconChevronRight size={14} />
+        </span>
+      </button>
+
+      {/* The step list rolls open/closed (grid-rows reveal) — steps stay mounted
+       * so the collapse animates too. */}
+      <div className="pd-chain-reveal" data-open={isExpanded}>
+        <div className="pd-chain-reveal-inner">
+          <div className="pd-chain-steps">
+            {renderSteps.map(({ step, index, key }) => (
+              <ActivityStep
+                key={key}
+                data={step}
+                expanded={openStep === index}
+                live={active}
+                onToggle={() => toggleStep(index)}
+                onOpenCanvas={() => onOpenCanvas?.(step, index)}
+              />
+            ))}
+            {!running ? (
+              <div className="pd-chain-step pd-chain-done">
+                <div className="pd-chain-step-row">
+                  <span className="pd-chain-step-icon pd-chain-done-icon">
+                    <IconCheck size={14} />
+                  </span>
+                  <span className="pd-chain-step-label">Done</span>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});

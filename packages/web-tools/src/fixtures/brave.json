@@ -1,0 +1,24 @@
+{
+  "type": "search",
+  "web": {
+    "type": "search",
+    "results": [
+      {
+        "title": "Example Domain",
+        "url": "https://www.example.com/",
+        "description": "This <strong>domain</strong> is for use in illustrative examples in documents.",
+        "profile": { "name": "example.com" }
+      },
+      {
+        "title": "Example.com - Wikipedia",
+        "url": "https://en.wikipedia.org/wiki/Example.com",
+        "description": "example.com is a second-level domain name reserved for documentation."
+      },
+      {
+        "title": "IANA-managed Reserved Domains",
+        "url": "https://www.iana.org/domains/reserved",
+        "description": "example.com, example.net, example.org are reserved for use in documentation."
+      }
+    ]
+  }
+}

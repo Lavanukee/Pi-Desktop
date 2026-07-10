@@ -1,0 +1,179 @@
+/**
+ * Renderer settings state: mirrors `~/.pi/desktop/settings.json` (loaded via
+ * settings:get), drives the live theme (resolving `system` → light/dark from the
+ * OS preference), and on every change persists via settings:set + pushes the
+ * side effects the frozen extensions observe:
+ *   - theme  → the theme store (data-flavor/data-mode on <html>)
+ *   - permission/effort → the harness, via `/harness` slash commands (the only
+ *     runtime config path the frozen harness exposes)
+ *   - search keys / mcp mode → handled main-side by settings:set
+ */
+import { create } from 'zustand';
+import type {
+  DesktopSettings,
+  DesktopSettingsPatch,
+  ThemeModePref,
+} from '../../electron/settings/settings-contract';
+import { type ThemeFlavor, useThemeStore } from '../store/theme';
+import { applyHarnessConfig } from './pi-connect';
+
+const ICON_STROKE_DEFAULT = 1.25;
+
+const DEFAULTS: DesktopSettings = {
+  version: 1,
+  theme: { flavor: 'claude', mode: 'system' },
+  permissionMode: 'reviewer',
+  effort: 'medium',
+  search: { brave: '', tavily: '' },
+  mcpMode: 'lite',
+  capabilities: { image: false, video: false, audio: false, threeD: false },
+  customInstructions: '',
+  iconStroke: ICON_STROKE_DEFAULT,
+};
+
+function prefersDark(): boolean {
+  return (
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-color-scheme: dark)').matches
+  );
+}
+
+function resolveMode(mode: ThemeModePref): 'dark' | 'light' {
+  if (mode === 'system') return prefersDark() ? 'dark' : 'light';
+  return mode;
+}
+
+/** Push the settings theme into the live theme store (which only knows light/dark). */
+function applyTheme(settings: DesktopSettings): void {
+  const theme = useThemeStore.getState();
+  theme.setFlavor(settings.theme.flavor);
+  theme.setMode(resolveMode(settings.theme.mode));
+}
+
+/** Drive the global icon stroke: an inline `--pd-icon-stroke` on the document
+ * root wins over the theme token, thinning/thickening every `.pd-icon` glyph. */
+function applyIconStroke(value: number): void {
+  document.documentElement.style.setProperty('--pd-icon-stroke', String(value));
+}
+
+interface SettingsStoreState {
+  settings: DesktopSettings;
+  loaded: boolean;
+  load: () => Promise<void>;
+  /** Merge a patch, persist, apply theme + harness side effects. */
+  update: (patch: DesktopSettingsPatch) => Promise<void>;
+  /** Top-bar quick toggle: apply a concrete flavor/mode to the live theme store
+   * and persist it, so the flip is instant AND survives a reload. */
+  setTheme: (patch: { flavor?: ThemeFlavor; mode?: 'dark' | 'light' }) => Promise<void>;
+}
+
+export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
+  settings: DEFAULTS,
+  loaded: false,
+
+  // Fetch settings into the store WITHOUT applying the theme — connectSettings
+  // decides whether to apply it at boot (it deliberately doesn't under E2E, so
+  // the base theme probe keeps the index.html default until it toggles).
+  load: async () => {
+    const settings = await window.piDesktop.invoke('settings:get', undefined);
+    set({ settings, loaded: true });
+  },
+
+  update: async (patch) => {
+    // Optimistic: apply theme immediately so the flip feels instant.
+    const optimistic = {
+      ...get().settings,
+      ...patch,
+      theme: { ...get().settings.theme, ...patch.theme },
+      search: { ...get().settings.search, ...patch.search },
+      capabilities: { ...get().settings.capabilities, ...patch.capabilities },
+    };
+    set({ settings: optimistic });
+    if (patch.theme !== undefined) applyTheme(optimistic);
+    if (patch.iconStroke !== undefined) applyIconStroke(optimistic.iconStroke);
+
+    const settings = await window.piDesktop.invoke('settings:set', { patch });
+    set({ settings });
+    applyTheme(settings);
+    applyIconStroke(settings.iconStroke);
+
+    // Harness picks up permission/effort only via its slash commands — fire the
+    // ones that actually changed (best-effort; a no-pi session just no-ops).
+    const harness: Parameters<typeof applyHarnessConfig>[0] = {};
+    if (patch.permissionMode !== undefined) harness.permissionMode = settings.permissionMode;
+    if (patch.effort !== undefined) harness.effort = settings.effort;
+    if (harness.permissionMode !== undefined || harness.effort !== undefined) {
+      void applyHarnessConfig(harness);
+    }
+  },
+
+  setTheme: async (patch) => {
+    // A top-bar toggle is an explicit, concrete choice, so — unlike update() —
+    // apply it to the live theme store verbatim (no `system` re-resolution, which
+    // would fight the toggle) and persist the concrete value so it sticks across
+    // a reload. Keep the in-memory settings in sync so the Appearance panel agrees.
+    const theme = useThemeStore.getState();
+    if (patch.flavor !== undefined) theme.setFlavor(patch.flavor);
+    if (patch.mode !== undefined) theme.setMode(patch.mode);
+    set({ settings: { ...get().settings, theme: { ...get().settings.theme, ...patch } } });
+    const settings = await window.piDesktop.invoke('settings:set', { patch: { theme: patch } });
+    set({ settings });
+  },
+}));
+
+/**
+ * Re-push the saved permission-mode / effort into a freshly (re)started pi
+ * session. Only the values that DIFFER from the harness's own defaults
+ * (`reviewer` / `medium`) are sent, so a default profile issues no commands —
+ * which keeps a fresh session's thread clean (each command is a real pi turn).
+ */
+export function applySavedHarnessConfig(): void {
+  const { permissionMode, effort } = useSettingsStore.getState().settings;
+  const patch: Parameters<typeof applyHarnessConfig>[0] = {};
+  if (permissionMode !== 'reviewer') patch.permissionMode = permissionMode;
+  if (effort !== 'medium') patch.effort = effort;
+  if (patch.permissionMode !== undefined || patch.effort !== undefined) {
+    void applyHarnessConfig(patch);
+  }
+}
+
+let connected = false;
+
+/** Load settings + keep the theme following the OS when mode is `system`. */
+export function connectSettings(): void {
+  if (connected) return;
+  connected = true;
+
+  // Under E2E the base theme probe asserts the exact index.html default
+  // (claude/dark) and drives the flavor/mode toggles itself, so we must not
+  // apply a persisted/seeded theme at boot. Live changes via update() still
+  // apply — only this boot-time application is suppressed.
+  const isE2E = new URLSearchParams(window.location.search).has('piE2E');
+
+  void useSettingsStore
+    .getState()
+    .load()
+    .then(() => {
+      const { settings } = useSettingsStore.getState();
+      if (!isE2E) applyTheme(settings);
+      // Icon stroke is orthogonal to the theme probes (a unitless override that
+      // matches the token at its default), so it is safe to apply at boot even
+      // under E2E — this is what makes a persisted thickness survive a reload.
+      applyIconStroke(settings.iconStroke);
+    });
+
+  if (typeof window.matchMedia === 'function') {
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    mql.addEventListener('change', () => {
+      const { settings } = useSettingsStore.getState();
+      if (!isE2E && settings.theme.mode === 'system') applyTheme(settings);
+    });
+  }
+
+  // E2E: expose a read handle behind the same opt-in as __pi_store (main appends
+  // ?piE2E=1 under PI_E2E). Same-context code can reach the store anyway; gating
+  // just keeps production from shipping a stable settings handle on window.
+  if (isE2E) {
+    window.__settings_store = () => useSettingsStore;
+  }
+}

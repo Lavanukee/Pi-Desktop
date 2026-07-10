@@ -1,0 +1,76 @@
+/*
+ * Tooltip — spec-tooltip.md. The entire flavor difference is the surface token
+ * pair: claude = theme-invariant black glass (--pd-tooltip-bg #000c / white),
+ * codex = theme pill (bg-overlay / text-primary). Motion rides the menu preset.
+ */
+
+.pd-tooltip {
+  z-index: 50;
+  max-width: 13rem;
+  padding: 4px 8px;
+  border-radius: var(--pd-radius-popover);
+  background: var(--pd-tooltip-bg);
+  color: var(--pd-tooltip-fg);
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-md);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+  font-weight: var(--pd-font-weight-regular);
+  text-wrap: pretty;
+  animation: pd-menu-enter var(--pd-duration-menu) var(--pd-easing-enter);
+}
+
+.pd-tooltip[data-state="closed"] {
+  animation: pd-fade-out var(--pd-duration-fast) var(--pd-easing-exit) forwards;
+}
+
+.pd-tooltip .pd-kbd,
+.pd-tooltip .pd-kbd--bare {
+  margin-left: 6px;
+  color: color-mix(in srgb, var(--pd-tooltip-fg) 60%, transparent);
+}
+
+/*
+ * Context-fullness hover card (feedback #1). Same tooltip motion/portal, but a
+ * theme-surface card instead of the black-glass caption: overlay bg, primary
+ * text, roomier. Rules come after .pd-tooltip so they win by source order for
+ * the shared element (both are single-class specificity).
+ */
+.pd-context-tooltip {
+  max-width: 17rem;
+  padding: 10px 12px;
+  background: var(--pd-bg-overlay);
+  color: var(--pd-text-primary);
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-popover);
+}
+
+.pd-context-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pd-context-card-bar {
+  margin-bottom: 5px;
+}
+
+.pd-context-card-line {
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-footnote);
+  font-weight: var(--pd-font-weight-medium);
+}
+
+.pd-context-card-line--muted {
+  color: var(--pd-text-muted);
+  font-weight: var(--pd-font-weight-regular);
+}
+
+.pd-context-card-note {
+  margin-top: 5px;
+  padding-top: 6px;
+  border-top: 0.5px solid var(--pd-border-subtle);
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+  text-wrap: pretty;
+}

@@ -1,0 +1,42 @@
+# Local/dev packaging config. Release packaging (dmg, notarization,
+# auto-update) hardens in W11; this exists so `pnpm ship:local` can put a
+# runnable "Pi Desktop.app" in /Applications at any time.
+appId: app.pidesktop.desktop
+productName: Pi Desktop
+directories:
+  output: release
+# `files` selects the app's OWN sources (the renderer bundle + the CJS electron
+# bundle). electron-builder ALSO copies the production dependency tree from
+# package.json into the asar automatically — that is how the runtime-loaded
+# workspace packages get bundled without appearing in any import graph:
+#   - @pi-desktop/provider-llamacpp, @pi-desktop/harness, @pi-desktop/web-tools
+#     ride along as `dependencies` (apps/desktop/package.json) purely so they
+#     land at <asar>/node_modules/@pi-desktop/<pkg>/src/index.ts, where pi loads
+#     them via `-e` (see electron/pi/pi-main.ts + electron/app-paths.ts). The
+#     desktop app never imports them; the dependency entry IS the bundling
+#     mechanism.
+#   - @pi-desktop/canvas carries its harness/ dir, served over pd-preview://.
+# Their .ts entry points + transitive deps stay INSIDE the asar on purpose: the
+# ELECTRON_RUN_AS_NODE pi child has the asar fs shim, and Node module resolution
+# only stays coherent when the whole tree shares the asar path (see app-paths.ts).
+files:
+  - dist/**/*
+  - dist-electron/**/*
+asarUnpack:
+  # pi is spawned as a real child process (ELECTRON_RUN_AS_NODE). Its cli.js is
+  # read through the asar shim, but its native transitive dep koffi (loaded via
+  # @mariozechner/clipboard) is a .node binary that CANNOT load from inside the
+  # asar, so the whole @mariozechner tree is unpacked. (electron-builder also
+  # auto-unpacks stray .node files, but pinning the scope here is explicit and
+  # keeps cli.js + its native deps colocated on real disk.)
+  - node_modules/@mariozechner/**
+  # node-pty (terminal tabs, Phase 2b) is a native .node addon that cannot load
+  # from inside the asar — unpack it so require('node-pty') resolves in the
+  # packaged app. Absent when the optional dep / native rebuild was skipped, in
+  # which case the PTY manager degrades to its piped-shell fallback.
+  - node_modules/node-pty/**
+mac:
+  target: dir
+  category: public.app-category.developer-tools
+  # No Developer ID yet: skip signing here; ship:local ad-hoc signs after.
+  identity: null

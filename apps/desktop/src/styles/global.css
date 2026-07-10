@@ -1,0 +1,596 @@
+@import "tailwindcss";
+@import "@pi-desktop/themes/themes.css";
+@import "@pi-desktop/ui/styles.css";
+@import "@pi-desktop/canvas/styles.css";
+
+/*
+ * Tailwind consumes only `--pd-*` tokens: the default color palette is
+ * cleared, and every themed utility below resolves to a var() reference
+ * (`inline`), so utilities re-resolve live when data-flavor/data-mode flip.
+ */
+@theme {
+  --color-*: initial;
+}
+
+@theme inline {
+  /* surfaces */
+  --color-bg-base: var(--pd-bg-base);
+  --color-bg-raised: var(--pd-bg-raised);
+  --color-bg-overlay: var(--pd-bg-overlay);
+  --color-bg-inset: var(--pd-bg-inset);
+  --color-bg-hover: var(--pd-bg-hover);
+  --color-bg-active: var(--pd-bg-active);
+  --color-bg-backdrop: var(--pd-bg-backdrop);
+
+  /* text */
+  --color-text-primary: var(--pd-text-primary);
+  --color-text-secondary: var(--pd-text-secondary);
+  --color-text-muted: var(--pd-text-muted);
+  --color-text-inverse: var(--pd-text-inverse);
+  --color-text-on-accent: var(--pd-text-on-accent);
+  --color-text-link: var(--pd-text-link);
+
+  /* borders */
+  --color-border-subtle: var(--pd-border-subtle);
+  --color-border-default: var(--pd-border-default);
+  --color-border-strong: var(--pd-border-strong);
+  --color-border-focus: var(--pd-border-focus);
+
+  /* accent */
+  --color-accent-primary: var(--pd-accent-primary);
+  --color-accent-hover: var(--pd-accent-hover);
+  --color-accent-active: var(--pd-accent-active);
+  --color-accent-subtle: var(--pd-accent-subtle);
+
+  /* status */
+  --color-status-info-bg: var(--pd-status-info-bg);
+  --color-status-info-fg: var(--pd-status-info-fg);
+  --color-status-info-border: var(--pd-status-info-border);
+  --color-status-success-bg: var(--pd-status-success-bg);
+  --color-status-success-fg: var(--pd-status-success-fg);
+  --color-status-success-border: var(--pd-status-success-border);
+  --color-status-warning-bg: var(--pd-status-warning-bg);
+  --color-status-warning-fg: var(--pd-status-warning-fg);
+  --color-status-warning-border: var(--pd-status-warning-border);
+  --color-status-danger-bg: var(--pd-status-danger-bg);
+  --color-status-danger-fg: var(--pd-status-danger-fg);
+  --color-status-danger-border: var(--pd-status-danger-border);
+
+  /* typography */
+  --font-sans: var(--pd-font-sans);
+  --font-serif: var(--pd-font-serif);
+  --font-mono: var(--pd-font-mono);
+  --text-caption: var(--pd-font-size-caption);
+  --text-caption--line-height: var(--pd-leading-caption);
+  --text-footnote: var(--pd-font-size-footnote);
+  --text-footnote--line-height: var(--pd-leading-footnote);
+  --text-body: var(--pd-font-size-body);
+  --text-body--line-height: var(--pd-leading-body);
+  --text-code: var(--pd-font-size-code);
+  --text-code--line-height: var(--pd-leading-code);
+  --text-heading: var(--pd-font-size-heading);
+  --text-heading--line-height: var(--pd-leading-heading);
+  --text-title: var(--pd-font-size-title);
+  --text-title--line-height: var(--pd-leading-title);
+
+  /* geometry */
+  --radius-xs: var(--pd-radius-xs);
+  --radius-sm: var(--pd-radius-sm);
+  --radius-md: var(--pd-radius-md);
+  --radius-lg: var(--pd-radius-lg);
+
+  /* elevation */
+  --shadow-sm: var(--pd-shadow-sm);
+  --shadow-md: var(--pd-shadow-md);
+  --shadow-lg: var(--pd-shadow-lg);
+  --shadow-popover: var(--pd-shadow-popover);
+
+  /* motion */
+  --ease-standard: var(--pd-easing-standard);
+  --ease-enter: var(--pd-easing-enter);
+  --ease-exit: var(--pd-easing-exit);
+  --ease-press: var(--pd-easing-press);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--pd-bg-base);
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  font-weight: var(--pd-font-weight-body);
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Lexical editor hosted in the composer shell: match the spec editor scale
+ * (16px/24px in both flavors) and position the placeholder over the input. */
+.pd-composer-editor {
+  position: relative;
+}
+.pd-composer-input {
+  font-size: 16px;
+  line-height: 24px;
+  min-height: 24px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  caret-color: var(--pd-text-primary);
+  user-select: text;
+}
+.pd-composer-input:focus {
+  outline: none;
+}
+/* #A11: align the placeholder with the first line of input. The editor pads its
+ * content 14px/16px (composer.css), and the placeholder is absolutely positioned
+ * inside it — top:0 left:0 sat it above/left of the caret line ("squished"). */
+.pd-composer-placeholder {
+  top: 14px;
+  left: 16px;
+  font-size: 16px;
+  line-height: 24px;
+  user-select: none;
+}
+
+/* Canvas dock: the side rail animates its width on open/close and on the
+ * inline↔side placement flip; dragging the resize handle suspends the
+ * transition so it tracks the cursor. Reduced-motion drops both. */
+.pd-canvas-rail {
+  transition: width var(--pd-duration-base, 220ms) var(--pd-easing-standard, ease);
+}
+.pd-canvas-rail[data-dragging="true"] {
+  transition: none;
+}
+@keyframes pd-inline-canvas-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.pd-inline-canvas {
+  margin-top: 0.5rem;
+  animation: pd-inline-canvas-in var(--pd-duration-base, 220ms) var(--pd-easing-enter, ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pd-canvas-rail {
+    transition: none;
+  }
+  .pd-inline-canvas {
+    animation: none;
+  }
+}
+
+/* #A4: scale the thread column down to a calmer measure (~85% of the frozen
+ * token width), aligning it with the 700px composer for one narrow spine. */
+.pd-thread {
+  max-width: 700px;
+}
+
+/*
+ * #A6: sidebar slide. The panel (.pd-sidebar) translates itself off-screen via
+ * its own data-open rule; this SLOT owns the layout footprint so the main
+ * surface reclaims the width as it closes. Claude floats the panel with an 8px
+ * margin, so its slot is that much wider.
+ */
+.pd-sidebar-slot {
+  flex: none;
+  height: 100%;
+  width: var(--pd-sidebar-width);
+  overflow: visible;
+  transition: width var(--pd-duration-slow, 320ms) var(--pd-easing-standard, ease);
+}
+:root[data-flavor="claude"] .pd-sidebar-slot {
+  width: calc(var(--pd-sidebar-width) + 16px);
+}
+.pd-sidebar-slot[data-open="false"] {
+  width: 0;
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pd-sidebar-slot {
+    transition: none;
+  }
+}
+
+/*
+ * #A10: elastic overscroll. `contain` stops the wheel from chaining out of the
+ * pane; the rubber-band translate is driven in JS (ChatThread) and rides on the
+ * content wrapper below.
+ */
+.pd-elastic-scroll {
+  overscroll-behavior: contain;
+}
+.pd-elastic-content {
+  will-change: transform;
+}
+
+/* #A8c: attachment previews — image thumbnail, else a filename + ext chip. */
+.pd-composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px 0;
+}
+.pd-attach {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 4px 6px 4px 4px;
+  border-radius: var(--pd-radius-sm);
+  background: var(--pd-bg-inset);
+  box-shadow: var(--pd-shadow-hairline);
+}
+.pd-attach-thumb {
+  width: 28px;
+  height: 28px;
+  border-radius: calc(var(--pd-radius-sm) - 2px);
+  object-fit: cover;
+  flex: none;
+}
+.pd-attach-ext {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: calc(var(--pd-radius-sm) - 2px);
+  background: var(--pd-bg-active);
+  color: var(--pd-text-secondary);
+  font-size: 9px;
+  font-weight: var(--pd-font-weight-semibold);
+  letter-spacing: 0.04em;
+  flex: none;
+}
+.pd-attach-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-secondary);
+}
+.pd-attach-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--pd-radius-full);
+  background: transparent;
+  color: var(--pd-text-muted);
+  cursor: pointer;
+  flex: none;
+}
+.pd-attach-remove:hover {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-primary);
+}
+
+/* #A8b: fullscreen drop-anywhere overlay. The dim is deliberately strong and the
+ * card is a solid raised surface so the greeting/composer behind it never bleeds
+ * through the (translucent, active) dropzone (adversarial drop-overlay finding). */
+.pd-window-drop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  background: color-mix(in srgb, var(--pd-bg-backdrop, #000) 68%, transparent);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  animation: pd-onboard-step-in 160ms var(--pd-easing-enter, ease-out);
+}
+.pd-window-drop-card {
+  width: min(520px, 90%);
+  padding: 16px;
+  border-radius: var(--pd-radius-lg);
+  background: var(--pd-bg-raised);
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-lg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pd-window-drop {
+    animation: none;
+  }
+}
+
+/* #A6 stub: a centered "coming soon" panel for not-yet-built nav destinations. */
+.pd-stub-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--pd-bg-base) 82%, transparent);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+}
+.pd-stub-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(420px, 100%);
+  padding: 24px;
+  border-radius: var(--pd-radius-lg);
+  background: var(--pd-bg-raised);
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-lg);
+}
+
+/*
+ * Round-5 #2/#4: the top bar takes the CHAT-AREA color in BOTH flavors, so it
+ * flows seamlessly into the conversation surface (no sidebar-tinted bar).
+ * Round-5 #1/#5: square the chat-area's TOP corners where it meets the top bar /
+ * sidebar (codex's floating card kept rounded top corners — remove that stray
+ * corner; the chat area is square at that junction). Both are app-level
+ * overrides of the frozen ui chrome CSS.
+ */
+.pd-topbar {
+  background: var(--pd-bg-base);
+}
+.pd-main-surface {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+/*
+ * Round-5 #15: animated light/dark quick toggle. A sun (dark mode) and a moon
+ * (light mode) are stacked; the flip cross-fades + rotates between them.
+ * Reduced-motion drops the transition.
+ */
+.pd-theme-toggle {
+  position: relative;
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+}
+.pd-theme-toggle > * {
+  position: absolute;
+  inset: 0;
+  transition:
+    opacity var(--pd-duration-base, 220ms) var(--pd-easing-standard, ease),
+    transform var(--pd-duration-base, 220ms) var(--pd-easing-standard, ease);
+}
+.pd-theme-toggle-sun {
+  opacity: 0;
+  transform: rotate(-90deg) scale(0.5);
+}
+.pd-theme-toggle-moon {
+  opacity: 0;
+  transform: rotate(90deg) scale(0.5);
+}
+.pd-theme-toggle[data-mode="dark"] .pd-theme-toggle-sun {
+  opacity: 1;
+  transform: none;
+}
+.pd-theme-toggle[data-mode="light"] .pd-theme-toggle-moon {
+  opacity: 1;
+  transform: none;
+}
+
+/*
+ * Round-5 #13: the chat title sits in the top bar just right of the sidebar.
+ * At rest it shows the chat name; on HOVER a breadcrumb prefix "<project> /"
+ * reveals (blank while projects is "" — the structure is wired). Clicking swaps
+ * it for the inline rename input.
+ */
+.pd-chat-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 340px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--pd-radius-md);
+  background: transparent;
+  color: var(--pd-text-primary);
+  font: inherit;
+  font-weight: var(--pd-font-weight-body);
+  cursor: text;
+  overflow: hidden;
+}
+.pd-chat-title:hover {
+  background: var(--pd-bg-hover);
+}
+.pd-chat-title-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pd-chat-title-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  color: var(--pd-text-muted);
+  transition:
+    max-width var(--pd-duration-base, 220ms) var(--pd-easing-standard, ease),
+    opacity var(--pd-duration-base, 220ms) var(--pd-easing-standard, ease);
+}
+.pd-chat-title:hover .pd-chat-title-crumb {
+  max-width: 200px;
+  opacity: 1;
+}
+.pd-chat-title-input {
+  max-width: 340px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--pd-border-strong);
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-raised);
+  color: var(--pd-text-primary);
+  font: inherit;
+  outline: none;
+}
+
+/*
+ * Round-5 #19: slim restore control for a slid-out (closed) canvas panel — the
+ * tab-bar toggle rides out with the panel, so this re-opens it. Fixed just below
+ * the top bar at the right edge.
+ */
+.pd-canvas-restore {
+  position: fixed;
+  top: calc(var(--pd-height-topbar) + 8px);
+  right: 8px;
+  z-index: 20;
+  display: flex;
+  padding: 2px;
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-raised);
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-sm);
+}
+
+/*
+ * Round-5 #7: a generated image inline in the thread — a bounded thumbnail that
+ * opens a fullscreen lightbox (click anywhere / Escape to dismiss).
+ */
+.pd-thread-image {
+  display: inline-flex;
+  width: max-content;
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--pd-border-subtle);
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-inset);
+  cursor: zoom-in;
+  overflow: hidden;
+}
+.pd-thread-image-thumb {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(360px, 100%);
+  max-height: 320px;
+  object-fit: contain;
+}
+.pd-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  border: 0;
+  background: color-mix(in srgb, var(--pd-bg-backdrop, #000) 82%, transparent);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  cursor: zoom-out;
+  animation: pd-onboard-step-in 140ms var(--pd-easing-enter, ease-out);
+}
+.pd-image-lightbox-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--pd-radius-md);
+  box-shadow: var(--pd-shadow-lg);
+}
+
+/*
+ * Round-5 #3/#8: the composer editor never shows a hard scrollbar (hidden here).
+ * A min-height keeps the placeholder + first line from ever scrolling; once the
+ * typed content overflows the max height and is scrolled, a top gradient MASK
+ * fades it under the edge instead of a hard cut (driven by `data-scrolled` from
+ * ChatComposer's scroll handler, so the mask is off at rest).
+ */
+.pd-composer-editor {
+  min-height: 3rem;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.pd-composer-editor::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+.pd-composer-editor[data-scrolled="true"] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-theme-toggle > *,
+  .pd-chat-title-crumb {
+    transition: none;
+  }
+  .pd-image-lightbox {
+    animation: none;
+  }
+}
+
+/*
+ * Round-6 (img53): pin the sidebar's collapse toggle to the SAME window-x as the
+ * top bar's re-open button (~80px, clearing the macOS traffic lights) in BOTH
+ * flavors, so it sits cleanly past the lights and never jumps on collapse/expand.
+ * Codex's panel starts at window x=0 (→ 80px padding); claude's floats 8px in
+ * (→ 72px padding = the same 80px window-x). Vertical centering is handled by the
+ * strip sharing the top-bar height with `items-center`.
+ */
+.pd-sidebar-tl {
+  padding-left: 80px;
+}
+:root[data-flavor="claude"] .pd-sidebar-tl {
+  padding-left: 72px;
+}
+
+/*
+ * Round-6 (#3): opening the Settings surface slides + fades it in, consistent
+ * with the app's panel motion (mirrors pd-onboard-step-in). It replaces the chat
+ * surface via a conditional mount, so the animation plays once on open.
+ * Reduced-motion drops it.
+ */
+@keyframes pd-settings-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.pd-settings-enter {
+  animation: pd-settings-in var(--pd-duration-base, 220ms) var(--pd-easing-enter, ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pd-settings-enter {
+    animation: none;
+  }
+}
+
+/* Onboarding wizard: each step fades/slides in on mount (keyed by step index).
+ * Reduced-motion drops the animation entirely. */
+@keyframes pd-onboard-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.pd-onboard-step {
+  animation: pd-onboard-step-in var(--pd-duration-base, 220ms) var(--pd-easing-enter, ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pd-onboard-step {
+    animation: none;
+  }
+}

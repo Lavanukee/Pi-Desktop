@@ -1,0 +1,66 @@
+/*
+ * Range slider (Slider component) — inverted-mono thumb on a tokenized track;
+ * brand color stays reserved for accents. Extracted from the QuestionCard so
+ * any control (e.g. IconStrokeControl) can reuse `.pd-slider`.
+ */
+
+.pd-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.pd-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-bg-track);
+  box-shadow: inset 0 0 0 0.5px var(--pd-border-default);
+}
+
+.pd-slider::-moz-range-track {
+  height: 4px;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-bg-track);
+  box-shadow: inset 0 0 0 0.5px var(--pd-border-default);
+}
+
+.pd-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-text-primary);
+  box-shadow: var(--pd-shadow-sm);
+}
+
+.pd-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-text-primary);
+  box-shadow: var(--pd-shadow-sm);
+}
+
+.pd-slider:focus-visible {
+  outline: none;
+}
+
+.pd-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    var(--pd-shadow-sm),
+    0 0 0 3px var(--pd-accent-subtle);
+}
+
+.pd-slider:focus-visible::-moz-range-thumb {
+  box-shadow:
+    var(--pd-shadow-sm),
+    0 0 0 3px var(--pd-accent-subtle);
+}

@@ -1,0 +1,74 @@
+/*
+ * File drop zone — feedback #7. Dashed well that turns to a solid accent
+ * outline while dragging or when forced active. bg/border transitions are
+ * tokenized so they collapse under reduced motion.
+ */
+
+.pd-dropzone-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pd-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 128px;
+  margin: 0;
+  padding: 20px;
+  border: 1.5px dashed var(--pd-border-strong);
+  border-radius: var(--pd-radius-surface);
+  background: var(--pd-bg-inset);
+  color: var(--pd-text-secondary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  text-align: center;
+  cursor: pointer;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition:
+    background-color var(--pd-duration-base) var(--pd-easing-standard),
+    border-color var(--pd-duration-base) var(--pd-easing-standard),
+    color var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-dropzone:hover {
+  background: var(--pd-bg-hover);
+}
+
+.pd-dropzone:focus-visible {
+  outline-color: var(--pd-border-focus);
+}
+
+.pd-dropzone--active {
+  border-style: solid;
+  border-color: var(--pd-border-focus);
+  background: var(--pd-accent-subtle);
+  color: var(--pd-text-primary);
+}
+
+.pd-dropzone-icon {
+  display: inline-flex;
+  color: var(--pd-text-muted);
+}
+
+.pd-dropzone-label {
+  font-weight: var(--pd-font-weight-medium);
+}
+
+.pd-dropzone-hint {
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-footnote);
+}
+
+.pd-dropzone-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

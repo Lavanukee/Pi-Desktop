@@ -1,0 +1,118 @@
+/*
+ * Under-message action bar + footnotes — feedback #6. The bar itself is a plain
+ * icon-button row; the hover-reveal comes from MessageRow's .pd-msg-actions
+ * wrapper, so the bar drops straight into that slot.
+ */
+
+.pd-msg-action-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Context chip: token count next to the gauge glyph; flows (no CTA min-width). */
+.pd-msg-context {
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Assistant-message footnotes (response speed, model name). */
+.pd-msg-footnote {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-footnote);
+  font-variant-numeric: tabular-nums;
+}
+
+.pd-msg-footnote-icon {
+  display: inline-flex;
+  color: var(--pd-text-muted);
+}
+
+.pd-msg-footnote--model {
+  font-weight: var(--pd-font-weight-medium);
+  font-variant-numeric: normal;
+}
+
+/*
+ * Inline message editor (round-3 #P3). Right-aligned like the user bubble; edit
+ * mode swaps the bubble for a bordered box holding a bare auto-grow textarea +
+ * Save/Cancel. The box carries the same bubble surface + radius so the flip
+ * reads as the message "opening" rather than a modal.
+ */
+.pd-editable-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(90%, 44rem);
+  padding: 10px 14px;
+  border-radius: var(--pd-radius-bubble);
+  background: var(--pd-user-bubble-bg);
+  box-shadow: 0 0 0 1px var(--pd-border-default);
+}
+
+.pd-editable-input {
+  color: var(--pd-user-bubble-fg);
+}
+
+.pd-editable-input.pd-textarea {
+  color: var(--pd-user-bubble-fg);
+}
+
+.pd-editable-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/*
+ * Branch switcher `‹ n / m ›` (round-3 #P3) — sits inline with copy/edit under a
+ * message that has alternates.
+ */
+.pd-branch-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.pd-branch-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--pd-radius-sm);
+  background: transparent;
+  color: var(--pd-text-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--pd-duration-base) var(--pd-easing-standard),
+    color var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-branch-arrow:hover:not(:disabled) {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-primary);
+}
+
+.pd-branch-arrow:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pd-branch-count {
+  min-width: 2.5em;
+  text-align: center;
+}

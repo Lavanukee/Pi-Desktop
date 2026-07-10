@@ -1,0 +1,104 @@
+/*
+ * Composer — spec-composer.md (claude ●●● css + ●●○ runtime / codex ●●●).
+ * One card; structure diverges only where the ADAPTATION notes allow:
+ * (1) the codex-only top tray slot, (2) toolbar contents (app config slots),
+ * (3) send-button visibility (prop). Everything else is tokens.
+ */
+
+.pd-composer-root {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.pd-composer {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border-radius: var(--pd-radius-surface);
+  background: color-mix(
+    in srgb,
+    var(--pd-bg-raised) calc(var(--pd-surface-translucency) * 100%),
+    transparent
+  );
+  /* Codex composer blurs at 16px = 2x popover blur; claude opaque (0). */
+  -webkit-backdrop-filter: blur(calc(var(--pd-blur-overlay) * 2));
+  backdrop-filter: blur(calc(var(--pd-blur-overlay) * 2));
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-md);
+  transition: box-shadow var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+/* Claude focus-within upgrades the hairline a border step + 1px ring — NOT the
+ * accent outline (spec-composer state matrix); codex leaves the card unchanged. */
+:root[data-flavor="claude"] .pd-composer:focus-within {
+  box-shadow:
+    0 0 0 1px var(--pd-border-strong),
+    var(--pd-shadow-md);
+}
+
+/* Codex-only cmdk tray docked on top, fusing into the card (shared top radius). */
+.pd-composer-tray {
+  margin-bottom: calc(-1 * var(--pd-radius-surface));
+  padding: 8px 12px calc(var(--pd-radius-surface) + 8px);
+  border-radius: var(--pd-radius-surface) var(--pd-radius-surface) 0 0;
+  background: color-mix(in srgb, var(--pd-bg-sidebar) 94%, transparent);
+  box-shadow: var(--pd-shadow-hairline);
+  color: var(--pd-text-secondary);
+  font-size: var(--pd-font-size-footnote);
+}
+
+.pd-composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px 0;
+}
+
+.pd-composer-editor {
+  max-height: 7.5rem;
+  overflow-y: auto;
+  padding: 14px 16px 8px;
+}
+
+.pd-composer-editor .pd-autogrow::after,
+.pd-composer-editor .pd-autogrow > .pd-textarea,
+.pd-composer-editor .pd-autogrow > textarea {
+  /* Editor text is 16px/24px in BOTH apps (claude quick-launcher input; codex
+   * runtime editor) — a shared constant, deliberately off the body scale. */
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: var(--pd-font-weight-body);
+}
+
+.pd-composer-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 8px;
+}
+
+.pd-composer-footer-spacer {
+  flex: 1;
+}
+
+.pd-composer-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--pd-border-default);
+  flex: none;
+}
+
+/* 28px send circle (codex-evidenced; claude flavor hides it via prop). Idle
+ * empty state rests at 50% (spec-composer codex state matrix). */
+.pd-composer-send {
+  width: 28px;
+  height: 28px;
+  flex: none;
+}
+
+.pd-composer-send:disabled {
+  opacity: 0.5;
+}

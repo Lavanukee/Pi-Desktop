@@ -1,0 +1,3 @@
+kMDItemContentModificationDate = 2026-03-05 06:48:29 +0000
+kMDItemFSSize                  = 36327161
+kMDItemKind                    = "Application"

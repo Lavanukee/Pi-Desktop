@@ -1,0 +1,333 @@
+{
+  "name": "id-reuse",
+  "state": {
+    "sessionFile": "/tmp/mock-pi/sessions/id-reuse.jsonl",
+    "sessionId": "mock-session-id-reuse"
+  },
+  "prompts": [
+    {
+      "match": "reuse",
+      "response": { "success": true },
+      "steps": [
+        { "emit": { "type": "agent_start" } },
+        { "emit": { "type": "turn_start" } },
+        {
+          "emit": {
+            "type": "message_start",
+            "message": { "role": "assistant", "content": [] }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_start",
+              "contentIndex": 0,
+              "id": "call_0",
+              "name": "bash",
+              "arguments": {}
+            }
+          }
+        },
+        {
+          "delayMs": 2,
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 0,
+              "id": "call_0",
+              "argsDelta": "{\"command\":\"ls\"}"
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_end",
+              "contentIndex": 0,
+              "toolCall": {
+                "type": "toolCall",
+                "id": "call_0",
+                "name": "bash",
+                "arguments": { "command": "ls" }
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "tool_execution_start",
+            "toolCallId": "call_0",
+            "toolName": "bash",
+            "args": { "command": "ls" }
+          }
+        },
+        {
+          "delayMs": 2,
+          "emit": {
+            "type": "tool_execution_end",
+            "toolCallId": "call_0",
+            "toolName": "bash",
+            "result": { "content": [{ "type": "text", "text": "run1-turn1 output" }] },
+            "isError": false
+          }
+        },
+        {
+          "emit": {
+            "type": "turn_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call_0",
+                  "name": "bash",
+                  "arguments": { "command": "ls" }
+                }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 20,
+                "output": 10,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 30,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1770000030000
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call_0",
+                "toolName": "bash",
+                "content": [{ "type": "text", "text": "run1-turn1 output" }],
+                "isError": false,
+                "timestamp": 1770000030100
+              }
+            ]
+          }
+        },
+        { "emit": { "type": "turn_start" } },
+        {
+          "emit": {
+            "type": "message_start",
+            "message": { "role": "assistant", "content": [] }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_start",
+              "contentIndex": 0,
+              "id": "call_0",
+              "name": "bash",
+              "arguments": {}
+            }
+          }
+        },
+        {
+          "delayMs": 2,
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 0,
+              "id": "call_0",
+              "argsDelta": "{\"command\":\"pwd\"}"
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_start",
+              "contentIndex": 1,
+              "partial": {
+                "role": "assistant",
+                "content": [
+                  { "type": "toolCall", "id": "call_0", "name": "bash", "arguments": {} },
+                  {
+                    "type": "toolCall",
+                    "id": "",
+                    "name": "read",
+                    "arguments": { "path": "/tmp/reused.txt" }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "tool_execution_start",
+            "toolCallId": "call_0",
+            "toolName": "bash",
+            "args": { "command": "pwd" }
+          }
+        },
+        {
+          "delayMs": 2,
+          "emit": {
+            "type": "tool_execution_end",
+            "toolCallId": "call_0",
+            "toolName": "bash",
+            "result": { "content": [{ "type": "text", "text": "run1-turn2 output" }] },
+            "isError": false
+          }
+        },
+        {
+          "emit": {
+            "type": "turn_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call_0",
+                  "name": "bash",
+                  "arguments": { "command": "pwd" }
+                }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 40,
+                "output": 10,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 50,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1770000031000
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call_0",
+                "toolName": "bash",
+                "content": [{ "type": "text", "text": "run1-turn2 output" }],
+                "isError": false,
+                "timestamp": 1770000031100
+              }
+            ]
+          }
+        },
+        { "emit": { "type": "agent_end", "messages": [] } }
+      ]
+    },
+    {
+      "match": "again",
+      "response": { "success": true },
+      "steps": [
+        { "emit": { "type": "agent_start" } },
+        { "emit": { "type": "turn_start" } },
+        {
+          "emit": {
+            "type": "message_start",
+            "message": { "role": "assistant", "content": [] }
+          }
+        },
+        {
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_start",
+              "contentIndex": 0,
+              "id": "call_0",
+              "name": "bash",
+              "arguments": {}
+            }
+          }
+        },
+        {
+          "delayMs": 2,
+          "emit": {
+            "type": "message_update",
+            "message": { "role": "assistant", "content": [] },
+            "assistantMessageEvent": {
+              "type": "toolcall_delta",
+              "contentIndex": 0,
+              "id": "call_0",
+              "argsDelta": "{\"command\":\"date\"}"
+            }
+          }
+        },
+        {
+          "emit": {
+            "type": "tool_execution_start",
+            "toolCallId": "call_0",
+            "toolName": "bash",
+            "args": { "command": "date" }
+          }
+        },
+        {
+          "delayMs": 2,
+          "emit": {
+            "type": "tool_execution_end",
+            "toolCallId": "call_0",
+            "toolName": "bash",
+            "result": { "content": [{ "type": "text", "text": "run2 output" }] },
+            "isError": false
+          }
+        },
+        {
+          "emit": {
+            "type": "turn_end",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "call_0",
+                  "name": "bash",
+                  "arguments": { "command": "date" }
+                }
+              ],
+              "api": "openai-completions",
+              "provider": "llamacpp",
+              "model": "qwen3.6-27b",
+              "usage": {
+                "input": 15,
+                "output": 8,
+                "cacheRead": 0,
+                "cacheWrite": 0,
+                "totalTokens": 23,
+                "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1770000032000
+            },
+            "toolResults": [
+              {
+                "role": "toolResult",
+                "toolCallId": "call_0",
+                "toolName": "bash",
+                "content": [{ "type": "text", "text": "run2 output" }],
+                "isError": false,
+                "timestamp": 1770000032100
+              }
+            ]
+          }
+        },
+        { "emit": { "type": "agent_end", "messages": [] } }
+      ]
+    }
+  ]
+}

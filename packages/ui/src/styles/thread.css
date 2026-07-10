@@ -1,0 +1,301 @@
+/*
+ * Message rows — spec-message-row.md. User bubble = pure token swap
+ * (bg/fg/radius); the ONLY flavor conditional is bubbleAlign (codex
+ * right-aligned max-w 77%), a documented non-token flavor flag.
+ * Codex interaction extras (hover actions) are built unconditionally — no
+ * claude evidence contradicts them (spec ADAPTATION recommendation).
+ */
+
+.pd-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: var(--pd-thread-width);
+  margin-inline: auto;
+  padding-inline: 20px;
+}
+
+.pd-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+/*
+ * User bubble rework (jedd round-1 feedback #5: "proper user message box
+ * styling, currently don't like it"). Right-aligned subtle pill for BOTH
+ * flavors now (ChatGPT gray-pill / Claude-subtle ref), roomier padding, and a
+ * larger corner concentric to the composer so the whole thread reads as one
+ * family. Colors/radius stay tokenized (--pd-user-bubble-*, --pd-radius-bubble)
+ * so the flavor split is preserved.
+ */
+.pd-msg--user {
+  align-items: flex-end;
+}
+
+.pd-msg-bubble {
+  max-width: min(80%, 40rem);
+  padding: 10px 16px;
+  /* Round-3 (jedd #5): the +6px pill was ~1.25x too round. Back to the raw
+   * bubble token, which still drives the flavor split (claude 10 vs codex
+   * 16->20 squircle) but reads as a message box, not a pill. */
+  border-radius: var(--pd-radius-bubble);
+  background: var(--pd-user-bubble-bg);
+  color: var(--pd-user-bubble-fg);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  font-weight: var(--pd-font-weight-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* Message text is selectable even though the app sets user-select:none on the
+   * body chrome (round-3 #P3) — the app inherits this from the message box. */
+  user-select: text;
+}
+
+/* Assistant voice: serif 16/1.5 (claude, dark wght 360) vs sans 14/22 w430+
+ * (codex) — entirely token-driven. */
+.pd-msg--assistant {
+  max-width: var(--pd-thread-prose-width);
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-response-family);
+  font-size: var(--pd-font-response-size);
+  line-height: var(--pd-leading-response);
+  font-weight: var(--pd-font-weight-body);
+  font-variation-settings: var(--pd-font-response-variation);
+  overflow-wrap: anywhere;
+  /* Assistant copy is selectable too (round-3 #P3). */
+  user-select: text;
+}
+
+.pd-msg-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-msg:hover .pd-msg-actions,
+.pd-msg:focus-within .pd-msg-actions {
+  opacity: 1;
+}
+
+/*
+ * Tool-call rows — spec-tool-call-row.md. Codex structure (the fully-evidenced
+ * one, ●●●); the CLAUDE flavor re-skin below is a RECONSTRUCTION (●○○,
+ * _gaps.md §5) from adjacent claude.ai collapsible/code-block CSS — verify
+ * against live claude.ai tool UI before pixel-polish.
+ */
+
+.pd-activity-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  cursor: pointer;
+  text-align: left;
+}
+
+.pd-activity-row:hover {
+  color: var(--pd-text-secondary);
+}
+
+.pd-activity-row-icon {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+}
+
+.pd-activity-row-chevron {
+  display: inline-flex;
+  opacity: 0;
+  transition: opacity var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-activity-row:hover .pd-activity-row-chevron,
+.pd-activity-row:focus-visible .pd-activity-row-chevron {
+  opacity: 1;
+}
+
+.pd-activity-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 0 24px;
+}
+
+.pd-activity-file-link {
+  color: var(--pd-text-link);
+  font-weight: var(--pd-font-weight-medium);
+  text-decoration: none;
+}
+
+.pd-activity-file-link:hover {
+  text-decoration: underline;
+}
+
+/* ---- grouped turn-diff card ---- */
+
+.pd-activity-card {
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-overlay);
+  box-shadow: var(--pd-shadow-hairline);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+}
+
+/* Claude flavor re-skin = its code-block wrapper recipe (translucent bg-000/50
+ * + 0.5px border-400), per spec-tool-call-row ADAPTATION. RECONSTRUCTED. */
+:root[data-flavor="claude"] .pd-activity-card {
+  background: var(--pd-code-block-bg);
+  box-shadow: 0 0 0 0.5px var(--pd-code-block-border);
+}
+
+.pd-activity-card-header,
+.pd-activity-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 36px;
+  margin: 0;
+  padding: 0 12px;
+  border: none;
+  background: transparent;
+  color: var(--pd-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-activity-card-header:hover,
+.pd-activity-file-row:hover {
+  /* list-hover at 30% strength (codex measured). */
+  background: color-mix(in srgb, var(--pd-bg-hover) 30%, transparent);
+}
+
+.pd-activity-file-row:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--pd-border-focus);
+}
+
+.pd-activity-card-header {
+  height: 48px;
+}
+
+.pd-activity-icon-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--pd-radius-sm);
+  background: var(--pd-bg-inset);
+  box-shadow: var(--pd-shadow-hairline);
+  color: var(--pd-text-secondary);
+  flex: none;
+}
+
+.pd-activity-title {
+  font-size: var(--pd-font-size-heading);
+  line-height: var(--pd-leading-heading);
+  font-weight: var(--pd-font-weight-medium);
+}
+
+.pd-activity-subtitle {
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-footnote);
+}
+
+/* Codex header hover swaps the ±N subtitle to "Review changes" — a display
+ * toggle, deliberately unanimated (spec-tool-call-row state matrix). */
+.pd-activity-subtitle--hover {
+  display: none;
+}
+
+.pd-activity-card-header:hover .pd-activity-subtitle--default:has(+ .pd-activity-subtitle--hover) {
+  display: none;
+}
+
+.pd-activity-card-header:hover .pd-activity-subtitle--hover {
+  display: inline;
+}
+
+.pd-activity-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-activity-path-prefix {
+  color: var(--pd-text-muted);
+}
+
+.pd-activity-spacer {
+  flex: 1;
+}
+
+/* ±N counts: git-decoration colors, tabular digits. */
+.pd-diff-count {
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.pd-diff-count--added {
+  color: var(--pd-diff-added-fg);
+}
+
+.pd-diff-count--deleted {
+  color: var(--pd-diff-deleted-fg);
+}
+
+.pd-diff-count--modified {
+  color: var(--pd-diff-modified-fg);
+}
+
+.pd-activity-expander {
+  color: var(--pd-text-muted);
+}
+
+/* ---- rolling-digit counters (codex diffstat; both flavors, spec ADAPTATION:
+ * "cheap and delightful — keep for both") ---- */
+
+.pd-rolling-number {
+  display: inline-flex;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+
+.pd-rolling-digit {
+  display: inline-block;
+  width: 1ch;
+  height: 1lh;
+  overflow: hidden;
+}
+
+.pd-rolling-digit-stack {
+  display: flex;
+  flex-direction: column;
+  transition: translate 300ms var(--pd-easing-enter);
+  translate: 0 calc(var(--pd-roll, 0) * -1lh);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-rolling-digit-stack {
+    transition: none;
+  }
+}

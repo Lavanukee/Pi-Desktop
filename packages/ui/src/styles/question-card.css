@@ -1,0 +1,160 @@
+/*
+ * Question UI (agent -> user) — feedback #8, Aside "Demo question". One card
+ * chrome for all three modes (choice / free / slider). Choice rows are numbered
+ * with a per-row info icon and a hover/focus-revealed enter hint.
+ */
+
+.pd-question {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 28rem;
+  padding: 16px;
+  border-radius: var(--pd-radius-surface);
+  background: var(--pd-bg-raised);
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-md);
+  color: var(--pd-text-primary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+}
+
+.pd-question-title {
+  font-size: var(--pd-font-size-heading);
+  line-height: var(--pd-leading-heading);
+  font-weight: var(--pd-font-weight-semibold);
+}
+
+.pd-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pd-question-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  margin: 0;
+  padding: 8px 12px;
+  border: none;
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-inset);
+  box-shadow: inset 0 0 0 0.5px var(--pd-border-subtle);
+  color: var(--pd-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition:
+    background-color var(--pd-duration-base) var(--pd-easing-standard),
+    box-shadow var(--pd-duration-base) var(--pd-easing-standard),
+    transform var(--pd-duration-base) var(--pd-easing-spring);
+}
+
+.pd-question-option:hover {
+  background: var(--pd-bg-hover);
+  transform: translateX(2px);
+}
+
+.pd-question-option:focus-visible {
+  outline-color: var(--pd-border-focus);
+}
+
+.pd-question-option--selected {
+  background: var(--pd-accent-subtle);
+  box-shadow: inset 0 0 0 1px var(--pd-accent-primary);
+}
+
+.pd-question-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: var(--pd-radius-sm);
+  background: var(--pd-bg-active);
+  color: var(--pd-text-secondary);
+  font-size: var(--pd-font-size-caption);
+  line-height: 1;
+  font-weight: var(--pd-font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.pd-question-option--selected .pd-question-number {
+  background: var(--pd-accent-primary);
+  color: var(--pd-text-on-accent);
+}
+
+.pd-question-option-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.pd-question-info {
+  display: inline-flex;
+  flex: none;
+  color: var(--pd-text-muted);
+  cursor: help;
+}
+
+.pd-question-info:hover {
+  color: var(--pd-text-secondary);
+}
+
+.pd-question-trailing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  flex: none;
+  color: var(--pd-accent-primary);
+}
+
+.pd-question-enter {
+  opacity: 0;
+  color: var(--pd-text-muted);
+  transition: opacity var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-question-option:hover .pd-question-enter,
+.pd-question-option:focus-visible .pd-question-enter {
+  opacity: 1;
+}
+
+.pd-question-nav-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+}
+
+.pd-question-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ---- slider row (the `.pd-slider` thumb/track live in styles/slider.css) ---- */
+
+.pd-question-slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pd-question-value {
+  min-width: 3ch;
+  text-align: right;
+  color: var(--pd-text-secondary);
+  font-weight: var(--pd-font-weight-medium);
+  font-variant-numeric: tabular-nums;
+}

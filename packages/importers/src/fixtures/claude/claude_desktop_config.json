@@ -1,0 +1,21 @@
+{
+  "preferences": {
+    "sidebarMode": "chat"
+  },
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/test/Docs"]
+    },
+    "github": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "ghcr.io/example/mcp-github"],
+      "env": {
+        "GITHUB_TOKEN": "user-provided-server-secret"
+      }
+    },
+    "broken": {
+      "args": ["no-command-here"]
+    }
+  }
+}

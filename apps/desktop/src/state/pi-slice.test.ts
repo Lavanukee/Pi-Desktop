@@ -232,6 +232,25 @@ describe('pi-slice — fork branch registry', () => {
     usePiStore.getState().setMessagesExternal([userMsg('u2', 'other session')]);
     expect(usePiStore.getState().branches).toEqual({});
   });
+
+  it('setMessagesExternal drops the harness checklist/subagent status keys (no leak across New chat)', () => {
+    usePiStore.setState({
+      extensionStatus: {
+        harness: '{"plan":[{"id":"s1","text":"old step","status":"in_progress"}]}',
+        'harness-subagents': '{"subagents":[]}',
+        'harness-task': '12.3s',
+        someOther: 'keep-me',
+      },
+    });
+    usePiStore.getState().setMessagesExternal([userMsg('u1', 'brand new session')]);
+    const es = usePiStore.getState().extensionStatus;
+    // Every harness-owned key is gone…
+    expect(es.harness).toBeUndefined();
+    expect(es['harness-subagents']).toBeUndefined();
+    expect(es['harness-task']).toBeUndefined();
+    // …but unrelated extension status survives.
+    expect(es.someOther).toBe('keep-me');
+  });
 });
 
 describe('pi-slice — toolCallId reuse across runs (index-as-id providers)', () => {

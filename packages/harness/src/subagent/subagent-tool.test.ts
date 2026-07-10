@@ -98,6 +98,20 @@ describe('spawn_subagent tool', () => {
     expect(runChild).not.toHaveBeenCalled();
   });
 
+  it('does not let est_ram_gb=0 bypass the memory budget (SB-2)', async () => {
+    const runChild = vi.fn(async (): Promise<ChildAgentResult> => {
+      throw new Error('should not run');
+    });
+    // Budget too small for even the per-agent default (1.5 > 1): a real estimate
+    // is rejected. A poisoned est_ram_gb=0 must NOT be forwarded as "free" and
+    // slip past — it is dropped, so the default (1.5) applies and it's rejected.
+    const tool = harness(runChild, { ramBudgetGB: 1, perAgentGB: 1.5 });
+    const res = await tool.execute('c', { goal: 'job', est_ram_gb: 0 }, undefined, undefined, CTX);
+    expect(res.isError).toBe(true);
+    expect(text(res)).toMatch(/not started/i);
+    expect(runChild).not.toHaveBeenCalled();
+  });
+
   it('surfaces a child failure/timeout as an error result (summary-only, no hang)', async () => {
     const runChild = vi.fn(
       async (): Promise<ChildAgentResult> => ({

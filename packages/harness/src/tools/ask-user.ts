@@ -21,6 +21,7 @@
 
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
 import { type Static, Type } from '@sinclair/typebox';
+import { readSubagentDepth } from '../subagent/types.js';
 
 /** Sentinel prefixing the encoded spec in an `input` placeholder. MUST match the
  * decoder in `@pi-desktop/engine` (renderer/event-router.ts). */
@@ -134,7 +135,10 @@ export function registerAskUser(pi: ExtensionAPI): void {
     parameters: AskUserParams,
     async execute(_toolCallId, params: AskUserInput, _signal, _onUpdate, ctx) {
       const spec = specFromParams(params);
-      if (!ctx.hasUI) {
+      // A spawned child pi reports ctx.hasUI === true but has NO human attached;
+      // awaiting ctx.ui.input there would hang the subagent forever. Treat any
+      // headless OR subagent context as unanswerable and return deterministically.
+      if (!ctx.hasUI || readSubagentDepth(process.env) > 0) {
         return {
           content: [{ type: 'text', text: 'No UI available to ask the user.' }],
           isError: true,

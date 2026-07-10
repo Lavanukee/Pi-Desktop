@@ -44,6 +44,16 @@ export interface CallModelRequest {
 /** Call a model and get its text back. Throws on transport/HTTP failure. */
 export type CallModel = (req: CallModelRequest) => Promise<string>;
 
+/**
+ * Default per-call timeout. Utility-model calls (reviewer / classifier
+ * escalation / tool-call fixer) run on paths that BLOCK the agent turn — the
+ * escalation is awaited inside `before_agent_start`, so a hung endpoint would
+ * mean the turn never starts. A default timeout bounds every call and fails
+ * open (mirrors flag-bash's 4s abort). Callers that pass their own `signal`
+ * still get it — the two are composed.
+ */
+const DEFAULT_TIMEOUT_MS = 5000;
+
 export interface OpenAiCompatConfig {
   /** Base URL, e.g. `http://127.0.0.1:8080/v1`. Trailing slash tolerated. */
   readonly baseUrl: string;
@@ -53,12 +63,15 @@ export interface OpenAiCompatConfig {
   readonly apiKey?: string;
   /** Injectable fetch (tests). Defaults to global fetch. */
   readonly fetchImpl?: typeof fetch;
+  /** Default per-call timeout (ms). Defaults to {@link DEFAULT_TIMEOUT_MS}. */
+  readonly timeoutMs?: number;
 }
 
 /** Build a {@link CallModel} that POSTs to an OpenAI-compatible chat endpoint. */
 export function createOpenAiCompatCallModel(config: OpenAiCompatConfig): CallModel {
   const doFetch = config.fetchImpl ?? fetch;
   const base = config.baseUrl.replace(/\/+$/, '');
+  const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   return async (req) => {
     const messages: { role: string; content: string }[] = [];
     if (req.system !== undefined) messages.push({ role: 'system', content: req.system });
@@ -69,6 +82,11 @@ export function createOpenAiCompatCallModel(config: OpenAiCompatConfig): CallMod
     if (config.apiKey !== undefined && config.apiKey.length > 0) {
       headers.authorization = `Bearer ${config.apiKey}`;
     }
+    // Compose the caller's signal (if any) with a default timeout so a hung
+    // endpoint can never wedge the turn — whichever aborts first wins.
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const signal =
+      req.signal !== undefined ? AbortSignal.any([req.signal, timeoutSignal]) : timeoutSignal;
     const res = await doFetch(`${base}/chat/completions`, {
       method: 'POST',
       headers,
@@ -79,7 +97,7 @@ export function createOpenAiCompatCallModel(config: OpenAiCompatConfig): CallMod
         temperature: req.temperature ?? 0,
         ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
       }),
-      signal: req.signal,
+      signal,
     });
     if (!res.ok) throw new Error(`utility model HTTP ${res.status}`);
     const json = (await res.json()) as {

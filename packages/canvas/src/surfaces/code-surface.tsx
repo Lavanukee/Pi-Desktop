@@ -1,5 +1,5 @@
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language';
-import { Compartment, EditorState, Transaction } from '@codemirror/state';
+import { Compartment, EditorState, type Extension, Transaction } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { IconCheck, IconCopy } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
@@ -38,6 +38,47 @@ const editableTheme = EditorView.theme({
   '.cm-content': { caretColor: 'var(--pd-text-primary)' },
   '.cm-activeLine': { backgroundColor: 'var(--pd-code-active-line, rgba(127,127,127,0.08))' },
 });
+
+/** Structural ref type (version-agnostic across React 18/19 ref typings). */
+type EditCallbackRef = { readonly current: ((text: string) => void) | undefined };
+
+/**
+ * The editability extensions, held in a Compartment so they can be reconfigured
+ * WITHOUT rebuilding the editor. When `editable` is false the buffer is a strict
+ * read-only viewer; when true it installs the ⌘/Ctrl-S save keymap and a
+ * user-edit `updateListener`. Callbacks come from refs so a reconfigure never
+ * captures a stale closure. Kept module-level (stable identity) so the reactive
+ * `[editable]` effect can list it without re-running on every render.
+ */
+function editExtensionsFor(
+  editable: boolean,
+  onSaveRef: EditCallbackRef,
+  onChangeRef: EditCallbackRef,
+): Extension {
+  if (!editable) return [EditorState.readOnly.of(true), EditorView.editable.of(false)];
+  return [
+    keymap.of([
+      {
+        key: 'Mod-s',
+        preventDefault: true,
+        run: (view) => {
+          onSaveRef.current?.(view.state.doc.toString());
+          return true;
+        },
+      },
+    ]),
+    EditorView.updateListener.of((update) => {
+      if (!update.docChanged) return;
+      // Only user edits (typing/paste/delete carry a userEvent); the
+      // streaming/reconcile dispatches do not, so they don't echo.
+      const userEdit = update.transactions.some(
+        (tr) => tr.annotation(Transaction.userEvent) !== undefined,
+      );
+      if (userEdit) onChangeRef.current?.(update.state.doc.toString());
+    }),
+    editableTheme,
+  ];
+}
 
 /** How well-known renderable kinds map to a highlight language when the artifact
  * omits `language` (an html/svg/markdown artifact routed to canvas). */
@@ -92,6 +133,7 @@ export function CodeSurface({
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const langRef = useRef<Compartment | null>(null);
+  const editRef = useRef<Compartment | null>(null);
   // Latest callbacks read from refs so the mount-once editor never goes stale.
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
@@ -100,41 +142,19 @@ export function CodeSurface({
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
-  // The editor is built once on mount; document/language changes are applied by
-  // the dedicated effects below (rebuilding the view per delta would defeat
-  // streaming). content.* / editable are intentionally read only for the initial
-  // state — the raw↔rendered toggle remounts this surface, so `editable` is fresh
-  // per mount.
+  // The editor is built once on mount; document/language/editability changes are
+  // applied by the dedicated effects below (rebuilding the view per delta would
+  // defeat streaming). content.* / editable are read only for the initial state
+  // here — the reactive effect below reconfigures the edit Compartment when
+  // `editable` flips (e.g. a tab finishing its stream), so no remount is needed.
   // biome-ignore lint/correctness/useExhaustiveDependencies: mount-once editor.
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     const langCompartment = new Compartment();
     langRef.current = langCompartment;
-    const editExtensions = editable
-      ? [
-          keymap.of([
-            {
-              key: 'Mod-s',
-              preventDefault: true,
-              run: (view) => {
-                onSaveRef.current?.(view.state.doc.toString());
-                return true;
-              },
-            },
-          ]),
-          EditorView.updateListener.of((update) => {
-            if (!update.docChanged) return;
-            // Only user edits (typing/paste/delete carry a userEvent); the
-            // streaming/reconcile dispatches below do not, so they don't echo.
-            const userEdit = update.transactions.some(
-              (tr) => tr.annotation(Transaction.userEvent) !== undefined,
-            );
-            if (userEdit) onChangeRef.current?.(update.state.doc.toString());
-          }),
-          editableTheme,
-        ]
-      : [EditorState.readOnly.of(true), EditorView.editable.of(false)];
+    const editCompartment = new Compartment();
+    editRef.current = editCompartment;
     const view = new EditorView({
       state: EditorState.create({
         doc: content.text,
@@ -143,7 +163,7 @@ export function CodeSurface({
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           langCompartment.of(languageExtension(content.language)),
           codeTheme,
-          ...editExtensions,
+          editCompartment.of(editExtensionsFor(editable, onSaveRef, onChangeRef)),
         ],
       }),
       parent: host,
@@ -154,6 +174,19 @@ export function CodeSurface({
       viewRef.current = null;
     };
   }, []);
+
+  // Reactively toggle editability. A canvas tab that finishes streaming flips
+  // `editable` false→true on the SAME mounted surface; reconfiguring the
+  // Compartment makes it editable + ⌘S-saveable at once, WITHOUT a remount, so
+  // scroll position and selection are preserved.
+  useEffect(() => {
+    const view = viewRef.current;
+    const compartment = editRef.current;
+    if (!view || !compartment) return;
+    view.dispatch({
+      effects: compartment.reconfigure(editExtensionsFor(editable, onSaveRef, onChangeRef)),
+    });
+  }, [editable]);
 
   useEffect(() => {
     const view = viewRef.current;

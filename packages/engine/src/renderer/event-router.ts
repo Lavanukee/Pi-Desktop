@@ -225,8 +225,9 @@ export function createEventRouter(sink: StoreSink, options: EventRouterOptions =
 
       case 'turn_end': {
         const message = e.message;
-        const assistant =
-          message !== undefined && message.role === 'assistant' ? message : undefined;
+        // `!= null`: a JSON null message must be treated like an absent one — a
+        // `=== undefined` guard lets null through and `message.role` then throws.
+        const assistant = message != null && message.role === 'assistant' ? message : undefined;
         if (currentAssistantId !== null) {
           sink.endTurn(currentAssistantId, assistant?.stopReason, assistant);
         }
@@ -236,9 +237,9 @@ export function createEventRouter(sink: StoreSink, options: EventRouterOptions =
           // (some providers stream args differently), synthesize a toolCall
           // block NOW so the user always sees the tool was used. Hiding tool
           // calls is a trust violation.
-          if (tr.toolCallId) {
+          if (tr?.toolCallId) {
             // Legacy transcripts carried args at tr.toolArgs; 0.68.1 may
-            // stash them in details.
+            // stash them in details. `tr?.` so a null entry is silently skipped.
             const legacyArgs = asRecord((tr as { toolArgs?: unknown }).toolArgs);
             const args =
               Object.keys(legacyArgs).length > 0 ? legacyArgs : argsFromResultDetails(tr.details);
@@ -271,7 +272,9 @@ export function createEventRouter(sink: StoreSink, options: EventRouterOptions =
 
       case 'message_update': {
         const ev = e.assistantMessageEvent;
-        if (ev === undefined || currentAssistantId === null) return;
+        // `== null`: a JSON null event is as good as absent — `=== undefined`
+        // would let null fall through to `ev.type` below and throw.
+        if (ev == null || currentAssistantId === null) return;
         const legacy = ev as unknown as LegacyToolcallFields;
         switch (ev.type) {
           case 'text_delta':
@@ -337,7 +340,9 @@ export function createEventRouter(sink: StoreSink, options: EventRouterOptions =
           }
           case 'toolcall_end': {
             const toolCall = ev.toolCall;
-            if (toolCall !== undefined) {
+            // `!= null`: a null toolCall is absent — a `!== undefined` guard lets
+            // it through and the `toolCall.id`/`.name` reads below then throw.
+            if (toolCall != null) {
               // Empty-id providers: resolve the router-generated id that the
               // streamed block was registered under, else finalize misses it.
               const callId =

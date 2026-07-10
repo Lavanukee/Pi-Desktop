@@ -225,7 +225,12 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
       getFailureCount: (t) => failureCounts.get(t) ?? 0,
       confirmRelax: async ({ toolName, error, count }) => {
         const ctx = runtime.currentCtx;
-        if (ctx?.hasUI !== true) return true; // headless → auto-approve relax
+        // A spawned child pi reports ctx.hasUI === true (it speaks the same rpc
+        // protocol) even though NO human is attached — blocking on ctx.ui.confirm
+        // there hangs the subagent forever and rung-5's abort never fires. Treat
+        // any headless OR subagent context as "no human present" and resolve the
+        // relax deterministically instead of awaiting a dialog nobody can answer.
+        if (readSubagentDepth(process.env) > 0 || ctx?.hasUI !== true) return true;
         return ctx.ui.confirm(
           `Relax "${toolName}" schema?`,
           `${error} (attempt ${count}). Accept the arguments as-is?`,
@@ -274,9 +279,16 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
 
     const task = runtime.lastPrompt;
     const issues: string[] = [];
-    if (knobs.reviewPasses > 0) {
+    // Run up to `reviewPasses` reviewer passes so a higher effort really does run
+    // more passes than a lower one (the knob was inert — medium/high/max all ran
+    // exactly once). Stop at the first pass that flags something (it already has
+    // the issues to fix); a clean pass proceeds to the next.
+    for (let i = 0; i < knobs.reviewPasses; i++) {
       const r = await reviewOutput(callModel, { task, output });
-      if (!r.ok) issues.push(...r.issues);
+      if (!r.ok) {
+        issues.push(...r.issues);
+        break;
+      }
     }
     if (knobs.adversarialChecks) {
       const a = await adversarialCheck(callModel, { task, output });
@@ -424,6 +436,13 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     runtime.currentCtx = ctx;
     runtime.config = restoreConfig(getEntries(ctx));
     runtime.permission.setMode(runtime.config.mode);
+    // A new / switched session must NOT inherit the previous session's live
+    // checklist or subagent panel. Reset them here (session_start also fires on a
+    // switch_session load) so the publish below republishes an EMPTY plan instead
+    // of leaking the old chat's tasks into the new one.
+    runtime.plan = null;
+    runtime.planTitle = null;
+    runtime.subagentSnapshot = null;
     // Push repair deps now that the effort level is known (abortThreshold etc.).
     bridge.push();
     if (runtime.statusTimer !== null) clearInterval(runtime.statusTimer);

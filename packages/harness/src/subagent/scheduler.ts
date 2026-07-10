@@ -102,7 +102,14 @@ export class SubagentScheduler {
    * `accepted:false` when its RAM estimate can never fit the budget.
    */
   submit(spec: SubmitSpec): Promise<SubmitResult> {
-    const estRamGB = spec.estRamGB ?? this.budget.perAgentGB;
+    // Only a FINITE, POSITIVE estimate is honoured; 0/negative/NaN would poison
+    // the shared `#usedRamGB` accounting (or bypass the budget entirely, since
+    // `usedRamGB + 0 <= budget` is always true), so those fall back to the
+    // per-agent default. `?? perAgentGB` alone let 0/negative through.
+    const estRamGB =
+      typeof spec.estRamGB === 'number' && Number.isFinite(spec.estRamGB) && spec.estRamGB > 0
+        ? spec.estRamGB
+        : this.budget.perAgentGB;
     // A task larger than the entire budget can never run — reject, don't queue
     // forever. (Guard the +0.001 float slop so an exact-fit estimate passes.)
     if (estRamGB > this.budget.ramBudgetGB + 1e-6) {

@@ -19,6 +19,7 @@ function makeFakePi(toolNames: string[]) {
     | { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }
     | undefined;
   let toolSearch: ToolDefinition | undefined;
+  let planTool: ToolDefinition | undefined;
 
   const pi = {
     on: (event: string, h: AnyHandler) => {
@@ -28,6 +29,7 @@ function makeFakePi(toolNames: string[]) {
     },
     registerTool: (def: ToolDefinition) => {
       if (def.name === 'tool_search') toolSearch = def;
+      if (def.name === 'update_plan') planTool = def;
     },
     registerCommand: (
       _name: string,
@@ -64,6 +66,7 @@ function makeFakePi(toolNames: string[]) {
       Promise.all((handlers.get(event) ?? []).map((h) => h(e, ctx))),
     getCommand: () => command,
     getToolSearch: () => toolSearch,
+    getPlanTool: () => planTool,
     getActiveTools: () => activeTools,
     setActiveTools: pi.setActiveTools as unknown as ReturnType<typeof vi.fn>,
   };
@@ -124,6 +127,35 @@ describe('wireHarness', () => {
     expect(statusCall).toBeDefined();
     const status = JSON.parse(statusCall?.[1] as string);
     expect(status).toMatchObject({ mode: 'reviewer', effort: 'medium', preset: 'auto' });
+  });
+
+  it('resets the plan on session_start so a new chat does not inherit the old checklist', async () => {
+    const f = makeFakePi(['read']);
+    wireHarness(f.pi);
+    const { ctx, setStatus } = makeCtx(f.entries);
+    const harnessStatus = () => {
+      const last = setStatus.mock.calls.filter((c) => c[0] === 'harness').at(-1)?.[1] as string;
+      return JSON.parse(last);
+    };
+
+    await f.fire('session_start', { type: 'session_start', reason: 'startup' }, ctx);
+    // The model publishes a checklist in session 1.
+    await f
+      .getPlanTool()
+      ?.execute?.(
+        'c',
+        { plan: [{ text: 'step one', status: 'in_progress' }] },
+        undefined,
+        undefined,
+        ctx,
+      );
+    expect(harnessStatus().plan).not.toBeNull();
+
+    // "New chat" → session_start fires again; the republished plan must be empty,
+    // not the previous session's leftover checklist.
+    setStatus.mockClear();
+    await f.fire('session_start', { type: 'session_start', reason: 'startup' }, ctx);
+    expect(harnessStatus().plan).toBeNull();
   });
 
   it('warns via model_select when a small model meets an advanced task', async () => {

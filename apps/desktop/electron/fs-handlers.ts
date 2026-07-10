@@ -362,28 +362,119 @@ function isUnderRoot(root: string, target: string): boolean {
   return target === root || target.startsWith(root + path.sep);
 }
 
+function lstatSafe(p: string): fs.Stats | null {
+  try {
+    return fs.lstatSync(p);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve `p` to a real (symlink-free) absolute path WITHOUT following a symlink
+ * on the final component and WITHOUT requiring the target to exist yet.
+ *
+ * `path.resolve` is purely lexical, so a symlink that sits lexically under a
+ * root but points outside would pass {@link isUnderRoot} while `writeFileSync`
+ * silently follows it — an arbitrary-file-write escape. We instead realpath the
+ * NEAREST EXISTING ANCESTOR directory (the file, and possibly some parent dirs,
+ * may not exist yet) so every symlink in the existing portion of the path is
+ * collapsed, then re-append the not-yet-existing trailing segments. Returns
+ * `null` only when nothing on the path resolves (should never happen — `/`
+ * always does).
+ */
+function realResolve(p: string): string | null {
+  const abs = path.resolve(p);
+  const missing: string[] = [];
+  let cur = abs;
+  for (;;) {
+    try {
+      const real = fs.realpathSync(cur);
+      return missing.length > 0 ? path.join(real, ...missing.reverse()) : real;
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) return null; // reached the filesystem root; unresolvable
+      missing.push(path.basename(cur));
+      cur = parent;
+    }
+  }
+}
+
 function writeFileFenced(
   file: string,
   content: string,
+  roots: string[] = allowedWriteRoots(),
 ): { ok: boolean; bytes?: number; error?: string } {
-  const resolved = path.resolve(file);
-  if (statSafe(resolved)?.isDirectory() === true) {
-    return { ok: false, error: 'Path is a directory' };
-  }
   const bytes = Buffer.byteLength(content, 'utf8');
   if (bytes > WRITE_FILE_MAX) return { ok: false, error: 'File exceeds the write size limit' };
-  const roots = allowedWriteRoots();
-  if (!roots.some((root) => isUnderRoot(root, resolved))) {
+
+  // Collapse symlinks in the existing portion of the path BEFORE fencing, so a
+  // symlink lexically under a root but pointing outside can't defeat the fence.
+  const resolved = realResolve(file);
+  if (resolved === null) return { ok: false, error: 'Path could not be resolved' };
+  // Compare in realpath space on BOTH sides. `resolved` collapses symlinks, so the
+  // allowed roots must too — otherwise a project/session dir that lives under a
+  // symlinked path (macOS /tmp -> /private/tmp, /var/folders temp dirs, or a
+  // symlinked working folder) would wrongly reject legit in-root writes. A symlink
+  // ESCAPE still fails: the target's realpath lands outside every root's realpath.
+  const realRoots = roots.map((root) => realResolve(root) ?? normalizeRoot(root));
+  if (!realRoots.some((root) => isUnderRoot(root, resolved))) {
     return { ok: false, error: 'Path is outside an allowed project or session folder' };
   }
+
+  // Defense in depth: refuse a final component that already exists as a symlink
+  // (points elsewhere) or a directory (overwriting a dir is never a file write).
+  const lst = lstatSafe(resolved);
+  if (lst?.isSymbolicLink() === true) return { ok: false, error: 'Path is a symlink' };
+  if (lst?.isDirectory() === true) return { ok: false, error: 'Path is a directory' };
+
+  const parent = path.dirname(resolved);
+  let fd: number | null = null;
   try {
-    fs.mkdirSync(path.dirname(resolved), { recursive: true });
-    fs.writeFileSync(resolved, content, 'utf8');
+    fs.mkdirSync(parent, { recursive: true });
+    // Re-realpath the parent now that it exists: mkdirSync(recursive) will happily
+    // descend THROUGH a symlinked intermediate dir, so re-check the real parent
+    // stays inside the fence (catches a symlinked dir swapped in mid-flight).
+    const realParent = fs.realpathSync(parent);
+    if (!realRoots.some((root) => isUnderRoot(root, realParent))) {
+      return { ok: false, error: 'Path is outside an allowed project or session folder' };
+    }
+    const finalPath = path.join(realParent, path.basename(resolved));
+    // O_NOFOLLOW makes the open FAIL (ELOOP) rather than follow a symlink at the
+    // final component. Open WITHOUT O_TRUNC so a target we go on to refuse (a
+    // hardlink, below) is never truncated before the check.
+    fd = fs.openSync(
+      finalPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_NOFOLLOW,
+      0o644,
+    );
+    // O_NOFOLLOW stops symlinks but NOT hardlinks (a hardlink's realpath is
+    // itself). Refuse a multiply-linked file so a hardlink planted inside a root
+    // can't write through to an out-of-root inode; and confirm the opened fd is
+    // still the inode we fenced (residual-TOCTOU belt-and-braces).
+    const opened = fs.fstatSync(fd);
+    if (opened.nlink > 1) return { ok: false, error: 'Path is a hard link' };
+    const named = lstatSafe(finalPath);
+    if (named !== null && (named.dev !== opened.dev || named.ino !== opened.ino)) {
+      return { ok: false, error: 'Path changed during write' };
+    }
+    fs.ftruncateSync(fd, 0);
+    fs.writeFileSync(fd, content, 'utf8');
     return { ok: true, bytes };
   } catch (error) {
     return { ok: false, error: (error as { message?: string })?.message ?? String(error) };
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* already closed */
+      }
+    }
   }
 }
+
+export { writeFileFenced };
 
 /** The fs channel implementations, spread into main.ts's registerIpcHandlers. */
 export const fsHandlers: {

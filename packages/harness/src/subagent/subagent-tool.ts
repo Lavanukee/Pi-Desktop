@@ -44,8 +44,9 @@ const SubagentParams = Type.Object({
   ),
   est_ram_gb: Type.Optional(
     Type.Number({
+      exclusiveMinimum: 0,
       description:
-        'Optional RAM estimate (GiB) for scheduling. Raise it when the subagent uses a bigger/different model.',
+        'Optional RAM estimate (GiB) for scheduling. Must be > 0. Raise it when the subagent uses a bigger/different model.',
     }),
   ),
   timeout_seconds: Type.Optional(
@@ -131,7 +132,16 @@ export function registerSubagentTool(pi: ExtensionAPI, deps: SubagentToolDeps): 
         };
       };
 
-      const estRamGB = typeof params.est_ram_gb === 'number' ? params.est_ram_gb : undefined;
+      // Forward ONLY a finite, positive estimate — a 0/negative/NaN value would
+      // poison the scheduler's shared RAM accounting or slip past the budget.
+      // (The schema's exclusiveMinimum guards the validated path; this guards a
+      // hand-built/unvalidated call too.)
+      const estRamGB =
+        typeof params.est_ram_gb === 'number' &&
+        Number.isFinite(params.est_ram_gb) &&
+        params.est_ram_gb > 0
+          ? params.est_ram_gb
+          : undefined;
       const result = await deps.scheduler.submit({
         id,
         name,

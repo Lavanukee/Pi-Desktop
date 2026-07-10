@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@mariozechner/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
+import { SUBAGENT_DEPTH_ENV } from '../subagent/types.js';
 import {
   ASK_USER_SENTINEL,
   type AskUserSpec,
@@ -122,5 +123,32 @@ describe('registerAskUser', () => {
       ctx,
     );
     expect((result?.details as { cancelled?: boolean })?.cancelled).toBe(true);
+  });
+
+  // SB-3: a spawned child pi reports hasUI === true but has no human to answer;
+  // ask_user must return deterministically instead of awaiting ctx.ui.input.
+  it('does not block on ctx.ui.input inside a subagent (returns "no UI")', async () => {
+    const prev = process.env[SUBAGENT_DEPTH_ENV];
+    process.env[SUBAGENT_DEPTH_ENV] = '1';
+    try {
+      const input = vi.fn(async () => 'never');
+      const ctx = { hasUI: true, ui: { input } } as unknown as ExtensionContext;
+      const { pi, getTool } = captureTool();
+      registerAskUser(pi);
+      const result = await getTool()?.execute?.(
+        'call',
+        { question: 'q', mode: 'free' },
+        undefined,
+        undefined,
+        ctx,
+      );
+      expect((result as { isError?: boolean } | undefined)?.isError).toBe(true);
+      expect((result?.details as { cancelled?: boolean })?.cancelled).toBe(true);
+      // The human-less subagent was never prompted.
+      expect(input).not.toHaveBeenCalled();
+    } finally {
+      if (prev === undefined) delete process.env[SUBAGENT_DEPTH_ENV];
+      else process.env[SUBAGENT_DEPTH_ENV] = prev;
+    }
   });
 });

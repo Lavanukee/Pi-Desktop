@@ -81,6 +81,41 @@ describe('event router — full fixture replays (mutation sequence snapshots)', 
   });
 });
 
+describe('event router — null-valued wire sub-fields (JSON null treated as absent) [round-9]', () => {
+  it('does not throw when streaming wire fields arrive as JSON null', () => {
+    const { sink, route } = makeRouter();
+    route({ type: 'agent_start' });
+    route({ type: 'turn_start' });
+
+    // assistantMessageEvent === null must be treated as absent (a `=== undefined`
+    // guard would fall through to `ev.type` and throw).
+    expect(() =>
+      route({ type: 'message_update', assistantMessageEvent: null } as unknown as PiBridgeEvent),
+    ).not.toThrow();
+
+    // toolcall_end carrying a null toolCall must be skipped, not dereferenced.
+    expect(() =>
+      route({
+        type: 'message_update',
+        assistantMessageEvent: { type: 'toolcall_end', contentIndex: 0, toolCall: null },
+      } as unknown as PiBridgeEvent),
+    ).not.toThrow();
+
+    // turn_end with a null message finalizes the turn without throwing, and a
+    // null entry inside toolResults is silently dropped.
+    expect(() =>
+      route({
+        type: 'turn_end',
+        message: null,
+        toolResults: [null],
+      } as unknown as PiBridgeEvent),
+    ).not.toThrow();
+
+    // The turn still finalized (endTurn was recorded) despite the null message.
+    expect(sink.callsFor('endTurn').length).toBeGreaterThan(0);
+  });
+});
+
 describe('event router — synthesized tool rows (hiding tool calls is a trust violation)', () => {
   it('synthesizes the inline block when only tool_execution_start/end arrive', () => {
     const { sink, route } = makeRouter();

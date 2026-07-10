@@ -15,11 +15,12 @@ import type {
   ToolInfo,
 } from '@mariozechner/pi-coding-agent';
 import { repairToolCallArguments } from '@pi-desktop/provider-llamacpp';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   HARNESS_CONFIG_ENTRY,
   HARNESS_REVIEW_ENTRY,
   type StoredEntryLike,
+  SUBAGENT_DEPTH_ENV,
   wireHarness,
 } from './index.js';
 import type { CallModel } from './model-call/call-model.js';
@@ -94,7 +95,7 @@ function makeRig(opts: { effort?: string; callModel?: CallModel } = {}) {
   const handle = wireHarness(pi, { callModel: opts.callModel });
   const fire = (event: string, e: unknown) =>
     Promise.all((handlers.get(event) ?? []).map((h) => h(e, ctx)));
-  return { pi, entries, ctx, handle, fire, sentUserMessages, abort, notify };
+  return { pi, entries, ctx, handle, fire, sentUserMessages, abort, notify, confirm };
 }
 
 async function startSession(rig: ReturnType<typeof makeRig>) {
@@ -196,5 +197,60 @@ describe('effort-gated reviewer pass', () => {
     const again = await rig.handle.reviewTurn('revision result', rig.ctx);
     expect(again).toBe(false);
     expect(callModel).not.toHaveBeenCalled();
+  });
+});
+
+describe('reviewPasses knob is real (round-9): passes scale with effort', () => {
+  // A reviewer that always approves → the loop never breaks early, so the number
+  // of reviewOutput calls equals reviewPasses (+ one adversarialCheck when on).
+  const okModel = () => vi.fn(async () => '{"ok":true,"issues":[]}');
+
+  it('medium runs exactly 1 reviewer pass; high runs more; max more still', async () => {
+    const m = okModel();
+    const rigM = makeRig({ effort: 'medium', callModel: m });
+    await startSession(rigM);
+    await rigM.handle.reviewTurn('result', rigM.ctx);
+    expect(m.mock.calls.length).toBe(1); // reviewPasses 1 + adversarial off
+
+    const h = okModel();
+    const rigH = makeRig({ effort: 'high', callModel: h });
+    await startSession(rigH);
+    await rigH.handle.reviewTurn('result', rigH.ctx);
+    expect(h.mock.calls.length).toBe(3); // reviewPasses 2 + adversarial on
+    expect(h.mock.calls.length).toBeGreaterThan(m.mock.calls.length);
+
+    const x = okModel();
+    const rigX = makeRig({ effort: 'max', callModel: x });
+    await startSession(rigX);
+    await rigX.handle.reviewTurn('result', rigX.ctx);
+    expect(x.mock.calls.length).toBe(4); // reviewPasses 3 + adversarial on
+    expect(x.mock.calls.length).toBeGreaterThan(h.mock.calls.length);
+  });
+});
+
+describe('SB-3 — a headless subagent context resolves deterministically (never blocks on a dialog)', () => {
+  afterEach(() => {
+    delete process.env[SUBAGENT_DEPTH_ENV];
+  });
+
+  it('confirmRelax auto-resolves inside a subagent instead of awaiting ctx.ui.confirm', async () => {
+    // A spawned child pi speaks the same rpc protocol → ctx.hasUI === true even
+    // with no human. Depth > 0 must short-circuit the relax gate so it can't hang.
+    process.env[SUBAGENT_DEPTH_ENV] = '1';
+    const rig = makeRig({ effort: 'medium' }); // no callModel → no rung-2 fixer
+    await startSession(rig);
+    const deps = rig.handle.buildRepairDeps();
+
+    // Parseable-but-schema-invalid args reach rung 4 with usable `current`.
+    const result = await repairToolCallArguments('{"wrong":1}', {
+      toolName: 'read',
+      schema: SCHEMA,
+      extraRungs: deps.extraRungs,
+    });
+
+    // The (human-less) subagent was NOT prompted, and the relax resolved.
+    expect(rig.confirm).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(result.rung).toBe(4);
   });
 });

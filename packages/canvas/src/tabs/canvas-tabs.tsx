@@ -7,7 +7,7 @@ import {
   IconPlus,
   IconTerminal,
 } from '@pi-desktop/ui';
-import { type ComponentType, type ReactNode, useEffect, useRef, useState } from 'react';
+import { type ComponentType, Fragment, type ReactNode, useEffect, useRef, useState } from 'react';
 import { type CanvasConfig, CanvasConfigContext, defaultCanvasConfig } from '../context.ts';
 import type { ArtifactContent } from '../model.ts';
 import { defaultSurfaceRegistry, type SurfaceRegistry } from '../registry.ts';
@@ -293,9 +293,14 @@ export function CanvasTabs({
         <div className="pd-canvas-tabpanel" role="tabpanel">
           {activeTab ? (
             renderSurface ? (
-              renderSurface(activeTab)
+              // Key by tab id so switching tabs remounts the surface (and its
+              // content slot), re-attaching the active tab's native view — without
+              // the key React reuses one instance and a prior terminal/browser
+              // view stays stuck in the slot.
+              <Fragment key={activeTab.id}>{renderSurface(activeTab)}</Fragment>
             ) : (
               <DefaultSurface
+                key={activeTab.id}
                 tab={activeTab}
                 registry={activeRegistry}
                 handlers={handlers}

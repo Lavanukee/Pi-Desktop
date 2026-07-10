@@ -62,6 +62,42 @@ describe('createOpenAiCompatCallModel', () => {
   });
 });
 
+describe('createOpenAiCompatCallModel — default timeout (SB-4)', () => {
+  // A fetch that never resolves on its own but honours the abort signal — models
+  // a hung utility endpoint. The default timeout must abort it so review /
+  // escalation / fixer calls can never hang the agent turn.
+  const hangingFetch = (): typeof fetch =>
+    ((_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () =>
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+        );
+      })) as unknown as typeof fetch;
+
+  it('aborts a hung request after the default timeout (fails open, never hangs)', async () => {
+    const callModel = createOpenAiCompatCallModel({
+      baseUrl: 'http://x/v1',
+      model: 'm',
+      fetchImpl: hangingFetch(),
+      timeoutMs: 20,
+    });
+    await expect(callModel({ prompt: 'hi' })).rejects.toThrow();
+  });
+
+  it('composes the caller signal with the timeout (a caller abort still wins)', async () => {
+    const callModel = createOpenAiCompatCallModel({
+      baseUrl: 'http://x/v1',
+      model: 'm',
+      fetchImpl: hangingFetch(),
+      timeoutMs: 60_000, // long, so the caller's abort is what ends the call
+    });
+    const ac = new AbortController();
+    const p = callModel({ prompt: 'hi', signal: ac.signal });
+    ac.abort();
+    await expect(p).rejects.toThrow();
+  });
+});
+
 describe('callModelFromEnv', () => {
   it('returns undefined when no base URL is configured', () => {
     expect(callModelFromEnv({})).toBeUndefined();

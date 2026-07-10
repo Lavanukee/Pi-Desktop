@@ -164,7 +164,7 @@ export const KNOWN_CONNECTORS: KnownConnector[] = [
       icon: '🔬',
       description: 'Structured step-by-step reasoning scratchpad.',
       command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-sequentialthinking'],
+      args: ['-y', '@modelcontextprotocol/server-sequential-thinking'],
     }),
   },
   {
@@ -657,7 +657,7 @@ export const KNOWN_CONNECTORS: KnownConnector[] = [
       icon: '🎮',
       description: 'Read and post to Discord servers and DMs.',
       command: 'npx',
-      args: ['-y', '@barryyip0625/mcp-discord'],
+      args: ['-y', 'mcp-discord'],
       env: { DISCORD_BOT_TOKEN: '' },
     }),
   },

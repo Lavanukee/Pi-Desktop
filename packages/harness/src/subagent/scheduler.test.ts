@@ -116,6 +116,36 @@ describe('SubagentScheduler rejection', () => {
   });
 });
 
+describe('SubagentScheduler — RAM estimate poisoning (SB-2)', () => {
+  it('a non-positive estRamGB falls back to perAgentGB (cannot bypass the budget)', () => {
+    // 4 slots by count, 2 GB RAM, 1.5 GB per agent. An estRamGB of 0 would
+    // otherwise read as "free" (0 <= budget always) and never charge #usedRamGB,
+    // letting unlimited agents run. It must be charged the per-agent default.
+    const sched = new SubagentScheduler({
+      budget: budget({ maxConcurrency: 4, ramBudgetGB: 2, perAgentGB: 1.5 }),
+    });
+    const a = deferredRunner();
+    const b = deferredRunner();
+    sched.submit({ id: 'a', name: 'A', estRamGB: 0, run: a.run });
+    sched.submit({ id: 'b', name: 'B', estRamGB: 0, run: b.run });
+    expect(a.started()).toBe(true);
+    // Charged 1.5 each: 1.5 + 1.5 = 3 > 2 → second QUEUES rather than running.
+    expect(b.started()).toBe(false);
+  });
+
+  it('negative and NaN estimates are ignored the same way', () => {
+    const sched = new SubagentScheduler({
+      budget: budget({ maxConcurrency: 4, ramBudgetGB: 2, perAgentGB: 1.5 }),
+    });
+    const a = deferredRunner();
+    const b = deferredRunner();
+    sched.submit({ id: 'a', name: 'A', estRamGB: -5, run: a.run });
+    sched.submit({ id: 'b', name: 'B', estRamGB: Number.NaN, run: b.run });
+    expect(a.started()).toBe(true);
+    expect(b.started()).toBe(false);
+  });
+});
+
 describe('SubagentScheduler failure handling', () => {
   it('records a failed run and keeps draining the queue (no wedge)', async () => {
     const sched = new SubagentScheduler({ budget: budget({ maxConcurrency: 1 }) });

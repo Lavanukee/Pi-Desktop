@@ -5,6 +5,7 @@ import type {
   ToolCallEventResult,
 } from '@mariozechner/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
+import { SUBAGENT_DEPTH_ENV } from '../subagent/types.js';
 import { evaluateToolCall, registerPermissions } from './modes.js';
 
 describe('evaluateToolCall — pure policy', () => {
@@ -175,5 +176,24 @@ describe('registerPermissions — event gating', () => {
       ),
     );
     expect(res).toMatchObject({ block: true });
+  });
+
+  // SB-3: a spawned child pi reports hasUI === true but has no human to answer,
+  // so a confirm-required call must block (not await ctx.ui.confirm and hang).
+  it('fails safe (blocks) in a subagent even though hasUI is true', async () => {
+    const prev = process.env[SUBAGENT_DEPTH_ENV];
+    process.env[SUBAGENT_DEPTH_ENV] = '1';
+    try {
+      const { pi, fire } = fakePi();
+      registerPermissions(pi, { initialMode: 'review-all' });
+      const confirm = vi.fn(async () => true);
+      const res = await fire(readEvent(), ctxWith(confirm, true));
+      expect(res).toMatchObject({ block: true });
+      // The human-less subagent was never prompted.
+      expect(confirm).not.toHaveBeenCalled();
+    } finally {
+      if (prev === undefined) delete process.env[SUBAGENT_DEPTH_ENV];
+      else process.env[SUBAGENT_DEPTH_ENV] = prev;
+    }
   });
 });

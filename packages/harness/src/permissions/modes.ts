@@ -15,6 +15,7 @@
 
 import type { ExtensionAPI, ToolCallEvent } from '@mariozechner/pi-coding-agent';
 import { isToolCallEventType } from '@mariozechner/pi-coding-agent';
+import { readSubagentDepth } from '../subagent/types.js';
 import { checkScaryBash, type ScaryBashRules } from './rules.js';
 
 export type PermissionMode = 'bypass' | 'reviewer' | 'review-all';
@@ -133,8 +134,11 @@ export function registerPermissions(
     }
 
     // confirm
-    if (!ctx.hasUI) {
-      // No UI available (print mode) → fail safe: block rather than silently run.
+    // A spawned child pi reports ctx.hasUI === true but has NO human to answer,
+    // so awaiting ctx.ui.confirm would hang it forever. Treat headless OR
+    // subagent contexts alike: fail safe (block) rather than silently run or hang.
+    if (!ctx.hasUI || readSubagentDepth(process.env) > 0) {
+      // No UI available (print mode / subagent) → block rather than silently run.
       opts.onBlock?.({ toolName: event.toolName, reason: decision.reason });
       return { block: true, reason: `${decision.reason} (no UI to confirm)` };
     }

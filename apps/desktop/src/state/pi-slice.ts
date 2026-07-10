@@ -156,14 +156,22 @@ export const usePiStore = create<PiSliceState>((set) => ({
       ],
     })),
   setMessagesExternal: (messages, truncated = false) =>
-    set({
+    set((s) => ({
       messages,
       historyTruncated: truncated,
       runningToolCalls: [],
       uiRequests: [],
       bridgeExited: null,
       branches: {},
-    }),
+      // A new/switched session must not inherit the previous session's live
+      // harness panels (checklist / subagents), which are published under the
+      // `harness*` status keys. Drop them now so a stale plan can't flash until
+      // the new session's harness republishes (the harness also resets its own
+      // runtime.plan at session_start — this is the renderer-side complement).
+      extensionStatus: Object.fromEntries(
+        Object.entries(s.extensionStatus).filter(([key]) => !key.startsWith('harness')),
+      ),
+    })),
 
   commitFork: (ordinal, { messageIndex, newFile, baseFile, editedText, images }) =>
     set((s) => {

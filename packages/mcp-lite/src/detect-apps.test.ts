@@ -72,6 +72,52 @@ describe('detectApps', () => {
   });
 });
 
+describe('catalog npx package specs are plausibly-real package names (round-9)', () => {
+  // The first non-flag arg to `npx` is the package to run. Strip an optional
+  // `@version` / `@latest` tag (scoped: the @ after the '/'; unscoped: the first @).
+  function npxPackageSpec(args: readonly string[]): string | undefined {
+    return args.find((a) => !a.startsWith('-') && !a.startsWith('http') && !a.startsWith('<'));
+  }
+  function stripVersion(spec: string): string {
+    if (spec.startsWith('@')) {
+      const slash = spec.indexOf('/');
+      const at = slash >= 0 ? spec.indexOf('@', slash) : -1;
+      return at > slash ? spec.slice(0, at) : spec;
+    }
+    const at = spec.indexOf('@');
+    return at > 0 ? spec.slice(0, at) : spec;
+  }
+  // npm package-name shape: optional lowercase scope, then a lowercase name.
+  const NPM_NAME = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
+
+  const npxConnectors = KNOWN_CONNECTORS.filter((c) => c.template.command === 'npx');
+
+  it('covers a meaningful number of npx connectors', () => {
+    expect(npxConnectors.length).toBeGreaterThan(5);
+  });
+
+  for (const c of npxConnectors) {
+    it(`${c.id}: launches a well-formed npm package name`, () => {
+      const spec = npxPackageSpec(c.template.args ?? []);
+      expect(spec, `${c.id} has no npx package arg`).toBeDefined();
+      // No unresolved placeholder leaked into the package position.
+      expect(spec).not.toMatch(/[<>]/);
+      expect(NPM_NAME.test(stripVersion(spec ?? ''))).toBe(true);
+    });
+  }
+
+  it('ships the CORRECT (non-404) package ids for the round-9 fixes', () => {
+    const seq = KNOWN_CONNECTORS_BY_ID['sequential-thinking'];
+    expect(seq?.template.args).toContain('@modelcontextprotocol/server-sequential-thinking');
+    // The typo'd (hyphen-less) id must be gone.
+    expect(JSON.stringify(seq)).not.toContain('sequentialthinking');
+
+    const discord = KNOWN_CONNECTORS_BY_ID.discord;
+    expect(discord?.template.args).toContain('mcp-discord');
+    expect(JSON.stringify(discord)).not.toContain('@barryyip0625/mcp-discord');
+  });
+});
+
 describe('connectorNeedsConfig', () => {
   it('is true for secret/placeholder connectors, false for plain local ones', () => {
     // biome-ignore lint/style/noNonNullAssertion: fixed catalog ids

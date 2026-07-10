@@ -35,6 +35,12 @@ asarUnpack:
   # packaged app. Absent when the optional dep / native rebuild was skipped, in
   # which case the PTY manager degrades to its piped-shell fallback.
   - node_modules/node-pty/**
+  # The `pi-afm` Swift helper (Apple Foundation Models bridge) is a mach-o binary
+  # spawned by both the main process (`--check`) and the pi child (streamAfm).
+  # A mach-o cannot be exec'd from inside the asar (the fs shim covers reads, not
+  # execve), so unpack the whole @pi-desktop/afm package to real disk; afm-main.ts
+  # rewrites the resolved app.asar path → app.asar.unpacked so `spawn` finds it.
+  - node_modules/@pi-desktop/afm/**
 mac:
   target: dir
   category: public.app-category.developer-tools

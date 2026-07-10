@@ -24,6 +24,8 @@ import {
   Tooltip,
 } from '@pi-desktop/ui';
 import { useState } from 'react';
+import { activateAppleModel } from '../state/afm-model';
+import { afmAvailable, useAfmStore } from '../state/afm-store';
 import { useLlmStore } from '../state/llm-store';
 import { activateLocalModel } from '../state/local-model';
 import { setModel } from '../state/pi-connect';
@@ -110,6 +112,8 @@ export function ComposerFooter({
   const catalog = useLlmStore((s) => s.catalog);
   const download = useLlmStore((s) => s.download);
   const refreshCatalog = useLlmStore((s) => s.refreshCatalog);
+  const afmAvailability = useAfmStore((s) => s.availability);
+  const refreshAfm = useAfmStore((s) => s.refresh);
   const [busy, setBusy] = useState<string | null>(null);
 
   const label =
@@ -147,11 +151,23 @@ export function ComposerFooter({
     }
   };
 
+  const onUseApple = async () => {
+    setBusy('afm');
+    try {
+      await activateAppleModel();
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <>
       <DropdownMenu
         onOpenChange={(open) => {
-          if (open) void refreshCatalog();
+          if (open) {
+            void refreshCatalog();
+            void refreshAfm();
+          }
         }}
       >
         <DropdownMenuTrigger asChild>
@@ -181,6 +197,20 @@ export function ComposerFooter({
           {onOpenModels !== undefined ? (
             <DropdownMenuItem data-testid="footer-open-manager" onSelect={() => onOpenModels()}>
               Manage models…
+            </DropdownMenuItem>
+          ) : null}
+          {afmAvailable(afmAvailability) ? (
+            <DropdownMenuItem
+              data-testid="footer-afm-item"
+              disabled={busy !== null}
+              description="On-device · no download · 4k context"
+              hint={busy === 'afm' ? <Spinner size={12} /> : 'Use'}
+              onSelect={(e) => {
+                e.preventDefault();
+                void onUseApple();
+              }}
+            >
+              Apple Intelligence
             </DropdownMenuItem>
           ) : null}
           {catalog.length === 0 ? (

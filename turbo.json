@@ -12,6 +12,10 @@
     "lint": {},
     "test": {
       "dependsOn": ["^build"]
+    },
+    "build:swift": {
+      "cache": false,
+      "outputs": ["swift/.build/release/**"]
     }
   }
 }

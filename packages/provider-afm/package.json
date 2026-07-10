@@ -1,0 +1,28 @@
+{
+  "name": "@pi-desktop/provider-afm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "pi provider extension: Apple Foundation Models on-device streamSimple, bridging @pi-desktop/afm's streamAfm into pi's AssistantMessageEventStream.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "0.68.1",
+    "@mariozechner/pi-coding-agent": "0.68.1",
+    "@pi-desktop/afm": "workspace:*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "@pi-desktop/shared": "workspace:*",
+    "@types/node": "^24.13.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

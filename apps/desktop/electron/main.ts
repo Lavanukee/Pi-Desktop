@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { createIpcEventSender, createLogger, registerIpcHandlers } from '@pi-desktop/shared';
 import { app, BrowserWindow, ipcMain, type WebPreferences } from 'electron';
+import { registerAfmIpc } from './afm/afm-main';
 import { resolveBundledPackageAsset } from './app-paths';
 import { registerBrowserIpc } from './canvas/browser-manager';
 import {
@@ -164,6 +165,10 @@ function registerAppIpc(): void {
 
   // Inference supervisor (utilityProcess) proxy channels.
   registerLlmIpc(ipcMain, allowSender);
+
+  // Apple Foundation Models (on-device) capability gate + set-active. Also
+  // publishes PI_AFM_HELPER_PATH so the pi child's provider-afm finds the helper.
+  registerAfmIpc(ipcMain, allowSender);
 
   // Desktop settings (theme/permissions/effort/search keys/mcp mode/capabilities).
   registerSettingsIpc(ipcMain, allowSender);

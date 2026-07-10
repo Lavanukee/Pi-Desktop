@@ -5,6 +5,7 @@
  * IpcInvokeMap / IpcEventMap constraints in @pi-desktop/shared.
  */
 import type { IpcClient, IpcEventMap, IpcInvokeMap } from '@pi-desktop/shared';
+import { AFM_INVOKE_CHANNELS, type AfmInvokeMap } from './afm/afm-contract';
 import {
   BROWSER_INVOKE_CHANNELS,
   type BrowserEventMap,
@@ -207,6 +208,7 @@ export const CANVAS_INVOKE_CHANNELS = [
 export type AppInvokeMap = CoreInvokeMap &
   FsInvokeMap &
   LlmInvokeMap &
+  AfmInvokeMap &
   SettingsInvokeMap &
   CanvasInvokeMap &
   ImportInvokeMap &
@@ -222,6 +224,7 @@ export const APP_INVOKE_CHANNELS = [
   'app:get-info',
   ...FS_INVOKE_CHANNELS,
   ...LLM_INVOKE_CHANNELS,
+  ...AFM_INVOKE_CHANNELS,
   ...SETTINGS_INVOKE_CHANNELS,
   ...CANVAS_INVOKE_CHANNELS,
   ...IMPORT_INVOKE_CHANNELS,

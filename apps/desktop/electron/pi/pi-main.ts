@@ -21,16 +21,24 @@ const log = createLogger('desktop:pi');
 const events = createIpcEventSender<AppEventMap>();
 
 /**
- * The three bundled pi extension packages, loaded via repeated `-e` flags.
+ * The bundled pi extension packages, loaded via repeated `-e` flags.
  * provider-llamacpp routes local models through its streamSimple provider
- * (llamacpp-stream api); harness (W5) and web-tools (W6) add tools/commands.
- * Each is resolved to its `<pkg>/src/index.ts` — repo-relative in dev,
- * bundle-relative (inside the asar) when packaged — via the shared app-paths
- * resolver, and only those that actually `export default` an activate are
- * included, so an absent/placeholder extension is tolerated and lands
- * automatically once its workstream ships.
+ * (llamacpp-stream api); provider-afm does the same for the Apple on-device
+ * model (afm-stream api, helper path injected via PI_AFM_HELPER_PATH env, set by
+ * afm-main.ts before the first spawn); harness (W5) and web-tools (W6) add
+ * tools/commands. Each is resolved to its `<pkg>/src/index.ts` — repo-relative
+ * in dev, bundle-relative (inside the asar) when packaged — via the shared
+ * app-paths resolver, and only those that actually `export default` an activate
+ * are included, so an absent/placeholder extension is tolerated and lands
+ * automatically once its workstream ships. provider-afm registers a harmless
+ * no-op handler off-platform (no afm block in models.json → never invoked).
  */
-const EXTENSION_PACKAGE_DIRS = ['provider-llamacpp', 'harness', 'web-tools'] as const;
+const EXTENSION_PACKAGE_DIRS = [
+  'provider-llamacpp',
+  'provider-afm',
+  'harness',
+  'web-tools',
+] as const;
 
 function resolveExtensionPaths(): string[] {
   const out: string[] = [];

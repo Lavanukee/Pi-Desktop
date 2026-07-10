@@ -6,11 +6,26 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 pnpm turbo run build --filter @pi-desktop/desktop
+# Build the Apple Foundation Models Swift helper (pi-afm) so it exists for
+# electron-builder to bundle (extraUnpackedDir via asarUnpack). No-op-safe on
+# non-arm64: the build just produces the mach-o under swift/.build/release.
+pnpm --filter @pi-desktop/afm build:swift
 pnpm --filter @pi-desktop/desktop exec electron-builder --dir --config electron-builder.yml
 
 APP_SRC="apps/desktop/release/mac-arm64/Pi Desktop.app"
 [ -d "$APP_SRC" ] || APP_SRC="apps/desktop/release/mac/Pi Desktop.app"
 [ -d "$APP_SRC" ] || { echo "ship-local: packaged app not found under apps/desktop/release" >&2; exit 1; }
+
+# Sign the pi-afm mach-o FIRST (codesign requires inner code signed before the
+# enclosing bundle). It is unpacked to app.asar.unpacked; ad-hoc is fine locally.
+# (Developer-ID signing + notarizing this helper as a separate mach-o is W11.)
+AFM_HELPER="$APP_SRC/Contents/Resources/app.asar.unpacked/node_modules/@pi-desktop/afm/swift/.build/release/pi-afm"
+if [ -f "$AFM_HELPER" ]; then
+  codesign --force --sign - "$AFM_HELPER"
+  echo "ship-local: signed pi-afm helper"
+else
+  echo "ship-local: WARNING pi-afm helper not bundled at $AFM_HELPER" >&2
+fi
 
 # Ad-hoc signature: required for locally-built binaries on Apple Silicon.
 codesign --force --deep --sign - "$APP_SRC"

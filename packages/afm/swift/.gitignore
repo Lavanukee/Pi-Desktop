@@ -1,0 +1,4 @@
+# SwiftPM build output — the compiled pi-afm binary + intermediates.
+.build/
+.swiftpm/
+Package.resolved

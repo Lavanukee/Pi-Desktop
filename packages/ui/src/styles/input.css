@@ -50,6 +50,37 @@
 }
 
 /*
+ * Search field — Input with a leading magnifying glass ("Search chats"). The
+ * glyph is overlaid in the left inset (muted, non-interactive) and the input
+ * gains left padding so text clears it.
+ */
+.pd-search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.pd-search-field-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--pd-text-muted);
+  pointer-events: none;
+}
+
+.pd-search-field-input {
+  padding-left: 32px;
+}
+
+/* Drop the native WebKit search decorations; the leading glyph is the affordance. */
+.pd-search-field-input::-webkit-search-decoration,
+.pd-search-field-input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+/*
  * Auto-grow mirror (claude composer trick, spec-composer motion notes: growth
  * is layout-driven via an invisible grid-cell replica, no animation).
  */

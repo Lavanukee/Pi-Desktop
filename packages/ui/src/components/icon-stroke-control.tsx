@@ -12,6 +12,31 @@ import {
 } from './icons.tsx';
 import { Slider } from './slider.tsx';
 
+/**
+ * Global floor for the icon stroke width, in SVG user units. 1.0 is the
+ * thinnest weight that still reads as a hairline glyph; `.pd-icon` mirrors this
+ * floor at render time via `max(1, …)`, so nothing draws thinner even if the
+ * token is set out of band.
+ */
+export const ICON_STROKE_MIN = 1;
+/** Upper bound of the stroke slider — heavy but not blobby at icon sizes. */
+export const ICON_STROKE_MAX = 2.5;
+
+/**
+ * Clamp a stroke width into the sane `[ICON_STROKE_MIN, ICON_STROKE_MAX]` range.
+ * Use before persisting or writing `--pd-icon-stroke` programmatically so a
+ * stale/out-of-range value can never push icons below the 1.0 floor (or absurdly
+ * thick). Non-finite input falls back to the minimum.
+ */
+export function clampIconStroke(
+  value: number,
+  min: number = ICON_STROKE_MIN,
+  max: number = ICON_STROKE_MAX,
+): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
 /** A representative sample of stroked glyphs for the live preview row. */
 const PREVIEW_ICONS = [
   IconChat,
@@ -45,8 +70,8 @@ export const IconStrokeControl = forwardRef<HTMLDivElement, IconStrokeControlPro
     {
       value,
       onChange,
-      min = 1,
-      max = 2.5,
+      min = ICON_STROKE_MIN,
+      max = ICON_STROKE_MAX,
       step = 0.25,
       label = 'Icon stroke width',
       className,
@@ -54,23 +79,26 @@ export const IconStrokeControl = forwardRef<HTMLDivElement, IconStrokeControlPro
     },
     ref,
   ) {
+    // Clamp the incoming value so a stale/programmatic out-of-range prop never
+    // shows a sub-floor readout or renders the preview thinner than the floor.
+    const safe = clampIconStroke(value, min, max);
     return (
       <div ref={ref} className={clsx('pd-icon-stroke-control', className)} {...rest}>
         <div className="pd-icon-stroke-control-header">
           <span className="pd-icon-stroke-control-label">{label}</span>
-          <span className="pd-icon-stroke-control-value">{value.toFixed(2)}</span>
+          <span className="pd-icon-stroke-control-value">{safe.toFixed(2)}</span>
         </div>
         <Slider
           min={min}
           max={max}
           step={step}
-          value={value}
+          value={safe}
           aria-label={typeof label === 'string' ? label : 'Icon stroke width'}
-          onValueChange={onChange}
+          onValueChange={(next) => onChange(clampIconStroke(next, min, max))}
         />
         <div
           className="pd-icon-stroke-control-preview"
-          style={{ '--pd-icon-stroke': value } as CSSProperties}
+          style={{ '--pd-icon-stroke': safe } as CSSProperties}
           aria-hidden="true"
         >
           {PREVIEW_ICONS.map((Glyph) => (

@@ -1,6 +1,7 @@
 import { clsx } from 'clsx';
 import type { ChangeEvent, InputHTMLAttributes, TextareaHTMLAttributes } from 'react';
 import { forwardRef, useState } from 'react';
+import { IconSearch } from './icons.tsx';
 
 export type InputProps = InputHTMLAttributes<HTMLInputElement>;
 
@@ -10,6 +11,34 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   ref,
 ) {
   return <input ref={ref} className={clsx('pd-input', className)} {...rest} />;
+});
+
+export interface SearchInputProps extends InputProps {
+  /** Leading magnifying-glass size in px. */
+  iconSize?: number;
+}
+
+/**
+ * Search field with a leading magnifying glass — the "Search chats" affordance.
+ * A thin wrapper over {@link Input}: the muted {@link IconSearch} is overlaid
+ * inside the field's left inset and honors `--pd-icon-stroke` like every glyph.
+ * Defaults to `type="search"` and forwards the ref straight to the `<input>`.
+ */
+export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(function SearchInput(
+  { className, iconSize = 16, ...rest },
+  ref,
+) {
+  return (
+    <div className="pd-search-field">
+      <IconSearch className="pd-search-field-icon" size={iconSize} />
+      <Input
+        ref={ref}
+        type="search"
+        className={clsx('pd-search-field-input', className)}
+        {...rest}
+      />
+    </div>
+  );
 });
 
 export interface TextAreaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {

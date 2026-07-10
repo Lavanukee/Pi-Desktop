@@ -91,11 +91,15 @@ try {
     { timeout: 10000 },
   );
 
-  const back = page.locator('[data-testid="canvas-tabs-panel"] .pd-browser [aria-label="Back"]');
+  // The nav chrome (back/fwd/refresh/URL) now lives in the per-tab operation
+  // bar (`.pd-browser-nav`), not inside the `.pd-browser` content surface.
+  const back = page.locator(
+    '[data-testid="canvas-tabs-panel"] .pd-browser-nav [aria-label="Back"]',
+  );
   await page.waitForFunction(
     () => {
       const btn = document.querySelector(
-        '[data-testid="canvas-tabs-panel"] .pd-browser [aria-label="Back"]',
+        '[data-testid="canvas-tabs-panel"] .pd-browser-nav [aria-label="Back"]',
       );
       return btn !== null && !btn.disabled;
     },

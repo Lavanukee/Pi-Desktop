@@ -23,6 +23,24 @@ export type CanvasTabKind =
 /** The media-preview surface's load state (loading → loaded | error). */
 export type MediaPreviewStatus = 'loading' | 'loaded' | 'error';
 
+/**
+ * One node in a {@link FileTree}. A `dir` node carries `children`; a `file` node
+ * is a leaf. `path` is the full path used for breadcrumb/open/reveal targeting;
+ * `name` is the display label. Pure data — no UI coupling.
+ */
+export interface FileTreeNode {
+  name: string;
+  path: string;
+  kind: 'file' | 'dir';
+  children?: FileTreeNode[];
+}
+
+/**
+ * The apps the file surface's "Open ▾" dropdown can shell out to. `Open in
+ * folder` is emitted separately via `onReveal` (it reveals, not opens-with).
+ */
+export type OpenWithAppId = 'vscode-insiders' | 'default' | 'terminal' | 'xcode';
+
 /** One subagent row in the subagent surface (pure data — no UI coupling). */
 export interface SubagentItem {
   id: string;
@@ -48,6 +66,20 @@ export interface CanvasTab {
   icon?: ReactNode;
   /** Artifact-backed surfaces (code | markdown | html | svg | image | pdf | file). */
   artifact?: Artifact;
+  /**
+   * When true, the file/code surface treats `artifact.content` as LIVE — it
+   * reconciles appended text without resetting scroll and auto-scrolls to the
+   * newest line as the file is written. Set while a write/edit is in flight.
+   */
+  streaming?: boolean;
+
+  // file surface state (the per-tab operation bar reads these)
+  /** Full path of the open file — drives the breadcrumb + open/reveal targeting. */
+  filePath?: string;
+  /** Explicit breadcrumb segments; when omitted they derive from `filePath`. */
+  breadcrumb?: string[];
+  /** Tree shown in the file surface's toggleable file-tree panel. */
+  fileTree?: FileTreeNode[];
 
   // browser surface state (app-updated via controller.updateTab)
   url?: string;
@@ -62,6 +94,8 @@ export interface CanvasTab {
   mediaType?: string;
   mediaIndex?: number;
   mediaStatus?: MediaPreviewStatus;
+  /** Formats offered in the media operation bar's "Download as …" dropdown. */
+  downloadFormats?: string[];
 
   // subagent surface state
   subagents?: SubagentItem[];

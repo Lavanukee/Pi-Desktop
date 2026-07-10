@@ -87,17 +87,25 @@ export {
   IconCode,
   IconDownload,
   IconExpand,
+  IconFolder,
+  IconFolders,
   IconMarkup,
   IconMinimize,
   IconPanelRight,
   IconPdf,
   IconSubagent,
 } from './tab-icons.tsx';
+// Per-tab operation bar (breadcrumb / file-tree / open-with; browser nav; media)
+export type { CanvasOperationBarProps } from './tabs/canvas-operation-bar.tsx';
+export { CanvasOperationBar, deriveBreadcrumb } from './tabs/canvas-operation-bar.tsx';
 // Tabbed canvas (THEME 1)
 export type { CanvasTabsHandlers, CanvasTabsProps } from './tabs/canvas-tabs.tsx';
 export { CanvasTabs } from './tabs/canvas-tabs.tsx';
 export type { CanvasControllerOptions } from './tabs/controller.ts';
 export { CanvasController, createCanvasController } from './tabs/controller.ts';
+// Filterable file-tree panel (file operation bar)
+export type { FileTreeProps } from './tabs/file-tree.tsx';
+export { FileTree, filterFileTree } from './tabs/file-tree.tsx';
 export type { CanvasTabKindMeta } from './tabs/tab-kinds.ts';
 export { CANVAS_TAB_KINDS, kindOpensInCanvas } from './tabs/tab-kinds.ts';
 export type {
@@ -105,6 +113,8 @@ export type {
   CanvasTab,
   CanvasTabKind,
   CanvasTabSpec,
+  FileTreeNode,
+  OpenWithAppId,
   SubagentItem,
 } from './tabs/tab-model.ts';
 export { emptyCanvasState } from './tabs/tab-model.ts';

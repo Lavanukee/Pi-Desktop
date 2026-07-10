@@ -51,6 +51,13 @@ export type PiInvokeMap = {
     request: { sessionPath: string };
     response: PiCommandAck & { cancelled?: boolean };
   };
+  /** Start a fresh session INSIDE the running pi (`new_session` RPC) — the
+   * New-chat action. No dispose/respawn: same pid, no "pi exited" crash toast,
+   * and nothing new spawned in the dock. `cancelled` reflects an extension veto. */
+  'pi:new-session': {
+    request: { parentSession?: string } | undefined;
+    response: PiCommandAck & { cancelled?: boolean };
+  };
   /** Fork a new branch at a user message's entry (mirrors the `fork` RPC).
    * Returns the forked message's text; pi switches its active session to the
    * new branch (a fresh session file whose leaf is the forked message's
@@ -108,6 +115,7 @@ export const PI_INVOKE_CHANNELS = [
   'pi:respond-ui',
   'pi:get-messages',
   'pi:switch-session',
+  'pi:new-session',
   'pi:fork',
   'pi:get-fork-messages',
   'pi:get-state',

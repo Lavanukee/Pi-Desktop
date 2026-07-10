@@ -14,6 +14,11 @@ declare global {
     /** E2E hook: accessor for the canvas controller (open browser/terminal
      * tabs). Present only when loaded with ?piE2E=1 (see CanvasTabsPanel.tsx). */
     __pi_canvas?: () => CanvasController;
+    /** E2E hook: recorded canvas shell-out invokes (open-with / reveal /
+     * open-external). Populated (and the real shell-out suppressed) only under
+     * ?piE2E=1 so probes can assert the wiring without launching Finder/Terminal
+     * (see chat/canvas/native-surfaces.ts). */
+    __pi_canvas_ipc?: Array<{ channel: string; req: unknown }>;
     /** E2E hook: accessor for the desktop-settings store. Present only when
      * loaded with ?piE2E=1 (see state/settings-store.ts). */
     __settings_store?: () => typeof useSettingsStore;

@@ -15,12 +15,14 @@
  * container + exposes the controller to the E2E probes.
  */
 import { type CanvasTab, CanvasTabs, IconPanelRight, useCanvasTabs } from '@pi-desktop/canvas';
-import { IconButton } from '@pi-desktop/ui';
+import { IconButton, IconClose } from '@pi-desktop/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CANVAS_MAX_WIDTH, CANVAS_MIN_WIDTH, useCanvasStore } from '../../state/canvas-store';
 import { artifactToPayload } from './artifacts';
+import { useFileWriteCanvasRouting } from './file-tabs';
 import { useNativeSurfaces } from './native-surfaces';
 import { useArtifactCanvasRouting } from './tabs-routing';
+import { useBashTerminalCanvasRouting } from './terminal-routing';
 
 /** E2E: probes open browser/terminal tabs through the shared controller. Gated
  * on the same `?piE2E=1` opt-in as `window.__pi_store` (see pi-connect.ts). */
@@ -30,20 +32,24 @@ export function CanvasTabsPanel() {
   const { controller, tabs, fullscreen } = useCanvasTabs();
   const sideWidth = useCanvasStore((s) => s.sideWidth);
   const setSideWidth = useCanvasStore((s) => s.setSideWidth);
-
-  // Round-5 #18/#19: the canvas panel-toggle now closes THIS panel and the APP
-  // owns the slide (CanvasTabs emits `onCollapse`). `closed` is that app-owned
-  // open/closed flag — the rail animates its width between `sideWidth` (open)
-  // and 0 (slid out). A new artifact routing into the canvas re-opens it (the
-  // tab count grows); a slim restore control re-opens a manually-closed panel.
-  const [closed, setClosed] = useState(false);
+  // Round-7: the rail's open/closed state is app-owned in the canvas store so the
+  // persistent top-right toggle (ChatApp) can open/close it even with no tabs.
+  // The in-rail panel-toggle + a newly-routed artifact drive it too. The rail
+  // animates its width between `sideWidth` (open) and 0 (slid out).
+  const canvasOpen = useCanvasStore((s) => s.canvasOpen);
+  const setCanvasOpen = useCanvasStore((s) => s.setCanvasOpen);
   const prevTabCount = useRef(tabs.length);
 
   // Phase 2b: the real WebContentsView / PTY handlers for the live surfaces.
   const surfaceHandlers = useNativeSurfaces(controller);
 
-  // Keep the canvas in sync with the streamed-artifact detector (THEME 2).
+  // Keep the canvas in sync with the streamed-artifact detector (THEME 2), the
+  // file-write → live file tab router, and the interactive-bash → terminal
+  // router (round-7). These run even while the panel renders null (no tabs yet),
+  // since it's their job to open the FIRST tab.
   useArtifactCanvasRouting();
+  useFileWriteCanvasRouting();
+  useBashTerminalCanvasRouting();
 
   useEffect(() => {
     if (IS_E2E) window.__pi_canvas = () => controller;
@@ -51,13 +57,14 @@ export function CanvasTabsPanel() {
 
   const hasTabs = tabs.length > 0;
 
-  // A newly-opened tab (artifact routed in, `+`, etc.) re-opens a closed panel.
+  // A newly-opened tab (artifact routed in, a file write, `+`, etc.) opens the
+  // rail even if the user had closed it.
   useEffect(() => {
-    if (tabs.length > prevTabCount.current) setClosed(false);
+    if (tabs.length > prevTabCount.current) setCanvasOpen(true);
     prevTabCount.current = tabs.length;
-  }, [tabs.length]);
+  }, [tabs.length, setCanvasOpen]);
 
-  const open = hasTabs && !closed && !fullscreen;
+  const open = canvasOpen && !fullscreen;
 
   // Animate the rail width between 0 (closed) and sideWidth (open) — the slide,
   // subject to the reduced-motion rules in global.css. Fullscreen sizes itself.
@@ -98,19 +105,37 @@ export function CanvasTabsPanel() {
     void window.piDesktop.invoke('canvas:popout', { artifact: artifactToPayload(tab.artifact) });
   }, []);
 
-  if (!hasTabs) return null;
+  // Render nothing only when the canvas is both empty AND closed. When the user
+  // opens it with no tabs (top-right toggle), the rail shows CanvasTabs' empty
+  // state (its `+` opens a browser tab); a routed-in surface fills it.
+  if (!open && !hasTabs && !fullscreen) return null;
 
   // `onCollapse` closes THIS panel (the app slides it out). `onCopy` defaults to
   // the clipboard inside CanvasTabs; the tab-bar Copy button appears for any
   // surface with copyable content (round-5 #20/#21).
   const surface = (
-    <CanvasTabs handlers={surfaceHandlers} onPopout={popOut} onCollapse={() => setClosed(true)} />
+    <CanvasTabs
+      handlers={surfaceHandlers}
+      onPopout={popOut}
+      onCollapse={() => setCanvasOpen(false)}
+    />
   );
 
-  // Fullscreen: cover the whole app surface with the tabbed canvas.
+  // Fullscreen: cover the whole app surface with the tabbed canvas (canvas media
+  // "expand"). A close control restores the docked rail.
   if (fullscreen) {
     return (
       <div className="fixed inset-0 z-40 bg-bg-base p-2" data-testid="canvas-tabs-panel">
+        <div className="pd-canvas-fullscreen-exit">
+          <IconButton
+            size="sm"
+            aria-label="Exit fullscreen"
+            data-testid="canvas-fullscreen-exit"
+            onClick={() => controller.setFullscreen(false)}
+          >
+            <IconClose size={16} />
+          </IconButton>
+        </div>
         {surface}
       </div>
     );
@@ -138,15 +163,16 @@ export function CanvasTabsPanel() {
         </div>
       </aside>
 
-      {/* Slim restore control for a manually-closed panel (the tab-bar toggle is
-          slid away with the panel). Mirrors the canvas panel-toggle glyph. */}
+      {/* Slim restore control for a manually-closed panel that still has tabs
+          (the tab-bar toggle is slid away with the panel). Mirrors the canvas
+          panel-toggle glyph. The top-bar toggle re-opens it when empty. */}
       {hasTabs && !open ? (
         <div className="pd-canvas-restore">
           <IconButton
             size="sm"
             aria-label="Open canvas panel"
             data-testid="canvas-restore"
-            onClick={() => setClosed(false)}
+            onClick={() => setCanvasOpen(true)}
           >
             <IconPanelRight size={16} />
           </IconButton>

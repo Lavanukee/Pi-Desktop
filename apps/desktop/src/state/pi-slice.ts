@@ -68,6 +68,10 @@ interface PiSliceState {
   composerText: string;
   windowTitle: string | null;
   bridgeExited: { code: number | null; signal: string | null } | null;
+  /** Set true by restartPi / model-switch before a DELIBERATE dispose+respawn
+   *  so the paired pi-exit is not surfaced as a crash toast; the sink consumes
+   *  it on bridgeExit. A real crash leaves this false and still toasts. */
+  intentionalRestart: boolean;
   /** True when a rehydrated session's leaf→root walk hit a dangling parentId. */
   historyTruncated: boolean;
   /** Fork branches keyed by divergence user-message ordinal (see BranchGroup). */
@@ -133,6 +137,7 @@ export const usePiStore = create<PiSliceState>((set) => ({
   composerText: '',
   windowTitle: null,
   bridgeExited: null,
+  intentionalRestart: false,
   historyTruncated: false,
   branches: {},
 
@@ -388,12 +393,22 @@ export function createPiSink(
     setMessages: (messages) => set({ messages }),
 
     notify: (level, message) =>
-      set((s) => ({
-        notifications: [
-          ...s.notifications.slice(-3),
-          { id: nextLocalId('n'), level, message, timestamp: Date.now() },
-        ],
-      })),
+      set((s) => {
+        // A deliberate restart (model switch / recovery) disposes pi, so the
+        // router emits a paired "pi exited (…)." error alongside bridgeExit.
+        // Suppress just that line while a restart is in flight; real crashes
+        // (intentionalRestart === false) still surface. Coupled to the router's
+        // _bridge_exit message prefix (packages/engine event-router.ts).
+        if (level === 'error' && s.intentionalRestart && message.startsWith('pi exited (')) {
+          return {};
+        }
+        return {
+          notifications: [
+            ...s.notifications.slice(-3),
+            { id: nextLocalId('n'), level, message, timestamp: Date.now() },
+          ],
+        };
+      }),
 
     // Idempotent dedupe-by-id (foundation-hardening handoff, Lane B): a renderer
     // reload replays pending dialogs via pi:start, and the router can re-emit the
@@ -441,6 +456,13 @@ export function createPiSink(
         ].slice(0, 50),
       })),
 
-    bridgeExit: (info) => set({ bridgeExited: info, runningToolCalls: [], uiRequests: [] }),
+    bridgeExit: (info) =>
+      set((s) =>
+        s.intentionalRestart
+          ? // Deliberate dispose (restart): consume the flag and drop the crash
+            // toast, but still clear transient run state as a real exit would.
+            { intentionalRestart: false, runningToolCalls: [], uiRequests: [] }
+          : { bridgeExited: info, runningToolCalls: [], uiRequests: [] },
+      ),
   };
 }

@@ -56,14 +56,59 @@ export async function startPi(opts: { cwd?: string; sessionPath?: string } = {})
 }
 
 /** Force a fresh pi child (dispose → whenExited → respawn) — the recovery path
- * for a wedged bridge, since pi:start returns the live-but-stuck one. */
+ * for a wedged bridge (pi:start returns the live-but-stuck one) and the
+ * model-switch seam (afm/local-model respawn to re-read models.json). NOT the
+ * New-chat path anymore — that uses newSession(), which never respawns. */
 export async function restartPi(
   opts: { cwd?: string; sessionPath?: string } | undefined = undefined,
 ) {
   // A new-chat restart (no sessionPath) re-arms custom instructions; a restart
   // that re-opens a specific session (e.g. to apply search keys) does not.
   if (opts?.sessionPath === undefined) armSessionInstructions();
-  return window.piDesktop.invoke('pi:restart', opts);
+  // Mark the dispose+respawn as DELIBERATE so the pi-exit it triggers is not
+  // surfaced as a crash toast (model switch, search-key apply, recovery
+  // restart). The pi-slice consumes this flag on the paired bridge-exit; the
+  // finally clears it for the already-dead-bridge case (recovery restart after
+  // a real crash), where no fresh exit event fires to consume it.
+  usePiStore.setState({ intentionalRestart: true });
+  try {
+    return await window.piDesktop.invoke('pi:restart', opts);
+  } finally {
+    usePiStore.setState({ intentionalRestart: false });
+  }
+}
+
+/**
+ * New chat: start a fresh session INSIDE the running pi (`new_session` RPC).
+ * Unlike restartPi this does NOT dispose/respawn the child — pi keeps the same
+ * pid, no "pi exited" crash toast fires, and nothing new appears in the dock. It
+ * resets the rendered thread + transient run state, re-arms the saved custom
+ * instructions for the fresh session's first prompt (round-4 armed this on the
+ * old restart path), and points the store at pi's new session.
+ */
+export async function newSession(): Promise<{ ok: boolean; cancelled?: boolean; error?: string }> {
+  const res = await window.piDesktop.invoke('pi:new-session', undefined);
+  // Reset the rendered thread + transient run/branch state to the fresh session
+  // (also clears any stale bridgeExited/notifications). Unconditional so New
+  // chat always yields a clean slate, even if the RPC failed.
+  usePiStore.getState().setMessagesExternal([]);
+  if (!res.success) return { ok: false, error: res.error };
+  if (res.cancelled === true) return { ok: true, cancelled: true };
+  // A fresh session adopts the saved custom instructions on its first prompt.
+  armSessionInstructions();
+  // Sync the store's session id/file to pi's new session so the sidebar refresh
+  // trigger + selected-row highlight track it (pi emits no session event here).
+  const state = await getPiState();
+  if (state.success && state.state !== undefined) {
+    usePiStore.setState((s) => ({
+      session: {
+        ...s.session,
+        sessionFile: state.state?.sessionFile,
+        sessionId: state.state?.sessionId,
+      },
+    }));
+  }
+  return { ok: true };
 }
 
 /** `data:<mime>;base64,<data>` → pi ImageContent. */

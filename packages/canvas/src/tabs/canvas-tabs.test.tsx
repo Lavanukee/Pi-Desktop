@@ -60,6 +60,47 @@ describe('CanvasTabs', () => {
     expect(c.getState().tabs).toHaveLength(4);
   });
 
+  it('places the new-tab + immediately after the ACTIVE tab', async () => {
+    const c = seededController(); // active is the last (image "Render") tab
+    const { container } = await render(<CanvasTabs controller={c} />);
+    // The + lives inside the active tab's slot (not in the right-hand controls).
+    const activeSlot = container
+      .querySelector('.pd-canvas-tab[data-active]')
+      ?.closest('.pd-canvas-tab-slot');
+    expect(activeSlot?.querySelector('.pd-canvas-newtab')).toBeTruthy();
+    expect(container.querySelector('.pd-canvas-tabbar-controls [aria-label="New tab"]')).toBeNull();
+    // Only the active tab carries a +.
+    expect(container.querySelectorAll('.pd-canvas-newtab')).toHaveLength(1);
+
+    // Focus the FIRST tab → the + follows it now.
+    await click(container.querySelector('.pd-canvas-tab-main'));
+    const firstSlot = container.querySelectorAll('.pd-canvas-tab-slot')[0];
+    expect(firstSlot?.querySelector('.pd-canvas-newtab')).toBeTruthy();
+  });
+
+  it('renders the per-kind operation bar for the active tab', async () => {
+    const c = seededController(); // active image tab → media operation bar
+    const { container } = await render(<CanvasTabs controller={c} />);
+    const opbar = container.querySelector('.pd-canvas-opbar');
+    expect(opbar?.getAttribute('data-kind')).toBe('image');
+    expect(opbar?.querySelector('.pd-media-title')?.textContent).toContain('Render');
+
+    // Switch to the browser tab → browser operation bar (URL + nav).
+    await click(container.querySelector('.pd-canvas-tab-main'));
+    expect(container.querySelector('.pd-canvas-opbar[data-kind="browser"]')).toBeTruthy();
+    expect(container.querySelector('.pd-canvas-opbar .pd-browser-url')).toBeTruthy();
+  });
+
+  it('routes the operation-bar media download through the handler contract', async () => {
+    const c = seededController(); // active image tab
+    const onMediaDownload = vi.fn();
+    const { container } = await render(
+      <CanvasTabs controller={c} handlers={{ onMediaDownload }} />,
+    );
+    await click(container.querySelector('.pd-canvas-opbar .pd-media-download button'));
+    expect(onMediaDownload).toHaveBeenCalledWith('t3', 'PNG');
+  });
+
   it('drops the fullscreen, ›› minimize, and left-sidebar controls from the bar', async () => {
     const c = seededController();
     const { container } = await render(<CanvasTabs controller={c} />);

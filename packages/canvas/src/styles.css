@@ -99,6 +99,18 @@
   display: none;
 }
 
+/* Each tab + (for the active tab) the new-tab `+` that follows it. */
+.pd-canvas-tab-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.pd-canvas-newtab {
+  flex: 0 0 auto;
+}
+
 .pd-canvas-tab {
   display: inline-flex;
   align-items: center;
@@ -203,6 +215,213 @@
   font-size: var(--pd-font-size-caption);
 }
 
+/* ── Per-tab operation bar (SECOND bar under the tab strip) ───────────── */
+
+.pd-canvas-opbar {
+  display: flex;
+  align-items: center;
+  gap: var(--pd-space-xs);
+  min-height: 36px;
+  padding: var(--pd-space-xs) var(--pd-space-sm);
+  border-bottom: 1px solid var(--pd-border-subtle);
+  flex: 0 0 auto;
+}
+
+.pd-canvas-opbar-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Anchor for the file-tree / open-with popovers. */
+.pd-canvas-opbar-pop {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+/* Breadcrumb "folder › file.ext" on the left of the file operation bar. */
+.pd-canvas-crumbs {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--pd-font-size-caption);
+}
+
+.pd-canvas-crumb {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--pd-text-muted);
+}
+
+.pd-canvas-crumb[data-file] {
+  color: var(--pd-text-primary);
+}
+
+.pd-canvas-crumb-sep {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--pd-text-ghost);
+}
+
+.pd-canvas-crumb-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 2px;
+}
+
+/* Shared dropdown menu (Open-with, media download). */
+.pd-canvas-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 3;
+  min-width: 160px;
+  padding: var(--pd-space-xs);
+  border: 1px solid var(--pd-border-default);
+  border-radius: var(--pd-radius-popover);
+  background: var(--pd-bg-overlay);
+  box-shadow: var(--pd-shadow-popover);
+}
+
+.pd-canvas-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--pd-radius-menu-item);
+  background: none;
+  color: var(--pd-text-primary);
+  font: inherit;
+  font-size: var(--pd-font-size-caption);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pd-canvas-menu-item:hover {
+  background: var(--pd-bg-hover);
+}
+
+.pd-canvas-menu-sep {
+  height: 1px;
+  margin: var(--pd-space-xs) 0;
+  background: var(--pd-border-subtle);
+}
+
+/* File-tree popover panel toggled by the two-folders button. */
+.pd-canvas-tree-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 3;
+  width: 280px;
+  max-height: 360px;
+  border: 1px solid var(--pd-border-default);
+  border-radius: var(--pd-radius-popover);
+  background: var(--pd-bg-overlay);
+  box-shadow: var(--pd-shadow-popover);
+  overflow: hidden;
+}
+
+/* ── File tree ───────────────────────────────────────────────────────── */
+
+.pd-file-tree {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: inherit;
+}
+
+.pd-file-tree-filter {
+  display: flex;
+  align-items: center;
+  gap: var(--pd-space-xs);
+  padding: var(--pd-space-xs) var(--pd-space-sm);
+  border-bottom: 1px solid var(--pd-border-subtle);
+  color: var(--pd-text-muted);
+  flex: 0 0 auto;
+}
+
+.pd-file-tree-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: var(--pd-text-primary);
+  font: inherit;
+  font-size: var(--pd-font-size-caption);
+}
+
+.pd-file-tree-input:focus {
+  outline: none;
+}
+
+.pd-file-tree-input::placeholder {
+  color: var(--pd-text-placeholder);
+}
+
+.pd-file-tree-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--pd-space-xs);
+  max-height: 320px;
+}
+
+.pd-file-tree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pd-space-xs);
+  width: 100%;
+  padding: 3px var(--pd-space-xs);
+  border: none;
+  border-radius: var(--pd-radius-row);
+  background: none;
+  color: var(--pd-text-secondary);
+  font: inherit;
+  font-size: var(--pd-font-size-caption);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pd-file-tree-row:hover {
+  background: var(--pd-bg-hover);
+}
+
+.pd-file-tree-row[data-active] {
+  background: var(--pd-bg-selected);
+  color: var(--pd-text-primary);
+}
+
+.pd-file-tree-caret {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 12px;
+  color: var(--pd-text-muted);
+}
+
+.pd-file-tree-glyph {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--pd-text-muted);
+}
+
+.pd-file-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-file-tree-empty {
+  margin: 0;
+  padding: var(--pd-space-md);
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-caption);
+  text-align: center;
+}
+
 /* ── Browser surface ─────────────────────────────────────────────────── */
 
 .pd-browser {
@@ -210,15 +429,6 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-}
-
-.pd-browser-toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--pd-space-xs);
-  padding: var(--pd-space-xs) var(--pd-space-sm);
-  border-bottom: 1px solid var(--pd-border-subtle);
-  flex: 0 0 auto;
 }
 
 .pd-browser-nav {
@@ -257,16 +467,30 @@
   border-color: var(--pd-border-focus);
 }
 
+.pd-browser-loading {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-accent-primary);
+  animation: pd-browser-pulse 1.4s ease-in-out infinite;
+}
+
+/* The "Pi is browsing" chip floats over the page content (top-right). */
 .pd-browser-driving {
+  position: absolute;
+  top: var(--pd-space-sm);
+  right: var(--pd-space-sm);
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  flex: 0 0 auto;
   padding: 2px 8px;
   border-radius: var(--pd-radius-full);
   background: var(--pd-accent-subtle);
   color: var(--pd-accent-primary);
   font-size: var(--pd-font-size-footnote);
+  box-shadow: var(--pd-shadow-popover);
 }
 
 .pd-browser-driving-dot {
@@ -288,7 +512,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pd-browser-driving-dot {
+  .pd-browser-driving-dot,
+  .pd-browser-loading {
     animation: none;
   }
 }
@@ -370,26 +595,17 @@
   min-height: 0;
 }
 
-.pd-media-header {
-  display: flex;
-  align-items: center;
-  gap: var(--pd-space-xs);
-  padding: var(--pd-space-xs) var(--pd-space-sm);
-  border-bottom: 1px solid var(--pd-border-subtle);
-  flex: 0 0 auto;
-}
-
+/* Media label + download split-button live in the operation bar now. */
 .pd-media-title {
   font-size: var(--pd-font-size-caption);
   color: var(--pd-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pd-media-type {
   color: var(--pd-text-muted);
-}
-
-.pd-media-spacer {
-  flex: 1 1 auto;
 }
 
 .pd-media-download {
@@ -397,41 +613,11 @@
   display: inline-flex;
   align-items: center;
   gap: 1px;
+  flex: 0 0 auto;
 }
 
 .pd-media-download .pd-btn {
   gap: 4px;
-}
-
-.pd-media-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 2;
-  min-width: 120px;
-  padding: var(--pd-space-xs);
-  border: 1px solid var(--pd-border-default);
-  border-radius: var(--pd-radius-popover);
-  background: var(--pd-bg-overlay);
-  box-shadow: var(--pd-shadow-popover);
-}
-
-.pd-media-menu-item {
-  display: block;
-  width: 100%;
-  padding: 6px 8px;
-  border: none;
-  border-radius: var(--pd-radius-menu-item);
-  background: none;
-  color: var(--pd-text-primary);
-  font: inherit;
-  font-size: var(--pd-font-size-caption);
-  text-align: left;
-  cursor: pointer;
-}
-
-.pd-media-menu-item:hover {
-  background: var(--pd-bg-hover);
 }
 
 .pd-media-body {

@@ -10,7 +10,12 @@
  * the attribute's 1.5 only shows through if the token is undefined (no theme
  * scope loaded). stroke-width is inherited, so child paths pick it up. Filled
  * glyphs (fill=currentColor, stroke=none) are unaffected.
+ *
+ * The `max(1, …)` clamps the RENDERED weight to a 1.0 user-unit floor: even if
+ * the app writes a sub-1 --pd-icon-stroke to the document root (stale prefs,
+ * bad programmatic set), glyphs never render thinner than 1.0. The slider floor
+ * (ICON_STROKE_MIN) and clampIconStroke() enforce the same bound in JS.
  */
 .pd-icon {
-  stroke-width: var(--pd-icon-stroke, 1.5);
+  stroke-width: max(1, var(--pd-icon-stroke, 1.5));
 }

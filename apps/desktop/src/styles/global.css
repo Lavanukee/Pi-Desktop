@@ -544,9 +544,27 @@ body {
  */
 .pd-sidebar-tl {
   padding-left: 80px;
+  /* Round-7 (img56): a little top padding so the collapse toggle drops onto the
+   * traffic-light vertical centre and the lights sit comfortably INSIDE the
+   * floating card rather than hugging its top edge. Pairs with the window's
+   * `trafficLightPosition` (electron/main.ts) which fixes the lights' y. */
+  padding-top: 4px;
 }
 :root[data-flavor="claude"] .pd-sidebar-tl {
   padding-left: 72px;
+}
+
+/* Round-7: exit control for the fullscreen ("expanded") canvas cover. */
+.pd-canvas-fullscreen-exit {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 41;
+  display: flex;
+  padding: 2px;
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-raised);
+  box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-sm);
 }
 
 /*

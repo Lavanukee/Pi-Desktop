@@ -1,5 +1,5 @@
 import { act } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { click, render } from '../test-utils.tsx';
 import { MediaPreviewSurface, mediaPreviewTransition } from './media-preview-surface.tsx';
 
@@ -31,12 +31,11 @@ describe('mediaPreviewTransition', () => {
   });
 });
 
-describe('MediaPreviewSurface', () => {
+describe('MediaPreviewSurface (body-only)', () => {
   it('runs loading → error → retry(loading) → loaded', async () => {
     const { container } = await render(<MediaPreviewSurface src="a.png" type="png" index={2} />);
-    // Header renders "Preview N · TYPE" upper-cased.
-    expect(container.querySelector('.pd-media-title')?.textContent).toContain('Preview 2');
-    expect(container.querySelector('.pd-media-type')?.textContent).toBe('PNG');
+    // The header (name · TYPE + download) lives in the operation bar now.
+    expect(container.querySelector('.pd-media-title')).toBeNull();
     // Starts loading (spinner shown, no error panel).
     expect(container.querySelector('.pd-media-status')).toBeTruthy();
     expect(container.querySelector('.pd-media-error')).toBeNull();
@@ -58,15 +57,6 @@ describe('MediaPreviewSurface', () => {
     expect(container.querySelector('img')?.hasAttribute('hidden')).toBe(false);
   });
 
-  it('emits onDownload with the primary format from the split-button', async () => {
-    const onDownload = vi.fn();
-    const { container } = await render(
-      <MediaPreviewSurface src="a.png" type="PNG" onDownload={onDownload} />,
-    );
-    await click(container.querySelector('.pd-media-download button'));
-    expect(onDownload).toHaveBeenCalledWith('PNG');
-  });
-
   it('honors a controlled status prop', async () => {
     const { container } = await render(
       <MediaPreviewSurface src="a.pdf" type="PDF" status="error" />,
@@ -77,8 +67,6 @@ describe('MediaPreviewSurface', () => {
   });
 
   it('self-manages error (never a dead spinner) when src is missing', async () => {
-    // B1: an uncontrolled surface with no src can never fire load/error, so it
-    // must resolve to the error panel instead of spinning forever.
     const { container } = await render(<MediaPreviewSurface type="PNG" />);
     expect(container.querySelector('.pd-media-status')).toBeNull();
     expect(container.querySelector('.pd-media-error-title')?.textContent).toBe(
@@ -86,13 +74,15 @@ describe('MediaPreviewSurface', () => {
     );
   });
 
-  it('renders (not a spinner) once a valid uncontrolled src loads', async () => {
-    // B1: a controlled `status` is NOT passed — the element's load event drives
-    // the flip to loaded, which the old hard-controlled `mediaStatus` blocked.
-    const { container } = await render(<MediaPreviewSurface src="a.png" type="PNG" />);
-    expect(container.querySelector('.pd-media-status')).toBeTruthy();
+  it('re-keys the media element back to loading when reloadNonce changes', async () => {
+    // The operation bar's Refresh bumps reloadNonce to reload the same src.
+    const { container, rerender } = await render(
+      <MediaPreviewSurface src="a.png" type="PNG" reloadNonce={0} />,
+    );
     await fire(container.querySelector('img'), 'load');
     expect(container.querySelector('.pd-media-status')).toBeNull();
-    expect(container.querySelector('img')?.hasAttribute('hidden')).toBe(false);
+    // Bump the nonce → back to loading (fresh element).
+    await rerender(<MediaPreviewSurface src="a.png" type="PNG" reloadNonce={1} />);
+    expect(container.querySelector('.pd-media-status')).toBeTruthy();
   });
 });

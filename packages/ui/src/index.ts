@@ -140,12 +140,17 @@ export {
 export type { FileDropZoneProps } from './components/file-input.tsx';
 export { FileDropZone } from './components/file-input.tsx';
 export type { IconStrokeControlProps } from './components/icon-stroke-control.tsx';
-export { IconStrokeControl } from './components/icon-stroke-control.tsx';
+export {
+  clampIconStroke,
+  ICON_STROKE_MAX,
+  ICON_STROKE_MIN,
+  IconStrokeControl,
+} from './components/icon-stroke-control.tsx';
 export * from './components/icons.tsx';
 export type { ContextGaugeProps, ProgressBarProps } from './components/indicators.tsx';
 export { ContextGauge, ProgressBar } from './components/indicators.tsx';
-export type { InputProps, TextAreaProps } from './components/input.tsx';
-export { Input, TextArea } from './components/input.tsx';
+export type { InputProps, SearchInputProps, TextAreaProps } from './components/input.tsx';
+export { Input, SearchInput, TextArea } from './components/input.tsx';
 export type { MarkdownProps } from './components/markdown.tsx';
 export { Markdown } from './components/markdown.tsx';
 export type {

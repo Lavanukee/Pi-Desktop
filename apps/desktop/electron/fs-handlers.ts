@@ -12,7 +12,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { FsInvokeMap, SessionSummary } from './ipc-contract';
+import type { FsInvokeMap, FsTreeNode, SessionSummary } from './ipc-contract';
 
 const HOME = os.homedir();
 const AGENT_DIR = path.join(HOME, '.pi', 'agent');
@@ -216,6 +216,97 @@ function readSession(file: string): string | null {
   return safeRead(resolved);
 }
 
+/**
+ * Bounded directory tree for the canvas file operation bar's file-tree panel.
+ * Same hard caps + skip-list as `listFiles` so it never recurses into
+ * node_modules et al: depth ≤ `maxDepth` (default 3), ≤ TREE_MAX_ENTRIES nodes,
+ * directories first then files, each level alphabetized. Dotfiles are skipped.
+ */
+const TREE_MAX_ENTRIES = 2000;
+const TREE_MAX_DEPTH = 4;
+
+function listTree(root: string, maxDepth: number): FsTreeNode[] {
+  const base = statSafe(root)?.isDirectory() === true ? root : path.dirname(root);
+  let count = 0;
+
+  function walk(dir: string, depth: number): FsTreeNode[] {
+    if (depth > maxDepth || count > TREE_MAX_ENTRIES) return [];
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    const dirs: FsTreeNode[] = [];
+    const files: FsTreeNode[] = [];
+    for (const e of entries) {
+      if (count > TREE_MAX_ENTRIES) break;
+      if (SKIP.has(e.name) || e.name.startsWith('.')) continue;
+      const full = path.join(dir, e.name);
+      count++;
+      if (e.isDirectory()) {
+        dirs.push({ name: e.name, path: full, kind: 'dir', children: walk(full, depth + 1) });
+      } else if (e.isFile()) {
+        files.push({ name: e.name, path: full, kind: 'file' });
+      }
+    }
+    dirs.sort((a, b) => a.name.localeCompare(b.name));
+    files.sort((a, b) => a.name.localeCompare(b.name));
+    return [...dirs, ...files];
+  }
+
+  if (statSafe(base)?.isDirectory() !== true) return [];
+  return walk(base, 0);
+}
+
+/**
+ * UTF-8 contents of a single file for the live canvas file surface. Size-capped
+ * (default 512 KiB) so a runaway write never streams a huge payload into the
+ * renderer, and flagged `binary` when a NUL byte appears in the head (so the app
+ * shows a note instead of mojibake). No path fence: the renderer is trusted and
+ * the model writes files anywhere in the project.
+ */
+const READ_FILE_DEFAULT_MAX = 512 * 1024;
+
+function readFileBounded(
+  file: string,
+  maxBytes: number,
+): { text: string | null; truncated: boolean; tooLarge: boolean; binary: boolean; bytes: number } {
+  const resolved = path.resolve(file);
+  const st = statSafe(resolved);
+  if (st === null || !st.isFile()) {
+    return { text: null, truncated: false, tooLarge: false, binary: false, bytes: 0 };
+  }
+  const cap = Math.max(0, maxBytes);
+  const tooLarge = st.size > cap;
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(resolved, 'r');
+    const length = Math.min(st.size, cap);
+    const buffer = Buffer.alloc(length);
+    const read = fs.readSync(fd, buffer, 0, length, 0);
+    const head = buffer.subarray(0, Math.min(read, 8192));
+    const binary = head.includes(0);
+    return {
+      text: binary ? null : buffer.subarray(0, read).toString('utf8'),
+      truncated: tooLarge,
+      tooLarge,
+      binary,
+      bytes: st.size,
+    };
+  } catch {
+    return { text: null, truncated: false, tooLarge: false, binary: false, bytes: st.size };
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* already closed */
+      }
+    }
+  }
+}
+
 /** The fs channel implementations, spread into main.ts's registerIpcHandlers. */
 export const fsHandlers: {
   [K in keyof FsInvokeMap]: (req: FsInvokeMap[K]['request']) => FsInvokeMap[K]['response'];
@@ -223,4 +314,9 @@ export const fsHandlers: {
   'fs:list-files': (req) => listFiles(req.cwd ?? '', req.query ?? '', req.limit ?? 30),
   'fs:list-sessions': (req) => listAllSessions(req?.cwd),
   'fs:read-session': (req) => ({ text: readSession(req.file) }),
+  'fs:list-tree': (req) => ({
+    root: req.root,
+    tree: listTree(req.root, Math.min(req.depth ?? 3, TREE_MAX_DEPTH)),
+  }),
+  'fs:read-file': (req) => readFileBounded(req.path, req.maxBytes ?? READ_FILE_DEFAULT_MAX),
 };

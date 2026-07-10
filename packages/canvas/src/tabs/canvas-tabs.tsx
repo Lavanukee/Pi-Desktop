@@ -10,9 +10,10 @@ import { ensureDefaultSurfaces } from '../surfaces/register-builtins.tsx';
 import { SubagentSurface } from '../surfaces/subagent-surface.tsx';
 import { TerminalSurface } from '../surfaces/terminal-surface.tsx';
 import { IconPanelRight, IconPopout } from '../tab-icons.tsx';
+import { CanvasOperationBar } from './canvas-operation-bar.tsx';
 import type { CanvasController } from './controller.ts';
 import { CANVAS_TAB_KINDS } from './tab-kinds.ts';
-import type { CanvasTab } from './tab-model.ts';
+import type { CanvasTab, FileTreeNode, OpenWithAppId } from './tab-model.ts';
 import { useCanvasTabs } from './use-canvas-tabs.tsx';
 
 /**
@@ -26,6 +27,8 @@ export interface CanvasTabsHandlers {
   onBrowserBack?: (tabId: string) => void;
   onBrowserForward?: (tabId: string) => void;
   onBrowserReload?: (tabId: string) => void;
+  /** "Open in external browser" control in the browser operation bar. */
+  onBrowserOpenExternal?: (tabId: string) => void;
   onBrowserMenu?: (tabId: string) => void;
   /** Slot element for a browser/terminal tab mounted (null on unmount/hide). */
   onSurfaceMount?: (tabId: string, kind: CanvasTab['kind'], element: HTMLElement | null) => void;
@@ -35,6 +38,12 @@ export interface CanvasTabsHandlers {
   onMediaRefresh?: (tabId: string) => void;
   onMediaExpand?: (tabId: string) => void;
   onSubagentSelect?: (tabId: string, subagentId: string) => void;
+  /** File operation bar — "Open ▾" dropdown app items (shell out to open-with). */
+  onOpenWith?: (tabId: string, appId: OpenWithAppId) => void;
+  /** File operation bar — "Open in folder" (reveal the file in the OS shell). */
+  onReveal?: (tabId: string) => void;
+  /** File operation bar — a file chosen from the toggleable file-tree panel. */
+  onFileTreeSelect?: (tabId: string, node: FileTreeNode) => void;
 }
 
 export interface CanvasTabsProps {
@@ -90,6 +99,12 @@ export function CanvasTabs({
   className,
 }: CanvasTabsProps) {
   const canvas = useCanvasTabs(controller);
+  // Per-tab media reload counter: the media operation bar's Refresh bumps it so
+  // the surface re-keys and re-fetches the same src (kept here so the bar and the
+  // surface — rendered in separate slots — stay in sync).
+  const [mediaNonce, setMediaNonce] = useState<Record<string, number>>({});
+  const bumpMediaNonce = (id: string): void =>
+    setMediaNonce((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
   if (!registry) ensureDefaultSurfaces();
   const activeRegistry = registry ?? defaultSurfaceRegistry;
   const config: CanvasConfig = { harnessUrl: harnessUrl ?? defaultCanvasConfig.harnessUrl };
@@ -105,6 +120,7 @@ export function CanvasTabs({
     else canvas.setCollapsed(true);
   };
   const copyText = activeCopyText(canvas.activeTab);
+  const activeTab = canvas.activeTab;
 
   if (canvas.collapsed) {
     return (
@@ -135,38 +151,48 @@ export function CanvasTabs({
               const Icon = meta.icon;
               const active = tab.id === canvas.activeTabId;
               return (
-                <div
-                  key={tab.id}
-                  className="pd-canvas-tab"
-                  data-active={active || undefined}
-                  data-kind={tab.kind}
-                >
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    className="pd-canvas-tab-main"
-                    onClick={() => canvas.focusTab(tab.id)}
+                // The new-tab `+` sits immediately AFTER the active tab (not at
+                // the far right of the strip).
+                <div key={tab.id} className="pd-canvas-tab-slot">
+                  <div
+                    className="pd-canvas-tab"
+                    data-active={active || undefined}
+                    data-kind={tab.kind}
                   >
-                    <span className="pd-canvas-tab-icon">{tab.icon ?? <Icon size={14} />}</span>
-                    <span className="pd-canvas-tab-label">{tab.title || meta.label}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="pd-canvas-tab-close"
-                    aria-label={`Close ${tab.title || meta.label}`}
-                    onClick={() => canvas.closeTab(tab.id)}
-                  >
-                    <IconClose size={12} />
-                  </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      className="pd-canvas-tab-main"
+                      onClick={() => canvas.focusTab(tab.id)}
+                    >
+                      <span className="pd-canvas-tab-icon">{tab.icon ?? <Icon size={14} />}</span>
+                      <span className="pd-canvas-tab-label">{tab.title || meta.label}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="pd-canvas-tab-close"
+                      aria-label={`Close ${tab.title || meta.label}`}
+                      onClick={() => canvas.closeTab(tab.id)}
+                    >
+                      <IconClose size={12} />
+                    </button>
+                  </div>
+                  {active ? (
+                    <IconButton
+                      size="sm"
+                      className="pd-canvas-newtab"
+                      aria-label="New tab"
+                      onClick={newTab}
+                    >
+                      <IconPlus size={16} />
+                    </IconButton>
+                  ) : null}
                 </div>
               );
             })}
           </div>
           <div className="pd-canvas-tabbar-controls">
-            <IconButton size="sm" aria-label="New tab" onClick={newTab}>
-              <IconPlus size={16} />
-            </IconButton>
             {copyText ? <CopyControl text={copyText} onCopy={onCopy} /> : null}
             {onPopout && canvas.activeTab?.artifact ? (
               <IconButton
@@ -186,15 +212,38 @@ export function CanvasTabs({
           </div>
         </div>
 
+        {activeTab ? (
+          <CanvasOperationBar
+            tab={activeTab}
+            onBrowserBack={() => handlers?.onBrowserBack?.(activeTab.id)}
+            onBrowserForward={() => handlers?.onBrowserForward?.(activeTab.id)}
+            onBrowserReload={() => handlers?.onBrowserReload?.(activeTab.id)}
+            onBrowserNavigate={(url) => handlers?.onBrowserNavigate?.(activeTab.id, url)}
+            onBrowserOpenExternal={() => handlers?.onBrowserOpenExternal?.(activeTab.id)}
+            onBrowserMenu={() => handlers?.onBrowserMenu?.(activeTab.id)}
+            onOpenWith={(appId) => handlers?.onOpenWith?.(activeTab.id, appId)}
+            onReveal={() => handlers?.onReveal?.(activeTab.id)}
+            onFileTreeSelect={(node) => handlers?.onFileTreeSelect?.(activeTab.id, node)}
+            onMediaDownload={(format) => handlers?.onMediaDownload?.(activeTab.id, format)}
+            onMediaRefresh={() => {
+              bumpMediaNonce(activeTab.id);
+              handlers?.onMediaRefresh?.(activeTab.id);
+            }}
+            onMediaExpand={() => handlers?.onMediaExpand?.(activeTab.id)}
+            onClose={() => canvas.closeTab(activeTab.id)}
+          />
+        ) : null}
+
         <div className="pd-canvas-tabpanel" role="tabpanel">
-          {canvas.activeTab ? (
+          {activeTab ? (
             renderSurface ? (
-              renderSurface(canvas.activeTab)
+              renderSurface(activeTab)
             ) : (
               <DefaultSurface
-                tab={canvas.activeTab}
+                tab={activeTab}
                 registry={activeRegistry}
                 handlers={handlers}
+                mediaNonce={mediaNonce[activeTab.id] ?? 0}
                 onCopy={onCopy}
                 onExport={onExport}
               />
@@ -217,27 +266,32 @@ interface DefaultSurfaceProps {
   tab: CanvasTab;
   registry: SurfaceRegistry;
   handlers?: CanvasTabsHandlers;
+  /** Media reload counter for the active tab (bumped by the operation bar). */
+  mediaNonce?: number;
   onCopy?: (text: string) => void;
   onExport?: (content: ArtifactContent) => void;
 }
 
-/** The built-in per-kind body renderer wired to the app handler contract. */
-function DefaultSurface({ tab, registry, handlers, onCopy, onExport }: DefaultSurfaceProps) {
+/**
+ * The built-in per-kind body renderer wired to the app handler contract. The
+ * browser nav chrome and the media header controls now live in the per-tab
+ * {@link CanvasOperationBar}; the surfaces here render CONTENT only.
+ */
+function DefaultSurface({
+  tab,
+  registry,
+  handlers,
+  mediaNonce = 0,
+  onCopy,
+  onExport,
+}: DefaultSurfaceProps) {
   const id = tab.id;
   switch (tab.kind) {
     case 'browser':
       return (
         <BrowserSurface
           url={tab.url}
-          loading={tab.loading}
-          canGoBack={tab.canGoBack}
-          canGoForward={tab.canGoForward}
           driving={tab.driving}
-          onNavigate={(url) => handlers?.onBrowserNavigate?.(id, url)}
-          onBack={() => handlers?.onBrowserBack?.(id)}
-          onForward={() => handlers?.onBrowserForward?.(id)}
-          onReload={() => handlers?.onBrowserReload?.(id)}
-          onMenu={() => handlers?.onBrowserMenu?.(id)}
           onMount={(el) => handlers?.onSurfaceMount?.(id, 'browser', el)}
           onRectChange={(rect) => handlers?.onSurfaceRectChange?.(id, 'browser', rect)}
         />
@@ -265,23 +319,24 @@ function DefaultSurface({ tab, registry, handlers, onCopy, onExport }: DefaultSu
           type={tab.mediaType ?? (tab.kind === 'pdf' ? 'PDF' : 'PNG')}
           index={tab.mediaIndex}
           status={tab.mediaStatus}
-          onDownload={(format) => handlers?.onMediaDownload?.(id, format)}
+          reloadNonce={mediaNonce}
           onRefresh={() => handlers?.onMediaRefresh?.(id)}
-          onExpand={() => handlers?.onMediaExpand?.(id)}
-          onClose={() => {
-            /* controller close is owned by the tab bar; expose via handler if needed */
-          }}
         />
       );
-    case 'file':
-      if (!tab.artifact) return <SurfaceMissing kind={tab.kind} />;
+    case 'file': {
+      // A file tab can open EMPTY and fill incrementally as the model writes it,
+      // so fall back to empty content instead of a "no surface" placeholder.
+      const content = tab.artifact?.content ?? { kind: 'text', text: '' };
+      const filename = tab.artifact?.filename ?? basename(tab.filePath);
       return (
         <FileSurface
-          content={tab.artifact.content}
-          filename={tab.artifact.filename}
+          content={content}
+          filename={filename}
+          streaming={tab.streaming}
           onCopy={onCopy}
         />
       );
+    }
     default: {
       // Artifact-backed surfaces (html | svg | markdown | code) via the registry.
       if (!tab.artifact) return <SurfaceMissing kind={tab.kind} />;
@@ -291,7 +346,7 @@ function DefaultSurface({ tab, registry, handlers, onCopy, onExport }: DefaultSu
       return (
         <Surface
           content={tab.artifact.content}
-          streaming={false}
+          streaming={tab.streaming ?? false}
           onCopy={onCopy}
           onExport={onExport}
         />
@@ -302,6 +357,12 @@ function DefaultSurface({ tab, registry, handlers, onCopy, onExport }: DefaultSu
 
 function SurfaceMissing({ kind }: { kind: string }) {
   return <div className="pd-canvas-empty">No surface for “{kind}”.</div>;
+}
+
+/** Last path segment of a file path (the display filename), or undefined. */
+function basename(path: string | undefined): string | undefined {
+  if (!path) return undefined;
+  return path.split(/[/\\]/).filter(Boolean).pop() ?? path;
 }
 
 /**

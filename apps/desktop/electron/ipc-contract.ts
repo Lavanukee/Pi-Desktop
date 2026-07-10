@@ -50,6 +50,19 @@ export interface SessionSummary {
   title: string;
 }
 
+/**
+ * One node in a bounded directory tree (fs:list-tree). Structural mirror of
+ * @pi-desktop/canvas's `FileTreeNode` — kept as a plain contract type so the
+ * main bundle never imports the canvas React package; the renderer passes the
+ * shape straight through to `CanvasTab.fileTree`.
+ */
+export interface FsTreeNode {
+  name: string;
+  path: string;
+  kind: 'file' | 'dir';
+  children?: FsTreeNode[];
+}
+
 export type FsInvokeMap = {
   /** Fuzzy file search from a cwd, for @-mention autocomplete. */
   'fs:list-files': {
@@ -60,12 +73,32 @@ export type FsInvokeMap = {
   'fs:list-sessions': { request: { cwd?: string } | undefined; response: SessionSummary[] };
   /** Raw session JSONL text (fenced to the sessions dir) for rehydration. */
   'fs:read-session': { request: { file: string }; response: { text: string | null } };
+  /** A bounded directory tree rooted at `root` (the file operation bar's tree
+   * panel). Depth/entry-count capped; the usual junk dirs are skipped. */
+  'fs:list-tree': {
+    request: { root: string; depth?: number };
+    response: { root: string; tree: FsTreeNode[] };
+  };
+  /** UTF-8 contents of a single file, size-capped, for the live canvas file
+   * surface. `tooLarge`/`binary` gate streaming huge/binary payloads. */
+  'fs:read-file': {
+    request: { path: string; maxBytes?: number };
+    response: {
+      text: string | null;
+      truncated: boolean;
+      tooLarge: boolean;
+      binary: boolean;
+      bytes: number;
+    };
+  };
 };
 
 export const FS_INVOKE_CHANNELS = [
   'fs:list-files',
   'fs:list-sessions',
   'fs:read-session',
+  'fs:list-tree',
+  'fs:read-file',
 ] as const satisfies readonly (keyof FsInvokeMap)[];
 
 // ---------------------------------------------------------------------------
@@ -193,16 +226,33 @@ export interface CanvasArtifactPayload {
   };
 }
 
+/** The apps the canvas file operation bar's "Open ▾" dropdown shells out to.
+ * Mirrors @pi-desktop/canvas's `OpenWithAppId` (kept inline so the electron
+ * contract stays free of the canvas React package). */
+export type CanvasOpenWithAppId = 'vscode-insiders' | 'default' | 'terminal' | 'xcode';
+
 export type CanvasInvokeMap = {
   /** Hand the current artifact to main and open/focus the pop-out window. */
   'canvas:popout': { request: { artifact: CanvasArtifactPayload }; response: { ok: boolean } };
   /** The pop-out window fetches the artifact main is holding for it. */
   'canvas:get-popout': { request: undefined; response: { artifact: CanvasArtifactPayload | null } };
+  /** Browser operation bar "open in external browser" → shell.openExternal. */
+  'canvas:open-external': { request: { url: string }; response: { ok: boolean } };
+  /** File operation bar "Open ▾" → shell out to open the file in the chosen app. */
+  'canvas:open-with': {
+    request: { path: string; appId: CanvasOpenWithAppId };
+    response: { ok: boolean; error?: string };
+  };
+  /** File operation bar "Open in folder" → shell.showItemInFolder. */
+  'canvas:reveal': { request: { path: string }; response: { ok: boolean } };
 };
 
 export const CANVAS_INVOKE_CHANNELS = [
   'canvas:popout',
   'canvas:get-popout',
+  'canvas:open-external',
+  'canvas:open-with',
+  'canvas:reveal',
 ] as const satisfies readonly (keyof CanvasInvokeMap)[];
 
 export type AppInvokeMap = CoreInvokeMap &

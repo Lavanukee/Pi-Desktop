@@ -324,6 +324,35 @@ describe('createPiSessions', () => {
     });
   });
 
+  it('pi:new-session starts a fresh session in the running pi without respawning', async () => {
+    const { sessions, created } = setup();
+    const sender = new FakeSender(1);
+    await sessions.handlers['pi:start'](sender, {});
+    const bridge = created[0];
+    if (bridge === undefined) throw new Error('no bridge');
+    bridge.send = (cmd, opts) => {
+      bridge.sent.push({ type: cmd.type, timeoutMs: opts?.timeoutMs });
+      return Promise.resolve({ success: true, data: { cancelled: false } });
+    };
+
+    const res = await sessions.handlers['pi:new-session'](sender, undefined);
+
+    expect(res).toEqual({ success: true, cancelled: false });
+    // Same live bridge — new_session never disposes/respawns (the whole point).
+    expect(created).toHaveLength(1);
+    expect(bridge.disposeCalls).toBe(0);
+    expect(bridge.alive).toBe(true);
+    expect(bridge.sent.find((s) => s.type === 'new_session')?.timeoutMs).toBe(30_000);
+  });
+
+  it('pi:new-session acks pi-not-running when nothing is live', async () => {
+    const { sessions } = setup();
+    expect(await sessions.handlers['pi:new-session'](new FakeSender(9), undefined)).toEqual({
+      success: false,
+      error: 'pi is not running',
+    });
+  });
+
   it('pi:restart disposes the live bridge and respawns a fresh one', async () => {
     const { sessions, created } = setup();
     const sender = new FakeSender(1);

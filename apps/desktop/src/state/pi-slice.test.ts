@@ -353,6 +353,30 @@ describe('pi-slice — artifact candidate dedupe', () => {
   });
 });
 
+describe('pi-slice — intentional restart suppresses the crash toast', () => {
+  it('drops the bridge-exit toast + paired "pi exited" error on a deliberate restart', () => {
+    // restartPi / model-switch set this before disposing pi.
+    usePiStore.setState({ intentionalRestart: true });
+    route([{ type: '_bridge_exit', code: null, signal: 'SIGTERM' } as PiBridgeEvent]);
+
+    const s = usePiStore.getState();
+    expect(s.bridgeExited).toBeNull();
+    expect(s.notifications.filter((n) => n.level === 'error')).toHaveLength(0);
+    // Flag consumed so a LATER real crash still toasts.
+    expect(s.intentionalRestart).toBe(false);
+  });
+
+  it('still shows the crash toast for an unexpected exit (no restart in flight)', () => {
+    route([{ type: '_bridge_exit', code: 1, signal: null } as PiBridgeEvent]);
+
+    const s = usePiStore.getState();
+    expect(s.bridgeExited).toEqual({ code: 1, signal: null });
+    expect(
+      s.notifications.some((n) => n.level === 'error' && n.message.startsWith('pi exited (')),
+    ).toBe(true);
+  });
+});
+
 describe('pi-slice — dialog lifecycle (pi auto-resolves expired dialogs silently)', () => {
   afterEach(() => vi.useRealTimers());
 

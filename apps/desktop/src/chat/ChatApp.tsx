@@ -8,15 +8,22 @@
  * (#A3); the collapse control lives in the sidebar just right of the traffic
  * lights (#A5); files can be dropped anywhere in the window (#A8).
  */
-import { CanvasProvider } from '@pi-desktop/canvas';
+import { CanvasProvider, IconPanelRight, useCanvasTabs } from '@pi-desktop/canvas';
 import type { Model } from '@pi-desktop/engine';
-import { IconButton, IconClose, IconSidebar, MainSurface, TopBar } from '@pi-desktop/ui';
+import {
+  IconButton,
+  IconClose,
+  IconSidebar,
+  IconTerminal,
+  MainSurface,
+  TopBar,
+} from '@pi-desktop/ui';
 import { useEffect, useState } from 'react';
-import { IconMoon, IconSun } from '../settings/icons';
 import type { SettingsSection } from '../settings/SettingsView';
+import { useCanvasStore } from '../state/canvas-store';
 import { getModels, setSessionName, startPi } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
-import { applySavedHarnessConfig, useSettingsStore } from '../state/settings-store';
+import { applySavedHarnessConfig } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
 import { ChatComposer } from './ChatComposer';
 import { ChatThread } from './ChatThread';
@@ -28,17 +35,37 @@ import { UiRequestDialogs } from './UiRequestDialogs';
 import { WindowDropOverlay } from './WindowDropOverlay';
 
 /**
- * Light/dark quick toggle glyph (round-5 #15): a sun (shown in dark mode) and a
- * moon (shown in light mode) stacked, cross-fading + rotating between the two on
- * click. Reduced-motion drops the transition (CSS). The icon reads as "the sun"
- * in the app's default dark mode, morphing on the flip.
+ * Round-7: the persistent top-right canvas cluster. A "New terminal" control
+ * opens a live interactive terminal tab in the canvas, and a canvas open/close
+ * toggle slides the rail in/out even when no artifact is showing. Rendered
+ * INSIDE `<CanvasProvider>` so it can reach the shared controller + open state.
  */
-function ThemeToggleIcon({ mode }: { mode: 'dark' | 'light' }) {
+function CanvasTopBarControls() {
+  const { controller } = useCanvasTabs();
+  const canvasOpen = useCanvasStore((s) => s.canvasOpen);
+  const setCanvasOpen = useCanvasStore((s) => s.setCanvasOpen);
+  const toggleCanvasOpen = useCanvasStore((s) => s.toggleCanvasOpen);
   return (
-    <span className="pd-theme-toggle" data-mode={mode} aria-hidden>
-      <IconSun className="pd-theme-toggle-sun" />
-      <IconMoon className="pd-theme-toggle-moon" />
-    </span>
+    <>
+      <IconButton
+        aria-label="New terminal in canvas"
+        data-testid="canvas-new-terminal"
+        onClick={() => {
+          controller.openTab({ kind: 'terminal', title: 'Terminal' });
+          setCanvasOpen(true);
+        }}
+      >
+        <IconTerminal />
+      </IconButton>
+      <IconButton
+        aria-label={canvasOpen ? 'Close canvas' : 'Open canvas'}
+        aria-pressed={canvasOpen}
+        data-testid="canvas-toggle"
+        onClick={() => toggleCanvasOpen()}
+      >
+        <IconPanelRight />
+      </IconButton>
+    </>
   );
 }
 
@@ -85,8 +112,6 @@ export function ChatApp({
   const windowTitle = usePiStore((s) => s.windowTitle);
   const modelId = usePiStore((s) => s.agent.model?.id ?? null);
   const flavor = useThemeStore((s) => s.flavor);
-  const mode = useThemeStore((s) => s.mode);
-  const setTheme = useSettingsStore((s) => s.setTheme);
   const [piModels, setPiModels] = useState<Model[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [truncatedNote, setTruncatedNote] = useState(false);
@@ -166,18 +191,11 @@ export function ChatApp({
               </>
             }
             right={
-              // Cleaned up (round-5): only the animated light/dark quick toggle
-              // remains. The confusing message-bubble icon (#14) and the dev
-              // gallery toggle (#23 → moved into settings) are both gone; flavor +
-              // full theme control live in the settings menu. The control is a
-              // .pd-btn IconButton, which opts out of the top bar's drag region.
-              <IconButton
-                aria-label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-                data-testid="toggle-mode"
-                onClick={() => void setTheme({ mode: mode === 'dark' ? 'light' : 'dark' })}
-              >
-                <ThemeToggleIcon mode={mode} />
-              </IconButton>
+              // Round-7: the light/dark quick-toggle moved to the sidebar's
+              // bottom-left (near the profile). The top-right now carries the
+              // persistent canvas cluster — "New terminal" + a canvas open/close
+              // toggle that works even with no artifact open.
+              <CanvasTopBarControls />
             }
           />
 

@@ -315,6 +315,26 @@ export function createPiSessions<S extends SessionSender>(deps: PiSessionsDeps<S
       }
     },
 
+    // Fresh session in the RUNNING pi (new_session RPC) — the New-chat action.
+    // No dispose/respawn (contrast pi:restart), so pi keeps the same pid, emits
+    // no _bridge_exit, and spawns nothing new in the dock.
+    'pi:new-session': async (sender, req) => {
+      const bridge = bridgeFor(sender);
+      if (bridge === undefined) return { success: false, error: 'pi is not running' };
+      try {
+        const res = await bridge.send(
+          {
+            type: 'new_session',
+            ...(req?.parentSession !== undefined ? { parentSession: req.parentSession } : {}),
+          },
+          { timeoutMs: TIMEOUT_MUTATE_MS },
+        );
+        return { success: true, cancelled: (res.data as { cancelled?: boolean }).cancelled };
+      } catch (error) {
+        return { success: false, error: String(error) };
+      }
+    },
+
     'pi:fork': async (sender, req) => {
       const bridge = bridgeFor(sender);
       if (bridge === undefined) return { success: false, error: 'pi is not running' };

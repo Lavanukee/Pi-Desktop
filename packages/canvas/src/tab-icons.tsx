@@ -10,7 +10,7 @@ import type { ReactNode, SVGProps } from 'react';
 
 export type IconProps = SVGProps<SVGSVGElement> & { size?: number };
 
-function Icon({ size = 16, children, ...rest }: IconProps & { children: ReactNode }) {
+function Icon({ size = 16, className, children, ...rest }: IconProps & { children: ReactNode }) {
   return (
     <svg
       width={size}
@@ -18,9 +18,13 @@ function Icon({ size = 16, children, ...rest }: IconProps & { children: ReactNod
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
+      // `.pd-icon` resolves stroke-width from --pd-icon-stroke (CSS beats this
+      // presentation attribute), so canvas glyphs honor the icon-thickness
+      // setting; the 1.5 is only a no-CSS fallback.
       strokeWidth={1.5}
       strokeLinecap="round"
       strokeLinejoin="round"
+      className={['pd-icon', className].filter(Boolean).join(' ')}
       aria-hidden="true"
       {...rest}
     >
@@ -139,6 +143,25 @@ export function IconArrowRight(props: IconProps) {
     <Icon {...props}>
       <path d="M6 4l4 4-4 4" />
       <path d="M10 8H3.5" />
+    </Icon>
+  );
+}
+
+/** A single folder. */
+export function IconFolder(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.3a1 1 0 0 1 .7.3L7.7 4.5h4.8A1.5 1.5 0 0 1 14 6v5.5A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5z" />
+    </Icon>
+  );
+}
+
+/** Two stacked folders — the file-tree panel toggle (img59). */
+export function IconFolders(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2 9V4.5A1.5 1.5 0 0 1 3.5 3h2l1 1.2h4A1.5 1.5 0 0 1 12 5.7" />
+      <path d="M4 6.5A1.5 1.5 0 0 1 5.5 5h2l1 1.2h4A1.5 1.5 0 0 1 14 7.7v3.8A1.5 1.5 0 0 1 12.5 13H5.5A1.5 1.5 0 0 1 4 11.5z" />
     </Icon>
   );
 }

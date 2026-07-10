@@ -78,6 +78,13 @@ function createMainWindow(): BrowserWindow {
     minWidth: 640,
     minHeight: 480,
     titleBarStyle: 'hiddenInset',
+    // Round-7 (img56): pin the traffic lights to a deterministic spot so they
+    // sit comfortably INSIDE the floating sidebar card (top edge ~y=8) with clear
+    // inset, and their vertical centre (~y=33) lines up with the sidebar's
+    // collapse toggle (centred in the top-bar-height header strip + its 4px top
+    // pad — see .pd-sidebar-tl). Without this, the default hiddenInset y left them
+    // hugging the card's top edge + misaligned.
+    trafficLightPosition: { x: 19, y: 26 },
     // Claude-dark bg-base; avoids a white flash before the renderer paints.
     backgroundColor: '#262624',
     webPreferences: SHARED_WEB_PREFERENCES,

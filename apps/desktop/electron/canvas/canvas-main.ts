@@ -14,12 +14,15 @@
  * packages/canvas/src/harness/protocol.ts (PD_PREVIEW_SCHEME /
  * PD_PREVIEW_HARNESS_HOST).
  */
-import { readFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { createIpcEventSender } from '@pi-desktop/shared';
-import { type IpcMainInvokeEvent, ipcMain, protocol, type WebContents } from 'electron';
-import type { AppEventMap, CanvasArtifactPayload } from '../ipc-contract';
+import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
+import { type IpcMainInvokeEvent, ipcMain, protocol, shell, type WebContents } from 'electron';
+import type { AppEventMap, CanvasArtifactPayload, CanvasOpenWithAppId } from '../ipc-contract';
 import { isTrustedIpcEvent } from '../trusted-senders';
+
+const log = createLogger('desktop:canvas');
 
 /** Mirrors packages/canvas/src/harness/protocol.ts (frozen). */
 const PD_PREVIEW_SCHEME = 'pd-preview';
@@ -120,4 +123,91 @@ export function registerCanvasIpc(
     guard(event, 'canvas:get-popout');
     return { artifact: popoutArtifact };
   });
+
+  // Browser operation bar → open the current URL in the user's real browser.
+  ipcMain.handle('canvas:open-external', async (event, req: { url: string }) => {
+    guard(event, 'canvas:open-external');
+    // Only ever hand http(s) URLs to the OS (never file:/custom schemes).
+    if (!/^https?:\/\//i.test(req.url.trim())) return { ok: false };
+    try {
+      await shell.openExternal(req.url.trim());
+      return { ok: true };
+    } catch (error) {
+      log.warn('open-external failed', { error: String(error) });
+      return { ok: false };
+    }
+  });
+
+  // File operation bar "Open ▾" → shell out to the chosen app.
+  ipcMain.handle(
+    'canvas:open-with',
+    async (event, req: { path: string; appId: CanvasOpenWithAppId }) => {
+      guard(event, 'canvas:open-with');
+      return openWithApp(req.path, req.appId);
+    },
+  );
+
+  // File operation bar "Open in folder" → reveal the file in Finder.
+  ipcMain.handle('canvas:reveal', (event, req: { path: string }) => {
+    guard(event, 'canvas:reveal');
+    shell.showItemInFolder(path.resolve(req.path));
+    return { ok: true };
+  });
+}
+
+/** `open -a <app> <target>` as a promise (macOS). Rejects on a non-zero exit
+ * (e.g. the app isn't installed), which drives the vscode-insiders → stable
+ * fallback below. */
+function openApp(appName: string, target: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile('open', ['-a', appName, target], (error) => (error ? reject(error) : resolve()));
+  });
+}
+
+/**
+ * Shell out to open a file in the requested app. `vscode-insiders` falls back to
+ * stable VS Code when Insiders isn't installed; `terminal` opens the file's
+ * directory; `default` uses the OS default handler via shell.openPath.
+ * macOS-only shell-outs (`open -a`); other platforms use the default handler.
+ */
+async function openWithApp(
+  filePath: string,
+  appId: CanvasOpenWithAppId,
+): Promise<{ ok: boolean; error?: string }> {
+  const target = path.resolve(filePath);
+  try {
+    if (appId === 'default' || process.platform !== 'darwin') {
+      const error = await shell.openPath(target);
+      return error ? { ok: false, error } : { ok: true };
+    }
+    if (appId === 'terminal') {
+      const dir = isDirectory(target) ? target : path.dirname(target);
+      await openApp('Terminal', dir);
+      return { ok: true };
+    }
+    if (appId === 'xcode') {
+      await openApp('Xcode', target);
+      return { ok: true };
+    }
+    // vscode-insiders → Insiders, else stable VS Code.
+    try {
+      await openApp('Visual Studio Code - Insiders', target);
+    } catch {
+      await openApp('Visual Studio Code', target);
+    }
+    return { ok: true };
+  } catch (error) {
+    log.warn('open-with failed', { appId, error: String(error) });
+    // Last resort: hand it to the OS default handler.
+    const fallback = await shell.openPath(target).catch(() => 'open failed');
+    return fallback ? { ok: false, error: String(error) } : { ok: true };
+  }
+}
+
+function isDirectory(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
 }

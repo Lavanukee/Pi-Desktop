@@ -9,6 +9,7 @@
  */
 
 import {
+  IconButton,
   IconChat,
   IconClock,
   IconConnector,
@@ -18,8 +19,8 @@ import {
   IconSettings,
   IconSidebar,
   IconSparkles,
-  Input,
   Kbd,
+  SearchInput,
   Sidebar,
   SidebarRow,
   SidebarScroll,
@@ -27,12 +28,29 @@ import {
 } from '@pi-desktop/ui';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SessionSummary } from '../../electron/ipc-contract';
+import { IconMoon, IconSun } from '../settings/icons';
 import type { SettingsSection } from '../settings/SettingsView';
-import { listSessions, restartPi, switchSession } from '../state/pi-connect';
+import { listSessions, newSession, switchSession } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
+import { useSettingsStore } from '../state/settings-store';
+import { useThemeStore } from '../store/theme';
 
 /** Nav destinations that don't have a real page yet — open a "coming soon" stub. */
 export type SidebarStub = 'projects' | 'artifacts' | 'scheduled' | 'skills';
+
+/**
+ * Light/dark quick-toggle glyph (round-5 #15, relocated to the sidebar footer in
+ * round-7): a sun (dark mode) and moon (light mode) cross-fade + rotate on flip.
+ * Reduced-motion drops the transition (CSS).
+ */
+function ThemeToggleIcon({ mode }: { mode: 'dark' | 'light' }) {
+  return (
+    <span className="pd-theme-toggle" data-mode={mode} aria-hidden>
+      <IconSun className="pd-theme-toggle-sun" />
+      <IconMoon className="pd-theme-toggle-moon" />
+    </span>
+  );
+}
 
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -61,6 +79,8 @@ export function SessionSidebar({
   const [query, setQuery] = useState('');
   const currentFile = usePiStore((s) => s.session?.sessionFile ?? null);
   const sessionId = usePiStore((s) => s.session?.sessionId ?? null);
+  const mode = useThemeStore((s) => s.mode);
+  const setTheme = useSettingsStore((s) => s.setTheme);
 
   const refresh = useCallback(() => {
     void listSessions().then(setSessions);
@@ -72,9 +92,12 @@ export function SessionSidebar({
     refresh();
   }, [refresh, sessionId]);
 
+  // New chat starts a fresh session in the RUNNING pi (new_session RPC): it
+  // resets the thread but does NOT dispose/respawn pi, so no "pi exited" crash
+  // toast fires and nothing new bounces in the dock (the old restartPi path did
+  // both). newSession() owns the store reset + custom-instructions re-arm.
   const onNewChat = async () => {
-    usePiStore.getState().setMessagesExternal([]);
-    await restartPi({});
+    await newSession();
     refresh();
   };
 
@@ -115,8 +138,7 @@ export function SessionSidebar({
           SidebarScroll's padding), so the search field, New chat, and the Chats
           rows all line their rounded boxes up on the same left edge (img33). */}
       <div className="px-2 pb-2">
-        <Input
-          type="search"
+        <SearchInput
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search chats"
@@ -194,23 +216,33 @@ export function SessionSidebar({
         </SidebarSection>
       </SidebarScroll>
 
-      {/* The profile row is the PRIMARY settings entry point now (relocated from
-          the top-bar gear). It opens the settings menu; the trailing gear signals
-          that. `open-settings` testid is kept so the settings/model probes still
-          reach the surface from here. */}
-      <button
-        type="button"
-        data-testid="open-settings"
-        aria-label="Open settings"
-        onClick={() => onOpenSettings('personalization')}
-        className="pd-sidebar-footer pd-focusable m-1 mt-0 cursor-pointer rounded-lg border-0 bg-transparent text-left font-[inherit] text-text-primary hover:bg-bg-hover"
-      >
-        <span className="pd-sidebar-avatar">P</span>
-        <span className="pd-sidebar-footer-name">
-          Pi Desktop<span className="pd-sidebar-footer-plan"> · Local</span>
-        </span>
-        <IconSettings size={16} className="shrink-0 text-text-muted" />
-      </button>
+      {/* Bottom-left footer: the profile row (PRIMARY settings entry point,
+          relocated from the top-bar gear) plus the light/dark quick-toggle
+          (round-7: moved here from the top bar). `open-settings` + `toggle-mode`
+          testids are kept so the existing probes still reach them. */}
+      <div className="m-1 mt-0 flex items-center gap-1">
+        <button
+          type="button"
+          data-testid="open-settings"
+          aria-label="Open settings"
+          onClick={() => onOpenSettings('personalization')}
+          className="pd-sidebar-footer pd-focusable min-w-0 flex-1 cursor-pointer rounded-lg border-0 bg-transparent text-left font-[inherit] text-text-primary hover:bg-bg-hover"
+        >
+          <span className="pd-sidebar-avatar">P</span>
+          <span className="pd-sidebar-footer-name">
+            Pi Desktop<span className="pd-sidebar-footer-plan"> · Local</span>
+          </span>
+          <IconSettings size={16} className="shrink-0 text-text-muted" />
+        </button>
+        <IconButton
+          aria-label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          data-testid="toggle-mode"
+          className="shrink-0"
+          onClick={() => void setTheme({ mode: mode === 'dark' ? 'light' : 'dark' })}
+        >
+          <ThemeToggleIcon mode={mode} />
+        </IconButton>
+      </div>
     </Sidebar>
   );
 }

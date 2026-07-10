@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Pi Desktop mark (monochrome)" style="color:#141413">
+  <title>Pi Desktop — monochrome</title>
+  <!--
+    Monochrome / template variant. Fills with `currentColor` so it inherits the
+    surrounding text color (menu-bar template, favicon, print, single-ink use).
+    Renders as warm-black (#141413, theme text.primary) when opened standalone.
+    Tint it by setting `color:` on the <svg> or a parent element.
+  -->
+  <g fill="currentColor">
+    <rect x="300" y="328" width="424" height="86" rx="43"/>
+    <rect x="329" y="328" width="86" height="372" rx="43"/>
+    <rect x="609" y="328" width="86" height="372" rx="43"/>
+  </g>
+</svg>

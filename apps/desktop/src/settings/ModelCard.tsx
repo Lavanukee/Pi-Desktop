@@ -19,15 +19,18 @@ import { useState } from 'react';
 import type { LlmCatalogEntry } from '../../electron/ipc-contract';
 import { useLlmStore } from '../state/llm-store';
 import { activateLocalModel } from '../state/local-model';
+import { applyModelEffortDefault } from '../state/settings-store';
 import {
   IconCheckCircle,
   IconDownload,
+  IconLock,
   IconPause,
   IconPlay,
   IconStop,
   IconTrash,
   IconWarning,
 } from './icons';
+import { EffortDefaultSelect, FavoriteStar } from './model-controls';
 import {
   displaySizeBytes,
   formatBytes,
@@ -45,7 +48,14 @@ function portOf(baseUrl: string | null): string | null {
   }
 }
 
-export function ModelCard({ entry }: { entry: LlmCatalogEntry }) {
+export function ModelCard({
+  entry,
+  advanced = false,
+}: {
+  entry: LlmCatalogEntry;
+  /** Reveal the power-knob details block (provider/quant/MTP/context/effort). */
+  advanced?: boolean;
+}) {
   const status = useLlmStore((s) => s.status);
   const hardware = useLlmStore((s) => s.hardware);
   const download = useLlmStore((s) => s.download);
@@ -74,7 +84,13 @@ export function ModelCard({ entry }: { entry: LlmCatalogEntry }) {
     }
   };
 
-  const onSetActive = () => run('activate', () => activateLocalModel(entry.id, quant));
+  const onSetActive = () =>
+    run('activate', async () => {
+      // Push this model's default effort into the harness before the (session-
+      // preserving) restart so the fresh session boots with it applied.
+      await applyModelEffortDefault(entry.id);
+      return activateLocalModel(entry.id, quant);
+    });
   const onDelete = () => run('delete', () => store.getState().deleteModel(entry.id));
   const onStop = () => run('stop', () => store.getState().stopServer());
   const onVerify = () =>
@@ -104,6 +120,11 @@ export function ModelCard({ entry }: { entry: LlmCatalogEntry }) {
                 Active
               </Badge>
             ) : null}
+            {entry.gated ? (
+              <Badge tone="warning" size="sm" data-testid={`gated-badge-${entry.id}`}>
+                <IconLock size={11} /> Gated
+              </Badge>
+            ) : null}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-text-muted">
             <span>{formatBytes(sizeBytes)}</span>
@@ -123,9 +144,12 @@ export function ModelCard({ entry }: { entry: LlmCatalogEntry }) {
             ) : null}
           </div>
         </div>
-        <Badge tone={ram.tone} size="sm" data-testid={`ram-badge-${entry.id}`}>
-          {ram.label}
-        </Badge>
+        <div className="flex shrink-0 items-center gap-1">
+          <Badge tone={ram.tone} size="sm" data-testid={`ram-badge-${entry.id}`}>
+            {ram.label}
+          </Badge>
+          <FavoriteStar modelId={entry.id} />
+        </div>
       </div>
 
       {/* Live status for the active model. */}
@@ -270,6 +294,42 @@ export function ModelCard({ entry }: { entry: LlmCatalogEntry }) {
           )}
         </div>
       </div>
+
+      {/* Advanced (progressive disclosure): per-model default effort + the raw
+          provider/spec details behind the manager's Advanced toggle. */}
+      {advanced ? (
+        <div
+          className="flex flex-col gap-3 border-t border-border-default pt-3"
+          data-testid={`advanced-${entry.id}`}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-caption text-text-secondary">Default effort</span>
+            <EffortDefaultSelect modelId={entry.id} />
+          </div>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-caption text-text-muted">
+            {entry.hfRepo !== undefined ? (
+              <>
+                <dt>Repository</dt>
+                <dd className="truncate font-mono text-text-secondary">{entry.hfRepo}</dd>
+              </>
+            ) : null}
+            <dt>Quant</dt>
+            <dd className="text-text-secondary">{quant || entry.quants[0]?.quant}</dd>
+            <dt>Context window</dt>
+            <dd className="text-text-secondary">{entry.contextWindow.toLocaleString()} tokens</dd>
+            <dt>Multi-token prediction</dt>
+            <dd className="text-text-secondary">{entry.mtp ? 'On (faster decode)' : 'Off'}</dd>
+            <dt>Vision / mmproj</dt>
+            <dd className="text-text-secondary">{entry.vision ? 'Supported' : 'Text-only'}</dd>
+            <dt>Source</dt>
+            <dd className="text-text-secondary">
+              {entry.source === 'hf' ? 'Hugging Face (discovered)' : 'Curated catalog'}
+              {entry.verified === false ? ' · checksum from repo tree' : ''}
+              {entry.verified === true ? ' · HEAD-verified' : ''}
+            </dd>
+          </dl>
+        </div>
+      ) : null}
     </div>
   );
 }

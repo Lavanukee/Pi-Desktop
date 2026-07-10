@@ -30,6 +30,18 @@
   outline-color: var(--pd-border-focus);
 }
 
+/*
+ * jedd round-8 #6: focus rings appear ONLY on keyboard focus. Every --pd-*
+ * focus ring in this stylesheet is already gated behind :focus-visible; this
+ * app-wide belt-and-suspenders rule additionally kills the browser/UA default
+ * outline (and any host-supplied one) on MOUSE :focus for native/third-party
+ * elements that never receive a pd- class — so clicking a control shows no
+ * outline, while tabbing to it (which matches :focus-visible) still does.
+ */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
 /* Screen-reader-only text (rolling counters expose their value here). */
 .pd-visually-hidden {
   position: absolute;

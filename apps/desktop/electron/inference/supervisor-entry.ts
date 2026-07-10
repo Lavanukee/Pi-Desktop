@@ -9,10 +9,10 @@
  * crash-looping llama-server never takes the UI process down.
  */
 import { createHash } from 'node:crypto';
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   buildProviderBlock,
   CATALOG,
@@ -21,16 +21,33 @@ import {
   detectHardware,
   downloadModel,
   ensureLlamaCpp,
+  estimateRamGB,
   getCatalogFile,
   getCatalogModel,
+  type HfGgufFile,
+  type HfModelHit,
+  type HfSort,
+  hfModelToCatalogEntry,
   LlamaServerSupervisor,
+  listHfGgufFiles,
   modelDir,
   probeServerFeatures,
   recommend,
+  searchHfModels,
   writeModelsJson,
 } from '@pi-desktop/inference';
-import type { LlmCatalogEntry, LlmHardware, LlmStatus } from '../ipc-contract';
 import type {
+  HfGgufFileDTO,
+  HfModelHitDTO,
+  HfSortOption,
+  LlmCatalogEntry,
+  LlmHardware,
+  LlmStatus,
+} from '../ipc-contract';
+import type {
+  HfListFilesReply,
+  HfRegisterReply,
+  HfSearchReply,
   LlmCatalogReply,
   LlmOutbound,
   LlmRequest,
@@ -45,6 +62,56 @@ const parentPort = (process as unknown as { parentPort: UtilityParentPort }).par
 const CONTEXT_CAP = 16_384;
 const MODELS_JSON = join(homedir(), '.pi', 'agent', 'models.json');
 const PROVIDER_NAME = 'llamacpp';
+
+/** Discovered Browse-HF models, adapted to the catalog shape. Persisted so a
+ * downloaded HF model survives a supervisor restart and stays in the local set. */
+const HF_MODELS_JSON = join(homedir(), '.pi', 'desktop', 'hf-models.json');
+const hfModels = new Map<string, CatalogModel>();
+
+function loadHfModels(): void {
+  try {
+    const raw = readFileSync(HF_MODELS_JSON, 'utf8');
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      for (const m of parsed) {
+        if (typeof m === 'object' && m !== null && typeof (m as CatalogModel).id === 'string') {
+          hfModels.set((m as CatalogModel).id, m as CatalogModel);
+        }
+      }
+    }
+  } catch {
+    // Absent/corrupt registry → start empty; a fresh add rewrites it.
+  }
+}
+
+function persistHfModels(): void {
+  try {
+    mkdirSync(dirname(HF_MODELS_JSON), { recursive: true });
+    writeFileSync(HF_MODELS_JSON, `${JSON.stringify([...hfModels.values()], null, 2)}\n`, 'utf8');
+  } catch {
+    // Best-effort: an unwritable registry only costs cross-restart persistence.
+  }
+}
+
+/** Resolve a model id against the curated catalog first, then discovered HF adds. */
+function getModel(id: string): CatalogModel | undefined {
+  return getCatalogModel(id) ?? hfModels.get(id);
+}
+
+/** All models the manager knows about: curated + discovered HF (dedup by id). */
+function allModels(): CatalogModel[] {
+  const byId = new Map<string, CatalogModel>();
+  for (const m of CATALOG) byId.set(m.id, m);
+  for (const m of hfModels.values()) if (!byId.has(m.id)) byId.set(m.id, m);
+  return [...byId.values()];
+}
+
+/** Map the UI sort option onto the raw HF models-API sort key. */
+function toHfSort(sort: HfSortOption | undefined): HfSort {
+  if (sort === 'likes') return 'likes';
+  if (sort === 'recent') return 'lastModified';
+  return 'downloads';
+}
 
 interface CurrentServer {
   supervisor: LlamaServerSupervisor;
@@ -94,9 +161,9 @@ function status(): LlmStatus {
         }
       : null,
     metrics,
-    downloadedModelIds: CATALOG.filter((m) => m.files.some((f) => isDownloaded(m, f))).map(
-      (m) => m.id,
-    ),
+    downloadedModelIds: allModels()
+      .filter((m) => m.files.some((f) => isDownloaded(m, f)))
+      .map((m) => m.id),
     error: lastError,
   };
 }
@@ -118,6 +185,10 @@ function catalogEntry(model: CatalogModel, recommendedId: string | null): LlmCat
     vision: model.input.includes('image'),
     downloaded: model.files.some((f) => isDownloaded(model, f)),
     recommended: model.id === recommendedId,
+    hfRepo: model.hfRepo,
+    gated: model.gated === true,
+    source: hfModels.has(model.id) ? 'hf' : 'curated',
+    verified: model.verified,
   };
 }
 
@@ -143,12 +214,105 @@ async function listCatalog(): Promise<LlmCatalogReply> {
     recommendedModelId = null;
     recommendation = null;
   }
+  // Curated first (recommender picks live here), then discovered HF adds.
   return {
-    models: CATALOG.map((m) => catalogEntry(m, recommendedModelId)),
+    models: allModels().map((m) => catalogEntry(m, recommendedModelId)),
     hardware,
     recommendedModelId,
     recommendation,
   };
+}
+
+// --- Hugging Face browse + register ------------------------------------------
+
+function toHfHit(hit: HfModelHit): HfModelHitDTO {
+  return {
+    id: hit.id,
+    author: hit.author,
+    name: hit.name,
+    downloads: hit.downloads,
+    likes: hit.likes,
+    tags: [...hit.tags],
+    gated: hit.gated,
+    pipelineTag: hit.pipelineTag,
+    updatedAt: hit.updatedAt,
+    likesRecent: hit.likesRecent,
+  };
+}
+
+function toHfFile(file: HfGgufFile, contextWindow: number): HfGgufFileDTO {
+  return {
+    path: file.path,
+    sizeBytes: file.sizeBytes,
+    quant: file.quant,
+    sha256: file.sha256,
+    mmproj: file.mmproj,
+    mtp: file.mtp,
+    minRamGB:
+      file.sizeBytes !== undefined && file.sizeBytes > 0
+        ? estimateRamGB(file.sizeBytes, contextWindow)
+        : undefined,
+  };
+}
+
+async function hfSearch(req: Extract<LlmRequest, { type: 'hf-search' }>): Promise<HfSearchReply> {
+  try {
+    const hits = await searchHfModels(req.query, {
+      filters: {
+        family: req.family,
+        task: req.task,
+        gated: req.gated,
+        minLikes: req.minLikes,
+      },
+      sort: toHfSort(req.sort),
+      limit: req.limit,
+      hfToken: req.hfToken,
+    });
+    return { hits: hits.map(toHfHit) };
+  } catch (error) {
+    const message = String(error instanceof Error ? error.message : error);
+    return { hits: [], error: message, rateLimited: /HTTP 429/.test(message) };
+  }
+}
+
+async function hfListFiles(
+  req: Extract<LlmRequest, { type: 'hf-list-files' }>,
+): Promise<HfListFilesReply> {
+  const contextWindow = req.contextWindow ?? 8192;
+  try {
+    const files = await listHfGgufFiles(req.repoId, { hfToken: req.hfToken });
+    return { files: files.map((f) => toHfFile(f, contextWindow)) };
+  } catch (error) {
+    const message = String(error instanceof Error ? error.message : error);
+    // A 401/403 on the tree is the gated-repo signal (needs a token/licence).
+    return { files: [], error: message, gated: /HTTP 40[13]/.test(message) };
+  }
+}
+
+/** Coerce a serialized HfGgufFileDTO back to the package's HfGgufFile shape. */
+function fromHfFileDTO(f: HfGgufFileDTO): HfGgufFile {
+  return {
+    path: f.path,
+    sizeBytes: f.sizeBytes,
+    quant: f.quant,
+    sha256: f.sha256,
+    mmproj: f.mmproj,
+    mtp: f.mtp,
+  };
+}
+
+function registerHfModel(req: Extract<LlmRequest, { type: 'register-hf-model' }>): HfRegisterReply {
+  const entry = hfModelToCatalogEntry(req.hit, fromHfFileDTO(req.file), {
+    contextWindow: req.contextWindow,
+    mmproj: req.mmproj !== undefined ? fromHfFileDTO(req.mmproj) : undefined,
+    mtpFile: req.mtpFile !== undefined ? fromHfFileDTO(req.mtpFile) : undefined,
+  });
+  hfModels.set(entry.id, entry);
+  persistHfModels();
+  emitStatus();
+  // A discovered HF add is never the hardware recommendation (the recommender
+  // only ever picks a curated model), so recommendedId is null here.
+  return { modelId: entry.id, entry: catalogEntry(entry, null) };
 }
 
 /** Restore the phase after a download settles (running server → ready, else idle). */
@@ -159,8 +323,9 @@ function settleDownloadPhase(): void {
 async function downloadOne(
   modelId: string,
   quant?: string,
+  hfToken?: string,
 ): Promise<{ success: boolean; error?: string; paused?: boolean; cancelled?: boolean }> {
-  const model = getCatalogModel(modelId);
+  const model = getModel(modelId);
   if (model === undefined) return { success: false, error: `unknown model: ${modelId}` };
   // Serialize: one download at a time. A second request while one runs is a
   // no-op so the UI can't fork two writers onto the same `.part`.
@@ -178,6 +343,7 @@ async function downloadOne(
       quant,
       launchMode: 'fast-text',
       signal: controller.signal,
+      hfToken,
       onProgress: (file, p) =>
         post({
           kind: 'download-progress',
@@ -240,7 +406,7 @@ async function discardPartials(model: CatalogModel, quant?: string): Promise<voi
 }
 
 async function deleteModel(modelId: string): Promise<{ success: boolean; error?: string }> {
-  const model = getCatalogModel(modelId);
+  const model = getModel(modelId);
   if (model === undefined) return { success: false, error: `unknown model: ${modelId}` };
   // Refuse to delete the model currently serving — stop it first.
   if (current?.model.id === modelId)
@@ -268,7 +434,7 @@ function sha256File(filePath: string): Promise<string> {
  * sha are reported `checked: false` (nothing to verify), which still counts as
  * ok so a hash-less entry never shows as corrupt. */
 async function verifyModel(modelId: string, quant?: string): Promise<LlmVerifyReply> {
-  const model = getCatalogModel(modelId);
+  const model = getModel(modelId);
   if (model === undefined) return { ok: false, files: [], error: `unknown model: ${modelId}` };
   const files = quant !== undefined ? model.files.filter((f) => f.quant === quant) : model.files;
   const results: LlmVerifyReply['files'] = [];
@@ -306,7 +472,7 @@ async function startServer(
   modelId: string,
   quant?: string,
 ): Promise<{ success: boolean; baseUrl?: string; error?: string }> {
-  const model = getCatalogModel(modelId);
+  const model = getModel(modelId);
   if (model === undefined) return { success: false, error: `unknown model: ${modelId}` };
   const file = pickFile(model, quant);
   if (file === undefined) return { success: false, error: `unknown quant for ${modelId}` };
@@ -396,7 +562,7 @@ async function handle(req: LlmRequest): Promise<unknown> {
     case 'list-catalog':
       return listCatalog();
     case 'download-model':
-      return downloadOne(req.modelId, req.quant);
+      return downloadOne(req.modelId, req.quant, req.hfToken);
     case 'pause-download':
       return pauseDownload();
     case 'cancel-download':
@@ -409,6 +575,12 @@ async function handle(req: LlmRequest): Promise<unknown> {
       return startServer(req.modelId, req.quant);
     case 'stop-server':
       return stopServer();
+    case 'hf-search':
+      return hfSearch(req);
+    case 'hf-list-files':
+      return hfListFiles(req);
+    case 'register-hf-model':
+      return registerHfModel(req);
   }
 }
 
@@ -425,5 +597,8 @@ parentPort.on('message', (event) => {
     );
 });
 
-// Announce initial idle state so the host has something to broadcast on attach.
+// Restore any previously-registered HF models so they stay in the local set
+// across a supervisor restart, then announce initial idle state so the host has
+// something to broadcast on attach.
+loadHfModels();
 emitStatus();

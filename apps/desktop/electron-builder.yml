@@ -44,5 +44,10 @@ asarUnpack:
 mac:
   target: dir
   category: public.app-category.developer-tools
+  # App icon: the "Pi caret" mark. Regenerate from build/icon.svg with
+  # `bash scripts/gen-icon.sh` (produces build/icon.icns + build/icon.png).
+  # `build/` is electron-builder's default buildResources dir, so icon.icns
+  # would be auto-detected, but the path is pinned here to be explicit.
+  icon: build/icon.icns
   # No Developer ID yet: skip signing here; ship:local ad-hoc signs after.
   identity: null

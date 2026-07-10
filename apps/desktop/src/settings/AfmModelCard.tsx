@@ -11,9 +11,20 @@ import { useState } from 'react';
 import type { AfmAvailabilityInfo } from '../../electron/afm/afm-contract';
 import { activateAppleModel } from '../state/afm-model';
 import { usePiStore } from '../state/pi-slice';
+import { applyModelEffortDefault } from '../state/settings-store';
 import { IconCpu, IconPlay } from './icons';
+import { EffortDefaultSelect, FavoriteStar } from './model-controls';
 
-export function AfmModelCard({ availability }: { availability: AfmAvailabilityInfo }) {
+/** Stable id the Apple on-device entry uses for favorites + effort defaults. */
+export const AFM_MODEL_ID = 'afm';
+
+export function AfmModelCard({
+  availability,
+  advanced = false,
+}: {
+  availability: AfmAvailabilityInfo;
+  advanced?: boolean;
+}) {
   const activeProvider = usePiStore((s) => s.agent.model?.provider);
   const isActive = activeProvider === 'afm';
   const [busy, setBusy] = useState(false);
@@ -23,6 +34,7 @@ export function AfmModelCard({ availability }: { availability: AfmAvailabilityIn
   const onSetActive = async () => {
     setBusy(true);
     try {
+      await applyModelEffortDefault(AFM_MODEL_ID);
       await activateAppleModel();
     } finally {
       setBusy(false);
@@ -57,9 +69,12 @@ export function AfmModelCard({ availability }: { availability: AfmAvailabilityIn
             <span>{contextK}k context</span>
           </div>
         </div>
-        <Badge tone="accent" size="sm" data-testid="afm-badge">
-          Apple Intelligence
-        </Badge>
+        <div className="flex shrink-0 items-center gap-1">
+          <Badge tone="accent" size="sm" data-testid="afm-badge">
+            Apple Intelligence
+          </Badge>
+          <FavoriteStar modelId={AFM_MODEL_ID} />
+        </div>
       </div>
 
       <p className="text-footnote text-text-secondary">
@@ -82,6 +97,16 @@ export function AfmModelCard({ availability }: { availability: AfmAvailabilityIn
           </Button>
         )}
       </div>
+
+      {advanced ? (
+        <div
+          className="flex items-center justify-between gap-3 border-t border-border-default pt-3"
+          data-testid={`advanced-${AFM_MODEL_ID}`}
+        >
+          <span className="text-caption text-text-secondary">Default effort</span>
+          <EffortDefaultSelect modelId={AFM_MODEL_ID} />
+        </div>
+      ) : null}
     </div>
   );
 }

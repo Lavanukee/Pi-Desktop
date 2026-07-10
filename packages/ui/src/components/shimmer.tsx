@@ -2,6 +2,7 @@ import { clsx } from 'clsx';
 import type { HTMLAttributes, ReactNode } from 'react';
 import { forwardRef, useState } from 'react';
 import { IconChevronRight } from './icons.tsx';
+import { Markdown } from './markdown.tsx';
 
 export interface ShimmerTextProps extends HTMLAttributes<HTMLSpanElement> {
   /** Set false to render resting text without the sweep. */
@@ -190,12 +191,23 @@ interface ThoughtWellProps {
  * The thought body: dim reasoning prose. When long and not yet expanded it
  * clamps with a bottom fade and offers a small "Show more" below the fade
  * (never a scrollbar) — the round-5 #4 affordance shared with in-chain thoughts.
+ *
+ * jedd round-8 #9: a string thought is rendered through the shared {@link Markdown}
+ * component (markdown + KaTeX + syntax-highlight + hex swatches — the same pipeline
+ * as responses), so thoughts get **bold**, code, lists and $math$. Non-string
+ * children (a caller passing its own JSX) fall back to rendering as-is. The dim
+ * "secondary" voice is preserved by `.pd-thinking-content` (see shimmer.css).
  */
 function ThoughtWell({ long, showMore, live = false, onShowMore, children }: ThoughtWellProps) {
+  const isMarkdown = typeof children === 'string';
   return (
     <div className="pd-thinking-well">
-      <div className="pd-thinking-content" data-clamped={long && !showMore}>
-        {children}
+      <div
+        className="pd-thinking-content"
+        data-clamped={long && !showMore}
+        data-md={isMarkdown || undefined}
+      >
+        {isMarkdown ? <Markdown className="pd-thinking-md">{children}</Markdown> : children}
       </div>
       {long && !live ? (
         <button

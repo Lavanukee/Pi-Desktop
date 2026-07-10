@@ -13,8 +13,15 @@ import {
   registerIpcHandlers,
 } from '@pi-desktop/shared';
 import { app, BrowserWindow, type IpcMain, type UtilityProcess, utilityProcess } from 'electron';
-import type { AppEventMap, LlmInvokeMap, LlmStatus } from '../ipc-contract';
-import type { LlmCatalogReply, LlmOutbound, LlmRequestBody } from './protocol';
+import type { AppEventMap, HfInvokeMap, LlmInvokeMap, LlmStatus } from '../ipc-contract';
+import type {
+  HfListFilesReply,
+  HfRegisterReply,
+  HfSearchReply,
+  LlmCatalogReply,
+  LlmOutbound,
+  LlmRequestBody,
+} from './protocol';
 
 const log = createLogger('desktop:llm');
 const events = createIpcEventSender<AppEventMap>();
@@ -81,7 +88,12 @@ const handlers: IpcHandlers<LlmInvokeMap> = {
   'llm:get-status': () => request<LlmStatus>({ type: 'get-status' }),
   'llm:list-catalog': () => request<LlmCatalogReply>({ type: 'list-catalog' }),
   'llm:download-model': (req) =>
-    request({ type: 'download-model', modelId: req.modelId, quant: req.quant }),
+    request({
+      type: 'download-model',
+      modelId: req.modelId,
+      quant: req.quant,
+      hfToken: req.hfToken,
+    }),
   'llm:pause-download': () => request({ type: 'pause-download' }),
   'llm:cancel-download': () => request({ type: 'cancel-download' }),
   'llm:delete-model': (req) => request({ type: 'delete-model', modelId: req.modelId }),
@@ -92,8 +104,42 @@ const handlers: IpcHandlers<LlmInvokeMap> = {
   'llm:stop-server': () => request({ type: 'stop-server' }),
 };
 
+/** Hugging Face browse/register channels — proxied to the same supervisor, which
+ * owns hf-search + the discovered-model registry (see supervisor-entry.ts). */
+const hfHandlers: IpcHandlers<HfInvokeMap> = {
+  'hf:search': (req) =>
+    request<HfSearchReply>({
+      type: 'hf-search',
+      query: req.query,
+      family: req.family,
+      task: req.task,
+      gated: req.gated,
+      minLikes: req.minLikes,
+      sort: req.sort,
+      limit: req.limit,
+      hfToken: req.hfToken,
+    }),
+  'hf:list-files': (req) =>
+    request<HfListFilesReply>({
+      type: 'hf-list-files',
+      repoId: req.repoId,
+      contextWindow: req.contextWindow,
+      hfToken: req.hfToken,
+    }),
+  'hf:register': (req) =>
+    request<HfRegisterReply>({
+      type: 'register-hf-model',
+      hit: req.hit,
+      file: req.file,
+      mmproj: req.mmproj,
+      mtpFile: req.mtpFile,
+      contextWindow: req.contextWindow,
+    }),
+};
+
 export function registerLlmIpc(ipcMain: IpcMain, allowSender: (event: unknown) => boolean): void {
   registerIpcHandlers<LlmInvokeMap>(ipcMain, handlers, { allowSender });
+  registerIpcHandlers<HfInvokeMap>(ipcMain, hfHandlers, { allowSender });
   // Stand the supervisor up now so its initial idle status broadcasts to the
   // window as soon as the renderer subscribes.
   ensureChild();

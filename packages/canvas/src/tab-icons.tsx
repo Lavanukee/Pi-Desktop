@@ -98,12 +98,35 @@ export function IconPanelRight(props: IconProps) {
   );
 }
 
-/** Pop out to a standalone window (box with an arrow leaving the top-right). */
+/**
+ * Pop out to a standalone window — a full rounded window box with a single notch
+ * at the top-right corner where the arrow exits. The old glyph left the whole
+ * top-right quadrant of the box open (both the top edge past x=7.5 and the right
+ * edge above y=8.5), so it read as a half-drawn rectangle; this keeps the box
+ * closed except the corner notch, matching the (verified) IconExternal anatomy.
+ */
 export function IconPopout(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M12.5 8.5v3A1.5 1.5 0 0 1 11 13H4.5A1.5 1.5 0 0 1 3 11.5V5A1.5 1.5 0 0 1 4.5 3.5h3" />
-      <path d="M10 3h3v3M13 3l-5 5" />
+      <path d="M8 3H4.5A1.5 1.5 0 0 0 3 4.5v7A1.5 1.5 0 0 0 4.5 13h7A1.5 1.5 0 0 0 13 11.5V8" />
+      <path d="M9.5 3H13v3.5" />
+      <path d="M13 3 8 8" />
+    </Icon>
+  );
+}
+
+/**
+ * Generic application glyph (launchpad-style 2×2 tiles) — the fallback icon for
+ * the file "Open" split button + the "Open with" list when the app has not (yet)
+ * supplied a real system icon (`iconDataUrl`).
+ */
+export function IconAppGeneric(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="2.75" y="2.75" width="4.5" height="4.5" rx="1.2" />
+      <rect x="8.75" y="2.75" width="4.5" height="4.5" rx="1.2" />
+      <rect x="2.75" y="8.75" width="4.5" height="4.5" rx="1.2" />
+      <rect x="8.75" y="8.75" width="4.5" height="4.5" rx="1.2" />
     </Icon>
   );
 }

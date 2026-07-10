@@ -34,6 +34,9 @@ export const DEFAULT_SETTINGS: DesktopSettings = {
   capabilities: { image: false, video: false, audio: false, threeD: false },
   customInstructions: '',
   iconStroke: ICON_STROKE_DEFAULT,
+  favoriteModels: [],
+  modelEffortDefaults: {},
+  hfToken: '',
 };
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
@@ -53,6 +56,28 @@ function bool(value: unknown, fallback: boolean): boolean {
 function num(value: unknown, fallback: number, min: number, max: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
   return Math.min(max, Math.max(min, value));
+}
+
+/** Unique list of non-empty strings (favorite model ids); junk → []. */
+function strArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  for (const v of value) {
+    if (typeof v === 'string' && v.length > 0) seen.add(v);
+  }
+  return [...seen];
+}
+
+/** Record<modelId, EffortLevel>, dropping entries with an invalid effort. */
+function effortMap(value: unknown): Record<string, EffortLevel> {
+  if (typeof value !== 'object' || value === null) return {};
+  const out: Record<string, EffortLevel> = {};
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === 'string' && (EFFORT_LEVELS as readonly string[]).includes(v)) {
+      out[key] = v as EffortLevel;
+    }
+  }
+  return out;
 }
 
 /** Normalize an untrusted parsed object into a fully-valid DesktopSettings. */
@@ -88,6 +113,9 @@ export function clampSettings(raw: unknown): DesktopSettings {
     },
     customInstructions: str(o.customInstructions, d.customInstructions),
     iconStroke: num(o.iconStroke, d.iconStroke, ICON_STROKE_MIN, ICON_STROKE_MAX),
+    favoriteModels: strArray(o.favoriteModels),
+    modelEffortDefaults: effortMap(o.modelEffortDefaults),
+    hfToken: str(o.hfToken, d.hfToken),
   };
 }
 

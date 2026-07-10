@@ -61,12 +61,12 @@ try {
 
   const viewport = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
 
-  // ── 1. Search glass ─────────────────────────────────────────────────────────
+  // ── 1. Search glass (round-8: CollapsibleSearch — a glass + label until clicked)
   await page.waitForSelector('[data-testid="sidebar-search"]', { timeout: 8000 });
   const hasGlass = await page.evaluate(() => {
-    const input = document.querySelector('[data-testid="sidebar-search"]');
-    const field = input?.closest('.pd-search-field');
-    return field?.querySelector('svg.pd-search-field-icon') !== null;
+    const wrap = document.querySelector('[data-testid="sidebar-search"]');
+    // The magnifying glass is always visible (collapsed trigger or expanded field).
+    return wrap?.querySelector('svg') !== null;
   });
   assert(hasGlass, 'the sidebar search field has no leading magnifying-glass icon');
 
@@ -115,8 +115,14 @@ try {
   await page.waitForSelector('[data-testid="canvas-tabs-panel"] .pd-canvas-empty', {
     timeout: 8000,
   });
-  // Closing it again removes the rail (empty + closed → nothing).
-  await canvasToggle.click();
+  // Round-8 #11/#16: while OPEN, the toggle lives in the CANVAS top-right (an X),
+  // and the chat top-right toggle hides. Closing via that X removes the rail
+  // (empty + closed → nothing).
+  assert(
+    (await page.locator('[data-testid="canvas-toggle"]').count()) === 0,
+    'the chat top-right canvas toggle must hide while the canvas is open',
+  );
+  await page.click('[data-testid="canvas-tabs-panel"] button[aria-label="Close canvas panel"]');
   await page.waitForFunction(
     () => document.querySelector('[data-testid="canvas-tabs-panel"]') === null,
     undefined,
@@ -147,12 +153,12 @@ try {
     timeout: 8000,
   });
 
-  // Open ▾ → "Open in folder" fires canvas:reveal with the path.
-  await page.click(`${opbar('file')} button[aria-label="Open with"]`);
-  await page.click(`${opbar('file')} .pd-canvas-menu button:has-text("Open in folder")`);
-  // Open ▾ → "Terminal" fires canvas:open-with { appId: 'terminal' }.
-  await page.click(`${opbar('file')} button[aria-label="Open with"]`);
-  await page.click(`${opbar('file')} .pd-canvas-menu button:has-text("Terminal")`);
+  // Round-8 #14: the split "Open" primary opens with the DEFAULT app
+  // (canvas:open-with { appId: 'default' }); the ▾ caret's menu carries
+  // "Open in folder" (canvas:reveal). (The richer app-list is covered in round8.)
+  await page.click(`${opbar('file')} .pd-canvas-split-main`);
+  await page.click(`${opbar('file')} .pd-canvas-split-caret`);
+  await page.click(`${opbar('file')} .pd-canvas-popmenu button:has-text("Open in folder")`);
 
   const fileCalls = await page.evaluate(() => window.__pi_canvas_ipc ?? []);
   const reveal = fileCalls.find((c) => c.channel === 'canvas:reveal');
@@ -160,10 +166,10 @@ try {
     reveal?.req?.path === '/tmp/pi-rt7/notes.md',
     'canvas:reveal not invoked with the file path',
   );
-  const openWith = fileCalls.find((c) => c.channel === 'canvas:open-with');
+  const openDefault = fileCalls.find((c) => c.channel === 'canvas:open-with');
   assert(
-    openWith?.req?.appId === 'terminal' && openWith?.req?.path === '/tmp/pi-rt7/notes.md',
-    'canvas:open-with not invoked with { path, appId: terminal }',
+    openDefault?.req?.appId === 'default' && openDefault?.req?.path === '/tmp/pi-rt7/notes.md',
+    'canvas:open-with not invoked with { path, appId: default }',
   );
 
   // ── 4b. BROWSER tab operation bar + 5b. open-external IPC ────────────────────

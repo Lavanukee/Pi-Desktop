@@ -95,32 +95,104 @@ describe('CanvasOperationBar — file', () => {
     expect(container.querySelector('.pd-canvas-tree-panel')).toBeNull();
   });
 
-  it('opens the "Open ▾" dropdown and emits onOpenWith / onReveal', async () => {
+  it('primary "Open" segment emits onOpen and shows the default app icon', async () => {
+    const onOpen = vi.fn();
+    const { container } = await render(
+      <CanvasOperationBar
+        tab={tab({
+          kind: 'file',
+          filePath: 'src/index.ts',
+          defaultApp: { id: 'code', name: 'VS Code', iconDataUrl: 'data:image/png;base64,AAAA' },
+          openApps: [
+            { id: 'code', name: 'VS Code' },
+            { id: 'sublime', name: 'Sublime Text' },
+          ],
+        })}
+        onOpen={onOpen}
+      />,
+    );
+    const primary = container.querySelector('.pd-canvas-split-main');
+    // The default app's icon (a data: URL <img>) sits on the primary segment.
+    expect(primary?.getAttribute('aria-label')).toBe('Open with VS Code');
+    expect(primary?.querySelector('.pd-canvas-app-icon img')).toBeTruthy();
+    await click(primary);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('the ▾ lists apps EXCEPT the default, plus "Open in folder"', async () => {
     const onOpenWith = vi.fn();
     const onReveal = vi.fn();
     const { container } = await render(
       <CanvasOperationBar
-        tab={tab({ kind: 'file', filePath: 'src/index.ts' })}
+        tab={tab({
+          kind: 'file',
+          filePath: 'src/index.ts',
+          defaultApp: { id: 'code', name: 'VS Code' },
+          openApps: [
+            { id: 'code', name: 'VS Code' },
+            { id: 'sublime', name: 'Sublime Text' },
+            { id: 'zed', name: 'Zed' },
+          ],
+        })}
         onOpenWith={onOpenWith}
         onReveal={onReveal}
       />,
     );
-    await click(container.querySelector('[aria-label="Open with"]'));
-    const items = [...container.querySelectorAll('.pd-canvas-menu-item')].map((n) => n.textContent);
-    expect(items).toEqual([
-      'VS Code Insiders',
-      'Default app',
-      'Terminal',
-      'Xcode',
-      'Open in folder',
-    ]);
-    await click(container.querySelectorAll('.pd-canvas-menu-item')[0] ?? null);
-    expect(onOpenWith).toHaveBeenCalledWith('vscode-insiders');
+    await click(container.querySelector('[aria-label="Open with…"]'));
+    const items = [...container.querySelectorAll('.pd-menu-item')].map((n) => n.textContent);
+    // Default (VS Code) omitted from the dropdown; "Open in folder" appended.
+    expect(items).toEqual(['Sublime Text', 'Zed', 'Open in folder']);
+    await click(container.querySelectorAll('.pd-menu-item')[0] ?? null);
+    expect(onOpenWith).toHaveBeenCalledWith('sublime');
 
-    await click(container.querySelector('[aria-label="Open with"]'));
-    const menuItems = container.querySelectorAll('.pd-canvas-menu-item');
+    await click(container.querySelector('[aria-label="Open with…"]'));
+    const menuItems = container.querySelectorAll('.pd-menu-item');
     await click(menuItems[menuItems.length - 1] ?? null);
     expect(onReveal).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to a generic app glyph when no default app is supplied', async () => {
+    const { container } = await render(
+      <CanvasOperationBar tab={tab({ kind: 'file', filePath: 'a.txt' })} />,
+    );
+    const primary = container.querySelector('.pd-canvas-split-main');
+    expect(primary?.getAttribute('aria-label')).toBe('Open');
+    // Generic glyph (an svg), not a system-icon <img>.
+    expect(primary?.querySelector('.pd-canvas-app-icon svg')).toBeTruthy();
+    expect(primary?.querySelector('.pd-canvas-app-icon img')).toBeNull();
+  });
+});
+
+describe('CanvasOperationBar — file raw/rendered toggle', () => {
+  it('shows the toggle for a markdown file and emits the mode change', async () => {
+    const onFileViewModeChange = vi.fn();
+    const { container } = await render(
+      <CanvasOperationBar
+        tab={tab({
+          kind: 'file',
+          filePath: 'README.md',
+          artifact: { id: 'a', filename: 'README.md', content: { kind: 'markdown', text: '# Hi' } },
+        })}
+        fileViewMode="rendered"
+        onFileViewModeChange={onFileViewModeChange}
+      />,
+    );
+    const segments = [...container.querySelectorAll('.pd-canvas-view-toggle .pd-segment')].map(
+      (n) => n.textContent,
+    );
+    expect(segments).toEqual(['Rendered', 'Raw']);
+    const raw = [...container.querySelectorAll('.pd-canvas-view-toggle .pd-segment')].find(
+      (n) => n.textContent === 'Raw',
+    );
+    await click(raw ?? null);
+    expect(onFileViewModeChange).toHaveBeenCalledWith('raw');
+  });
+
+  it('hides the toggle for a non-markdown (code) file', async () => {
+    const { container } = await render(
+      <CanvasOperationBar tab={tab({ kind: 'file', filePath: 'main.ts' })} />,
+    );
+    expect(container.querySelector('.pd-canvas-view-toggle')).toBeNull();
   });
 });
 
@@ -196,7 +268,12 @@ describe('CanvasOperationBar — media', () => {
         onClose={onClose}
       />,
     );
-    expect(container.querySelector('.pd-media-title')?.textContent).toContain('render.png');
+    // The extension is stripped so it reads "render · PNG", not "render.png · PNG".
+    const title = container
+      .querySelector('.pd-media-title')
+      ?.textContent?.replace(/\s+/g, ' ')
+      .trim();
+    expect(title).toBe('render · PNG');
     expect(container.querySelector('.pd-media-type')?.textContent).toBe('PNG');
     await click(container.querySelector('.pd-media-download button'));
     expect(onMediaDownload).toHaveBeenCalledWith('PNG');

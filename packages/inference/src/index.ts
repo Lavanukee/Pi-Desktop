@@ -9,6 +9,7 @@ export const packageName = '@pi-desktop/inference';
 export * from './catalog.js';
 export * from './download.js';
 export * from './hardware.js';
+export * from './hf-search.js';
 export * from './llamacpp-manager.js';
 export * from './llamacpp-manifest.js';
 export * from './model-downloader.js';

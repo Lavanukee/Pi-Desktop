@@ -1,5 +1,13 @@
-import { IconButton, IconCheck, IconClose, IconCopy, IconPlus } from '@pi-desktop/ui';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import {
+  IconButton,
+  IconCheck,
+  IconClose,
+  IconCopy,
+  IconGlobe,
+  IconPlus,
+  IconTerminal,
+} from '@pi-desktop/ui';
+import { type ComponentType, type ReactNode, useEffect, useRef, useState } from 'react';
 import { type CanvasConfig, CanvasConfigContext, defaultCanvasConfig } from '../context.ts';
 import type { ArtifactContent } from '../model.ts';
 import { defaultSurfaceRegistry, type SurfaceRegistry } from '../registry.ts';
@@ -9,12 +17,28 @@ import { MediaPreviewSurface } from '../surfaces/media-preview-surface.tsx';
 import { ensureDefaultSurfaces } from '../surfaces/register-builtins.tsx';
 import { SubagentSurface } from '../surfaces/subagent-surface.tsx';
 import { TerminalSurface } from '../surfaces/terminal-surface.tsx';
-import { IconPanelRight, IconPopout } from '../tab-icons.tsx';
-import { CanvasOperationBar } from './canvas-operation-bar.tsx';
+import { IconFolder, IconPanelRight, IconPopout } from '../tab-icons.tsx';
+import { CanvasOperationBar, fileViewModeDefault } from './canvas-operation-bar.tsx';
 import type { CanvasController } from './controller.ts';
 import { CANVAS_TAB_KINDS } from './tab-kinds.ts';
-import type { CanvasTab, FileTreeNode, OpenWithAppId } from './tab-model.ts';
+import type { CanvasTab, FileTreeNode, FileViewMode } from './tab-model.ts';
 import { useCanvasTabs } from './use-canvas-tabs.tsx';
+import { useOutsideClose } from './use-outside-close.ts';
+
+/** The tab kinds the `+` menu can open. */
+export type NewTabKind = 'file' | 'browser' | 'terminal';
+
+/** The `+` menu rows: kind, label, optional shortcut hint, and type glyph. */
+const NEW_TAB_ITEMS: ReadonlyArray<{
+  kind: NewTabKind;
+  label: string;
+  hint?: string;
+  icon: ComponentType<{ size?: number }>;
+}> = [
+  { kind: 'file', label: 'Files', hint: '⌘P', icon: IconFolder },
+  { kind: 'browser', label: 'Browser', hint: '⌘T', icon: IconGlobe },
+  { kind: 'terminal', label: 'Terminal', icon: IconTerminal },
+];
 
 /**
  * The app-supplied wiring for LIVE surfaces (browser/terminal native views,
@@ -38,12 +62,16 @@ export interface CanvasTabsHandlers {
   onMediaRefresh?: (tabId: string) => void;
   onMediaExpand?: (tabId: string) => void;
   onSubagentSelect?: (tabId: string, subagentId: string) => void;
-  /** File operation bar — "Open ▾" dropdown app items (shell out to open-with). */
-  onOpenWith?: (tabId: string, appId: OpenWithAppId) => void;
+  /** File split button — primary "Open" segment (open with the tab's default app). */
+  onOpen?: (tabId: string) => void;
+  /** File split button — a specific app chosen from the "Open with" dropdown. */
+  onOpenWith?: (tabId: string, appId: string) => void;
   /** File operation bar — "Open in folder" (reveal the file in the OS shell). */
   onReveal?: (tabId: string) => void;
   /** File operation bar — a file chosen from the toggleable file-tree panel. */
   onFileTreeSelect?: (tabId: string, node: FileTreeNode) => void;
+  /** File operation bar — the raw↔rendered toggle changed (persist per-tab). */
+  onFileViewModeChange?: (tabId: string, mode: FileViewMode) => void;
 }
 
 export interface CanvasTabsProps {
@@ -54,8 +82,11 @@ export interface CanvasTabsProps {
   /** Override the HTML surface harness URL (else `pd-preview://`). */
   harnessUrl?: string;
   handlers?: CanvasTabsHandlers;
-  /** `+` click; defaults to opening a fresh browser tab. */
-  onNewTab?: () => void;
+  /**
+   * A kind was chosen from the `+` menu (Files / Browser / Terminal). When
+   * omitted, the canvas opens a fresh tab of that kind itself.
+   */
+  onNewTab?: (kind: NewTabKind) => void;
   /** Pop the active tab out to a standalone window. When set, a pop-out control
    * appears in the tab bar for artifact-backed tabs (the app opens the window). */
   onPopout?: (tab: CanvasTab) => void;
@@ -65,6 +96,13 @@ export interface CanvasTabsProps {
    * omitted, the panel collapses in place to an internal restore rail.
    */
   onCollapse?: () => void;
+  /**
+   * Whether the canvas panel is OPEN, which drives the panel-toggle glyph: open
+   * → an X (close), closed → the panel icon (round-8 #16). The app owns the open
+   * state + the toggle's placement; when omitted it's inferred from the internal
+   * collapsed state (the expanded tab bar always shows the X).
+   */
+  panelOpen?: boolean;
   /**
    * Copy handler for the tab-bar Copy control (and per-surface copy). Receives
    * the active surface's content — artifact source (code/text/markdown/svg) or,
@@ -93,6 +131,7 @@ export function CanvasTabs({
   onNewTab,
   onPopout,
   onCollapse,
+  panelOpen,
   onCopy,
   onExport,
   renderSurface,
@@ -105,14 +144,20 @@ export function CanvasTabs({
   const [mediaNonce, setMediaNonce] = useState<Record<string, number>>({});
   const bumpMediaNonce = (id: string): void =>
     setMediaNonce((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
+  // Per-tab raw↔rendered view (round-8 #13). Seeded from `tab.rawRendered` /
+  // the per-type default; the operation-bar toggle overrides it here (and the
+  // app may persist via the onFileViewModeChange handler).
+  const [viewModes, setViewModes] = useState<Record<string, FileViewMode>>({});
   if (!registry) ensureDefaultSurfaces();
   const activeRegistry = registry ?? defaultSurfaceRegistry;
   const config: CanvasConfig = { harnessUrl: harnessUrl ?? defaultCanvasConfig.harnessUrl };
 
-  const newTab = (): void => {
-    if (onNewTab) onNewTab();
-    else canvas.openTab({ kind: 'browser', title: 'New tab' });
+  const newTab = (kind: NewTabKind): void => {
+    if (onNewTab) onNewTab(kind);
+    else canvas.openTab({ kind, title: CANVAS_TAB_KINDS[kind].label });
   };
+  const fileViewMode = (tab: CanvasTab): FileViewMode =>
+    viewModes[tab.id] ?? tab.rawRendered ?? fileViewModeDefault(tab);
   // The single open/close affordance for the canvas panel. When the app wires
   // `onCollapse` it owns the slide; standalone, we collapse to the restore rail.
   const togglePanel = (): void => {
@@ -121,6 +166,9 @@ export function CanvasTabs({
   };
   const copyText = activeCopyText(canvas.activeTab);
   const activeTab = canvas.activeTab;
+  // The expanded tab bar is only rendered while the panel is open, so the toggle
+  // shows the X (close) by default; the app can override placement via panelOpen.
+  const panelIsOpen = panelOpen ?? !canvas.collapsed;
 
   if (canvas.collapsed) {
     return (
@@ -178,16 +226,7 @@ export function CanvasTabs({
                       <IconClose size={12} />
                     </button>
                   </div>
-                  {active ? (
-                    <IconButton
-                      size="sm"
-                      className="pd-canvas-newtab"
-                      aria-label="New tab"
-                      onClick={newTab}
-                    >
-                      <IconPlus size={16} />
-                    </IconButton>
-                  ) : null}
+                  {active ? <NewTabButton onPick={newTab} /> : null}
                 </div>
               );
             })}
@@ -206,8 +245,12 @@ export function CanvasTabs({
                 <IconPopout size={16} />
               </IconButton>
             ) : null}
-            <IconButton size="sm" aria-label="Toggle canvas panel" onClick={togglePanel}>
-              <IconPanelRight size={16} />
+            <IconButton
+              size="sm"
+              aria-label={panelIsOpen ? 'Close canvas panel' : 'Open canvas panel'}
+              onClick={togglePanel}
+            >
+              {panelIsOpen ? <IconClose size={16} /> : <IconPanelRight size={16} />}
             </IconButton>
           </div>
         </div>
@@ -221,9 +264,16 @@ export function CanvasTabs({
             onBrowserNavigate={(url) => handlers?.onBrowserNavigate?.(activeTab.id, url)}
             onBrowserOpenExternal={() => handlers?.onBrowserOpenExternal?.(activeTab.id)}
             onBrowserMenu={() => handlers?.onBrowserMenu?.(activeTab.id)}
+            onOpen={() => handlers?.onOpen?.(activeTab.id)}
             onOpenWith={(appId) => handlers?.onOpenWith?.(activeTab.id, appId)}
             onReveal={() => handlers?.onReveal?.(activeTab.id)}
             onFileTreeSelect={(node) => handlers?.onFileTreeSelect?.(activeTab.id, node)}
+            fileViewMode={activeTab.kind === 'file' ? fileViewMode(activeTab) : undefined}
+            onFileViewModeChange={(nextMode) => {
+              const id = activeTab.id;
+              setViewModes((prev) => ({ ...prev, [id]: nextMode }));
+              handlers?.onFileViewModeChange?.(id, nextMode);
+            }}
             onMediaDownload={(format) => handlers?.onMediaDownload?.(activeTab.id, format)}
             onMediaRefresh={() => {
               bumpMediaNonce(activeTab.id);
@@ -244,6 +294,7 @@ export function CanvasTabs({
                 registry={activeRegistry}
                 handlers={handlers}
                 mediaNonce={mediaNonce[activeTab.id] ?? 0}
+                fileMode={activeTab.kind === 'file' ? fileViewMode(activeTab) : undefined}
                 onCopy={onCopy}
                 onExport={onExport}
               />
@@ -251,14 +302,80 @@ export function CanvasTabs({
           ) : (
             <div className="pd-canvas-empty">
               <p className="pd-canvas-empty-title">No surfaces open</p>
-              <IconButton size="sm" aria-label="New tab" onClick={newTab}>
-                <IconPlus size={16} />
-              </IconButton>
+              <NewTabButton onPick={newTab} />
             </div>
           )}
         </div>
       </div>
     </CanvasConfigContext.Provider>
+  );
+}
+
+/**
+ * The tab-strip `+` control — a menu button (round-8 #10) whose popover opens a
+ * new Files / Browser / Terminal tab. The trigger keeps the `.pd-canvas-newtab`
+ * hook + "New tab" label so it stays discoverable; picking a row calls `onPick`.
+ */
+function NewTabButton({ onPick }: { onPick: (kind: NewTabKind) => void }) {
+  const [open, setOpen] = useState(false);
+  // The `+` lives inside the horizontally-scrolling tab strip (overflow clips
+  // both axes), so an absolute dropdown would be cut off at the 40px strip. Pin
+  // the menu with position:fixed, measured from the anchor, so it escapes the
+  // clip while staying inline (no portal — keeps it self-contained + testable).
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  useOutsideClose(ref, open, () => setOpen(false));
+  const toggle = (): void => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const rect = ref.current?.getBoundingClientRect();
+    if (rect) setPos({ top: rect.bottom + 4, left: rect.left });
+    setOpen(true);
+  };
+  return (
+    <div ref={ref} className="pd-canvas-menu-anchor">
+      <IconButton
+        size="sm"
+        className="pd-canvas-newtab"
+        aria-label="New tab"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={toggle}
+      >
+        <IconPlus size={16} />
+      </IconButton>
+      {open ? (
+        <div
+          className="pd-menu pd-canvas-popmenu pd-canvas-popmenu--fixed"
+          role="menu"
+          style={pos ? { top: pos.top, left: pos.left } : undefined}
+        >
+          {NEW_TAB_ITEMS.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.kind}
+                type="button"
+                role="menuitem"
+                className="pd-menu-item"
+                onClick={() => {
+                  setOpen(false);
+                  onPick(item.kind);
+                }}
+              >
+                <span className="pd-menu-icon" aria-hidden="true">
+                  <Icon size={16} />
+                </span>
+                {item.label}
+                {item.hint ? <span className="pd-menu-hint">{item.hint}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -268,6 +385,8 @@ interface DefaultSurfaceProps {
   handlers?: CanvasTabsHandlers;
   /** Media reload counter for the active tab (bumped by the operation bar). */
   mediaNonce?: number;
+  /** Raw↔rendered view for a file tab (from the operation-bar toggle). */
+  fileMode?: FileViewMode;
   onCopy?: (text: string) => void;
   onExport?: (content: ArtifactContent) => void;
 }
@@ -282,6 +401,7 @@ function DefaultSurface({
   registry,
   handlers,
   mediaNonce = 0,
+  fileMode,
   onCopy,
   onExport,
 }: DefaultSurfaceProps) {
@@ -333,6 +453,10 @@ function DefaultSurface({
           content={content}
           filename={filename}
           streaming={tab.streaming}
+          mode={fileMode}
+          // The operation-bar breadcrumb already names the file — hide the
+          // surface's own header so the filename isn't shown twice (round-8 #12).
+          showFilename={false}
           onCopy={onCopy}
         />
       );

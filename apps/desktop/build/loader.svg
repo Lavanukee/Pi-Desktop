@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 1024 1024" role="img" aria-label="Loading">
+  <title>Pi Desktop — loading</title>
+  <!--
+    Loader derived from the app mark: the Pi caret DRAWS ITSELF (a bright clay
+    stroke wipes on along the pi's stroke path), while the right leg blinks like
+    a text-insertion caret — the "cursor" reading of the mark, in motion.
+    Self-contained (CSS-in-SVG, no external refs). Honors prefers-reduced-motion:
+    motion freezes to the fully-drawn static mark.
+    Recolor by setting `color:` on the <svg>; strokes/fills use currentColor.
+  -->
+  <defs>
+    <style>
+      svg { color: #D97757; }
+      .ghost { fill: currentColor; opacity: 0.14; }
+      .draw {
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 78;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-dasharray: 1000 1000;
+        stroke-dashoffset: 1000;
+        animation: pd-draw 2.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+      }
+      .caret {
+        fill: currentColor;
+        transform-origin: center;
+        animation: pd-blink 1.05s ease-in-out infinite;
+      }
+      @keyframes pd-draw {
+        0%   { stroke-dashoffset: 1000; }
+        42%  { stroke-dashoffset: 0; }
+        62%  { stroke-dashoffset: 0; }
+        100% { stroke-dashoffset: -1000; }
+      }
+      @keyframes pd-blink {
+        0%, 44%   { opacity: 1; }
+        56%, 78%  { opacity: 0.12; }
+        90%, 100% { opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .draw  { stroke-dashoffset: 0; animation: none; }
+        .caret { opacity: 1; animation: none; }
+        .ghost { opacity: 0.14; }
+      }
+    </style>
+  </defs>
+
+  <!-- faint full mark: the "un-drawn" pi hinted underneath -->
+  <g class="ghost">
+    <rect x="300" y="328" width="424" height="86" rx="43"/>
+    <rect x="329" y="328" width="86" height="372" rx="43"/>
+    <rect x="609" y="328" width="86" height="372" rx="43"/>
+  </g>
+
+  <!-- the pi drawing itself: roof, then left leg, then right leg -->
+  <path class="draw" pathLength="1000"
+        d="M300 371 L724 371 M372 371 L372 700 M652 371 L652 700"/>
+
+  <!-- right leg = blinking text caret (the "cursor" tell) -->
+  <rect class="caret" x="609" y="328" width="86" height="372" rx="43"/>
+</svg>

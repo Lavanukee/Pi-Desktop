@@ -12,6 +12,7 @@ import { create } from 'zustand';
 import type {
   DesktopSettings,
   DesktopSettingsPatch,
+  EffortLevel,
   ThemeModePref,
 } from '../../electron/settings/settings-contract';
 import { type ThemeFlavor, useThemeStore } from '../store/theme';
@@ -29,6 +30,9 @@ const DEFAULTS: DesktopSettings = {
   capabilities: { image: false, video: false, audio: false, threeD: false },
   customInstructions: '',
   iconStroke: ICON_STROKE_DEFAULT,
+  favoriteModels: [],
+  modelEffortDefaults: {},
+  hfToken: '',
 };
 
 function prefersDark(): boolean {
@@ -134,6 +138,43 @@ export function applySavedHarnessConfig(): void {
   if (effort !== 'medium') patch.effort = effort;
   if (patch.permissionMode !== undefined || patch.effort !== undefined) {
     void applyHarnessConfig(patch);
+  }
+}
+
+/** Star / unstar a model id, persisting the whole favorites list. */
+export async function toggleFavoriteModel(modelId: string): Promise<void> {
+  const current = useSettingsStore.getState().settings.favoriteModels;
+  const favoriteModels = current.includes(modelId)
+    ? current.filter((id) => id !== modelId)
+    : [...current, modelId];
+  await useSettingsStore.getState().update({ favoriteModels });
+}
+
+/**
+ * Set (or clear, when `effort` is undefined) a model's default effort, persisting
+ * the whole map. Applies immediately only when the model is already active — the
+ * usual path is {@link applyModelEffortDefault} at set-active time.
+ */
+export async function setModelEffortDefault(
+  modelId: string,
+  effort: EffortLevel | undefined,
+): Promise<void> {
+  const current = { ...useSettingsStore.getState().settings.modelEffortDefaults };
+  if (effort === undefined) delete current[modelId];
+  else current[modelId] = effort;
+  await useSettingsStore.getState().update({ modelEffortDefaults: current });
+}
+
+/**
+ * When a model with a stored effort default becomes active, push that effort
+ * into the settings (which drives the harness `/harness effort` command). A
+ * no-op when the model has no default or already matches the current effort.
+ */
+export async function applyModelEffortDefault(modelId: string): Promise<void> {
+  const { modelEffortDefaults, effort } = useSettingsStore.getState().settings;
+  const target = modelEffortDefaults[modelId];
+  if (target !== undefined && target !== effort) {
+    await useSettingsStore.getState().update({ effort: target });
   }
 }
 

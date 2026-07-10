@@ -144,6 +144,19 @@
   -webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
 }
 
+/* jedd round-8 #9: a string thought renders through the shared Markdown
+ * component. The Markdown owns its own paragraph wrapping, so drop the
+ * plain-text pre-wrap; and keep the body in the dim "secondary" thought voice —
+ * .pd-prose would otherwise repaint it text-primary. Inline code / links /
+ * KaTeX keep their own colors, exactly as they read in the response prose. */
+.pd-thinking-content[data-md] {
+  white-space: normal;
+}
+
+.pd-thinking-content .pd-thinking-md {
+  color: var(--pd-text-secondary);
+}
+
 /* ---- shared "Show more / less" affordance (jedd round-5 #4) ----
  * Small, lighter (muted), and always in normal flow BELOW the faded text so it
  * never overlaps visible content. Used by ThinkingBlock + in-chain thoughts. */

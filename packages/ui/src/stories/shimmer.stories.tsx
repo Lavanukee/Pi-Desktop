@@ -6,6 +6,23 @@ const BRIEF = 'Curated exercise tutorials and reframed guidance toward direct au
 
 const LONG = `The user wants a local model recommendation. Given 24GB of unified memory, a 27B parameter model at Q4_K_M quantization should leave roughly 6GB of headroom for the context window and the OS. MTP decoding gives another ~40% throughput on top of that, so the 27B is the right default rather than the 14B. I should also mention that dropping to Q3 would free memory but noticeably hurts instruction-following, which is the opposite of what a first-run default should optimize for.`;
 
+/** Rich thought exercising markdown + inline math + code + a hex swatch (round-8 #9). */
+const MARKDOWN_THOUGHT = [
+  'Let me reason through this **carefully**.',
+  '',
+  'The user needs `Q4_K_M` at 27B. Key points:',
+  '',
+  '- 24GB unified memory',
+  '- ~6GB context headroom',
+  '- MTP adds ~40% throughput',
+  '',
+  'Energy check: $E = mc^2$ and the accent `#0a84ff` swatch renders inline.',
+  '',
+  '```python',
+  'ctx = mem - weights  # remaining headroom',
+  '```',
+].join('\n');
+
 export const Shimmer: Story = () => (
   <Frame>
     <Row label="shimmer text (claude smooth sweep / codex steps-48)">
@@ -41,6 +58,11 @@ export const Thinking: Story = () => (
     <Row label="bare inline thought (hideLabel) — how a brief thought sits between prose">
       <ThinkingBlock status="done" hideLabel>
         {BRIEF}
+      </ThinkingBlock>
+    </Row>
+    <Row label="markdown thought (round-8 #9) — bold / list / inline code / $math$ / hex swatch">
+      <ThinkingBlock status="done" durationMs={9000} defaultExpanded>
+        {MARKDOWN_THOUGHT}
       </ThinkingBlock>
     </Row>
   </Frame>

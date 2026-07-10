@@ -81,6 +81,69 @@
 }
 
 /*
+ * Collapsible search (jedd round-8 #2). Collapsed, it's a compact button — a
+ * magnifying glass + a muted "Search chats" label — that expands into the live
+ * SearchInput field in place. The glass stays visible in both states. Both
+ * states share the field's height/radius so the swap reads as expand-in-place.
+ */
+.pd-collapsible-search {
+  display: block;
+  width: 100%;
+}
+
+.pd-collapsible-search--collapsed {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: var(--pd-control-md);
+  margin: 0;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--pd-radius-md);
+  background: transparent;
+  color: var(--pd-text-placeholder);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  font-weight: var(--pd-font-weight-body);
+  text-align: left;
+  /* Signals "click to type", matching the chat-rename affordance. */
+  cursor: text;
+  user-select: none;
+  transition:
+    background-color var(--pd-duration-base) var(--pd-easing-standard),
+    color var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-collapsible-search--collapsed:hover {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-muted);
+}
+
+.pd-collapsible-search-icon {
+  flex: none;
+  color: var(--pd-text-muted);
+}
+
+.pd-collapsible-search-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Expanded: the live field fades in place; reduced-motion drops the fade. */
+.pd-collapsible-search--expanded .pd-search-field {
+  animation: pd-fade-in var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-collapsible-search--expanded .pd-search-field {
+    animation: none;
+  }
+}
+
+/*
  * Auto-grow mirror (claude composer trick, spec-composer motion notes: growth
  * is layout-driven via an invisible grid-cell replica, no animation).
  */

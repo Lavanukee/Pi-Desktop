@@ -63,7 +63,7 @@ export { CodeSurface } from './surfaces/code-surface.tsx';
 export type { ContentSlotOptions } from './surfaces/content-slot.ts';
 export { useContentSlot } from './surfaces/content-slot.ts';
 export type { FileSurfaceProps } from './surfaces/file-surface.tsx';
-export { FileSurface } from './surfaces/file-surface.tsx';
+export { defaultFileViewMode, FileSurface } from './surfaces/file-surface.tsx';
 export type { FrameGate, HtmlSurfaceProps } from './surfaces/html-surface.tsx';
 export { HtmlSurface, HtmlSurfaceController } from './surfaces/html-surface.tsx';
 export { languageExtension } from './surfaces/languages.ts';
@@ -82,6 +82,7 @@ export type { TerminalSurfaceProps } from './surfaces/terminal-surface.tsx';
 export { TerminalSurface } from './surfaces/terminal-surface.tsx';
 // Canvas-local chrome icons (pdf/subagent/expand/minimize/panel-toggle/download/nav)
 export {
+  IconAppGeneric,
   IconArrowLeft,
   IconArrowRight,
   IconCode,
@@ -93,19 +94,28 @@ export {
   IconMinimize,
   IconPanelRight,
   IconPdf,
+  IconPopout,
   IconSubagent,
 } from './tab-icons.tsx';
 // Per-tab operation bar (breadcrumb / file-tree / open-with; browser nav; media)
 export type { CanvasOperationBarProps } from './tabs/canvas-operation-bar.tsx';
-export { CanvasOperationBar, deriveBreadcrumb } from './tabs/canvas-operation-bar.tsx';
+export {
+  CanvasOperationBar,
+  deriveBreadcrumb,
+  fileViewModeDefault,
+  isMarkdownFile,
+} from './tabs/canvas-operation-bar.tsx';
 // Tabbed canvas (THEME 1)
-export type { CanvasTabsHandlers, CanvasTabsProps } from './tabs/canvas-tabs.tsx';
+export type { CanvasTabsHandlers, CanvasTabsProps, NewTabKind } from './tabs/canvas-tabs.tsx';
 export { CanvasTabs } from './tabs/canvas-tabs.tsx';
 export type { CanvasControllerOptions } from './tabs/controller.ts';
 export { CanvasController, createCanvasController } from './tabs/controller.ts';
 // Filterable file-tree panel (file operation bar)
 export type { FileTreeProps } from './tabs/file-tree.tsx';
 export { FileTree, filterFileTree } from './tabs/file-tree.tsx';
+// Project picker (📁 <project> chip → search dropdown)
+export type { ProjectPickerItem, ProjectPickerProps } from './tabs/project-picker.tsx';
+export { ProjectPicker } from './tabs/project-picker.tsx';
 export type { CanvasTabKindMeta } from './tabs/tab-kinds.ts';
 export { CANVAS_TAB_KINDS, kindOpensInCanvas } from './tabs/tab-kinds.ts';
 export type {
@@ -114,6 +124,8 @@ export type {
   CanvasTabKind,
   CanvasTabSpec,
   FileTreeNode,
+  FileViewMode,
+  OpenWithApp,
   OpenWithAppId,
   SubagentItem,
 } from './tabs/tab-model.ts';

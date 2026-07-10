@@ -149,8 +149,13 @@ export {
 export * from './components/icons.tsx';
 export type { ContextGaugeProps, ProgressBarProps } from './components/indicators.tsx';
 export { ContextGauge, ProgressBar } from './components/indicators.tsx';
-export type { InputProps, SearchInputProps, TextAreaProps } from './components/input.tsx';
-export { Input, SearchInput, TextArea } from './components/input.tsx';
+export type {
+  CollapsibleSearchProps,
+  InputProps,
+  SearchInputProps,
+  TextAreaProps,
+} from './components/input.tsx';
+export { CollapsibleSearch, Input, SearchInput, TextArea } from './components/input.tsx';
 export type { MarkdownProps } from './components/markdown.tsx';
 export { Markdown } from './components/markdown.tsx';
 export type {

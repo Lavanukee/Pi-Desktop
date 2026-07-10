@@ -192,10 +192,69 @@ body {
 :root[data-flavor="claude"] .pd-sidebar-slot {
   width: calc(var(--pd-sidebar-width) + 16px);
 }
+/*
+ * Round-8 #1: a COLLAPSED sidebar is a NARROW ICON RAIL (~64px), not hidden —
+ * the SVG icons stay visible. The slot keeps the rail's footprint; the panel
+ * override below cancels the ui package's off-screen slide so it parks in place.
+ */
 .pd-sidebar-slot[data-open="false"] {
-  width: 0;
-  overflow: hidden;
+  width: var(--pd-sidebar-rail, 64px);
+  overflow: visible;
 }
+:root[data-flavor="claude"] .pd-sidebar-slot[data-open="false"] {
+  width: calc(var(--pd-sidebar-rail, 64px) + 16px);
+}
+.pd-sidebar[data-open="false"] {
+  transform: none;
+  opacity: 1;
+  pointer-events: auto;
+  width: var(--pd-sidebar-rail, 64px);
+  transition:
+    width var(--pd-duration-slow) var(--pd-easing-standard),
+    transform var(--pd-duration-slow) var(--pd-easing-standard);
+}
+:root[data-flavor="claude"] .pd-sidebar[data-open="false"] {
+  transform: none;
+}
+
+/* Rail contents: a centered vertical stack of icon-only buttons. */
+.pd-rail {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0 8px;
+  overflow-y: auto;
+}
+.pd-rail-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: var(--pd-radius-md, 8px);
+  background: transparent;
+  color: var(--pd-text-secondary);
+  cursor: pointer;
+  transition: background-color var(--pd-duration-base) var(--pd-easing-standard);
+}
+.pd-rail-btn:hover {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-primary);
+}
+.pd-rail-sep {
+  width: 24px;
+  height: 1px;
+  margin: 4px 0;
+  background: var(--pd-border-subtle, var(--pd-sidebar-border));
+}
+.pd-rail-spacer {
+  flex: 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pd-sidebar-slot {
     transition: none;

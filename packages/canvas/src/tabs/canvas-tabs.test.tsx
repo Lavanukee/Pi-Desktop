@@ -53,11 +53,35 @@ describe('CanvasTabs', () => {
     expect(c.getState().tabs.map((t) => t.id)).toEqual(['t2', 't3']);
   });
 
-  it('+ opens a new tab', async () => {
+  it('+ opens a menu and picks a new tab kind', async () => {
     const c = seededController();
     const { container } = await render(<CanvasTabs controller={c} />);
-    await click(container.querySelector('[aria-label="New tab"]'));
+    // The + is a menu trigger now (round-8 #10) — no tab until a kind is picked.
+    await click(container.querySelector('.pd-canvas-newtab'));
+    const labels = [...container.querySelectorAll('.pd-canvas-menu-anchor .pd-menu-item')].map(
+      (n) => n.textContent,
+    );
+    expect(labels).toEqual(['Files⌘P', 'Browser⌘T', 'Terminal']);
+    const browser = [...container.querySelectorAll('.pd-menu-item')].find((n) =>
+      n.textContent?.includes('Browser'),
+    );
+    await click(browser ?? null);
     expect(c.getState().tabs).toHaveLength(4);
+    expect(c.getState().tabs[3]?.kind).toBe('browser');
+  });
+
+  it('+ menu routes the chosen kind through onNewTab', async () => {
+    const c = seededController();
+    const onNewTab = vi.fn();
+    const { container } = await render(<CanvasTabs controller={c} onNewTab={onNewTab} />);
+    await click(container.querySelector('.pd-canvas-newtab'));
+    const terminal = [...container.querySelectorAll('.pd-menu-item')].find((n) =>
+      n.textContent?.includes('Terminal'),
+    );
+    await click(terminal ?? null);
+    expect(onNewTab).toHaveBeenCalledWith('terminal');
+    // The handler owns creation → the canvas does not open a tab itself.
+    expect(c.getState().tabs).toHaveLength(3);
   });
 
   it('places the new-tab + immediately after the ACTIVE tab', async () => {
@@ -110,25 +134,55 @@ describe('CanvasTabs', () => {
     expect(container.querySelector('[aria-label="Toggle sidebar"]')).toBeNull();
   });
 
-  it('panel-toggle emits onCollapse and leaves internal collapse to the app', async () => {
+  it('panel-toggle shows an X (Close) when open and emits onCollapse', async () => {
     const c = seededController();
     const onCollapse = vi.fn();
     const { container } = await render(<CanvasTabs controller={c} onCollapse={onCollapse} />);
-    await click(container.querySelector('[aria-label="Toggle canvas panel"]'));
+    // Open canvas → the toggle is a "Close canvas panel" control (X glyph, #16).
+    await click(container.querySelector('[aria-label="Close canvas panel"]'));
     expect(onCollapse).toHaveBeenCalledTimes(1);
     // The app owns the slide; internal collapsed state is untouched.
     expect(c.getState().collapsed).toBe(false);
   });
 
-  it('panel-toggle collapses to the restore rail when onCollapse is not wired', async () => {
+  it('panel-toggle collapses to the restore rail (panel icon) when onCollapse is not wired', async () => {
     const c = seededController();
     const { container } = await render(<CanvasTabs controller={c} />);
-    await click(container.querySelector('[aria-label="Toggle canvas panel"]'));
+    await click(container.querySelector('[aria-label="Close canvas panel"]'));
     expect(c.getState().collapsed).toBe(true);
     expect(container.querySelector('.pd-canvas-tabs--collapsed')).toBeTruthy();
-    // The rail reopens the panel.
+    // The rail reopens the panel (panel icon → open).
     await click(container.querySelector('[aria-label="Open canvas panel"]'));
     expect(c.getState().collapsed).toBe(false);
+  });
+
+  it('panel-toggle glyph follows the app-owned panelOpen prop', async () => {
+    const c = seededController();
+    const { container, rerender } = await render(
+      <CanvasTabs controller={c} panelOpen onCollapse={() => {}} />,
+    );
+    expect(container.querySelector('[aria-label="Close canvas panel"]')).toBeTruthy();
+    await rerender(<CanvasTabs controller={c} panelOpen={false} onCollapse={() => {}} />);
+    expect(container.querySelector('[aria-label="Open canvas panel"]')).toBeTruthy();
+  });
+
+  it('toggles a markdown file tab between rendered prose and raw source', async () => {
+    const c = new CanvasController({ idFactory: () => 'f1' });
+    c.openTab({
+      kind: 'file',
+      title: 'Doc',
+      filePath: 'README.md',
+      artifact: { id: 'a', filename: 'README.md', content: { kind: 'markdown', text: '# Hello' } },
+    });
+    const { container } = await render(<CanvasTabs controller={c} />);
+    // Markdown defaults to rendered → prose, and the filename is NOT duplicated
+    // in the surface (only the op-bar breadcrumb names it — #12).
+    expect(container.querySelector('.pd-canvas-markdown')).toBeTruthy();
+    expect(container.querySelector('.pd-file-name')).toBeNull();
+    // Switch to Raw → the CodeMirror source viewer.
+    const raw = [...container.querySelectorAll('.pd-segment')].find((n) => n.textContent === 'Raw');
+    await click(raw ?? null);
+    expect(container.querySelector('.cm-editor')).toBeTruthy();
   });
 
   it('copies the active surface content and swaps to a check', async () => {

@@ -11,6 +11,7 @@ import type {
   LlmRecommendation,
   LlmStatus,
 } from '../../electron/ipc-contract';
+import { useSettingsStore } from './settings-store';
 
 export interface LlmDownloadState {
   modelId: string;
@@ -138,7 +139,9 @@ export const useLlmStore = create<LlmStoreState>((set, get) => ({
         paused: false,
       },
     });
-    const res = await window.piDesktop.invoke('llm:download-model', { modelId, quant });
+    // Gated HF repos need the saved token; public repos ignore it.
+    const hfToken = useSettingsStore.getState().settings.hfToken || undefined;
+    const res = await window.piDesktop.invoke('llm:download-model', { modelId, quant, hfToken });
     if (res.paused === true) {
       // Keep the bar; flip to the paused affordance (Resume).
       set((s) => (s.download ? { download: { ...s.download, paused: true } } : {}));

@@ -49,6 +49,15 @@ export interface DesktopSettings {
   /** Global SVG icon stroke width; applied to `--pd-icon-stroke` on <html>.
    * Defaults to the token value (1.25). */
   iconStroke: number;
+  /** Starred model ids (curated or discovered-HF), surfaced in a Favorites
+   * section of the Model Manager. */
+  favoriteModels: string[];
+  /** Per-model default effort; applied to the effort setting when that model is
+   * set active (keyed by model id). */
+  modelEffortDefaults: Record<string, EffortLevel>;
+  /** Hugging Face access token for gated/private repos (search + gated
+   * downloads). Sensitive — persisted to the 0600 settings.json. Empty = unset. */
+  hfToken: string;
 }
 
 /** A partial patch merged over the current document (one level deep on the
@@ -62,6 +71,11 @@ export interface DesktopSettingsPatch {
   capabilities?: Partial<GenerationCapabilities>;
   customInstructions?: string;
   iconStroke?: number;
+  /** Full replacement list (renderer read-modify-writes the whole array). */
+  favoriteModels?: string[];
+  /** Full replacement map (renderer read-modify-writes the whole record). */
+  modelEffortDefaults?: Record<string, EffortLevel>;
+  hfToken?: string;
 }
 
 /** Icon-stroke bounds — mirrors the IconStrokeControl slider range. */

@@ -18,6 +18,7 @@ import {
 } from './canvas/browser-contract';
 import { IMPORT_INVOKE_CHANNELS, type ImportInvokeMap } from './import/import-contract';
 import { PI_INVOKE_CHANNELS, type PiEventMap, type PiInvokeMap } from './pi/contract';
+import { PROJECT_INVOKE_CHANNELS, type ProjectInvokeMap } from './project/project-contract';
 import { SETTINGS_INVOKE_CHANNELS, type SettingsInvokeMap } from './settings/settings-contract';
 import { PTY_INVOKE_CHANNELS, type PtyEventMap, type PtyInvokeMap } from './terminal/pty-contract';
 
@@ -142,6 +143,14 @@ export interface LlmCatalogEntry {
   vision: boolean;
   downloaded: boolean;
   recommended: boolean;
+  /** HF repo id (e.g. "unsloth/gemma-4-E2B-it-GGUF") — for the Advanced view. */
+  hfRepo?: string;
+  /** True when the source HF repo is gated (needs an accepted licence / token). */
+  gated?: boolean;
+  /** Where this entry came from: the hand-curated catalog or a Browse-HF add. */
+  source?: 'curated' | 'hf';
+  /** True only for HEAD-verified curated repos; false for discovered HF adds. */
+  verified?: boolean;
 }
 
 export interface LlmHardware {
@@ -170,9 +179,10 @@ export type LlmInvokeMap = {
       recommendation: LlmRecommendation | null;
     };
   };
-  /** Start OR resume a download (resumes from the `.part` sidecar automatically). */
+  /** Start OR resume a download (resumes from the `.part` sidecar automatically).
+   * `hfToken` (from settings) authorizes gated-repo files; public repos ignore it. */
   'llm:download-model': {
-    request: { modelId: string; quant?: string };
+    request: { modelId: string; quant?: string; hfToken?: string };
     response: { success: boolean; error?: string; paused?: boolean; cancelled?: boolean };
   };
   /** Abort the in-flight download but KEEP the `.part` file (download-model resumes it). */
@@ -213,6 +223,85 @@ export const LLM_INVOKE_CHANNELS = [
 ] as const satisfies readonly (keyof LlmInvokeMap)[];
 
 // ---------------------------------------------------------------------------
+// Hugging Face model-search channels (Browse-HF view; proxied to the inference
+// supervisor, which owns @pi-desktop/inference's hf-search + the dynamic
+// registry of discovered models). Structural DTO mirrors of the package's
+// HfModelHit / HfGgufFile keep this contract free of a package import.
+// ---------------------------------------------------------------------------
+
+/** One HF search hit (mirror of @pi-desktop/inference `HfModelHit`). */
+export interface HfModelHitDTO {
+  id: string;
+  author: string;
+  name: string;
+  downloads: number;
+  likes: number;
+  tags: string[];
+  gated: boolean;
+  pipelineTag?: string;
+  updatedAt?: string;
+  likesRecent?: number;
+}
+
+/** One GGUF file in a repo (mirror of `HfGgufFile`) + a RAM estimate the
+ * supervisor computes so the quant picker can badge fit without the package. */
+export interface HfGgufFileDTO {
+  path: string;
+  sizeBytes?: number;
+  quant?: string;
+  sha256?: string;
+  mmproj?: boolean;
+  mtp?: boolean;
+  /** Estimated minimum system RAM (GB), via `estimateRamGB`; undefined if unsized. */
+  minRamGB?: number;
+}
+
+/** Sort orders exposed in the Browse-HF UI (mapped to HF's raw sort keys). */
+export type HfSortOption = 'downloads' | 'likes' | 'recent';
+
+export type HfInvokeMap = {
+  /** Text + filter search over HF GGUF repos (rate-limit aware; errors are
+   * returned, not thrown, so the UI can show a message instead of crashing). */
+  'hf:search': {
+    request: {
+      query: string;
+      family?: string;
+      task?: string;
+      gated?: boolean;
+      minLikes?: number;
+      sort?: HfSortOption;
+      limit?: number;
+      hfToken?: string;
+    };
+    response: { hits: HfModelHitDTO[]; error?: string; rateLimited?: boolean };
+  };
+  /** List a repo's `.gguf` files (quant/size/sha/mmproj/mtp + RAM estimate). */
+  'hf:list-files': {
+    request: { repoId: string; contextWindow?: number; hfToken?: string };
+    response: { files: HfGgufFileDTO[]; gated?: boolean; error?: string };
+  };
+  /** Adapt an HF hit + chosen file into a catalog entry and register it with the
+   * supervisor (persisted), so the existing llm:download-model/start-server/… act
+   * on it by id exactly like a curated model. */
+  'hf:register': {
+    request: {
+      hit: HfModelHitDTO;
+      file: HfGgufFileDTO;
+      mmproj?: HfGgufFileDTO;
+      mtpFile?: HfGgufFileDTO;
+      contextWindow?: number;
+    };
+    response: { modelId: string; entry: LlmCatalogEntry };
+  };
+};
+
+export const HF_INVOKE_CHANNELS = [
+  'hf:search',
+  'hf:list-files',
+  'hf:register',
+] as const satisfies readonly (keyof HfInvokeMap)[];
+
+// ---------------------------------------------------------------------------
 // Canvas channels (artifact pop-out into a separate app window)
 // ---------------------------------------------------------------------------
 
@@ -231,10 +320,21 @@ export interface CanvasArtifactPayload {
   };
 }
 
-/** The apps the canvas file operation bar's "Open ▾" dropdown shells out to.
- * Mirrors @pi-desktop/canvas's `OpenWithAppId` (kept inline so the electron
- * contract stays free of the canvas React package). */
-export type CanvasOpenWithAppId = 'vscode-insiders' | 'default' | 'terminal' | 'xcode';
+/** Identifier of an app in the file "Open with" list. Round-8: widened to a
+ * free-form string — the desktop supplies real system apps (bundle id or `.app`
+ * path). `'default'` still routes to the OS default handler; the legacy named
+ * ids (`vscode-insiders` / `terminal` / `xcode`) stay valid for back-compat. */
+export type CanvasOpenWithAppId = string;
+
+/** One app the canvas "Open with" split button can shell out to (round-8 #14).
+ * Mirrors @pi-desktop/canvas's `OpenWithApp` (kept inline so the electron
+ * contract stays free of the canvas React package). The `iconDataUrl` is the
+ * app's system icon extracted to a PNG data URL by the main process. */
+export interface CanvasOpenApp {
+  id: CanvasOpenWithAppId;
+  name: string;
+  iconDataUrl?: string;
+}
 
 export type CanvasInvokeMap = {
   /** Hand the current artifact to main and open/focus the pop-out window. */
@@ -243,6 +343,13 @@ export type CanvasInvokeMap = {
   'canvas:get-popout': { request: undefined; response: { artifact: CanvasArtifactPayload | null } };
   /** Browser operation bar "open in external browser" → shell.openExternal. */
   'canvas:open-external': { request: { url: string }; response: { ok: boolean } };
+  /** The apps that can open a given file (LaunchServices + a pragmatic set), each
+   * with a system-icon data URL, plus the detected default app id (round-8 #14).
+   * Icons are extracted + cached lazily in main. */
+  'canvas:list-open-apps': {
+    request: { path: string };
+    response: { apps: CanvasOpenApp[]; defaultAppId: string | null };
+  };
   /** File operation bar "Open ▾" → shell out to open the file in the chosen app. */
   'canvas:open-with': {
     request: { path: string; appId: CanvasOpenWithAppId };
@@ -256,6 +363,7 @@ export const CANVAS_INVOKE_CHANNELS = [
   'canvas:popout',
   'canvas:get-popout',
   'canvas:open-external',
+  'canvas:list-open-apps',
   'canvas:open-with',
   'canvas:reveal',
 ] as const satisfies readonly (keyof CanvasInvokeMap)[];
@@ -263,9 +371,11 @@ export const CANVAS_INVOKE_CHANNELS = [
 export type AppInvokeMap = CoreInvokeMap &
   FsInvokeMap &
   LlmInvokeMap &
+  HfInvokeMap &
   AfmInvokeMap &
   SettingsInvokeMap &
   CanvasInvokeMap &
+  ProjectInvokeMap &
   ImportInvokeMap &
   BrowserInvokeMap &
   BrowserAgentInvokeMap &
@@ -280,9 +390,11 @@ export const APP_INVOKE_CHANNELS = [
   'app:get-info',
   ...FS_INVOKE_CHANNELS,
   ...LLM_INVOKE_CHANNELS,
+  ...HF_INVOKE_CHANNELS,
   ...AFM_INVOKE_CHANNELS,
   ...SETTINGS_INVOKE_CHANNELS,
   ...CANVAS_INVOKE_CHANNELS,
+  ...PROJECT_INVOKE_CHANNELS,
   ...IMPORT_INVOKE_CHANNELS,
   ...BROWSER_INVOKE_CHANNELS,
   ...BROWSER_AGENT_INVOKE_CHANNELS,

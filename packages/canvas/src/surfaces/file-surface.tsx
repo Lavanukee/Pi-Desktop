@@ -1,7 +1,13 @@
+import { Markdown } from '@pi-desktop/ui';
 import { type ReactNode, useEffect, useRef } from 'react';
 import type { ArtifactContent } from '../model.ts';
+import type { FileViewMode } from '../tabs/tab-model.ts';
 import { CodeSurface } from './code-surface.tsx';
-import { MarkdownSurface } from './markdown-surface.tsx';
+
+/** Sensible default view for a file: markdown renders, everything else is raw. */
+export function defaultFileViewMode(content: ArtifactContent): FileViewMode {
+  return content.kind === 'markdown' ? 'rendered' : 'raw';
+}
 
 export interface FileSurfaceProps {
   content: ArtifactContent;
@@ -12,6 +18,19 @@ export interface FileSurfaceProps {
    * auto-scrolls to the newest line on each delta.
    */
   streaming?: boolean;
+  /**
+   * Raw ↔ rendered view. `rendered` markdown goes through @pi-desktop/ui's
+   * Markdown (katex + hex swatches + fenced code); everything else (and `raw`)
+   * uses the CodeMirror source viewer. Defaults per file type via
+   * {@link defaultFileViewMode}.
+   */
+  mode?: FileViewMode;
+  /**
+   * Show the filename header strip. Defaults to `true` for standalone use; the
+   * tabbed canvas passes `false` because the operation-bar breadcrumb already
+   * names the file (avoids a duplicate header — round-8 #12).
+   */
+  showFilename?: boolean;
   onCopy?: (text: string) => void;
   /** Slot for future inline editing UI (overlaid below the viewer). */
   children?: ReactNode;
@@ -31,11 +50,16 @@ export function FileSurface({
   content,
   filename,
   streaming = false,
+  mode,
+  showFilename = true,
   onCopy,
   children,
   className,
 }: FileSurfaceProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
+  const view = mode ?? defaultFileViewMode(content);
+  // Rendered markdown → rich prose; raw markdown + all code → the source viewer.
+  const rendered = view === 'rendered' && content.kind === 'markdown';
 
   // Auto-scroll to newest while streaming. Child effects (which apply the code
   // delta) run before this parent effect, so the scroller height is already
@@ -56,10 +80,12 @@ export function FileSurface({
   const rootClass = ['pd-file', className].filter(Boolean).join(' ');
   return (
     <div className={rootClass}>
-      {filename ? <div className="pd-file-name">{filename}</div> : null}
+      {showFilename && filename ? <div className="pd-file-name">{filename}</div> : null}
       <div ref={bodyRef} className="pd-file-body">
-        {content.kind === 'markdown' ? (
-          <MarkdownSurface content={content} streaming={streaming} onCopy={onCopy} />
+        {rendered ? (
+          <div className="pd-canvas-markdown pd-scroll">
+            <Markdown>{content.text}</Markdown>
+          </div>
         ) : (
           <CodeSurface content={content} streaming={streaming} onCopy={onCopy} />
         )}

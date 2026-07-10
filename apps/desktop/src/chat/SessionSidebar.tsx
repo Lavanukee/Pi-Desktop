@@ -1,34 +1,44 @@
 /**
- * Session sidebar: floating (claude) / frosted (codex) panel that slides in/out
- * (round-3 #A6). Hosts the collapse control (just right of the traffic lights,
- * #A5), a search field, New chat, then the Workspace nav (Projects, Artifacts,
- * Connectors, Scheduled, Skills, Settings) ABOVE the Chats history (round-5 #22).
- * Connectors + Settings are wired to real destinations; the not-yet-built pages
- * open a "coming soon" stub (#A6 follow-up). Sessions are read from the fs
- * channels; mutations go through pi.
+ * Session sidebar. Two shapes driven by `open`:
+ *   - EXPANDED: the collapse toggle sits to the LEFT of a click-to-expand
+ *     `CollapsibleSearch` (round-8 #1/#2), then New chat, the Workspace nav
+ *     (Projects, Model management, Connectors, Scheduled, Skills — Artifacts +
+ *     the redundant Settings entry removed, #4/#5), then the Chats history and
+ *     the bottom-left profile/theme footer.
+ *   - COLLAPSED: a NARROW ICON RAIL (~64px) — the SVG icons stay visible; the
+ *     search becomes just the magnifying glass; the profile/theme controls pin
+ *     to the bottom. Never fully hidden. Width + label-hiding live in global.css.
+ * Sessions are read from the fs channels; mutations go through pi.
  */
 
 import {
+  CollapsibleSearch,
   IconButton,
   IconChat,
   IconClock,
   IconConnector,
-  IconFile,
   IconFolderPlus,
   IconPencil,
+  IconSearch,
   IconSettings,
   IconSidebar,
   IconSparkles,
   Kbd,
-  SearchInput,
   Sidebar,
   SidebarRow,
   SidebarScroll,
   SidebarSection,
 } from '@pi-desktop/ui';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  type ComponentType,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import type { SessionSummary } from '../../electron/ipc-contract';
-import { IconMoon, IconSun } from '../settings/icons';
+import { IconCpu, IconMoon, IconSun } from '../settings/icons';
 import type { SettingsSection } from '../settings/SettingsView';
 import { listSessions, newSession, switchSession } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
@@ -36,7 +46,7 @@ import { useSettingsStore } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
 
 /** Nav destinations that don't have a real page yet — open a "coming soon" stub. */
-export type SidebarStub = 'projects' | 'artifacts' | 'scheduled' | 'skills';
+export type SidebarStub = 'projects' | 'scheduled' | 'skills';
 
 /**
  * Light/dark quick-toggle glyph (round-5 #15, relocated to the sidebar footer in
@@ -52,6 +62,32 @@ function ThemeToggleIcon({ mode }: { mode: 'dark' | 'light' }) {
   );
 }
 
+/** A 40×40 icon-only button for the collapsed rail (tooltip = its label). */
+function RailButton({
+  label,
+  icon,
+  onClick,
+  testid,
+}: {
+  label: string;
+  icon: ReactNode;
+  onClick: () => void;
+  testid?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className="pd-rail-btn pd-focusable"
+      aria-label={label}
+      title={label}
+      data-testid={testid}
+      onClick={onClick}
+    >
+      {icon}
+    </button>
+  );
+}
+
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '';
@@ -62,15 +98,26 @@ function relativeTime(iso: string): string {
   return `${Math.floor(secs / 86400)}d`;
 }
 
+interface WorkspaceNavItem {
+  id: string;
+  label: string;
+  icon: ComponentType<{ size?: number }>;
+  onClick: () => void;
+  testid: string;
+}
+
 export function SessionSidebar({
   open,
   onCollapse,
+  onExpand,
   onTruncated,
   onOpenSettings,
   onOpenStub,
 }: {
   open: boolean;
   onCollapse: () => void;
+  /** Expand the rail back to the full sidebar (round-8 rail). */
+  onExpand: () => void;
   onTruncated: () => void;
   onOpenSettings: (section: SettingsSection) => void;
   onOpenStub: (stub: SidebarStub) => void;
@@ -96,10 +143,10 @@ export function SessionSidebar({
   // resets the thread but does NOT dispose/respawn pi, so no "pi exited" crash
   // toast fires and nothing new bounces in the dock (the old restartPi path did
   // both). newSession() owns the store reset + custom-instructions re-arm.
-  const onNewChat = async () => {
+  const onNewChat = useCallback(async () => {
     await newSession();
     refresh();
-  };
+  }, [refresh]);
 
   const onOpen = async (file: string) => {
     const result = await switchSession(file);
@@ -114,37 +161,123 @@ export function SessionSidebar({
     return list.slice(0, 50);
   }, [sessions, query]);
 
+  // Round-5 #22 / round-8 #4/#5: Workspace nav above the Chats list. Artifacts
+  // removed; "Model management" routes to the settings model-manager surface
+  // (section id `models` is the seam the parallel model-manager rework owns);
+  // the redundant Settings entry is gone (it lives in the profile footer).
+  const workspaceNav: WorkspaceNavItem[] = [
+    {
+      id: 'projects',
+      label: 'Projects',
+      icon: IconFolderPlus,
+      onClick: () => onOpenStub('projects'),
+      testid: 'nav-projects',
+    },
+    {
+      id: 'models',
+      label: 'Model management',
+      icon: IconCpu,
+      onClick: () => onOpenSettings('models'),
+      testid: 'nav-model-management',
+    },
+    {
+      id: 'connectors',
+      label: 'Connectors',
+      icon: IconConnector,
+      onClick: () => onOpenSettings('connectors'),
+      testid: 'nav-connectors',
+    },
+    {
+      id: 'scheduled',
+      label: 'Scheduled',
+      icon: IconClock,
+      onClick: () => onOpenStub('scheduled'),
+      testid: 'nav-scheduled',
+    },
+    {
+      id: 'skills',
+      label: 'Skills',
+      icon: IconSparkles,
+      onClick: () => onOpenStub('skills'),
+      testid: 'nav-skills',
+    },
+  ];
+
+  // ── COLLAPSED: the narrow icon rail (round-8 #1/#3) ────────────────────────
+  if (!open) {
+    return (
+      <Sidebar open={open} className="pd-sidebar--rail">
+        {/* Traffic-light clearance strip (draggable); no button — the rail's own
+            expand toggle sits just below it, clear of the macOS lights. */}
+        <div className="pd-sidebar-tl h-[var(--pd-height-topbar)] shrink-0 [-webkit-app-region:drag]" />
+        <div className="pd-rail">
+          <RailButton
+            label="Expand sidebar"
+            testid="expand-sidebar"
+            onClick={onExpand}
+            icon={<IconSidebar size={18} />}
+          />
+          <RailButton label="Search chats" onClick={onExpand} icon={<IconSearch size={18} />} />
+          <div className="pd-rail-sep" aria-hidden="true" />
+          <RailButton
+            label="New chat"
+            testid="new-chat"
+            onClick={() => void onNewChat()}
+            icon={<IconPencil size={18} />}
+          />
+          <RailButton label="Chats" onClick={onExpand} icon={<IconChat size={18} />} />
+          <RailButton
+            label="Projects"
+            testid="nav-projects"
+            onClick={() => onOpenStub('projects')}
+            icon={<IconFolderPlus size={18} />}
+          />
+          <RailButton
+            label="Model management"
+            testid="nav-model-management"
+            onClick={() => onOpenSettings('models')}
+            icon={<IconCpu size={18} />}
+          />
+          <div className="pd-rail-spacer" />
+          <RailButton
+            label="Open settings"
+            testid="open-settings"
+            onClick={() => onOpenSettings('personalization')}
+            icon={<IconSettings size={18} />}
+          />
+          <RailButton
+            label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            testid="toggle-mode"
+            onClick={() => void setTheme({ mode: mode === 'dark' ? 'light' : 'dark' })}
+            icon={<ThemeToggleIcon mode={mode} />}
+          />
+        </div>
+      </Sidebar>
+    );
+  }
+
+  // ── EXPANDED: the full sidebar ─────────────────────────────────────────────
   return (
     <Sidebar open={open}>
-      {/* Traffic-light clearance strip. It shares the TOP BAR's height so the
-          collapse control is vertically centered on the same band as the traffic
-          lights + top-bar controls. Round-6 (img53): `.pd-sidebar-tl` pins the
-          toggle to the SAME window-x (~80px) as the top-bar's re-open button in
-          BOTH flavors — accounting for claude's 8px floating-panel margin — so it
-          sits cleanly past the lights and never jumps on collapse/expand. */}
-      <div className="pd-sidebar-tl flex h-[var(--pd-height-topbar)] shrink-0 items-center [-webkit-app-region:drag] pr-2">
+      {/* Traffic-light clearance strip (draggable). The collapse toggle now lives
+          in the search row below (to the LEFT of the search), round-8 #1. */}
+      <div className="pd-sidebar-tl h-[var(--pd-height-topbar)] shrink-0 [-webkit-app-region:drag]" />
+
+      {/* Collapse toggle + click-to-expand search share one row; both align on
+          the same 8px left inset as the rows below (img33). */}
+      <div className="flex items-center gap-1 px-2 pb-2">
         <button
           type="button"
           aria-label="Collapse sidebar"
           data-testid="collapse-sidebar"
           onClick={onCollapse}
-          className="[-webkit-app-region:no-drag] pd-focusable flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-bg-hover"
+          className="pd-focusable flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-bg-hover"
         >
           <IconSidebar size={16} />
         </button>
-      </div>
-
-      {/* Search + the scroll list below share ONE 8px left inset (px-2 ==
-          SidebarScroll's padding), so the search field, New chat, and the Chats
-          rows all line their rounded boxes up on the same left edge (img33). */}
-      <div className="px-2 pb-2">
-        <SearchInput
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search chats"
-          aria-label="Search chats"
-          data-testid="sidebar-search"
-        />
+        <div className="min-w-0 flex-1" data-testid="sidebar-search">
+          <CollapsibleSearch placeholder="Search chats" value={query} onChange={setQuery} />
+        </div>
       </div>
 
       <SidebarScroll>
@@ -156,44 +289,19 @@ export function SessionSidebar({
           data-testid="new-chat"
         />
 
-        {/* Round-5 #22: the Workspace nav sits ABOVE the Chats/Recents list. */}
         <SidebarSection label="Workspace">
-          <SidebarRow
-            icon={<IconFolderPlus size={16} />}
-            label="Projects"
-            onClick={() => onOpenStub('projects')}
-            data-testid="nav-projects"
-          />
-          <SidebarRow
-            icon={<IconFile size={16} />}
-            label="Artifacts"
-            onClick={() => onOpenStub('artifacts')}
-            data-testid="nav-artifacts"
-          />
-          <SidebarRow
-            icon={<IconConnector size={16} />}
-            label="Connectors"
-            onClick={() => onOpenSettings('connectors')}
-            data-testid="nav-connectors"
-          />
-          <SidebarRow
-            icon={<IconClock size={16} />}
-            label="Scheduled"
-            onClick={() => onOpenStub('scheduled')}
-            data-testid="nav-scheduled"
-          />
-          <SidebarRow
-            icon={<IconSparkles size={16} />}
-            label="Skills"
-            onClick={() => onOpenStub('skills')}
-            data-testid="nav-skills"
-          />
-          <SidebarRow
-            icon={<IconSettings size={16} />}
-            label="Settings"
-            onClick={() => onOpenSettings('appearance')}
-            data-testid="nav-settings"
-          />
+          {workspaceNav.map((item) => {
+            const Icon = item.icon;
+            return (
+              <SidebarRow
+                key={item.id}
+                icon={<Icon size={16} />}
+                label={item.label}
+                onClick={item.onClick}
+                data-testid={item.testid}
+              />
+            );
+          })}
         </SidebarSection>
 
         <SidebarSection label="Chats">
@@ -216,10 +324,9 @@ export function SessionSidebar({
         </SidebarSection>
       </SidebarScroll>
 
-      {/* Bottom-left footer: the profile row (PRIMARY settings entry point,
-          relocated from the top-bar gear) plus the light/dark quick-toggle
-          (round-7: moved here from the top bar). `open-settings` + `toggle-mode`
-          testids are kept so the existing probes still reach them. */}
+      {/* Bottom-left footer: the profile row (PRIMARY settings entry point) plus
+          the light/dark quick-toggle. `open-settings` + `toggle-mode` testids are
+          kept so the existing probes still reach them. */}
       <div className="m-1 mt-0 flex items-center gap-1">
         <button
           type="button"

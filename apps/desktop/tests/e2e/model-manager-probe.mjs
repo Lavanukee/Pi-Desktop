@@ -95,7 +95,104 @@ try {
   assert(statusText.includes('42.5'), `expected TPS in status, got: ${statusText}`);
   assert(statusText.includes(':8080'), `expected port in status, got: ${statusText}`);
 
+  // ── Advanced toggle → per-model default effort persists ─────────────────────
+  await page.click('[data-testid="mm-advanced-toggle"]');
+  await page.waitForSelector(`[data-testid="advanced-${modelId}"]`, { timeout: 8000 });
+  await page.click(`[data-testid="effort-default-${modelId}"]`);
+  await page.getByRole('option', { name: 'High' }).click();
+  await page.waitForFunction(
+    (id) => window.__settings_store().getState().settings.modelEffortDefaults[id] === 'high',
+    modelId,
+    { timeout: 8000 },
+  );
+
+  // ── Favorites: star the curated model, assert it persists ───────────────────
+  await page.click(`[data-testid="favorite-${modelId}"]`);
+  await page.waitForFunction(
+    (id) => window.__settings_store().getState().settings.favoriteModels.includes(id),
+    modelId,
+    { timeout: 8000 },
+  );
+  // The Favorites-only filter now appears and narrows the list to the starred card.
+  await page.click('[data-testid="mm-favorites-toggle"]');
+  await page.waitForSelector(`[data-testid="model-card-${modelId}"]`, { timeout: 8000 });
+  await page.click('[data-testid="mm-favorites-toggle"]');
+
+  // ── Browse Hugging Face: mock a search + a repo file listing ────────────────
+  await page.click('[data-testid="mm-tab-browse"]');
+  await page.waitForSelector('[data-testid="hf-browse"]', { timeout: 8000 });
+
+  const hfHit = {
+    id: 'probe-org/Probe-Model-GGUF',
+    author: 'probe-org',
+    name: 'Probe-Model-GGUF',
+    downloads: 123456,
+    likes: 789,
+    tags: ['gguf', 'text-generation'],
+    gated: false,
+    pipelineTag: 'text-generation',
+    updatedAt: '2026-01-01T00:00:00Z',
+  };
+  // Inject search results (mocks the hf:search IPC at the store boundary — the
+  // same technique the download-progress path above uses, no live network).
+  await page.evaluate((hit) => {
+    window.__hf_store().setState({ searchStatus: 'done', results: [hit] });
+  }, hfHit);
+  await page.waitForSelector('[data-testid="hf-results"]', { timeout: 8000 });
+  const resultCards = await page.locator('[data-testid^="hf-result-"]').count();
+  assert(resultCards === 1, `expected 1 HF result card, got ${resultCards}`);
+  const resultText = await page
+    .locator('[data-testid="hf-result-probe-org/Probe-Model-GGUF"]')
+    .innerText();
+  assert(resultText.includes('probe-org'), `expected author in result, got: ${resultText}`);
+
+  // Selecting a repo → its GGUF quant list (mock the hf:list-files IPC too).
+  await page.evaluate((hit) => {
+    window.__hf_store().setState({
+      selected: hit,
+      filesStatus: 'done',
+      files: [
+        {
+          path: 'Probe-Q4_K_M.gguf',
+          sizeBytes: 4e9,
+          quant: 'Q4_K_M',
+          mmproj: false,
+          mtp: false,
+          minRamGB: 6,
+        },
+        {
+          path: 'Probe-Q6_K.gguf',
+          sizeBytes: 6e9,
+          quant: 'Q6_K',
+          mmproj: false,
+          mtp: false,
+          minRamGB: 8,
+        },
+      ],
+    });
+  }, hfHit);
+  await page.waitForSelector('[data-testid="hf-quant-probe-org/Probe-Model-GGUF-Q4_K_M"]', {
+    timeout: 8000,
+  });
+  const quantRows = await page
+    .locator('[data-testid^="hf-quant-probe-org/Probe-Model-GGUF-"]')
+    .count();
+  assert(quantRows === 2, `expected 2 quant rows, got ${quantRows}`);
+
+  // Favoriting an HF result persists by its repo id.
+  await page.click('[data-testid="favorite-probe-org/Probe-Model-GGUF"]');
+  await page.waitForFunction(
+    () =>
+      window
+        .__settings_store()
+        .getState()
+        .settings.favoriteModels.includes('probe-org/Probe-Model-GGUF'),
+    undefined,
+    { timeout: 8000 },
+  );
+
   // ── Composer model-chip deep-link into the manager ──────────────────────────
+  // Back to chat (from the Browse tab of the manager).
   await page.click('[data-testid="settings-back"]');
   await page.waitForSelector('[data-testid="composer-input"]', { timeout: 8000 });
   // Open the footer model menu → "Manage models…".
@@ -105,7 +202,8 @@ try {
   await page.waitForSelector('[data-testid="model-manager"]', { timeout: 8000 });
 
   console.log(
-    `model-manager-probe OK — ${cardCount} cards + RAM badges + recommendation; progress→active UI + footer deep-link verified`,
+    `model-manager-probe OK — ${cardCount} cards + RAM badges + recommendation; progress→active UI; ` +
+      'advanced effort-default + favorite persist; Browse-HF search→quant-list + HF favorite; footer deep-link verified',
   );
 } finally {
   await app.close();

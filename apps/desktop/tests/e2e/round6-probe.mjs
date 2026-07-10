@@ -70,10 +70,12 @@ try {
   await page.waitForSelector('[data-testid="composer-input"]', { timeout: 8000 });
 
   // ── (3) Settings gear cog — check BEFORE opening settings (sidebar visible) ──
-  const gearD = await page.getAttribute('[data-testid="nav-settings"] svg path', 'd');
+  // Round-8 #5: the redundant Workspace "Settings" nav row was removed; the gear
+  // now lives only in the bottom-left profile entry (data-testid="open-settings").
+  const gearD = await page.getAttribute('[data-testid="open-settings"] svg path', 'd');
   assert(
     typeof gearD === 'string' && gearD.length > 150,
-    `Settings nav icon is not the gear cog (path d length ${gearD?.length ?? 0})`,
+    `Settings profile icon is not the gear cog (path d length ${gearD?.length ?? 0})`,
   );
 
   // ── (1) Streaming thought: expanded + live, then collapse on response text ──

@@ -310,6 +310,111 @@
   background: var(--pd-border-subtle);
 }
 
+/* Anchor for the .pd-menu popovers (new-tab +, project picker). */
+.pd-canvas-menu-anchor {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+/* Position the shared ui .pd-menu surface under its trigger (it carries the
+ * look; this only anchors it). Right-aligned by default; data-align="start"
+ * left-aligns (the +-menu / project picker open leftward). */
+.pd-menu.pd-canvas-popmenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: auto;
+}
+
+.pd-menu.pd-canvas-popmenu[data-align="start"] {
+  right: auto;
+  left: 0;
+}
+
+/* The new-tab + menu pins with fixed coords (top/left set inline) so it escapes
+ * the tab strip's overflow clipping. */
+.pd-menu.pd-canvas-popmenu--fixed {
+  position: fixed;
+  right: auto;
+  left: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-menu.pd-canvas-popmenu {
+    animation: none;
+  }
+}
+
+/* App icons in the "Open" split button + its dropdown (system icon or glyph). */
+.pd-canvas-app-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--pd-text-muted);
+}
+
+.pd-canvas-app-icon img {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--pd-radius-sm);
+  object-fit: contain;
+}
+
+/* ── File "Open" split button (primary + divided caret, one unit) ─────── */
+
+.pd-canvas-split {
+  display: inline-flex;
+  align-items: stretch;
+  height: 28px;
+  border: 1px solid var(--pd-border-default);
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-raised);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.pd-canvas-split-main,
+.pd-canvas-split-caret {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pd-space-xs);
+  border: none;
+  background: none;
+  color: var(--pd-text-primary);
+  font: inherit;
+  font-size: var(--pd-font-size-caption);
+  cursor: pointer;
+  transition: background var(--pd-duration-fast) var(--pd-easing-standard);
+}
+
+.pd-canvas-split-main {
+  padding: 0 var(--pd-space-sm);
+}
+
+.pd-canvas-split-caret {
+  padding: 0 4px;
+  color: var(--pd-text-muted);
+}
+
+.pd-canvas-split-main:hover,
+.pd-canvas-split-caret:hover {
+  background: var(--pd-bg-hover);
+}
+
+/* The thin divider that keeps the two segments visually connected. */
+.pd-canvas-split-divider {
+  width: 1px;
+  align-self: stretch;
+  flex: 0 0 auto;
+  background: var(--pd-border-default);
+}
+
+/* Raw↔rendered segmented toggle sizing (surface styling comes from ui). */
+.pd-canvas-view-toggle {
+  flex: 0 0 auto;
+}
+
 /* File-tree popover panel toggled by the two-folders button. */
 .pd-canvas-tree-panel {
   position: absolute;
@@ -417,6 +522,88 @@
 .pd-file-tree-empty {
   margin: 0;
   padding: var(--pd-space-md);
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-caption);
+  text-align: center;
+}
+
+/* ── Project picker (📁 <project> chip → search dropdown) ─────────────── */
+
+.pd-project-picker {
+  position: relative;
+  display: inline-flex;
+}
+
+.pd-project-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pd-space-xs);
+  height: 28px;
+  max-width: 220px;
+  padding: 0 var(--pd-space-sm);
+  border: 1px solid var(--pd-border-default);
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-bg-raised);
+  color: var(--pd-text-secondary);
+  font: inherit;
+  font-size: var(--pd-font-size-caption);
+  cursor: pointer;
+  transition: background var(--pd-duration-fast) var(--pd-easing-standard);
+}
+
+.pd-project-chip:hover {
+  background: var(--pd-bg-hover);
+}
+
+.pd-project-chip-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--pd-text-muted);
+}
+
+.pd-project-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-project-search {
+  display: flex;
+  align-items: center;
+  gap: var(--pd-space-xs);
+  padding: var(--pd-space-xs) var(--pd-space-sm) var(--pd-space-sm);
+  margin-bottom: var(--pd-space-xs);
+  border-bottom: 1px solid var(--pd-border-subtle);
+  color: var(--pd-text-muted);
+}
+
+.pd-project-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: var(--pd-text-primary);
+  font: inherit;
+  font-size: var(--pd-font-size-caption);
+}
+
+.pd-project-search-input:focus {
+  outline: none;
+}
+
+.pd-project-search-input::placeholder {
+  color: var(--pd-text-placeholder);
+}
+
+.pd-project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-project-empty {
+  margin: 0;
+  padding: var(--pd-space-sm) var(--pd-space-md);
   color: var(--pd-text-muted);
   font-size: var(--pd-font-size-caption);
   text-align: center;

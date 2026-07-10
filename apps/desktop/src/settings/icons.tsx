@@ -148,3 +148,35 @@ export function IconMoon(props: LocalIconProps) {
     </Svg>
   );
 }
+
+/** Favorites star; pass `filled` to render the solid (starred) state. */
+export function IconStar({ filled = false, ...props }: LocalIconProps & { filled?: boolean }) {
+  return (
+    <Svg {...props}>
+      <path
+        d="M8 1.9l1.76 3.57 3.94.57-2.85 2.78.67 3.92L8 10.86 4.43 12.7l.67-3.92L2.25 6l3.94-.57z"
+        fill={filled ? 'currentColor' : 'none'}
+      />
+    </Svg>
+  );
+}
+
+/** Globe / provider glyph for the Browse-Hugging-Face surface. */
+export function IconGlobe(props: LocalIconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M2.2 8h11.6M8 2.2c1.7 1.6 2.6 3.7 2.6 5.8S9.7 12.2 8 13.8C6.3 12.2 5.4 10.1 5.4 8S6.3 3.8 8 2.2z" />
+    </Svg>
+  );
+}
+
+/** Lock glyph for the gated-repo state. */
+export function IconLock(props: LocalIconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3.6" y="7" width="8.8" height="6.4" rx="1.3" />
+      <path d="M5.4 7V5.2a2.6 2.6 0 0 1 5.2 0V7" />
+    </Svg>
+  );
+}

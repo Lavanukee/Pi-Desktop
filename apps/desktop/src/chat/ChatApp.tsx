@@ -8,21 +8,15 @@
  * (#A3); the collapse control lives in the sidebar just right of the traffic
  * lights (#A5); files can be dropped anywhere in the window (#A8).
  */
-import { CanvasProvider, IconPanelRight, useCanvasTabs } from '@pi-desktop/canvas';
+import { CanvasProvider, IconPanelRight, ProjectPicker } from '@pi-desktop/canvas';
 import type { Model } from '@pi-desktop/engine';
-import {
-  IconButton,
-  IconClose,
-  IconSidebar,
-  IconTerminal,
-  MainSurface,
-  TopBar,
-} from '@pi-desktop/ui';
+import { IconButton, IconClose, MainSurface, TopBar } from '@pi-desktop/ui';
 import { useEffect, useState } from 'react';
 import type { SettingsSection } from '../settings/SettingsView';
 import { useCanvasStore } from '../state/canvas-store';
 import { getModels, setSessionName, startPi } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
+import { useProjectStore } from '../state/project-store';
 import { applySavedHarnessConfig } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
 import { ChatComposer } from './ChatComposer';
@@ -35,37 +29,25 @@ import { UiRequestDialogs } from './UiRequestDialogs';
 import { WindowDropOverlay } from './WindowDropOverlay';
 
 /**
- * Round-7: the persistent top-right canvas cluster. A "New terminal" control
- * opens a live interactive terminal tab in the canvas, and a canvas open/close
- * toggle slides the rail in/out even when no artifact is showing. Rendered
- * INSIDE `<CanvasProvider>` so it can reach the shared controller + open state.
+ * Round-8 #11/#16: the chat top-right holds EXACTLY ONE control — the canvas
+ * open/close toggle — and only while the canvas is CLOSED (panel icon → open).
+ * Once the canvas is open, its own top-right carries the toggle (an X), so this
+ * one hides: there is never a duplicate toggle and never a terminal icon here.
+ * Rendered INSIDE `<CanvasProvider>` so it can reach the shared open state.
  */
 function CanvasTopBarControls() {
-  const { controller } = useCanvasTabs();
   const canvasOpen = useCanvasStore((s) => s.canvasOpen);
-  const setCanvasOpen = useCanvasStore((s) => s.setCanvasOpen);
   const toggleCanvasOpen = useCanvasStore((s) => s.toggleCanvasOpen);
+  if (canvasOpen) return null;
   return (
-    <>
-      <IconButton
-        aria-label="New terminal in canvas"
-        data-testid="canvas-new-terminal"
-        onClick={() => {
-          controller.openTab({ kind: 'terminal', title: 'Terminal' });
-          setCanvasOpen(true);
-        }}
-      >
-        <IconTerminal />
-      </IconButton>
-      <IconButton
-        aria-label={canvasOpen ? 'Close canvas' : 'Open canvas'}
-        aria-pressed={canvasOpen}
-        data-testid="canvas-toggle"
-        onClick={() => toggleCanvasOpen()}
-      >
-        <IconPanelRight />
-      </IconButton>
-    </>
+    <IconButton
+      aria-label="Open canvas"
+      aria-pressed={false}
+      data-testid="canvas-toggle"
+      onClick={() => toggleCanvasOpen()}
+    >
+      <IconPanelRight />
+    </IconButton>
   );
 }
 
@@ -73,10 +55,6 @@ const STUB_COPY: Record<SidebarStub, { title: string; body: string }> = {
   projects: {
     title: 'Projects',
     body: 'Group chats, files, and context into projects. Coming soon.',
-  },
-  artifacts: {
-    title: 'Artifacts',
-    body: 'A gallery of everything Pi has made for you. Coming soon.',
   },
   scheduled: {
     title: 'Scheduled tasks',
@@ -103,6 +81,29 @@ function StubPanel({ stub, onClose }: { stub: SidebarStub; onClose: () => void }
   );
 }
 
+/**
+ * The project (working-folder) chip above the composer (round-8 #15). Selecting a
+ * project switches the working folder (pi cwd + canvas file-tree root, owned by
+ * the project store); "New project" opens a native folder picker in main.
+ */
+function ProjectChip() {
+  const projects = useProjectStore((s) => s.projects);
+  const activeId = useProjectStore((s) => s.activeId);
+  const selectProject = useProjectStore((s) => s.selectProject);
+  const newProject = useProjectStore((s) => s.newProject);
+  const clearProject = useProjectStore((s) => s.clearProject);
+  return (
+    <ProjectPicker
+      projects={projects.map((p) => ({ id: p.id, name: p.name }))}
+      active={activeId}
+      onSelect={(id) => void selectProject(id)}
+      onNew={() => void newProject()}
+      onClear={() => void clearProject()}
+      placeholder="No project"
+    />
+  );
+}
+
 export function ChatApp({
   onOpenSettings,
 }: {
@@ -117,10 +118,18 @@ export function ChatApp({
   const [truncatedNote, setTruncatedNote] = useState(false);
   const [stub, setStub] = useState<SidebarStub | null>(null);
 
-  // Spawn the window's pi session once, then push any saved harness config
-  // (permission/effort) that differs from the harness defaults.
+  // Load the persisted project (working folder) first, then spawn the window's
+  // pi session rooted at it (so the initial session adopts the active project's
+  // cwd, round-8 #15), then push any saved harness config (permission/effort).
   useEffect(() => {
-    void startPi({}).then(() => applySavedHarnessConfig());
+    void useProjectStore
+      .getState()
+      .load()
+      .then(() => {
+        const cwd = useProjectStore.getState().activePath ?? undefined;
+        return startPi(cwd !== undefined ? { cwd } : {});
+      })
+      .then(() => applySavedHarnessConfig());
   }, []);
 
   // Tiny-window adaptation (adversarial finding): a narrow window lets the fixed
@@ -162,12 +171,14 @@ export function ChatApp({
   return (
     <CanvasProvider>
       <div className="flex h-full">
-        {/* The sidebar stays mounted so it can slide; the slot collapses its
-            width when closed (the panel itself translates off-screen). */}
+        {/* The sidebar stays mounted; when collapsed the slot narrows to a
+            ~64px ICON RAIL (round-8 #1) rather than hiding — global.css owns the
+            rail width + the panel's stay-put override. */}
         <div className="pd-sidebar-slot" data-open={sidebarOpen}>
           <SessionSidebar
             open={sidebarOpen}
             onCollapse={() => setSidebarOpen(false)}
+            onExpand={() => setSidebarOpen(true)}
             onTruncated={() => setTruncatedNote(true)}
             onOpenSettings={onOpenSettings}
             onOpenStub={setStub}
@@ -176,25 +187,18 @@ export function ChatApp({
 
         <MainSurface className="flex min-w-0 flex-1 flex-col">
           <TopBar
-            trafficLightInset={!sidebarOpen}
+            // The rail always hosts the traffic lights now, so the top bar never
+            // needs to inset for them.
+            trafficLightInset={false}
             left={
-              // The chat title sits just RIGHT of the sidebar (#13), not centered.
-              // With the sidebar open its own collapse control (#A5) is used; the
-              // top-bar toggle only appears to re-open a collapsed sidebar.
-              <>
-                {sidebarOpen ? null : (
-                  <IconButton aria-label="Open sidebar" onClick={() => setSidebarOpen(true)}>
-                    <IconSidebar />
-                  </IconButton>
-                )}
-                <ChatTitle title={title} onRename={(name) => void setSessionName(name)} />
-              </>
+              // The chat title sits just RIGHT of the sidebar/rail (#13). The
+              // rail carries its own expand toggle, so no top-bar sidebar button.
+              <ChatTitle title={title} onRename={(name) => void setSessionName(name)} />
             }
             right={
-              // Round-7: the light/dark quick-toggle moved to the sidebar's
-              // bottom-left (near the profile). The top-right now carries the
-              // persistent canvas cluster — "New terminal" + a canvas open/close
-              // toggle that works even with no artifact open.
+              // Round-8 #11/#16: the ONLY top-right control is the canvas toggle,
+              // and only while the canvas is closed (it moves into the canvas when
+              // open). No terminal icon, no duplicate.
               <CanvasTopBarControls />
             }
           />
@@ -225,6 +229,11 @@ export function ChatApp({
                   Restored an earlier session; some history was truncated.
                 </div>
               ) : null}
+              {/* Round-8 #15: the project (working-folder) chip sits ABOVE the
+                  composer, left-aligned to the composer's max width. */}
+              <div className="mx-auto mb-1.5 flex w-full max-w-[700px] px-1">
+                <ProjectChip />
+              </div>
               {composer}
             </div>
           </div>

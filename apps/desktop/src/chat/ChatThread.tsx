@@ -274,15 +274,59 @@ export function ChatThread() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  // Autoscroll "stick": true only while the user is parked at the bottom. It is
+  // released the instant the user scrolls UP (free-scroll during generation,
+  // round-8) and re-armed only when they return to the bottom — so a burst of
+  // streaming re-renders can never yank the view back down while they read above.
   const pinnedRef = useRef(true);
   useElasticOverscroll(scrollRef, contentRef);
 
-  // Track whether the user is pinned to the bottom; only auto-scroll then.
+  // Re-arm the stick only when genuinely back at the bottom (tight threshold so
+  // scrolling even slightly up stays released).
   const onScroll = () => {
     const el = scrollRef.current;
     if (el === null) return;
-    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 16;
   };
+
+  // Release the stick on any explicit upward intent BEFORE the next streaming
+  // render can re-pin. Wheel/touch/keys fire ahead of the scroll event — which
+  // is exactly where the old snap-back race lived — so releasing here lets the
+  // user scroll up freely and STAY there mid-generation.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el === null) return;
+    const releaseUp = () => {
+      pinnedRef.current = false;
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) releaseUp();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'Home') releaseUp();
+    };
+    let lastY = 0;
+    const onTouchStart = (e: TouchEvent) => {
+      lastY = e.touches[0]?.clientY ?? 0;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      const y = e.touches[0]?.clientY ?? 0;
+      if (y > lastY + 1) releaseUp(); // finger drags down → content moves up
+      lastY = y;
+    };
+    el.addEventListener('wheel', onWheel, { passive: true });
+    el.addEventListener('keydown', onKey);
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: true });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('keydown', onKey);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+    };
+  }, []);
+
+  // Keep the newest content in view ONLY while pinned (never fights a scroll-up).
   useEffect(() => {
     const el = scrollRef.current;
     if (el !== null && pinnedRef.current) el.scrollTop = el.scrollHeight;

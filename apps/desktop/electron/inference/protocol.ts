@@ -3,18 +3,46 @@
  * "inference-supervisor" utilityProcess (supervisor-entry.ts). Kept in its own
  * electron-free module so both bundles share exactly one set of types.
  */
-import type { LlmCatalogEntry, LlmHardware, LlmRecommendation, LlmStatus } from '../ipc-contract';
+import type {
+  HfGgufFileDTO,
+  HfModelHitDTO,
+  HfSortOption,
+  LlmCatalogEntry,
+  LlmHardware,
+  LlmRecommendation,
+  LlmStatus,
+} from '../ipc-contract';
 
 export type LlmRequestBody =
   | { type: 'get-status' }
   | { type: 'list-catalog' }
-  | { type: 'download-model'; modelId: string; quant?: string }
+  | { type: 'download-model'; modelId: string; quant?: string; hfToken?: string }
   | { type: 'pause-download' }
   | { type: 'cancel-download' }
   | { type: 'delete-model'; modelId: string }
   | { type: 'verify-model'; modelId: string; quant?: string }
   | { type: 'start-server'; modelId: string; quant?: string }
-  | { type: 'stop-server' };
+  | { type: 'stop-server' }
+  | {
+      type: 'hf-search';
+      query: string;
+      family?: string;
+      task?: string;
+      gated?: boolean;
+      minLikes?: number;
+      sort?: HfSortOption;
+      limit?: number;
+      hfToken?: string;
+    }
+  | { type: 'hf-list-files'; repoId: string; contextWindow?: number; hfToken?: string }
+  | {
+      type: 'register-hf-model';
+      hit: HfModelHitDTO;
+      file: HfGgufFileDTO;
+      mmproj?: HfGgufFileDTO;
+      mtpFile?: HfGgufFileDTO;
+      contextWindow?: number;
+    };
 
 export type LlmRequest = LlmRequestBody & { id: number };
 
@@ -37,6 +65,23 @@ export interface LlmCatalogReply {
   hardware: LlmHardware;
   recommendedModelId: string | null;
   recommendation: LlmRecommendation | null;
+}
+
+export interface HfSearchReply {
+  hits: HfModelHitDTO[];
+  error?: string;
+  rateLimited?: boolean;
+}
+
+export interface HfListFilesReply {
+  files: HfGgufFileDTO[];
+  gated?: boolean;
+  error?: string;
+}
+
+export interface HfRegisterReply {
+  modelId: string;
+  entry: LlmCatalogEntry;
 }
 
 export interface LlmDownloadProgress {

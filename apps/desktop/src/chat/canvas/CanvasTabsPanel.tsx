@@ -14,7 +14,7 @@
  * destroyed when the tab leaves the controller. This component only presents the
  * container + exposes the controller to the E2E probes.
  */
-import { type CanvasTab, CanvasTabs, IconPanelRight, useCanvasTabs } from '@pi-desktop/canvas';
+import { type CanvasTab, CanvasTabs, type NewTabKind, useCanvasTabs } from '@pi-desktop/canvas';
 import { IconButton, IconClose } from '@pi-desktop/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CANVAS_MAX_WIDTH, CANVAS_MIN_WIDTH, useCanvasStore } from '../../state/canvas-store';
@@ -109,6 +109,19 @@ export function CanvasTabsPanel() {
     void window.piDesktop.invoke('canvas:popout', { artifact: artifactToPayload(tab.artifact) });
   }, []);
 
+  // Canvas `+` menu (round-8 #10): open a new file / browser / terminal tab,
+  // reusing the existing native-surface mount paths (browser:create, PTY spawn).
+  // A `file` tab opens empty and can be filled from the tree panel.
+  const onNewTab = useCallback(
+    (kind: NewTabKind) => {
+      if (kind === 'terminal') controller.openTab({ kind: 'terminal', title: 'Terminal' });
+      else if (kind === 'browser') controller.openTab({ kind: 'browser', title: 'New tab' });
+      else controller.openTab({ kind: 'file', title: 'Untitled' });
+      setCanvasOpen(true);
+    },
+    [controller, setCanvasOpen],
+  );
+
   // Render nothing only when the canvas is both empty AND closed. When the user
   // opens it with no tabs (top-right toggle), the rail shows CanvasTabs' empty
   // state (its `+` opens a browser tab); a routed-in surface fills it.
@@ -120,8 +133,13 @@ export function CanvasTabsPanel() {
   const surface = (
     <CanvasTabs
       handlers={surfaceHandlers}
+      onNewTab={onNewTab}
       onPopout={popOut}
       onCollapse={() => setCanvasOpen(false)}
+      // Round-8 #11/#16: the canvas is only rendered while open, so its top-right
+      // toggle shows the X (close). The chat top-bar carries the panel icon that
+      // re-opens it when closed — never both at once.
+      panelOpen={open}
     />
   );
 
@@ -166,22 +184,6 @@ export function CanvasTabsPanel() {
           {surface}
         </div>
       </aside>
-
-      {/* Slim restore control for a manually-closed panel that still has tabs
-          (the tab-bar toggle is slid away with the panel). Mirrors the canvas
-          panel-toggle glyph. The top-bar toggle re-opens it when empty. */}
-      {hasTabs && !open ? (
-        <div className="pd-canvas-restore">
-          <IconButton
-            size="sm"
-            aria-label="Open canvas panel"
-            data-testid="canvas-restore"
-            onClick={() => setCanvasOpen(true)}
-          >
-            <IconPanelRight size={16} />
-          </IconButton>
-        </div>
-      ) : null}
     </>
   );
 }

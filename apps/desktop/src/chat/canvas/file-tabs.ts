@@ -16,12 +16,28 @@ import {
   type CanvasController,
   type CanvasTabSpec,
   type FileTreeNode,
+  type OpenWithApp,
   useCanvasTabs,
 } from '@pi-desktop/canvas';
 import type { ChatMsg } from '@pi-desktop/engine';
 import { useEffect, useRef } from 'react';
 import { usePiStore } from '../../state/pi-slice';
+import { useProjectStore } from '../../state/project-store';
 import { basename, detectFileWrites, dirname } from './file-writes';
+
+/** Same `?piE2E=1` opt-in as the other E2E hooks — skips the real app-list
+ * shell-out (sips/duti) so probes stay fast + deterministic. */
+const IS_E2E = new URLSearchParams(window.location.search).has('piE2E');
+
+/**
+ * The file-tree root for a file tab: the active project's working folder (round-8
+ * #15), else the session cwd, else the file's own directory. The label names the
+ * top of the tree (the project / working folder).
+ */
+function treeRootFor(absPath: string, cwd: string | undefined): { root: string; label: string } {
+  const root = useProjectStore.getState().activePath ?? cwd ?? dirname(absPath);
+  return { root, label: basename(root) };
+}
 
 /** Stable upsert key for a file path → its canvas tab (open-or-focus by path). */
 export function fileTabKey(absPath: string): string {
@@ -155,15 +171,44 @@ async function readTree(rootDir: string): Promise<FileTreeNode[]> {
   }
 }
 
-/** Base spec (kind/key/title/path/breadcrumb) for a file tab. */
+/** Base spec (kind/key/title/path/breadcrumb) for a file tab. Breadcrumb + tree
+ * root follow the active project's working folder when set (round-8 #15/#6). */
 function fileTabSpec(absPath: string, cwd: string | undefined): CanvasTabSpec {
+  const { label } = treeRootFor(absPath, cwd);
+  const base = useProjectStore.getState().activePath ?? cwd;
   return {
     kind: 'file',
     key: fileTabKey(absPath),
     title: basename(absPath),
     filePath: absPath,
-    breadcrumb: fileBreadcrumb(absPath, cwd),
+    breadcrumb: fileBreadcrumb(absPath, base),
+    fileTreeRootLabel: label,
   };
+}
+
+/**
+ * Fetch the system apps that can open this file (round-8 #14) and set the tab's
+ * `defaultApp` + `openApps` so the "Open" split button shows the default's icon
+ * and lists the rest. Lazy + best-effort; skipped under E2E (the real
+ * sips/duti shell-out is slow + machine-specific — probes inject apps directly).
+ */
+async function hydrateOpenApps(
+  controller: CanvasController,
+  key: string,
+  absPath: string,
+): Promise<void> {
+  if (IS_E2E) return;
+  try {
+    const res = await window.piDesktop.invoke('canvas:list-open-apps', { path: absPath });
+    const tab = controller.getState().tabs.find((t) => t.key === key);
+    if (tab === undefined) return;
+    const apps = res.apps as OpenWithApp[];
+    const defaultApp =
+      res.defaultAppId !== null ? apps.find((a) => a.id === res.defaultAppId) : undefined;
+    controller.updateTab(tab.id, { openApps: apps, ...(defaultApp ? { defaultApp } : {}) });
+  } catch {
+    // best-effort — the "Open" button still opens the OS default.
+  }
 }
 
 /**
@@ -179,7 +224,8 @@ export async function openFileInCanvas(
   const existing = controller.getState().tabs.find((t) => t.key === key);
   if (existing) controller.focusTab(existing.id);
   else controller.upsertTab(key, { ...fileTabSpec(absPath, cwd), streaming: false });
-  const [read, tree] = await Promise.all([readFile(absPath), readTree(dirname(absPath))]);
+  const { root } = treeRootFor(absPath, cwd);
+  const [read, tree] = await Promise.all([readFile(absPath), readTree(root)]);
   const tab = controller.getState().tabs.find((t) => t.key === key);
   if (tab === undefined) return;
   controller.updateTab(tab.id, {
@@ -187,6 +233,7 @@ export async function openFileInCanvas(
     fileTree: tree,
     ...(read ? { artifact: fileArtifact(absPath, read) } : {}),
   });
+  void hydrateOpenApps(controller, key, absPath);
 }
 
 /**
@@ -220,11 +267,14 @@ export function useFileWriteCanvasRouting(): void {
             ? { artifact: hintArtifact(ev.path, ev.contentHint) }
             : {}),
         });
-        // Populate the file-tree panel in the background.
-        void readTree(dirname(ev.path)).then((tree) => {
+        // Populate the file-tree panel (rooted at the working folder) + the
+        // "Open with" app list in the background.
+        const { root } = treeRootFor(ev.path, cwd);
+        void readTree(root).then((tree) => {
           const tab = controller.getState().tabs.find((t) => t.key === key);
           if (tab) controller.updateTab(tab.id, { fileTree: tree });
         });
+        void hydrateOpenApps(controller, key, ev.path);
       } else {
         // Live refresh: reflect the running flag + any newer content hint.
         const patch: Record<string, unknown> = {};

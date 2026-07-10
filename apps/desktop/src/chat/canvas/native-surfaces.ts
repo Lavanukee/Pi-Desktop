@@ -101,8 +101,13 @@ class NativeSurfaces {
         const url = this.#tab(tabId)?.url;
         if (url) canvasShellInvoke('canvas:open-external', { url });
       },
-      // File operation bar: Open ▾ (shell out), Open in folder (reveal), and a
-      // file chosen from the tree panel (open/focus its own file tab).
+      // File operation bar split button: "Open" opens with the OS DEFAULT app
+      // (round-8 #14 — the same handler the default-app icon labels), while the
+      // ▾ dropdown's "Open with" picks a specific app id (bundle id / .app path).
+      onOpen: (tabId) => {
+        const filePath = this.#tab(tabId)?.filePath;
+        if (filePath) canvasShellInvoke('canvas:open-with', { path: filePath, appId: 'default' });
+      },
       onOpenWith: (tabId, appId) => {
         const filePath = this.#tab(tabId)?.filePath;
         if (filePath) canvasShellInvoke('canvas:open-with', { path: filePath, appId });
@@ -113,6 +118,11 @@ class NativeSurfaces {
       },
       onFileTreeSelect: (_tabId, node) => {
         if (node.kind === 'file') void openFileInCanvas(this.#controller, node.path, this.#cwd);
+      },
+      // Persist the raw↔rendered choice on the tab so it survives tab switches
+      // (round-8 #6/#13); the canvas seeds its toggle from `tab.rawRendered`.
+      onFileViewModeChange: (tabId, mode) => {
+        this.#controller.updateTab(tabId, { rawRendered: mode });
       },
       // Media operation bar: download the current media src / expand to fullscreen.
       onMediaDownload: (tabId, format) => this.#downloadMedia(tabId, format),

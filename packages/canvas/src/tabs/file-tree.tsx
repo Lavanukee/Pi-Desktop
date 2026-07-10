@@ -51,6 +51,14 @@ export interface FileTreeProps {
   onSelect?: (node: FileTreeNode) => void;
   /** Path of the currently-open file, highlighted in the tree. */
   activePath?: string;
+  /**
+   * Optional top-level folder label (the file's directory OR a working/project
+   * folder). When set, the whole `tree` nests under one expandable root row so
+   * the top level is the chosen folder; the app supplies it.
+   */
+  rootLabel?: string;
+  /** Path for the synthetic root row (defaults to `rootLabel`). */
+  rootPath?: string;
   className?: string;
 }
 
@@ -60,11 +68,27 @@ export interface FileTreeProps {
  * extension icons. Directories expand/collapse; files emit `onSelect`. When a
  * filter is active every surviving directory is force-expanded so matches show.
  */
-export function FileTree({ tree, onSelect, activePath, className }: FileTreeProps) {
+export function FileTree({
+  tree,
+  onSelect,
+  activePath,
+  rootLabel,
+  rootPath,
+  className,
+}: FileTreeProps) {
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
 
-  const filtered = useMemo(() => filterFileTree(tree, query), [tree, query]);
+  // With a rootLabel, nest the whole tree under a single expandable root folder
+  // so the top level is the chosen project/working folder (open by default).
+  const displayTree = useMemo<FileTreeNode[]>(
+    () =>
+      rootLabel
+        ? [{ name: rootLabel, path: rootPath ?? rootLabel, kind: 'dir', children: tree }]
+        : tree,
+    [tree, rootLabel, rootPath],
+  );
+  const filtered = useMemo(() => filterFileTree(displayTree, query), [displayTree, query]);
   const filtering = query.trim().length > 0;
   // While filtering, ignore the manual collapse set so every match is visible.
   const expandedDirs = useMemo(

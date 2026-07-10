@@ -36,10 +36,26 @@ export interface FileTreeNode {
 }
 
 /**
- * The apps the file surface's "Open ▾" dropdown can shell out to. `Open in
- * folder` is emitted separately via `onReveal` (it reveals, not opens-with).
+ * Identifier of an app in the file "Open with" list — a system app id / bundle
+ * id the app resolves. Free-form: the desktop app supplies the real app list.
+ * `Open in folder` is emitted separately via `onReveal` (it reveals, not opens).
  */
-export type OpenWithAppId = 'vscode-insiders' | 'default' | 'terminal' | 'xcode';
+export type OpenWithAppId = string;
+
+/**
+ * One app in the file "Open" split button. The desktop app fetches the system
+ * icon and passes it as a `data:` URL; the canvas renders whatever is given and
+ * falls back to a generic app glyph when `iconDataUrl` is absent.
+ */
+export interface OpenWithApp {
+  id: OpenWithAppId;
+  name: string;
+  /** `data:` URL of the app's system icon (app-supplied; optional). */
+  iconDataUrl?: string;
+}
+
+/** A file tab's raw↔rendered view preference (md defaults to rendered, code to raw). */
+export type FileViewMode = 'raw' | 'rendered';
 
 /** One subagent row in the subagent surface (pure data — no UI coupling). */
 export interface SubagentItem {
@@ -80,6 +96,14 @@ export interface CanvasTab {
   breadcrumb?: string[];
   /** Tree shown in the file surface's toggleable file-tree panel. */
   fileTree?: FileTreeNode[];
+  /** Top-level label for the file tree (the project / working folder). */
+  fileTreeRootLabel?: string;
+  /** Default app for the "Open" split button (its icon shows on the Open segment). */
+  defaultApp?: OpenWithApp;
+  /** Apps in the "Open with" dropdown — the {@link defaultApp} is omitted from it. */
+  openApps?: OpenWithApp[];
+  /** Persisted raw↔rendered preference for the file view (per-tab). */
+  rawRendered?: FileViewMode;
 
   // browser surface state (app-updated via controller.updateTab)
   url?: string;

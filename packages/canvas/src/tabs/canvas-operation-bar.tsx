@@ -7,33 +7,43 @@ import {
   IconExternal,
   IconMore,
   IconRefresh,
+  SegmentedControl,
 } from '@pi-desktop/ui';
 import {
   type FormEvent,
   type ReactElement,
   type ReactNode,
-  type RefObject,
   useEffect,
   useRef,
   useState,
 } from 'react';
 import {
+  IconAppGeneric,
   IconArrowLeft,
   IconArrowRight,
   IconDownload,
   IconExpand,
+  IconFolder,
   IconFolders,
 } from '../tab-icons.tsx';
 import { FileTree } from './file-tree.tsx';
-import type { CanvasTab, FileTreeNode, OpenWithAppId } from './tab-model.ts';
+import type { CanvasTab, FileTreeNode, FileViewMode, OpenWithApp } from './tab-model.ts';
+import { useOutsideClose } from './use-outside-close.ts';
 
-/** The apps offered in the file surface's "Open ▾" dropdown, in display order. */
-const OPEN_WITH_APPS: ReadonlyArray<{ id: OpenWithAppId; label: string }> = [
-  { id: 'vscode-insiders', label: 'VS Code Insiders' },
-  { id: 'default', label: 'Default app' },
-  { id: 'terminal', label: 'Terminal' },
-  { id: 'xcode', label: 'Xcode' },
-];
+/**
+ * True when a file tab renders as markdown (by content kind or by `.md`/`.mdx`
+ * extension) — the only case where the raw↔rendered toggle is meaningful.
+ */
+export function isMarkdownFile(tab: CanvasTab): boolean {
+  if (tab.artifact?.content.kind === 'markdown') return true;
+  const name = tab.filePath ?? tab.artifact?.filename ?? tab.title ?? '';
+  return /\.(md|markdown|mdx)$/i.test(name);
+}
+
+/** Default view for a file tab: markdown renders, code is raw (round-8 #13). */
+export function fileViewModeDefault(tab: CanvasTab): FileViewMode {
+  return isMarkdownFile(tab) ? 'rendered' : 'raw';
+}
 
 /**
  * Breadcrumb segments for a file tab: explicit `breadcrumb`, else the path split
@@ -47,10 +57,16 @@ export function deriveBreadcrumb(tab: CanvasTab): string[] {
   return tab.title ? [tab.title] : [];
 }
 
-/** Display name for the media label ("<name> · <TYPE>"). */
+/**
+ * Display name for the media/file label — the base filename with its extension
+ * stripped so the bar reads "<name> · <TYPE>" ("render.png" + PNG → "render ·
+ * PNG", not "render.png · PNG"; img69 "Cover letter · DOCX"). Round-8 #8.
+ */
 function mediaName(tab: CanvasTab): string {
   const path = tab.filePath ?? tab.artifact?.filename ?? tab.title;
-  return path ? (path.split(/[/\\]/).filter(Boolean).pop() ?? path) : 'Preview';
+  const base = path ? (path.split(/[/\\]/).filter(Boolean).pop() ?? path) : 'Preview';
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? base.slice(0, dot) : base;
 }
 
 export interface CanvasOperationBarProps {
@@ -64,9 +80,16 @@ export interface CanvasOperationBarProps {
   onBrowserOpenExternal?: () => void;
   onBrowserMenu?: () => void;
   // file
-  onOpenWith?: (appId: OpenWithAppId) => void;
+  /** Primary "Open" segment — open with the DEFAULT app. */
+  onOpen?: () => void;
+  /** A specific app chosen from the "Open with" dropdown. */
+  onOpenWith?: (appId: string) => void;
   onReveal?: () => void;
   onFileTreeSelect?: (node: FileTreeNode) => void;
+  /** Current raw↔rendered view for a markdown file tab (drives the toggle). */
+  fileViewMode?: FileViewMode;
+  /** The raw↔rendered toggle changed. */
+  onFileViewModeChange?: (mode: FileViewMode) => void;
   // media (image | pdf)
   onMediaDownload?: (format: string) => void;
   onMediaRefresh?: () => void;
@@ -115,7 +138,15 @@ function renderOps(props: CanvasOperationBarProps): ReactNode {
 
 /* ── File ───────────────────────────────────────────────────────────────── */
 
-function FileOps({ tab, onOpenWith, onReveal, onFileTreeSelect }: CanvasOperationBarProps) {
+function FileOps({
+  tab,
+  onOpen,
+  onOpenWith,
+  onReveal,
+  onFileTreeSelect,
+  fileViewMode,
+  onFileViewModeChange,
+}: CanvasOperationBarProps) {
   const [treeOpen, setTreeOpen] = useState(false);
   const [openMenu, setOpenMenu] = useState(false);
   const treeRef = useRef<HTMLDivElement>(null);
@@ -125,6 +156,12 @@ function FileOps({ tab, onOpenWith, onReveal, onFileTreeSelect }: CanvasOperatio
   useOutsideClose(openRef, openMenu, () => setOpenMenu(false));
 
   const crumbs = deriveBreadcrumb(tab);
+  const defaultApp = tab.defaultApp;
+  // The dropdown lists every app EXCEPT the default (it lives on the primary
+  // segment) — belt-and-braces even if the app already omitted it.
+  const apps = (tab.openApps ?? []).filter((app) => app.id !== defaultApp?.id);
+  const showToggle = isMarkdownFile(tab);
+  const mode = fileViewMode ?? fileViewModeDefault(tab);
   return (
     <>
       <nav className="pd-canvas-crumbs" aria-label="File path">
@@ -151,6 +188,18 @@ function FileOps({ tab, onOpenWith, onReveal, onFileTreeSelect }: CanvasOperatio
         )}
       </nav>
       <span className="pd-canvas-opbar-spacer" />
+      {showToggle ? (
+        <SegmentedControl
+          className="pd-canvas-view-toggle"
+          aria-label="File view"
+          value={mode}
+          onValueChange={(value) => onFileViewModeChange?.(value as FileViewMode)}
+          options={[
+            { value: 'rendered', label: 'Rendered' },
+            { value: 'raw', label: 'Raw' },
+          ]}
+        />
+      ) : null}
       <div ref={treeRef} className="pd-canvas-opbar-pop">
         <IconButton
           size="sm"
@@ -164,6 +213,7 @@ function FileOps({ tab, onOpenWith, onReveal, onFileTreeSelect }: CanvasOperatio
           <div className="pd-canvas-tree-panel" role="dialog" aria-label="Files">
             <FileTree
               tree={tab.fileTree ?? []}
+              rootLabel={tab.fileTreeRootLabel}
               activePath={tab.filePath}
               onSelect={(node) => {
                 onFileTreeSelect?.(node);
@@ -174,48 +224,82 @@ function FileOps({ tab, onOpenWith, onReveal, onFileTreeSelect }: CanvasOperatio
         ) : null}
       </div>
       <div ref={openRef} className="pd-canvas-opbar-pop">
-        <Button
-          size="sm"
-          variant="secondary"
-          aria-label="Open with"
-          aria-expanded={openMenu}
-          onClick={() => setOpenMenu((open) => !open)}
-        >
-          Open
-          <IconChevronDown size={14} />
-        </Button>
+        {/* Split button: primary "Open" (default app) + a divided ▾ that lists
+            the other apps — one connected control (round-8 #14). */}
+        <div className="pd-canvas-split">
+          <button
+            type="button"
+            className="pd-canvas-split-main"
+            aria-label={defaultApp ? `Open with ${defaultApp.name}` : 'Open'}
+            onClick={() => onOpen?.()}
+          >
+            <AppIcon app={defaultApp} />
+            Open
+          </button>
+          <span className="pd-canvas-split-divider" aria-hidden="true" />
+          <button
+            type="button"
+            className="pd-canvas-split-caret"
+            aria-label="Open with…"
+            aria-expanded={openMenu}
+            onClick={() => setOpenMenu((open) => !open)}
+          >
+            <IconChevronDown size={14} />
+          </button>
+        </div>
         {openMenu ? (
-          <div className="pd-canvas-menu" role="menu">
-            {OPEN_WITH_APPS.map((app) => (
+          <div className="pd-menu pd-canvas-popmenu" role="menu">
+            {apps.map((app) => (
               <button
                 key={app.id}
                 type="button"
                 role="menuitem"
-                className="pd-canvas-menu-item"
+                className="pd-menu-item"
                 onClick={() => {
                   setOpenMenu(false);
                   onOpenWith?.(app.id);
                 }}
               >
-                {app.label}
+                <AppIcon app={app} slot="menu" />
+                {app.name}
               </button>
             ))}
-            <div className="pd-canvas-menu-sep" aria-hidden="true" />
+            {apps.length > 0 ? <div className="pd-menu-separator" aria-hidden="true" /> : null}
             <button
               type="button"
               role="menuitem"
-              className="pd-canvas-menu-item"
+              className="pd-menu-item"
               onClick={() => {
                 setOpenMenu(false);
                 onReveal?.();
               }}
             >
+              <span className="pd-menu-icon" aria-hidden="true">
+                <IconFolder size={16} />
+              </span>
               Open in folder
             </button>
           </div>
         ) : null}
       </div>
     </>
+  );
+}
+
+/**
+ * The app's system icon (a `data:` URL) or the generic app glyph fallback, sized
+ * for the split-button primary segment (`slot="split"`) or a menu row.
+ */
+function AppIcon({ app, slot = 'split' }: { app?: OpenWithApp; slot?: 'split' | 'menu' }) {
+  const className = slot === 'menu' ? 'pd-menu-icon pd-canvas-app-icon' : 'pd-canvas-app-icon';
+  return (
+    <span className={className} aria-hidden="true">
+      {app?.iconDataUrl ? (
+        <img src={app.iconDataUrl} alt="" width={16} height={16} />
+      ) : (
+        <IconAppGeneric size={16} />
+      )}
+    </span>
   );
 }
 
@@ -360,22 +444,4 @@ function MediaOps({
       </IconButton>
     </>
   );
-}
-
-/* ── shared ─────────────────────────────────────────────────────────────── */
-
-/** Close a popover on any outside pointer-down while it's open. */
-function useOutsideClose(
-  ref: RefObject<HTMLElement | null>,
-  open: boolean,
-  close: () => void,
-): void {
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: MouseEvent): void => {
-      if (!ref.current?.contains(event.target as Node)) close();
-    };
-    window.addEventListener('mousedown', onDown);
-    return () => window.removeEventListener('mousedown', onDown);
-  }, [open, close, ref]);
 }

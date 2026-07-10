@@ -92,4 +92,17 @@ describe('FileTree', () => {
     await typeFilter(container.querySelector<HTMLInputElement>('.pd-file-tree-input'), 'zzz');
     expect(container.querySelector('.pd-file-tree-empty')?.textContent).toBe('No matching files');
   });
+
+  it('nests the tree under a configurable root folder (#15)', async () => {
+    const { container } = await render(<FileTree tree={tree} rootLabel="my-project" />);
+    const names = [...container.querySelectorAll('.pd-file-tree-name')].map((n) => n.textContent);
+    // The chosen folder is the top level, expanded by default over the tree.
+    expect(names[0]).toBe('my-project');
+    expect(names).toContain('src');
+    // Collapsing the root hides everything beneath it.
+    await click(container.querySelector('.pd-file-tree-row[data-kind="dir"]'));
+    expect([...container.querySelectorAll('.pd-file-tree-name')].map((n) => n.textContent)).toEqual(
+      ['my-project'],
+    );
+  });
 });

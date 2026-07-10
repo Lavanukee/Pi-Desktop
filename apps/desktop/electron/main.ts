@@ -16,6 +16,7 @@ import { registerImportIpc } from './import/import-main';
 import { registerLlmIpc } from './inference/llm-main';
 import type { AppEventMap, CoreInvokeMap, FsInvokeMap } from './ipc-contract';
 import { registerPiIpc } from './pi/pi-main';
+import { registerProjectIpc } from './project/project-main';
 import { applySettingsEnvFromDisk, registerSettingsIpc } from './settings/settings-main';
 import { registerPtyIpc } from './terminal/pty-manager';
 import {
@@ -186,6 +187,9 @@ function registerAppIpc(): void {
 
   // Desktop settings (theme/permissions/effort/search keys/mcp mode/capabilities).
   registerSettingsIpc(ipcMain, allowSender);
+
+  // Projects (working folders): list/set/new/clear, persisted to projects.json.
+  registerProjectIpc(ipcMain, allowSender);
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();

@@ -15,12 +15,21 @@
  * PD_PREVIEW_HARNESS_HOST).
  */
 import { execFile } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
 import { type IpcMainInvokeEvent, ipcMain, protocol, shell, type WebContents } from 'electron';
-import type { AppEventMap, CanvasArtifactPayload, CanvasOpenWithAppId } from '../ipc-contract';
+import type {
+  AppEventMap,
+  CanvasArtifactPayload,
+  CanvasOpenApp,
+  CanvasOpenWithAppId,
+} from '../ipc-contract';
 import { isTrustedIpcEvent } from '../trusted-senders';
+
+const execFileAsync = promisify(execFile);
 
 const log = createLogger('desktop:canvas');
 
@@ -138,6 +147,13 @@ export function registerCanvasIpc(
     }
   });
 
+  // File operation bar "Open with" split button → the apps that can open this
+  // file (LaunchServices default + a pragmatic set), each with a system icon.
+  ipcMain.handle('canvas:list-open-apps', async (event, req: { path: string }) => {
+    guard(event, 'canvas:list-open-apps');
+    return listOpenApps(req.path);
+  });
+
   // File operation bar "Open ▾" → shell out to the chosen app.
   ipcMain.handle(
     'canvas:open-with',
@@ -180,6 +196,16 @@ async function openWithApp(
       const error = await shell.openPath(target);
       return error ? { ok: false, error } : { ok: true };
     }
+    // Round-8 #14: real system apps arrive as a `.app` path (`open -a`) or a
+    // bundle id (`open -b`). The legacy named ids below stay as fallbacks.
+    if (appId.endsWith('.app')) {
+      await openApp(appId, target);
+      return { ok: true };
+    }
+    if (isBundleId(appId)) {
+      await execFileAsync('open', ['-b', appId, target]);
+      return { ok: true };
+    }
     if (appId === 'terminal') {
       const dir = isDirectory(target) ? target : path.dirname(target);
       await openApp('Terminal', dir);
@@ -210,4 +236,128 @@ function isDirectory(p: string): boolean {
   } catch {
     return false;
   }
+}
+
+// ── "Open with" app list + system icons (round-8 #14) ──────────────────────
+//
+// macOS only. The default handler is detected via `duti -x <ext>` when
+// available (else omitted — the "Open" button still opens the OS default via
+// shell.openPath). The candidate list is the default app plus a pragmatic set
+// of installed editors/terminals; each app's icon is extracted from its bundle
+// (Info.plist → .icns → PNG via `sips`) and returned as a data URL. Results are
+// cached by extension; icons are cached by app path — the extraction shells out.
+
+/** Reverse-DNS bundle id (has a dot, no slash, not a `.app` path). */
+function isBundleId(value: string): boolean {
+  return value.includes('.') && !value.includes('/') && !value.endsWith('.app');
+}
+
+/** Pragmatic candidate apps probed by their standard install locations. */
+const KNOWN_APP_PATHS = [
+  '/Applications/Visual Studio Code - Insiders.app',
+  '/Applications/Visual Studio Code.app',
+  '/Applications/Xcode.app',
+  '/System/Applications/Utilities/Terminal.app',
+  '/Applications/Utilities/Terminal.app',
+];
+
+const appMetaCache = new Map<string, CanvasOpenApp>();
+const openAppsByExt = new Map<string, { apps: CanvasOpenApp[]; defaultAppId: string | null }>();
+
+function extOf(filePath: string): string {
+  const base = path.basename(filePath);
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
+}
+
+/** Parse a small set of Info.plist keys via `plutil -convert json`. */
+async function readBundleInfo(
+  appPath: string,
+): Promise<{ id: string; name: string; iconFile?: string }> {
+  const plist = path.join(appPath, 'Contents', 'Info.plist');
+  const fallbackName = path.basename(appPath).replace(/\.app$/i, '');
+  try {
+    const { stdout } = await execFileAsync('plutil', ['-convert', 'json', '-o', '-', plist]);
+    const info = JSON.parse(stdout) as Record<string, unknown>;
+    const id = typeof info.CFBundleIdentifier === 'string' ? info.CFBundleIdentifier : appPath;
+    const name =
+      (typeof info.CFBundleDisplayName === 'string' && info.CFBundleDisplayName) ||
+      (typeof info.CFBundleName === 'string' && info.CFBundleName) ||
+      fallbackName;
+    const iconFile = typeof info.CFBundleIconFile === 'string' ? info.CFBundleIconFile : undefined;
+    return { id, name, iconFile };
+  } catch {
+    return { id: appPath, name: fallbackName };
+  }
+}
+
+/** Extract an app's icon to a small PNG data URL (`sips`), or undefined. */
+async function extractIconDataUrl(appPath: string, iconFile: string): Promise<string | undefined> {
+  const name = /\.icns$/i.test(iconFile) ? iconFile : `${iconFile}.icns`;
+  const icns = path.join(appPath, 'Contents', 'Resources', name);
+  if (!existsSync(icns)) return undefined;
+  const out = path.join(
+    tmpdir(),
+    `pi-appicon-${Buffer.from(appPath).toString('hex').slice(0, 24)}.png`,
+  );
+  try {
+    // -Z 32: cap the longest side at 32px so the data URL stays tiny.
+    await execFileAsync('sips', ['-s', 'format', 'png', '-Z', '32', icns, '--out', out]);
+    return `data:image/png;base64,${readFileSync(out).toString('base64')}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Bundle id + display name + icon data URL for an app, cached by path. */
+async function appMeta(appPath: string): Promise<CanvasOpenApp> {
+  const cached = appMetaCache.get(appPath);
+  if (cached !== undefined) return cached;
+  const info = await readBundleInfo(appPath);
+  const iconDataUrl =
+    info.iconFile !== undefined ? await extractIconDataUrl(appPath, info.iconFile) : undefined;
+  // Prefer the bundle id (stable, `open -b`) as the app id; fall back to path.
+  const meta: CanvasOpenApp = { id: info.id || appPath, name: info.name, iconDataUrl };
+  appMetaCache.set(appPath, meta);
+  return meta;
+}
+
+/** LaunchServices default app for an extension via `duti -x` (optional tool). */
+async function defaultAppPath(ext: string): Promise<string | null> {
+  if (ext === '') return null;
+  try {
+    const { stdout } = await execFileAsync('duti', ['-x', ext]);
+    const line = stdout
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.endsWith('.app'));
+    return line ?? null;
+  } catch {
+    return null; // duti not installed / no association — default stays undetected.
+  }
+}
+
+async function listOpenApps(
+  filePath: string,
+): Promise<{ apps: CanvasOpenApp[]; defaultAppId: string | null }> {
+  if (process.platform !== 'darwin') return { apps: [], defaultAppId: null };
+  const ext = extOf(filePath);
+  const cached = openAppsByExt.get(ext);
+  if (cached !== undefined) return cached;
+
+  const defPath = await defaultAppPath(ext);
+  const paths: string[] = [];
+  if (defPath !== null && existsSync(defPath)) paths.push(defPath);
+  for (const p of KNOWN_APP_PATHS) if (existsSync(p) && !paths.includes(p)) paths.push(p);
+
+  const apps: CanvasOpenApp[] = [];
+  let defaultAppId: string | null = null;
+  for (const p of paths) {
+    const meta = await appMeta(p);
+    apps.push(meta);
+    if (p === defPath) defaultAppId = meta.id;
+  }
+  const result = { apps, defaultAppId };
+  openAppsByExt.set(ext, result);
+  return result;
 }

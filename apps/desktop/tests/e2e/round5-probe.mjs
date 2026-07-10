@@ -243,8 +243,9 @@ try {
     null,
     { timeout: 8000 },
   );
-  // Toggle → the app slides the panel out (width → 0, data-open false).
-  await page.click('[aria-label="Toggle canvas panel"]');
+  // Round-8: the in-canvas toggle (an X while open) slides the panel out
+  // (width → 0, data-open false); the tab set is preserved.
+  await page.click('[data-testid="canvas-tabs-panel"] [aria-label="Close canvas panel"]');
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="canvas-tabs-panel"]');
@@ -253,8 +254,8 @@ try {
     null,
     { timeout: 5000 },
   );
-  // Restore control slides it back in.
-  await page.click('[data-testid="canvas-restore"]');
+  // Round-8: the chat top-right toggle (visible while closed) slides it back in.
+  await page.click('[data-testid="canvas-toggle"]');
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="canvas-tabs-panel"]');

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Pi Desktop mark">
+  <title>Pi Desktop — glyph</title>
+  <!--
+    Bare glyph: the Pi caret mark on transparent, in the product clay accent
+    (pd-accent-primary #d97757). For use where the platform supplies its own
+    mask/background, or as a standalone brand mark. Same geometry as icon.svg.
+  -->
+  <g fill="#D97757">
+    <rect x="300" y="328" width="424" height="86" rx="43"/>
+    <rect x="329" y="328" width="86" height="372" rx="43"/>
+    <rect x="609" y="328" width="86" height="372" rx="43"/>
+  </g>
+</svg>

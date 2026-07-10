@@ -52,6 +52,8 @@ export interface CatalogModel {
   readonly minRamGB: number;
   readonly contextWindow: number;
   readonly input: readonly ('text' | 'image')[];
+  /** True when the HF repo is gated (needs an accepted licence / token). */
+  readonly gated?: boolean;
   /** True only for HEAD-verified repo/file/sha/size. */
   readonly verified: boolean;
 }

@@ -274,6 +274,19 @@ function readOnboarding(): OnboardingState {
   return { firstRunComplete: false, choices: null };
 }
 
+/** Delete onboarding.json so the first-run gate re-opens the wizard. Settings
+ * (settings.json) are left intact; the wizard applies fresh choices live. */
+function resetOnboarding(): { ok: boolean } {
+  try {
+    fs.rmSync(ONBOARDING_PATH, { force: true });
+    log.info('onboarding reset');
+    return { ok: true };
+  } catch (error) {
+    log.warn('onboarding reset failed', { error: String(error) });
+    return { ok: false };
+  }
+}
+
 function completeOnboarding(choices: OnboardingChoices): { ok: boolean } {
   try {
     fs.mkdirSync(path.dirname(ONBOARDING_PATH), { recursive: true });
@@ -310,6 +323,7 @@ const handlers: IpcHandlers<ImportInvokeMap> = {
   'import:apply-skills': (req) => applySkills(req.names),
   'onboarding:get-state': () => readOnboarding(),
   'onboarding:complete': (req) => completeOnboarding(req.choices),
+  'onboarding:reset': () => resetOnboarding(),
 };
 
 export function registerImportIpc(

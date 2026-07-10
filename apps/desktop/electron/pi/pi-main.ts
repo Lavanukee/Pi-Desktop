@@ -12,6 +12,7 @@ import { PiBridge } from '@pi-desktop/engine/main';
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
 import { app, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
 import { resolveBundledPackageAsset } from '../app-paths';
+import { getInferenceUtility } from '../inference/llm-main';
 import type { AppEventMap } from '../ipc-contract';
 import { isTrustedIpcEvent } from '../trusted-senders';
 import { createPiSessions, type PiSessionHandlers } from './pi-sessions';
@@ -71,12 +72,34 @@ const EXTENSION_PATHS: string[] = resolveExtensionPaths();
  * a margin, so the two must not drift apart. */
 const KILL_GRACE_MS = 1500;
 
+/**
+ * Env for the pi child, augmented (task #54) with the harness reliability
+ * engine's utility endpoint when a local model server is running at spawn — so
+ * the fixer / reviewer / adversarial / classifier-escalation actually fire,
+ * pointed at the SAME local server pi uses. Read fresh on every spawn: a model
+ * switch respawns pi (local-model.ts → restartPi), so a server that comes up
+ * later is picked up on the next spawn. If no server is up, the vars are left
+ * unset and the harness degrades to its heuristic fallback (never a hardcoded
+ * URL). Dynamic gap: a server that starts WITHOUT a subsequent pi respawn won't
+ * re-point the already-running child until the next spawn.
+ */
+function buildPiEnv(): Record<string, string | undefined> {
+  const utility = getInferenceUtility();
+  if (utility === null) return { ...process.env };
+  return {
+    ...process.env,
+    PI_DESKTOP_UTILITY_BASE_URL: utility.baseUrl,
+    PI_DESKTOP_UTILITY_MODEL: utility.model,
+  };
+}
+
 const sessions = createPiSessions<WebContents>({
   createBridge: (req, onEvent, opts) =>
     new PiBridge(
       {
         cwd: req.cwd,
         sessionPath: req.sessionPath,
+        env: buildPiEnv(),
         // Extensions are skipped on a post-crash retry (a broken/WIP extension
         // that exits pi at startup degrades to a working extension-free session).
         extensionPaths: opts?.extensionsDisabled === true ? [] : EXTENSION_PATHS,

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -129,6 +130,66 @@ describe('downloadFile', () => {
     const result = await downloadFile({ url: fixture.url, dest, expectedSha256: SHA });
     expect(result.sha256).toBe(SHA);
     expect((await readFile(dest)).equals(PAYLOAD)).toBe(true);
+  });
+
+  it('honors an AbortSignal mid-stream: the streaming loop stops and does not finalize', async () => {
+    // Deterministic two-chunk body via an injected fetch that ignores the signal
+    // itself, so ONLY the download loop's `signal.aborted` check can stop it.
+    // Abort fires after the first chunk is processed → the next loop iteration
+    // throws before the file is renamed into place.
+    const controller = new AbortController();
+    const chunks = [PAYLOAD.subarray(0, 50_000), PAYLOAD.subarray(50_000)];
+    let idx = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(ctrl) {
+        const chunk = chunks[idx++];
+        if (chunk !== undefined) ctrl.enqueue(chunk);
+        else ctrl.close();
+      },
+    });
+    const fetchImpl = (async () =>
+      new Response(body, {
+        status: 200,
+        headers: {
+          'content-length': String(PAYLOAD.length),
+          'accept-ranges': 'bytes',
+        },
+      })) as unknown as typeof fetch;
+
+    let sawBytes = false;
+    await expect(
+      downloadFile({
+        url: fixture.url,
+        dest,
+        expectedSha256: SHA,
+        signal: controller.signal,
+        fetchImpl,
+        progressIntervalMs: 0,
+        // Abort once real bytes have landed (skip the initial received:0 emit).
+        onProgress: (p) => {
+          if (p.received > 0) {
+            sawBytes = true;
+            controller.abort();
+          }
+        },
+      }),
+    ).rejects.toThrow(/abort/i);
+
+    // The loop processed a chunk (so it truly aborted mid-stream, not pre-flight)
+    // and never finalized the destination — the transfer did not complete.
+    expect(sawBytes).toBe(true);
+    expect(existsSync(dest)).toBe(false);
+  });
+
+  it('a pre-flight aborted signal stops the transfer before finalizing', async () => {
+    // An already-aborted signal: fetch itself rejects (real fetch honors it), so
+    // no destination file is produced.
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      downloadFile({ url: fixture.url, dest, expectedSha256: SHA, signal: controller.signal }),
+    ).rejects.toBeTruthy();
+    expect(existsSync(dest)).toBe(false);
   });
 
   it('is idempotent: a verified destination skips the transfer', async () => {

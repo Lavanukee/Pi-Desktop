@@ -490,6 +490,68 @@ describe('event router — bridge exit finalizes the in-flight turn', () => {
   });
 });
 
+describe('event router — harness ask_user (rich QuestionCard over input)', () => {
+  const sentinel = 'PI_DESKTOP_ASK_USER::v1::';
+
+  it('decodes a sentinel-tagged input placeholder into a synthetic askUser dialog', () => {
+    const { sink, route } = makeRouter();
+    const spec = {
+      v: 1,
+      mode: 'multi',
+      question: 'Pick features',
+      options: [
+        { value: 'a', label: 'Auth' },
+        { value: 'b', label: 'Billing' },
+      ],
+    };
+    route({
+      type: 'extension_ui_request',
+      id: 'ask-1',
+      method: 'input',
+      title: 'Pick features',
+      placeholder: sentinel + JSON.stringify(spec),
+    } as unknown as PiBridgeEvent);
+
+    const [call] = sink.callsFor('uiRequest');
+    const req = call?.[1] as
+      | { method: string; ask?: { mode: string }; placeholder?: string }
+      | undefined;
+    expect(req?.method).toBe('askUser');
+    expect(req?.ask?.mode).toBe('multi');
+    // The sentinel placeholder is not leaked to the plain-input field.
+    expect(req?.placeholder).toBeUndefined();
+  });
+
+  it('leaves a plain input request as a normal input dialog', () => {
+    const { sink, route } = makeRouter();
+    route({
+      type: 'extension_ui_request',
+      id: 'in-1',
+      method: 'input',
+      title: 'Your name?',
+      placeholder: 'Ada',
+    } as unknown as PiBridgeEvent);
+    const [call] = sink.callsFor('uiRequest');
+    const req = call?.[1] as { method: string; ask?: unknown } | undefined;
+    expect(req?.method).toBe('input');
+    expect(req?.ask).toBeUndefined();
+  });
+
+  it('treats a malformed sentinel payload as a normal input (defensive)', () => {
+    const { sink, route } = makeRouter();
+    route({
+      type: 'extension_ui_request',
+      id: 'in-2',
+      method: 'input',
+      title: 'x',
+      placeholder: `${sentinel}not json{`,
+    } as unknown as PiBridgeEvent);
+    const [call] = sink.callsFor('uiRequest');
+    const req = call?.[1] as { method: string } | undefined;
+    expect(req?.method).toBe('input');
+  });
+});
+
 describe('event router — dialog expiry (pi auto-resolves silently)', () => {
   afterEach(() => vi.useRealTimers());
 

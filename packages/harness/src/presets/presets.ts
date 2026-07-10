@@ -12,9 +12,22 @@
  */
 
 import type { TaskClass } from '../classify/classify.js';
+import { SPAWN_SUBAGENT_TOOL_NAME } from '../subagent/types.js';
 
 /** The always-available tool-search tool name. */
 export const TOOL_SEARCH_TOOL_NAME = 'tool_search';
+
+/**
+ * Harness tools kept active in EVERY preset (when registered), independent of
+ * the task class — the model must always be able to publish a plan, ask the user
+ * a question, and spawn a subagent. `tool_search` is handled separately (it is
+ * gated by {@link ResolvePresetOptions.includeToolSearch}).
+ */
+export const ALWAYS_ACTIVE_TOOLS: readonly string[] = [
+  'update_plan',
+  'ask_user',
+  SPAWN_SUBAGENT_TOOL_NAME,
+];
 
 // Common tool clusters (built-in pi tools + this repo's web-tools/gen tools).
 const CORE_FS = ['read', 'write', 'edit', 'ls', 'find', 'grep'] as const;
@@ -92,6 +105,15 @@ export function resolvePresetTools(
     !seen.has(TOOL_SEARCH_TOOL_NAME)
   ) {
     out.push(TOOL_SEARCH_TOOL_NAME);
+    seen.add(TOOL_SEARCH_TOOL_NAME);
+  }
+  // Plan + ask-user stay active across every class (when registered) so the
+  // model can always surface progress and ask questions.
+  for (const name of ALWAYS_ACTIVE_TOOLS) {
+    if (available.has(name) && !seen.has(name)) {
+      out.push(name);
+      seen.add(name);
+    }
   }
   return out;
 }

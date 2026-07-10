@@ -20,12 +20,13 @@
  * first) so recorded transcripts from older pi versions still replay.
  */
 import type { ToolResultMsg } from '../types/chat';
-import type {
-  AssistantMessage,
-  PiBridgeEvent,
-  RpcExtensionUIRequest,
-  ThinkingLevel,
-  ToolCall,
+import {
+  type AssistantMessage,
+  decodeAskUserPlaceholder,
+  type PiBridgeEvent,
+  type RpcExtensionUIRequest,
+  type ThinkingLevel,
+  type ToolCall,
 } from '../types/rpc';
 import type { StoreSink } from './store-sink';
 
@@ -165,15 +166,22 @@ export function createEventRouter(sink: StoreSink, options: EventRouterOptions =
           prefill?: string;
           timeout?: number;
         };
+        // A harness `ask_user` question rides on the open-ended `input` method:
+        // its placeholder carries a sentinel-tagged rich spec (multi-select /
+        // slider / …) pi's frozen protocol can't express. Decode it into a
+        // synthetic `askUser` dialog the QuestionCard renders; anything else is
+        // a plain input. The reply still round-trips as the input's string value.
+        const ask = e.method === 'input' ? decodeAskUserPlaceholder(req.placeholder) : null;
         sink.uiRequest({
           id: e.id,
-          method: e.method,
+          method: ask !== null ? 'askUser' : e.method,
           title: e.title,
           message: req.message,
           options: req.options,
-          placeholder: req.placeholder,
+          placeholder: ask !== null ? undefined : req.placeholder,
           prefill: req.prefill,
           timeout: req.timeout,
+          ...(ask !== null ? { ask } : {}),
         });
         // pi auto-resolves the dialog on its side at `timeout` and emits NO
         // event, so the router must self-expire the request from the store or

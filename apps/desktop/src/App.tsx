@@ -5,6 +5,7 @@ import { ChatApp } from './chat/ChatApp';
 import { CanvasPopoutView } from './chat/canvas/CanvasPopoutView';
 import { ConnectorsScreen } from './connectors/ConnectorsScreen';
 import { GalleryView } from './gallery/GalleryView';
+import { FirstRunTips, resetFirstRunTips } from './onboarding/FirstRunTips';
 import { OnboardingWizard } from './onboarding/OnboardingWizard';
 import { type SettingsSection, SettingsView } from './settings/SettingsView';
 import { applyThemeAttributes, useThemeStore } from './store/theme';
@@ -62,6 +63,16 @@ export function App() {
     applyThemeAttributes(document.documentElement, { flavor, mode });
   }, [flavor, mode]);
 
+  // "Redo onboarding" (Settings → Interface): clear the persisted first-run flag,
+  // re-arm the first-run tips, and re-open the wizard. Settings persist; the
+  // wizard applies fresh choices live.
+  const redoOnboarding = () => {
+    void window.piDesktop.invoke('onboarding:reset', undefined).catch(() => undefined);
+    resetFirstRunTips();
+    setView('chat');
+    setGate('onboarding');
+  };
+
   // First-run gate: onboarding runs before ChatApp until the choices are
   // persisted. The boot theme is owned solely by settings.json (applied by
   // connectSettings, and seeded from onboarding.json on first read) — applying
@@ -102,8 +113,8 @@ export function App() {
       <ToastProvider swipeDirection="right">
         <div className="h-full">
           {gate === 'loading' ? (
-            <div className="flex h-full items-center justify-center">
-              <Spinner size={18} />
+            <div className="flex h-full items-center justify-center text-accent-primary">
+              <Spinner size={22} />
             </div>
           ) : gate === 'onboarding' ? (
             <OnboardingWizard onComplete={() => setGate('ready')} />
@@ -114,6 +125,7 @@ export function App() {
               onClose={() => setView('chat')}
               onOpenGallery={() => setView('gallery')}
               onOpenConnectors={() => setView('connectors')}
+              onRedoOnboarding={redoOnboarding}
             />
           ) : view === 'connectors' ? (
             <ConnectorsScreen onClose={() => setView('chat')} />
@@ -135,13 +147,17 @@ export function App() {
               </div>
             </div>
           ) : (
-            <ChatApp
-              onOpenSettings={(section) => {
-                setSettingsSection(section);
-                setView('settings');
-              }}
-              onOpenConnectors={() => setView('connectors')}
-            />
+            <div className="relative h-full">
+              <ChatApp
+                onOpenSettings={(section) => {
+                  setSettingsSection(section);
+                  setView('settings');
+                }}
+                onOpenConnectors={() => setView('connectors')}
+              />
+              {/* Onboarding `tutorial` flag consumer: dismissible first-run tips. */}
+              <FirstRunTips />
+            </div>
           )}
         </div>
         <ProbeHooks />

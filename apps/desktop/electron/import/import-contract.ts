@@ -83,6 +83,8 @@ export type ImportInvokeMap = {
   'onboarding:get-state': { request: undefined; response: OnboardingState };
   /** Persist the wizard result + mark first-run complete. */
   'onboarding:complete': { request: { choices: OnboardingChoices }; response: { ok: boolean } };
+  /** Clear onboarding.json so the wizard re-runs ("Redo onboarding" in Settings). */
+  'onboarding:reset': { request: undefined; response: { ok: boolean } };
 };
 
 export const IMPORT_INVOKE_CHANNELS = [
@@ -95,4 +97,5 @@ export const IMPORT_INVOKE_CHANNELS = [
   'import:apply-skills',
   'onboarding:get-state',
   'onboarding:complete',
+  'onboarding:reset',
 ] as const satisfies readonly (keyof ImportInvokeMap)[];

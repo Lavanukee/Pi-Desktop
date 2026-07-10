@@ -24,6 +24,7 @@ import { IMPORT_INVOKE_CHANNELS, type ImportInvokeMap } from './import/import-co
 import { PI_INVOKE_CHANNELS, type PiEventMap, type PiInvokeMap } from './pi/contract';
 import { PROJECT_INVOKE_CHANNELS, type ProjectInvokeMap } from './project/project-contract';
 import { SETTINGS_INVOKE_CHANNELS, type SettingsInvokeMap } from './settings/settings-contract';
+import { SKILLS_INVOKE_CHANNELS, type SkillsInvokeMap } from './skills/skills-contract';
 import { PTY_INVOKE_CHANNELS, type PtyEventMap, type PtyInvokeMap } from './terminal/pty-contract';
 
 export interface AppInfo {
@@ -389,6 +390,7 @@ export type AppInvokeMap = CoreInvokeMap &
   CanvasInvokeMap &
   ProjectInvokeMap &
   ConnectorsInvokeMap &
+  SkillsInvokeMap &
   ImportInvokeMap &
   BrowserInvokeMap &
   BrowserAgentInvokeMap &
@@ -409,6 +411,7 @@ export const APP_INVOKE_CHANNELS = [
   ...CANVAS_INVOKE_CHANNELS,
   ...PROJECT_INVOKE_CHANNELS,
   ...CONNECTORS_INVOKE_CHANNELS,
+  ...SKILLS_INVOKE_CHANNELS,
   ...IMPORT_INVOKE_CHANNELS,
   ...BROWSER_INVOKE_CHANNELS,
   ...BROWSER_AGENT_INVOKE_CHANNELS,

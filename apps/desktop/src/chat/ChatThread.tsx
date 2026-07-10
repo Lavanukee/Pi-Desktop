@@ -36,6 +36,7 @@ import { usePiStore } from '../state/pi-slice';
 import { useThemeStore } from '../store/theme';
 import { generatedImageSrc, segmentGroup } from './activity-mapping';
 import { InlineArtifact } from './canvas/InlineArtifacts';
+import { HarnessChecklistPanel } from './HarnessStatus';
 import { Markdown } from './markdown';
 import { ThreadActivityChain } from './ThreadActivity';
 import { ThreadImage } from './ThreadImage';
@@ -359,160 +360,165 @@ export function ChatThread() {
   const items = toRenderItems(messages, claimed);
 
   return (
-    <ScrollArea
-      ref={scrollRef}
-      onScroll={onScroll}
-      className="pd-elastic-scroll min-h-0 flex-1"
-      data-testid="chat-scroll"
-    >
-      <div ref={contentRef} className="pd-elastic-content">
-        <Thread>
-          {historyTruncated ? (
-            <div className="pb-2 text-center text-footnote text-text-muted">
-              Earlier messages were truncated when this session was restored.
-            </div>
-          ) : null}
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* The live task checklist stays pinned above the scrolling transcript so
+          the user watches items flip pending → in_progress → done during a task. */}
+      <HarnessChecklistPanel />
+      <ScrollArea
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="pd-elastic-scroll min-h-0 flex-1"
+        data-testid="chat-scroll"
+      >
+        <div ref={contentRef} className="pd-elastic-content">
+          <Thread>
+            {historyTruncated ? (
+              <div className="pb-2 text-center text-footnote text-text-muted">
+                Earlier messages were truncated when this session was restored.
+              </div>
+            ) : null}
 
-          {items.map((item) => {
-            if (item.kind === 'user') {
-              const message = item.message;
-              const ordinal = userOrdinalById.get(message.id) ?? -1;
-              const group = branches[ordinal];
-              // A message with alternates shows a persistent ‹ n / m › switcher
-              // beneath its bubble (kept out of the hover-only action bar so the
-              // alternates are always discoverable).
-              const switcher =
-                group !== undefined && group.files.length > 1 ? (
-                  <div className="flex justify-end">
-                    <BranchSwitcher
-                      data-testid="branch-switcher"
-                      index={group.active}
-                      total={group.files.length}
-                      onPrev={() => void switchBranch(ordinal, group.active - 1)}
-                      onNext={() => void switchBranch(ordinal, group.active + 1)}
-                    />
-                  </div>
-                ) : null;
+            {items.map((item) => {
+              if (item.kind === 'user') {
+                const message = item.message;
+                const ordinal = userOrdinalById.get(message.id) ?? -1;
+                const group = branches[ordinal];
+                // A message with alternates shows a persistent ‹ n / m › switcher
+                // beneath its bubble (kept out of the hover-only action bar so the
+                // alternates are always discoverable).
+                const switcher =
+                  group !== undefined && group.files.length > 1 ? (
+                    <div className="flex justify-end">
+                      <BranchSwitcher
+                        data-testid="branch-switcher"
+                        index={group.active}
+                        total={group.files.length}
+                        onPrev={() => void switchBranch(ordinal, group.active - 1)}
+                        onNext={() => void switchBranch(ordinal, group.active + 1)}
+                      />
+                    </div>
+                  ) : null;
 
-              // Inline edit mode: the bubble becomes an editable textarea (#A9).
-              if (editingId === message.id) {
+                // Inline edit mode: the bubble becomes an editable textarea (#A9).
+                if (editingId === message.id) {
+                  return (
+                    <div key={message.id} className="flex flex-col gap-1">
+                      <EditableMessage
+                        data-testid="editing-message"
+                        value={message.text}
+                        editing
+                        onSave={saveEdit}
+                        onCancel={() => setEditingId(null)}
+                      />
+                      {switcher}
+                    </div>
+                  );
+                }
                 return (
                   <div key={message.id} className="flex flex-col gap-1">
-                    <EditableMessage
-                      data-testid="editing-message"
-                      value={message.text}
-                      editing
-                      onSave={saveEdit}
-                      onCancel={() => setEditingId(null)}
-                    />
+                    <MessageRow
+                      kind="user"
+                      actions={
+                        <MessageActions
+                          onCopy={() => copyText(message.text)}
+                          onEdit={() => setEditingId(message.id)}
+                        />
+                      }
+                    >
+                      <div className="flex flex-col gap-2">
+                        {message.images !== undefined && message.images.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {message.images.map((src) => (
+                              // biome-ignore lint/a11y/useAltText: user attachment thumbnail
+                              <img key={src} src={src} className="max-h-32 rounded-md" />
+                            ))}
+                          </div>
+                        ) : null}
+                        {message.text.length > 0 ? (
+                          <span className="whitespace-pre-wrap">{message.text}</span>
+                        ) : null}
+                      </div>
+                    </MessageRow>
                     {switcher}
                   </div>
                 );
               }
-              return (
-                <div key={message.id} className="flex flex-col gap-1">
+
+              if (item.kind === 'assistant') {
+                const group = item.group;
+                const first = group[0];
+                if (first === undefined) return null;
+                const totalTokens = [...group].reverse().find((m) => m.usage !== undefined)
+                  ?.usage?.totalTokens;
+                const streaming = group.some((m) => m.isStreaming === true);
+                return (
                   <MessageRow
-                    kind="user"
+                    key={first.id}
+                    kind="assistant"
                     actions={
                       <MessageActions
-                        onCopy={() => copyText(message.text)}
-                        onEdit={() => setEditingId(message.id)}
+                        onCopy={() => copyText(groupPlainText(group))}
+                        onRetry={() => retryFrom(first.id)}
+                        tokenCount={totalTokens}
                       />
                     }
                   >
-                    <div className="flex flex-col gap-2">
-                      {message.images !== undefined && message.images.length > 0 ? (
-                        <div className="flex flex-wrap gap-2">
-                          {message.images.map((src) => (
-                            // biome-ignore lint/a11y/useAltText: user attachment thumbnail
-                            <img key={src} src={src} className="max-h-32 rounded-md" />
-                          ))}
-                        </div>
-                      ) : null}
-                      {message.text.length > 0 ? (
-                        <span className="whitespace-pre-wrap">{message.text}</span>
-                      ) : null}
-                    </div>
-                  </MessageRow>
-                  {switcher}
-                </div>
-              );
-            }
-
-            if (item.kind === 'assistant') {
-              const group = item.group;
-              const first = group[0];
-              if (first === undefined) return null;
-              const totalTokens = [...group].reverse().find((m) => m.usage !== undefined)
-                ?.usage?.totalTokens;
-              const streaming = group.some((m) => m.isStreaming === true);
-              return (
-                <MessageRow
-                  key={first.id}
-                  kind="assistant"
-                  actions={
-                    <MessageActions
-                      onCopy={() => copyText(groupPlainText(group))}
-                      onRetry={() => retryFrom(first.id)}
-                      tokenCount={totalTokens}
+                    <AssistantGroup
+                      group={group}
+                      resultByCallId={resultByCallId}
+                      runningToolCalls={runningToolCalls}
+                      tps={streaming ? undefined : tps}
                     />
-                  }
-                >
-                  <AssistantGroup
-                    group={group}
-                    resultByCallId={resultByCallId}
-                    runningToolCalls={runningToolCalls}
-                    tps={streaming ? undefined : tps}
-                  />
-                </MessageRow>
-              );
-            }
+                  </MessageRow>
+                );
+              }
 
-            if (item.kind === 'bash') {
+              if (item.kind === 'bash') {
+                const message = item.message;
+                return (
+                  <ActivityRow
+                    key={message.id}
+                    icon={<IconTerminal size={14} />}
+                    label={`! ${message.command}`}
+                  >
+                    <pre className="whitespace-pre-wrap pt-1 text-code text-text-secondary">
+                      {message.output || '(no output)'}
+                    </pre>
+                  </ActivityRow>
+                );
+              }
+
+              // Orphan tool result (rehydrated with no matching assistant block).
               const message = item.message;
               return (
                 <ActivityRow
                   key={message.id}
                   icon={<IconTerminal size={14} />}
-                  label={`! ${message.command}`}
+                  label={message.toolName}
                 >
                   <pre className="whitespace-pre-wrap pt-1 text-code text-text-secondary">
-                    {message.output || '(no output)'}
+                    {message.text || '(no output)'}
                   </pre>
                 </ActivityRow>
               );
-            }
+            })}
 
-            // Orphan tool result (rehydrated with no matching assistant block).
-            const message = item.message;
-            return (
-              <ActivityRow
-                key={message.id}
-                icon={<IconTerminal size={14} />}
-                label={message.toolName}
-              >
-                <pre className="whitespace-pre-wrap pt-1 text-code text-text-secondary">
-                  {message.text || '(no output)'}
-                </pre>
-              </ActivityRow>
-            );
-          })}
-
-          {agent.isStreaming ? (
-            <div className="flex items-center gap-2 py-2 text-footnote text-text-muted">
-              <Spinner size={12} />
-              <ShimmerText active>
-                {agent.retry !== null
-                  ? `Retrying (${agent.retry.attempt}/${agent.retry.maxAttempts})…`
-                  : flavor === 'claude'
-                    ? 'Working'
-                    : 'Thinking'}
-              </ShimmerText>
-              <span>· {elapsed}s</span>
-            </div>
-          ) : null}
-        </Thread>
-      </div>
-    </ScrollArea>
+            {agent.isStreaming ? (
+              <div className="flex items-center gap-2 py-2 text-footnote text-text-muted">
+                <Spinner size={12} />
+                <ShimmerText active>
+                  {agent.retry !== null
+                    ? `Retrying (${agent.retry.attempt}/${agent.retry.maxAttempts})…`
+                    : flavor === 'claude'
+                      ? 'Working'
+                      : 'Thinking'}
+                </ShimmerText>
+                <span>· {elapsed}s</span>
+              </div>
+            ) : null}
+          </Thread>
+        </div>
+      </ScrollArea>
+    </div>
   );
 }

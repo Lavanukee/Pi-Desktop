@@ -18,6 +18,32 @@ export const HARNESS_REVIEW_ENTRY = 'harness/review';
 /** Preset selection: a fixed class, or `auto` to let the classifier decide. */
 export type PresetSelection = TaskClass | 'auto';
 
+/** Lifecycle state of a single plan/checklist item. */
+export type PlanItemStatus = 'pending' | 'in_progress' | 'done';
+
+export const PLAN_ITEM_STATUSES: readonly PlanItemStatus[] = ['pending', 'in_progress', 'done'];
+
+export function isPlanItemStatus(v: unknown): v is PlanItemStatus {
+  return typeof v === 'string' && (PLAN_ITEM_STATUSES as readonly string[]).includes(v);
+}
+
+/**
+ * One row of the task checklist the model maintains via the `update_plan` tool.
+ * Surfaced to the renderer inside {@link HarnessStatus.plan} so the desktop app
+ * can render a live {@link TaskChecklist} that flips pending → in_progress → done.
+ */
+export interface PlanItem {
+  /** Stable id (used as a React key + for updates). */
+  readonly id: string;
+  /** Human-readable step label. */
+  readonly text: string;
+  readonly status: PlanItemStatus;
+  /** Optional grouping/section heading (e.g. a subagent name). */
+  readonly group?: string;
+  /** Future/roadmap step — rendered dimmer, not yet started. */
+  readonly roadmap?: boolean;
+}
+
 /** The user-tunable harness configuration the app reads. */
 export interface HarnessConfig {
   readonly mode: PermissionMode;
@@ -47,6 +73,10 @@ export interface HarnessStatus extends HarnessConfig {
   readonly runningTaskMs: number | null;
   /** Per-tool repair failure counts this session. */
   readonly repairFailures: Readonly<Record<string, number>>;
+  /** The live task checklist (from the `update_plan` tool), or null if unset. */
+  readonly plan: readonly PlanItem[] | null;
+  /** Optional heading for the plan panel (from the `update_plan` tool). */
+  readonly planTitle: string | null;
 }
 
 /** Minimal structural view of a persisted session entry. */

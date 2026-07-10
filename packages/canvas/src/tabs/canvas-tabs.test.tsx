@@ -1,3 +1,4 @@
+import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { click, render } from '../test-utils.tsx';
 import { CanvasTabs } from './canvas-tabs.tsx';
@@ -61,13 +62,56 @@ describe('CanvasTabs', () => {
     const labels = [...container.querySelectorAll('.pd-canvas-menu-anchor .pd-menu-item')].map(
       (n) => n.textContent,
     );
-    expect(labels).toEqual(['Files⌘P', 'Browser⌘T', 'Terminal']);
+    expect(labels).toEqual(['Files⌘P', 'Browser⌘T', 'Terminal', 'Subagents']);
     const browser = [...container.querySelectorAll('.pd-menu-item')].find((n) =>
       n.textContent?.includes('Browser'),
     );
     await click(browser ?? null);
     expect(c.getState().tabs).toHaveLength(4);
     expect(c.getState().tabs[3]?.kind).toBe('browser');
+  });
+
+  it('renders a live subagent tab and fires onSubagentSelect on a row click', async () => {
+    const c = new CanvasController({ idFactory: () => 'sa' });
+    c.openTab({
+      kind: 'subagent',
+      title: 'Subagents',
+      subagents: [
+        { id: 'w1', name: 'Research', step: 'Reading files…', status: 'running' },
+        { id: 'w2', name: 'Refactor', step: 'Done', status: 'done' },
+      ],
+    });
+    const onSubagentSelect = vi.fn();
+    const { container } = await render(
+      <CanvasTabs controller={c} handlers={{ onSubagentSelect }} />,
+    );
+    const rows = [...container.querySelectorAll('.pd-subagent-row')];
+    expect(rows.map((r) => r.querySelector('.pd-subagent-name')?.textContent)).toEqual([
+      'Research',
+      'Refactor',
+    ]);
+    await click(rows[0] ?? null);
+    expect(onSubagentSelect).toHaveBeenCalledWith('sa', 'w1');
+
+    // Live update: pushing new SubagentItem[] via the controller re-renders rows.
+    await act(async () => {
+      c.updateTab('sa', {
+        subagents: [{ id: 'w1', name: 'Research', step: 'Summarizing…', status: 'running' }],
+      });
+    });
+    const stepText = container.querySelector('.pd-subagent-step')?.textContent;
+    expect(stepText).toBe('Summarizing…');
+  });
+
+  it('opens a subagent tab from the + menu', async () => {
+    const c = seededController();
+    const { container } = await render(<CanvasTabs controller={c} />);
+    await click(container.querySelector('.pd-canvas-newtab'));
+    const subagents = [...container.querySelectorAll('.pd-menu-item')].find((n) =>
+      n.textContent?.includes('Subagents'),
+    );
+    await click(subagents ?? null);
+    expect(c.getState().tabs[3]?.kind).toBe('subagent');
   });
 
   it('+ menu routes the chosen kind through onNewTab', async () => {

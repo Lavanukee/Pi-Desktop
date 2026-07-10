@@ -419,8 +419,63 @@ export type PiAgentEvent =
 // Extension UI sub-protocol
 // ---------------------------------------------------------------------------
 
-/** Dialog methods block pi until an {@link RpcExtensionUIResponse} arrives. */
+/** Dialog methods pi actually emits on the wire; each blocks pi until an
+ * {@link RpcExtensionUIResponse} arrives. This is the faithful, frozen set. */
 export type ExtensionUiDialogMethod = 'confirm' | 'select' | 'input' | 'editor';
+
+/**
+ * Renderer-facing dialog methods = the wire set plus the synthetic `askUser`,
+ * which the event-router SYNTHESIZES from an `input` request whose placeholder
+ * carries the {@link HARNESS_ASK_USER_SENTINEL}. pi's frozen protocol cannot
+ * express multi-select or a numeric slider, so the harness `ask_user` tool
+ * encodes a rich {@link HarnessAskUserSpec} over the open-ended `input` method;
+ * the app decodes it here and renders it through the design-system QuestionCard.
+ */
+export type RendererDialogMethod = ExtensionUiDialogMethod | 'askUser';
+
+/** Sentinel prefixing an encoded {@link HarnessAskUserSpec} in an `input`
+ * placeholder. MUST match the encoder in `@pi-desktop/harness`
+ * (tools/ask-user.ts `ASK_USER_SENTINEL`). */
+export const HARNESS_ASK_USER_SENTINEL = 'PI_DESKTOP_ASK_USER::v1::';
+
+export type HarnessAskUserMode = 'choice' | 'multi' | 'slider' | 'free';
+
+/** Rich question spec the harness `ask_user` tool encodes over `input`. */
+export interface HarnessAskUserSpec {
+  readonly v: 1;
+  readonly mode: HarnessAskUserMode;
+  readonly question: string;
+  readonly options?: { readonly value: string; readonly label: string; readonly info?: string }[];
+  readonly min?: number;
+  readonly max?: number;
+  readonly step?: number;
+  readonly defaultValue?: number;
+  readonly placeholder?: string;
+  readonly submitLabel?: string;
+}
+
+/**
+ * Decode an `input` placeholder into a {@link HarnessAskUserSpec}, or null when
+ * it is a plain input (no sentinel / malformed). Pure + defensive: a malformed
+ * payload degrades to a normal input dialog rather than throwing.
+ */
+export function decodeAskUserPlaceholder(
+  placeholder: string | undefined,
+): HarnessAskUserSpec | null {
+  if (placeholder === undefined || !placeholder.startsWith(HARNESS_ASK_USER_SENTINEL)) return null;
+  try {
+    const parsed = JSON.parse(placeholder.slice(HARNESS_ASK_USER_SENTINEL.length)) as {
+      mode?: unknown;
+      question?: unknown;
+    };
+    if (typeof parsed.question !== 'string') return null;
+    const mode = parsed.mode;
+    if (mode !== 'choice' && mode !== 'multi' && mode !== 'slider' && mode !== 'free') return null;
+    return { v: 1, ...(parsed as object), mode, question: parsed.question } as HarnessAskUserSpec;
+  } catch {
+    return null;
+  }
+}
 
 export type RpcExtensionUIRequest =
   | {

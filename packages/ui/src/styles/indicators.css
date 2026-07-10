@@ -36,17 +36,65 @@
   }
 }
 
-.pd-spinner {
-  display: inline-block;
+/*
+ * The branded "Pi caret" loader (Spinner component; build/loader.svg in-app).
+ * The pi mark draws itself along its stroke path (pd-loader-draw) while the
+ * right leg blinks like a text caret (pd-loader-blink); a faint full mark sits
+ * underneath. currentColor throughout so it inherits the surrounding text
+ * color. Multiple loaders desync via a per-instance --pd-loader-delay.
+ */
+.pd-loader {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: var(--pd-icon-size);
   height: var(--pd-icon-size);
-  border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
-  border-top-color: currentColor;
-  border-radius: var(--pd-radius-full);
   flex: none;
-  /* pd-spin keeps running under reduced motion: essential loading feedback
-   * (WCAG 2.3.3 exemption, themes emit.ts convention). */
-  animation: pd-spin 0.8s linear infinite;
+  color: currentColor;
+}
+
+.pd-loader-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.pd-loader-ghost {
+  fill: currentColor;
+  opacity: 0.14;
+}
+
+.pd-loader-draw {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 78;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1000 1000;
+  stroke-dashoffset: 1000;
+  animation: pd-loader-draw 2.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  animation-delay: var(--pd-loader-delay, 0ms);
+}
+
+.pd-loader-caret {
+  fill: currentColor;
+  transform-origin: center;
+  animation: pd-loader-blink 1.05s ease-in-out infinite;
+  animation-delay: var(--pd-loader-delay, 0ms);
+}
+
+/* Reduced motion: freeze to the fully-drawn static mark. Infinite animations
+ * are disabled by component CSS per the themes emit.ts convention. */
+@media (prefers-reduced-motion: reduce) {
+  .pd-loader-draw {
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+  .pd-loader-caret {
+    opacity: 1;
+    animation: none;
+  }
 }
 
 .pd-gauge {

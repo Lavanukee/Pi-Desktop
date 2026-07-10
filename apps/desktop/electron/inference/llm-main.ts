@@ -33,6 +33,30 @@ const pending = new Map<
   { resolve: (value: unknown) => void; reject: (error: Error) => void }
 >();
 
+/** Last status the supervisor broadcast — the source of the utility endpoint the
+ * pi child points its reliability engine at (task #54). */
+let lastStatus: LlmStatus | null = null;
+
+/**
+ * The OpenAI-compatible endpoint of the currently-running local model, or null
+ * when no server is up. `baseUrl` already ends in `/v1` (supervisor.baseUrl), so
+ * it feeds `PI_DESKTOP_UTILITY_BASE_URL` directly; `model` is the served id.
+ * pi-main reads this at spawn to point the harness fixer/review/classifier at
+ * the same local server. Never a hardcoded URL — absent server ⇒ null ⇒ the
+ * harness degrades to its heuristic fallback.
+ */
+export function getInferenceUtility(): { baseUrl: string; model: string } | null {
+  if (
+    lastStatus === null ||
+    !lastStatus.serverRunning ||
+    lastStatus.baseUrl === null ||
+    lastStatus.baseUrl.length === 0
+  ) {
+    return null;
+  }
+  return { baseUrl: lastStatus.baseUrl, model: lastStatus.model?.id ?? 'utility' };
+}
+
 function broadcast<K extends keyof AppEventMap & string>(
   channel: K,
   payload: AppEventMap[K],
@@ -49,6 +73,7 @@ function ensureChild(): UtilityProcess {
 
   proc.on('message', (message: LlmOutbound) => {
     if (message.kind === 'status') {
+      lastStatus = message.status;
       broadcast('llm:status', message.status);
       return;
     }
@@ -66,6 +91,7 @@ function ensureChild(): UtilityProcess {
   proc.on('exit', (code) => {
     log.warn('inference-supervisor exited', { code });
     child = null;
+    lastStatus = null;
     for (const waiter of pending.values()) waiter.reject(new Error('inference-supervisor exited'));
     pending.clear();
   });

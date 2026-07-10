@@ -51,10 +51,12 @@ function SectionBody({
   section,
   onOpenGallery,
   onOpenConnectors,
+  onRedoOnboarding,
 }: {
   section: SettingsSection;
   onOpenGallery?: () => void;
   onOpenConnectors?: () => void;
+  onRedoOnboarding?: () => void;
 }) {
   switch (section) {
     case 'models':
@@ -64,7 +66,7 @@ function SectionBody({
     case 'appearance':
       return <AppearancePanel />;
     case 'interface':
-      return <InterfacePanel onOpenGallery={onOpenGallery} />;
+      return <InterfacePanel onOpenGallery={onOpenGallery} onRedoOnboarding={onRedoOnboarding} />;
     case 'agent':
       return <AgentPanel />;
     case 'search':
@@ -82,6 +84,7 @@ export function SettingsView({
   onClose,
   onOpenGallery,
   onOpenConnectors,
+  onRedoOnboarding,
 }: {
   section: SettingsSection;
   onSection: (section: SettingsSection) => void;
@@ -90,6 +93,8 @@ export function SettingsView({
   onOpenGallery?: () => void;
   /** Open the full Codex-style connectors gallery (its own top-level view). */
   onOpenConnectors?: () => void;
+  /** Clear the first-run flag + re-open the onboarding wizard (Interface panel). */
+  onRedoOnboarding?: () => void;
 }) {
   return (
     <div className="pd-settings-enter flex h-full flex-col bg-bg-base" data-testid="settings-view">
@@ -150,6 +155,7 @@ export function SettingsView({
               section={section}
               onOpenGallery={onOpenGallery}
               onOpenConnectors={onOpenConnectors}
+              onRedoOnboarding={onRedoOnboarding}
             />
           </div>
         </ScrollArea>

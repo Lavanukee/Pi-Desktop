@@ -1,6 +1,17 @@
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 import path from 'node:path';
+import { claudePaths, parseClaudeWindowState } from '@pi-desktop/importers';
 import { createIpcEventSender, createLogger, registerIpcHandlers } from '@pi-desktop/shared';
-import { app, BrowserWindow, ipcMain, type WebPreferences } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  type BrowserWindowConstructorOptions,
+  ipcMain,
+  type NativeImage,
+  nativeImage,
+  type WebPreferences,
+} from 'electron';
 import { registerAfmIpc } from './afm/afm-main';
 import { resolveBundledPackageAsset } from './app-paths';
 import { registerBrowserAgentIpc } from './canvas/browser-agent';
@@ -19,6 +30,7 @@ import type { AppEventMap, CoreInvokeMap, FsInvokeMap } from './ipc-contract';
 import { registerPiIpc } from './pi/pi-main';
 import { registerProjectIpc } from './project/project-main';
 import { applySettingsEnvFromDisk, registerSettingsIpc } from './settings/settings-main';
+import { registerSkillsIpc } from './skills/skills-main';
 import { registerPtyIpc } from './terminal/pty-manager';
 import {
   isTrustedIpcEvent,
@@ -47,6 +59,60 @@ registerCanvasSchemesAsPrivileged();
 let mainWindow: BrowserWindow | null = null;
 let canvasPopoutWindow: BrowserWindow | null = null;
 
+// The "Pi caret" app mark (build/icon.png). Packaged builds get their bundle
+// icon from build/icon.icns (electron-builder mac.icon), but that does not set
+// the RUNTIME dock/window image in dev, so load the PNG here for the dev window
+// + dock. build/ is a sibling of dist-electron (apps/desktop/build) in dev; it
+// is not shipped inside the asar, so the packaged path simply resolves empty
+// and the .icns bundle icon stands.
+const ICON_PATH = path.join(DIST_ELECTRON, '../build/icon.png');
+
+function appIconImage(): NativeImage | null {
+  try {
+    const img = nativeImage.createFromPath(ICON_PATH);
+    return img.isEmpty() ? null : img;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * On first run only (no onboarding.json yet), size the initial window from the
+ * user's Claude Desktop window bounds so it "opens where they left Claude". Pure
+ * read of window-state.json via the importers parser (never touches auth). E2E
+ * is skipped so probe window geometry stays deterministic.
+ */
+function firstRunClaudeBounds(): Pick<
+  BrowserWindowConstructorOptions,
+  'width' | 'height' | 'x' | 'y'
+> | null {
+  if (process.env.PI_E2E === '1') return null;
+  const home = os.homedir();
+  try {
+    if (fs.existsSync(path.join(home, '.pi', 'desktop', 'onboarding.json'))) return null;
+  } catch {
+    return null;
+  }
+  let text: string | null = null;
+  try {
+    text = fs.readFileSync(claudePaths(home).windowState, 'utf8');
+  } catch {
+    return null;
+  }
+  const { bounds } = parseClaudeWindowState(text);
+  if (bounds === null || bounds.isMaximized || bounds.isFullScreen) return null;
+  // Clamp to the window's own minimums; only carry x/y when both are present.
+  const out: Pick<BrowserWindowConstructorOptions, 'width' | 'height' | 'x' | 'y'> = {
+    width: Math.max(640, Math.round(bounds.width)),
+    height: Math.max(480, Math.round(bounds.height)),
+  };
+  if (bounds.x !== undefined && bounds.y !== undefined) {
+    out.x = Math.round(bounds.x);
+    out.y = Math.round(bounds.y);
+  }
+  return out;
+}
+
 const SHARED_WEB_PREFERENCES: WebPreferences = {
   preload: path.join(DIST_ELECTRON, 'preload.js'),
   contextIsolation: true,
@@ -74,12 +140,17 @@ function loadRenderer(win: BrowserWindow, extraQuery?: Record<string, string>): 
 }
 
 function createMainWindow(): BrowserWindow {
+  const icon = appIconImage();
   const win = new BrowserWindow({
     title: 'Pi Desktop',
     width: 1080,
     height: 720,
     minWidth: 640,
     minHeight: 480,
+    // First run: adopt the user's Claude Desktop window size/position if present.
+    ...firstRunClaudeBounds(),
+    // macOS shows the dock image (set in whenReady); icon is used on win/linux.
+    ...(icon !== null ? { icon } : {}),
     titleBarStyle: 'hiddenInset',
     // Round-7 (img56): pin the traffic lights to a deterministic spot so they
     // sit comfortably INSIDE the floating sidebar card (top edge ~y=8) with clear
@@ -196,6 +267,10 @@ function registerAppIpc(): void {
   // Owns ~/.pi/desktop/mcp-connectors.json (the file the mcp-lite pi extension
   // reads); the model sees changes on the next pi session/spawn.
   registerConnectorsIpc(ipcMain, allowSender);
+
+  // Skills: bundled catalog + install/remove into ~/.pi/agent/skills (the dir
+  // the pi engine auto-discovers skills from); copies from app resources.
+  registerSkillsIpc(ipcMain, allowSender);
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -228,6 +303,12 @@ if (!hasSingleInstanceLock) {
   applySettingsEnvFromDisk();
 
   void app.whenReady().then(() => {
+    // Dev dock icon: show the Pi caret mark on macOS (packaged uses the .icns
+    // bundle icon; this covers the unsigned dev/electron-run window).
+    if (process.platform === 'darwin' && app.dock !== undefined) {
+      const icon = appIconImage();
+      if (icon !== null) app.dock.setIcon(icon);
+    }
     registerAppIpc();
     registerPiIpc();
     // Native canvas surfaces (Phase 2b): per-tab WebContentsView + PTY managers.

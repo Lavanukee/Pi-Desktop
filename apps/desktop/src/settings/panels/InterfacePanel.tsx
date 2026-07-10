@@ -10,7 +10,13 @@ import { Button, IconStrokeControl, SegmentedControl } from '@pi-desktop/ui';
 import { useSettingsStore } from '../../state/settings-store';
 import { SettingRow, SettingSection } from '../parts';
 
-export function InterfacePanel({ onOpenGallery }: { onOpenGallery?: () => void }) {
+export function InterfacePanel({
+  onOpenGallery,
+  onRedoOnboarding,
+}: {
+  onOpenGallery?: () => void;
+  onRedoOnboarding?: () => void;
+}) {
   const iconStroke = useSettingsStore((s) => s.settings.iconStroke);
   const flavor = useSettingsStore((s) => s.settings.theme.flavor);
   const update = useSettingsStore((s) => s.update);
@@ -45,6 +51,24 @@ export function InterfacePanel({ onOpenGallery }: { onOpenGallery?: () => void }
             ]}
           />
         </SettingRow>
+
+        {onRedoOnboarding !== undefined ? (
+          <SettingRow
+            label="Redo onboarding"
+            hint="Replay the first-run setup wizard (imports, theme, experience). Your settings are kept."
+          >
+            <div>
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="settings-redo-onboarding"
+                onClick={onRedoOnboarding}
+              >
+                Redo onboarding
+              </Button>
+            </div>
+          </SettingRow>
+        ) : null}
 
         {onOpenGallery !== undefined ? (
           <SettingRow

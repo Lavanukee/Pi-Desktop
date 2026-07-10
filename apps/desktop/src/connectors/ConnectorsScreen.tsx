@@ -40,6 +40,7 @@ import { installedServer, isEnabled, useConnectorsStore } from '../state/connect
 import { useSettingsStore } from '../state/settings-store';
 import { ConnectorDetail } from './ConnectorDetail';
 import { ConnectPermissionDialog } from './ConnectPermissionDialog';
+import { SkillsTab } from './SkillsTab';
 
 /** Renderer-safe mirror of mcp-lite's connectorNeedsConfig (kept local so the
  * renderer never imports the node-touching detect-apps module). */
@@ -313,15 +314,7 @@ export function ConnectorsScreen({ onClose }: { onClose: () => void }) {
           <ScrollArea className="min-h-0 flex-1">
             <div className="mx-auto w-full max-w-[880px] px-8 py-5">
               {tab === 'skills' ? (
-                <div
-                  className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border-default border-dashed py-16 text-center"
-                  data-testid="connectors-skills-empty"
-                >
-                  <p className="text-body text-text-primary">No skills yet</p>
-                  <p className="max-w-[320px] text-footnote text-text-muted">
-                    Skills let Pi follow a saved playbook. This is coming soon.
-                  </p>
-                </div>
+                <SkillsTab />
               ) : (
                 <div className="flex flex-col gap-6">
                   {/* MCP mode + scope controls. */}

@@ -22,6 +22,7 @@ import { artifactToPayload } from './artifacts';
 import { useBrowserAgent } from './browser-agent';
 import { useFileWriteCanvasRouting } from './file-tabs';
 import { useNativeSurfaces } from './native-surfaces';
+import { useSubagentCanvasRouting } from './subagent-routing';
 import { useArtifactCanvasRouting } from './tabs-routing';
 import { useBashTerminalCanvasRouting } from './terminal-routing';
 
@@ -46,6 +47,9 @@ export function CanvasTabsPanel() {
   // browser-use: open/focus + register the agent browser tab on request from
   // the main-process bridge, and reflect its "driving" chrome.
   useBrowserAgent(controller);
+  // subagents: open/feed the live subagent list tab from the harness-subagents
+  // extension status stream (spawn_subagent progress).
+  useSubagentCanvasRouting(controller);
 
   // Keep the canvas in sync with the streamed-artifact detector (THEME 2), the
   // file-write → live file tab router, and the interactive-bash → terminal
@@ -116,7 +120,20 @@ export function CanvasTabsPanel() {
     (kind: NewTabKind) => {
       if (kind === 'terminal') controller.openTab({ kind: 'terminal', title: 'Terminal' });
       else if (kind === 'browser') controller.openTab({ kind: 'browser', title: 'New tab' });
+      else if (kind === 'subagent')
+        controller.upsertTab('pi:subagents', { kind: 'subagent', title: 'Subagents' });
       else controller.openTab({ kind: 'file', title: 'Untitled' });
+      setCanvasOpen(true);
+    },
+    [controller, setCanvasOpen],
+  );
+
+  // Clicking a subagent row focuses the (live) subagent tab. Only the summary of
+  // each child returns to chat, so there is no separate per-subagent transcript
+  // surface to open — focusing keeps the list in view.
+  const onSubagentSelect = useCallback(
+    (tabId: string) => {
+      controller.focusTab(tabId);
       setCanvasOpen(true);
     },
     [controller, setCanvasOpen],
@@ -132,7 +149,7 @@ export function CanvasTabsPanel() {
   // surface with copyable content (round-5 #20/#21).
   const surface = (
     <CanvasTabs
-      handlers={surfaceHandlers}
+      handlers={{ ...surfaceHandlers, onSubagentSelect }}
       onNewTab={onNewTab}
       onPopout={popOut}
       onCollapse={() => setCanvasOpen(false)}

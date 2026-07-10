@@ -44,6 +44,7 @@ import type {
   LlmHardware,
   LlmStatus,
 } from '../ipc-contract';
+import { DownloadCancellation, discardPartials, partialPaths } from './download-cancellation';
 import type {
   HfListFilesReply,
   HfRegisterReply,
@@ -128,8 +129,7 @@ let metrics: LlmStatus['metrics'] = null;
 
 /** In-flight download bookkeeping. `intent` disambiguates a deliberate
  * pause/cancel (an AbortSignal fires either way) from a genuine transfer error. */
-let downloadController: AbortController | null = null;
-let downloadIntent: 'pause' | 'cancel' | null = null;
+const cancellation = new DownloadCancellation();
 
 function post(message: LlmOutbound): void {
   parentPort.postMessage(message);
@@ -329,12 +329,9 @@ async function downloadOne(
   if (model === undefined) return { success: false, error: `unknown model: ${modelId}` };
   // Serialize: one download at a time. A second request while one runs is a
   // no-op so the UI can't fork two writers onto the same `.part`.
-  if (downloadController !== null)
-    return { success: false, error: 'a download is already running' };
+  if (cancellation.running) return { success: false, error: 'a download is already running' };
 
-  const controller = new AbortController();
-  downloadController = controller;
-  downloadIntent = null;
+  const signal = cancellation.begin();
   phase = 'downloading';
   lastError = undefined;
   emitStatus();
@@ -342,7 +339,7 @@ async function downloadOne(
     await downloadModel(model, {
       quant,
       launchMode: 'fast-text',
-      signal: controller.signal,
+      signal,
       hfToken,
       onProgress: (file, p) =>
         post({
@@ -361,13 +358,15 @@ async function downloadOne(
     return { success: true };
   } catch (error) {
     // An abort means the user paused or cancelled — not a failure.
-    if (downloadIntent === 'pause') {
+    if (cancellation.intent === 'pause') {
       settleDownloadPhase();
       emitStatus();
       return { success: false, paused: true };
     }
-    if (downloadIntent === 'cancel') {
-      await discardPartials(model, quant);
+    if (cancellation.intent === 'cancel') {
+      await discardPartials(partialPaths(modelDir(model.id), model.files, quant, join), (p) =>
+        unlink(p),
+      );
       settleDownloadPhase();
       emitStatus();
       return { success: false, cancelled: true };
@@ -377,32 +376,16 @@ async function downloadOne(
     emitStatus();
     return { success: false, error: lastError };
   } finally {
-    downloadController = null;
-    downloadIntent = null;
+    cancellation.clear();
   }
 }
 
 function pauseDownload(): { success: boolean } {
-  if (downloadController === null) return { success: false };
-  downloadIntent = 'pause';
-  downloadController.abort();
-  return { success: true };
+  return { success: cancellation.pause() };
 }
 
 async function cancelDownload(): Promise<{ success: boolean }> {
-  if (downloadController === null) return { success: false };
-  downloadIntent = 'cancel';
-  downloadController.abort();
-  return { success: true };
-}
-
-/** Remove the `.part` sidecars for a model's files so a cancel leaves nothing
- * half-written for a later resume to pick up. */
-async function discardPartials(model: CatalogModel, quant?: string): Promise<void> {
-  const files = quant !== undefined ? model.files.filter((f) => f.quant === quant) : model.files;
-  for (const file of files) {
-    await unlink(`${modelPathFor(model, file)}.part`).catch(() => {});
-  }
+  return { success: cancellation.cancel() };
 }
 
 async function deleteModel(modelId: string): Promise<{ success: boolean; error?: string }> {

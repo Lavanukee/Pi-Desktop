@@ -16,7 +16,8 @@
 import type { ChatMsg, ContentBlock, ToolResultMsg } from '../types/chat';
 import type {
   AssistantMessage,
-  ExtensionUiDialogMethod,
+  HarnessAskUserSpec,
+  RendererDialogMethod,
   StopReason,
   ThinkingLevel,
   ToolCall,
@@ -45,12 +46,15 @@ export interface SessionChangeInfo {
 /** A blocking extension dialog; answer via PiBridge.respondUi with this id. */
 export interface UiDialogRequest {
   id: string;
-  method: ExtensionUiDialogMethod;
+  method: RendererDialogMethod;
   title?: string;
   message?: string;
   options?: string[];
   placeholder?: string;
   prefill?: string;
+  /** Present when `method === 'askUser'`: the rich QuestionCard spec decoded
+   * from a sentinel-tagged `input` request (multi-select / slider / etc.). */
+  ask?: HarnessAskUserSpec;
   /** ms; pi auto-resolves its side with a default on expiry but emits NO
    * event. The router runs the expiry timer and calls
    * {@link StoreSink.resolveUiRequest} — answers sent after that are ids pi

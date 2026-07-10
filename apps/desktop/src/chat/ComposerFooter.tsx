@@ -30,6 +30,7 @@ import { useLlmStore } from '../state/llm-store';
 import { activateLocalModel } from '../state/local-model';
 import { setModel } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
+import { HarnessStatusCluster } from './HarnessStatus';
 
 /** 73000 → "73,000"; small numbers pass through. */
 function fmtInt(n: number): string {
@@ -253,6 +254,10 @@ export function ComposerFooter({
           {tps.toFixed(1)} tok/s
         </span>
       ) : null}
+
+      {/* Harness surfacing (round-9 W3): active class + live task timer + repair
+          activity, so all four status elements live in one always-visible cluster. */}
+      <HarnessStatusCluster />
 
       {/* Info popover: current/last-turn stats. Tokens are real (engine usage);
           the tool-call count is exact; elapsed is derived from message

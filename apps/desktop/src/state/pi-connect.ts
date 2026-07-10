@@ -189,6 +189,19 @@ export async function applyHarnessConfig(opts: {
   }
 }
 
+/**
+ * Push the classifier preset into the running harness (`/harness preset <x>`).
+ * `auto` restores the tier-1 classifier; any task class pins that preset. Same
+ * best-effort slash-command transport as {@link applyHarnessConfig} (no user
+ * echo; a no-harness session ignores it). The harness republishes its status so
+ * the UI's active-class reflects the change.
+ */
+export async function applyHarnessPreset(preset: string): Promise<void> {
+  await window.piDesktop
+    .invoke('pi:prompt', { message: `/harness preset ${preset}` })
+    .catch(() => {});
+}
+
 export async function getModels() {
   return window.piDesktop.invoke('pi:get-models', undefined);
 }

@@ -18,7 +18,7 @@ import { MediaPreviewSurface } from '../surfaces/media-preview-surface.tsx';
 import { ensureDefaultSurfaces } from '../surfaces/register-builtins.tsx';
 import { SubagentSurface } from '../surfaces/subagent-surface.tsx';
 import { TerminalSurface } from '../surfaces/terminal-surface.tsx';
-import { IconFolder, IconPanelRight, IconPopout } from '../tab-icons.tsx';
+import { IconFolder, IconPanelRight, IconPopout, IconSubagent } from '../tab-icons.tsx';
 import { CanvasOperationBar, hasViewToggle, viewModeDefault } from './canvas-operation-bar.tsx';
 import type { CanvasController } from './controller.ts';
 import { CANVAS_TAB_KINDS } from './tab-kinds.ts';
@@ -26,8 +26,9 @@ import type { CanvasTab, FileTreeNode, FileViewMode } from './tab-model.ts';
 import { useCanvasTabs } from './use-canvas-tabs.tsx';
 import { useOutsideClose } from './use-outside-close.ts';
 
-/** The tab kinds the `+` menu can open. */
-export type NewTabKind = 'file' | 'browser' | 'terminal';
+/** The tab kinds the `+` menu can open. `subagent` opens the live subagent list
+ * surface (the app also opens/feeds it automatically as children spawn). */
+export type NewTabKind = 'file' | 'browser' | 'terminal' | 'subagent';
 
 /** The `+` menu rows: kind, label, optional shortcut hint, and type glyph. */
 const NEW_TAB_ITEMS: ReadonlyArray<{
@@ -39,6 +40,7 @@ const NEW_TAB_ITEMS: ReadonlyArray<{
   { kind: 'file', label: 'Files', hint: '⌘P', icon: IconFolder },
   { kind: 'browser', label: 'Browser', hint: '⌘T', icon: IconGlobe },
   { kind: 'terminal', label: 'Terminal', icon: IconTerminal },
+  { kind: 'subagent', label: 'Subagents', icon: IconSubagent },
 ];
 
 /**

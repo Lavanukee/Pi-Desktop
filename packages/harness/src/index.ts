@@ -33,6 +33,7 @@ import { createClassifierEscalation } from './classify/escalation.js';
 import { effortKnobs, isEffortLevel } from './effort/effort.js';
 import { parseModelParams, smallModelWarning } from './model/model-size.js';
 import { type CallModel, callModelFromEnv } from './model-call/call-model.js';
+import { createBashFlagger } from './permissions/flag-bash.js';
 import {
   isPermissionMode,
   type PermissionController,
@@ -51,10 +52,22 @@ import {
   HARNESS_REVIEW_ENTRY,
   type HarnessConfig,
   type HarnessStatus,
+  type PlanItem,
   restoreConfig,
   type StoredEntryLike,
   updateConfig,
 } from './state.js';
+import { detectBudget } from './subagent/budget.js';
+import { type SchedulerSnapshot, SubagentScheduler } from './subagent/scheduler.js';
+import { registerSubagentTool } from './subagent/subagent-tool.js';
+import {
+  HARNESS_SUBAGENTS_STATUS_KEY,
+  type HarnessSubagentsStatus,
+  MAX_SUBAGENT_DEPTH,
+  readSubagentDepth,
+} from './subagent/types.js';
+import { registerAskUser } from './tools/ask-user.js';
+import { registerPlanTool } from './tools/plan-tool.js';
 import { registerToolSearch } from './tools/tool-search.js';
 
 export const packageName = '@pi-desktop/harness';
@@ -75,6 +88,12 @@ interface HarnessRuntime {
   lastPrompt: string;
   /** Skip the reviewer for the next turn (it's a revision we ourselves triggered). */
   suppressNextReview: boolean;
+  /** The live task checklist from the `update_plan` tool (null before first use). */
+  plan: PlanItem[] | null;
+  /** Optional heading for the plan panel. */
+  planTitle: string | null;
+  /** Latest subagent scheduler snapshot (null until the first spawn_subagent). */
+  subagentSnapshot: SchedulerSnapshot | null;
 }
 
 /** Options for {@link wireHarness}. All optional; the app passes none (`-e` load). */
@@ -164,6 +183,9 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     currentCtx: null,
     lastPrompt: '',
     suppressNextReview: false,
+    plan: null,
+    planTitle: null,
+    subagentSnapshot: null,
   };
 
   // The utility model powering fixer + reviewer + classifier escalation. Absent
@@ -292,8 +314,42 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     },
   });
 
-  // Permission gate.
-  runtime.permission = registerPermissions(pi, { initialMode: runtime.config.mode });
+  // Task-list / checklist tool: the model publishes a plan the app renders live.
+  registerPlanTool(pi, {
+    onUpdate: (plan, title) => {
+      runtime.plan = plan.length > 0 ? plan : null;
+      runtime.planTitle = title ?? null;
+      if (runtime.currentCtx !== null) publishStatus(runtime.currentCtx);
+    },
+  });
+
+  // Ask-user tool: rich choice / multi-select / slider / free-text questions,
+  // routed to the desktop QuestionCard via the input-dialog sentinel channel.
+  registerAskUser(pi);
+
+  // Real subagents: `spawn_subagent` runs an isolated child pi and returns ONLY
+  // its summary. Spawns are memory-scheduled (concurrency bounded by detected
+  // RAM/cores, degrading to 1 with no utility model / low RAM / single core).
+  // Only the top-level agent (depth 0) registers the tool — a spawned child
+  // (depth >= 1) does not, so subagents can't recursively spawn subagents (v1).
+  if (readSubagentDepth(process.env) < MAX_SUBAGENT_DEPTH) {
+    const scheduler = new SubagentScheduler({
+      budget: detectBudget({ hasUtilityModel: callModel !== undefined }),
+      onChange: (snap) => {
+        runtime.subagentSnapshot = snap;
+        if (runtime.currentCtx !== null) publishSubagents(runtime.currentCtx);
+      },
+    });
+    registerSubagentTool(pi, { scheduler });
+  }
+
+  // Permission gate. In reviewer mode a scary-bash command is flagged first by
+  // the regex rules, then — when a utility model is configured — double-checked
+  // by the small model (fail-open to the regex result).
+  runtime.permission = registerPermissions(pi, {
+    initialMode: runtime.config.mode,
+    ...(callModel !== undefined ? { flagBash: createBashFlagger(callModel) } : {}),
+  });
 
   function buildStatus(ctx: ExtensionContext): HarnessStatus {
     const usage = ctx.getContextUsage();
@@ -306,6 +362,8 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
       contextPercent: usage?.percent ?? null,
       runningTaskMs: runtime.taskStart !== null ? Date.now() - runtime.taskStart : null,
       repairFailures: countRepairFailures(getEntries(ctx)),
+      plan: runtime.plan,
+      planTitle: runtime.planTitle,
     };
   }
 
@@ -318,6 +376,29 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
         ? `⏱ ${((Date.now() - runtime.taskStart) / 1000).toFixed(1)}s`
         : undefined,
     );
+  }
+
+  /**
+   * Stream the live subagent list over the SAME setStatus channel the plan uses,
+   * under a distinct key so the desktop opens/feeds the canvas subagent tab. An
+   * empty/null snapshot clears the key (the panel/tab shows nothing).
+   */
+  function publishSubagents(ctx: ExtensionContext): void {
+    const snap = runtime.subagentSnapshot;
+    if (snap === null || snap.items.length === 0) {
+      ctx.ui.setStatus(HARNESS_SUBAGENTS_STATUS_KEY, undefined);
+      return;
+    }
+    const payload: HarnessSubagentsStatus = {
+      subagents: snap.items,
+      budget: {
+        maxConcurrency: snap.maxConcurrency,
+        running: snap.running,
+        queued: snap.queued,
+        reason: snap.reason,
+      },
+    };
+    ctx.ui.setStatus(HARNESS_SUBAGENTS_STATUS_KEY, JSON.stringify(payload));
   }
 
   function applyPreset(cls: TaskClass, ctx: ExtensionContext): void {
@@ -348,6 +429,7 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     if (runtime.statusTimer !== null) clearInterval(runtime.statusTimer);
     runtime.statusTimer = setInterval(() => publishStatus(ctx), 1000);
     publishStatus(ctx);
+    publishSubagents(ctx);
   });
 
   pi.on('session_shutdown', () => {
@@ -562,6 +644,7 @@ export {
   UTILITY_BASE_URL_ENV,
   UTILITY_MODEL_ENV,
 } from './model-call/call-model.js';
+export { createBashFlagger, interpretFlagReply } from './permissions/flag-bash.js';
 export {
   type BashFlagger,
   type EvaluateInput,
@@ -583,6 +666,7 @@ export {
   type ScaryBashRules,
 } from './permissions/rules.js';
 export {
+  ALWAYS_ACTIVE_TOOLS,
   isToolSearchOnly,
   PRESET_TOOLS,
   type ResolvePresetOptions,
@@ -629,11 +713,54 @@ export {
   HARNESS_REVIEW_ENTRY,
   type HarnessConfig,
   type HarnessStatus,
+  isPlanItemStatus,
+  PLAN_ITEM_STATUSES,
+  type PlanItem,
+  type PlanItemStatus,
   type PresetSelection,
   restoreConfig,
   type StoredEntryLike,
   updateConfig,
 } from './state.js';
+export {
+  type BudgetInputs,
+  buildChildSpawnPlan,
+  type ChildAgentResult,
+  type ConcurrencyBudget,
+  computeConcurrencyBudget,
+  deriveSubagentName,
+  detectBudget,
+  HARNESS_SUBAGENTS_STATUS_KEY,
+  type HarnessSubagentsStatus,
+  MAX_SUBAGENT_DEPTH,
+  type RunChildAgentOptions,
+  readSubagentDepth,
+  registerSubagentTool,
+  runChildAgent,
+  type SchedulerSnapshot,
+  SPAWN_SUBAGENT_TOOL_NAME,
+  SUBAGENT_DEPTH_ENV,
+  SubagentScheduler,
+  type SubagentStatus,
+  type SubagentStatusItem,
+} from './subagent/index.js';
+export {
+  ASK_USER_SENTINEL,
+  type AskUserAnswer,
+  type AskUserMode,
+  type AskUserSpec,
+  describeAnswer,
+  encodeAskUser,
+  registerAskUser,
+  specFromParams,
+} from './tools/ask-user.js';
+export {
+  normalizePlan,
+  PLAN_TOOL_NAME,
+  type PlanToolOptions,
+  planSummary,
+  registerPlanTool,
+} from './tools/plan-tool.js';
 export {
   registerToolSearch,
   type SearchToolsOptions,

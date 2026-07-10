@@ -95,6 +95,29 @@ try {
   assert(statusText.includes('42.5'), `expected TPS in status, got: ${statusText}`);
   assert(statusText.includes(':8080'), `expected port in status, got: ${statusText}`);
 
+  // ── Cancel an in-flight download via the ModelCard cancel button ────────────
+  // Re-inject a download for the same model, then CLICK the cancel-download
+  // testid: the real cancelDownload store action fires llm:cancel-download (the
+  // supervisor aborts the transfer + discards its .part) and clears the bar.
+  // Mock-driven like the progress path above — no live transfer.
+  await page.evaluate((id) => {
+    window.__llm_store().getState().applyDownloadProgress({
+      modelId: id,
+      file: 'model.gguf',
+      received: 5e8,
+      total: 4e9,
+      fraction: 0.125,
+    });
+  }, modelId);
+  await page.waitForSelector(`[data-testid="cancel-download-${modelId}"]`, { timeout: 8000 });
+  await page.click(`[data-testid="cancel-download-${modelId}"]`);
+  // The download aborts: the store clears the bar and the progress row unmounts.
+  await page.waitForFunction(() => window.__llm_store().getState().download === null, undefined, {
+    timeout: 8000,
+  });
+  const downloadRowsAfterCancel = await page.locator(`[data-testid="download-${modelId}"]`).count();
+  assert(downloadRowsAfterCancel === 0, 'download row should be gone after cancel');
+
   // ── Advanced toggle → per-model default effort persists ─────────────────────
   await page.click('[data-testid="mm-advanced-toggle"]');
   await page.waitForSelector(`[data-testid="advanced-${modelId}"]`, { timeout: 8000 });
@@ -203,7 +226,8 @@ try {
 
   console.log(
     `model-manager-probe OK — ${cardCount} cards + RAM badges + recommendation; progress→active UI; ` +
-      'advanced effort-default + favorite persist; Browse-HF search→quant-list + HF favorite; footer deep-link verified',
+      'cancel-download clears the bar; advanced effort-default + favorite persist; ' +
+      'Browse-HF search→quant-list + HF favorite; footer deep-link verified',
   );
 } finally {
   await app.close();

@@ -74,6 +74,37 @@ describe('assembleServerArgs', () => {
     expect(args).toContain('--parallel');
   });
 
+  it('fast-text EAGLE-3 enables draft-eagle3 + the draft model via --model-draft', () => {
+    const args = assembleServerArgs({
+      ...base,
+      launchMode: 'fast-text',
+      specType: 'draft-eagle3',
+      eagle3Supported: true,
+      draftPath: '/eagle3.gguf',
+    });
+    expect(args).toContain('--spec-type');
+    expect(args[args.indexOf('--spec-type') + 1]).toBe('draft-eagle3');
+    expect(args).toContain('--model-draft');
+    expect(args[args.indexOf('--model-draft') + 1]).toBe('/eagle3.gguf');
+    expect(args).toContain('--spec-draft-n-max');
+    // EAGLE-3 must NOT also emit the MTP spec-type.
+    expect(args).not.toContain('draft-mtp');
+    expect(args).not.toContain('--mmproj');
+  });
+
+  it('fast-text EAGLE-3 omits spec flags when the build lacks eagle3 support', () => {
+    const args = assembleServerArgs({
+      ...base,
+      launchMode: 'fast-text',
+      specType: 'draft-eagle3',
+      eagle3Supported: false,
+      draftPath: '/eagle3.gguf',
+    });
+    expect(args).not.toContain('--spec-type');
+    expect(args).not.toContain('--model-draft');
+    expect(args).toContain('--parallel');
+  });
+
   it('multimodal enables --mmproj, never draft-mtp, and honours --parallel', () => {
     const args = assembleServerArgs({
       ...base,

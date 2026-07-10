@@ -46,6 +46,7 @@ import { connectRepairBridge, type LiveRepairDeps } from './repair/bridge.js';
 import { createToolCallFixer, withRepairAttempts } from './repair/fixer.js';
 import { createHarnessExtraRungs, type HarnessRepairDeps } from './repair/rungs.js';
 import { adversarialCheck, reviewOutput } from './review/review.js';
+import { registerSkillInstructions } from './skills/skill-instructions.js';
 import {
   DEFAULT_CONFIG,
   HARNESS_CLASSIFY_ENTRY,
@@ -380,6 +381,12 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     );
     return true;
   }
+
+  // Skill-instructions framing (Wave B #3b): wrap a SKILL/tool-instructions file
+  // the model READS in an explicit `<skill_instructions>` marker on the outgoing
+  // context, so it reaches the model as instructions — not as a user turn (the
+  // provider folds tool results into a user-role turn for Gemma-class templates).
+  registerSkillInstructions(pi);
 
   // Tool search — always available so the model can pull in missing tools.
   registerToolSearch(pi, {
@@ -819,6 +826,15 @@ export {
   type ReviewResult,
   reviewOutput,
 } from './review/review.js';
+export {
+  isSkillPath,
+  registerSkillInstructions,
+  SKILL_INSTRUCTIONS_TAG,
+  type SkillContextMessage,
+  skillNameFromPath,
+  withSkillInstructions,
+  wrapSkillContent,
+} from './skills/skill-instructions.js';
 export {
   DEFAULT_CONFIG,
   HARNESS_CLASSIFY_ENTRY,

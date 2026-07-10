@@ -145,6 +145,25 @@ function baseName(path: string | undefined): string | undefined {
   return path.split(/[/\\]/).pop() || path;
 }
 
+/**
+ * True when a read targets a pi SKILL / tool-instructions file (Wave B #3a) —
+ * so the chain renders it as "Read a skill" (own glyph), NOT a plain file read.
+ *
+ * A pi skill is a `SKILL.md` playbook auto-discovered under the agent skills
+ * dir (`~/.pi/agent/skills/<name>/SKILL.md`) or the project dir
+ * (`<cwd>/.pi/skills/<name>/SKILL.md`); a skill's supporting files live beside
+ * it under that same `.pi/(agent/)skills/` tree. We detect BOTH the canonical
+ * playbook (basename `SKILL.md`) and anything under a pi skills dir. Kept in
+ * lock-step with the harness framing detector (skill-instructions.ts).
+ */
+export function isSkillPath(path: string | undefined): boolean {
+  if (path === undefined || path.length === 0) return false;
+  const norm = path.replace(/\\/g, '/');
+  const base = norm.split('/').pop() ?? '';
+  if (base.toLowerCase() === 'skill.md') return true;
+  return /(^|\/)\.pi\/(agent\/)?skills\//.test(norm);
+}
+
 /** Present-tense (running) / past-tense (done) label per step kind. */
 const STEP_LABELS: Record<ActivityStepKind, [running: string, done: string]> = {
   thinking: ['Thinking…', 'Thought'],
@@ -152,6 +171,7 @@ const STEP_LABELS: Record<ActivityStepKind, [running: string, done: string]> = {
   edit: ['Editing a file', 'Edited a file'],
   read: ['Reading a file', 'Read a file'],
   file: ['Presenting a file', 'Presented a file'],
+  skill: ['Reading a skill', 'Read a skill'],
   search: ['Searching the web', 'Searched the web'],
   'browser-navigate': ['Navigating', 'Visited a page'],
   'browser-click': ['Clicking', 'Clicked'],
@@ -303,7 +323,12 @@ export function mapToolStep(
   running: boolean,
 ): MappedStep {
   const args = block.arguments ?? {};
-  const kind = toolStepKind(block.name);
+  // A read whose target is a SKILL / tool-instructions file is reclassified from
+  // the generic `read` to the distinct `skill` kind (Wave B #3a) — its own label
+  // ("Read a skill") + sparkle glyph. Only a read-ish tool is promoted; an edit
+  // to a skill file stays an edit.
+  let kind = toolStepKind(block.name);
+  if (kind === 'read' && isSkillPath(pickPath(args))) kind = 'skill';
   const filename = baseName(pickPath(args));
   const status = running ? 'running' : 'done';
   const label = stepLabel(kind, running);
@@ -358,6 +383,10 @@ export function mapToolStep(
         },
       };
     }
+    case 'skill':
+      // A skill/instructions read: same inline-preview shape as a file read, but
+      // its own kind → "Read a skill" + sparkle glyph in the chain.
+      return { data: { kind: 'skill', label, status, filename, preview: str(result?.text) } };
     default:
       // read / file-preview: show the tool output inline.
       return { data: { kind: 'read', label, status, filename, preview: str(result?.text) } };

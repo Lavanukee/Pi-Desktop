@@ -198,6 +198,8 @@ export async function ensureLlamaCpp(opts: EnsureLlamaCppOptions = {}): Promise<
 export interface ServerFeatures {
   /** MTP speculative decoding via `--spec-type draft-mtp`. */
   readonly mtp: boolean;
+  /** EAGLE-3 draft-model speculative decoding via `--spec-type draft-eagle3`. */
+  readonly eagle3: boolean;
   /** Vision projector support via `--mmproj`. */
   readonly mmproj: boolean;
   /** Multi-slot parallel decoding via `--parallel`. */
@@ -232,6 +234,7 @@ export async function probeServerFeatures(
   }
   return {
     mtp: help.includes('draft-mtp'),
+    eagle3: help.includes('draft-eagle3'),
     mmproj: help.includes('--mmproj'),
     parallel: help.includes('--parallel') || help.includes('-np'),
     draftModel: help.includes('--model-draft') || /(^|\s)-md(\s|,)/.test(help),

@@ -3,10 +3,20 @@
  *
  * Brand glyphs are the canonical, widely-published single-path brand marks from
  * the CC0/MIT simple-icons set (https://simpleicons.org) — reproduced verbatim,
- * not hand-guessed. Every mark is rendered MONOCHROME via `fill="currentColor"`
- * (or `stroke="currentColor"` for the neutral line-art fallbacks) so a single
- * mark reads on both light and dark surfaces, and is fully INLINE — no remote
- * URLs — so it works under the app CSP and offline.
+ * not hand-guessed. Each is rendered in its BRAND COLOR: simple-icons ships a
+ * canonical brand `hex` per icon (Blender #E87D0D, Docker #2496ED, Spotify
+ * #1DB954, …), which we apply to the SVG `fill` (see {@link BRAND_ICON_COLORS}).
+ * The marks stay single-path brand-hex "mono" rather than hand-built multicolor:
+ * a faithful one-color brand mark beats an inaccurate hand-guessed multicolor
+ * logo. Every mark is fully INLINE — no remote URLs — so it works under the app
+ * CSP and offline.
+ *
+ * THEME SAFETY: a near-black brand (GitHub #181717, Notion/Unity #000) is
+ * invisible on a dark surface, so those marks fill with `var(--pd-connector-ink,
+ * <brand hex>)` — the brand hex on light, but the box's ink (currentColor) on
+ * dark, where the app defines `--pd-connector-ink` (see ConnectorIcon's CSS).
+ * The hex fallback keeps the mark correct even with no app CSS (tests/offline).
+ * Neutral CATEGORY fallbacks stay `stroke="currentColor"`.
  *
  * All third-party product names, logos, and brands are the property of their
  * respective owners; the marks are used here for identification only (see the
@@ -65,10 +75,72 @@ const BRAND_ICON_PATHS: Record<string, string> = {
   zoom: 'M5.033 14.649H.743a.74.74 0 0 1-.686-.458.74.74 0 0 1 .16-.808L3.19 10.41H1.06A1.06 1.06 0 0 1 0 9.35h3.957c.301 0 .57.18.686.458a.74.74 0 0 1-.161.808L1.51 13.59h2.464c.585 0 1.06.475 1.06 1.06zM24 11.338c0-1.14-.927-2.066-2.066-2.066-.61 0-1.158.265-1.537.686a2.061 2.061 0 0 0-1.536-.686c-1.14 0-2.066.926-2.066 2.066v3.311a1.06 1.06 0 0 0 1.06-1.06v-2.251a1.004 1.004 0 0 1 2.013 0v2.251c0 .586.474 1.06 1.06 1.06v-3.311a1.004 1.004 0 0 1 2.012 0v2.251c0 .586.475 1.06 1.06 1.06zM16.265 12a2.728 2.728 0 1 1-5.457 0 2.728 2.728 0 0 1 5.457 0zm-1.06 0a1.669 1.669 0 1 0-3.338 0 1.669 1.669 0 0 0 3.338 0zm-4.82 0a2.728 2.728 0 1 1-5.458 0 2.728 2.728 0 0 1 5.457 0zm-1.06 0a1.669 1.669 0 1 0-3.338 0 1.669 1.669 0 0 0 3.338 0z',
 };
 
-/** Wrap a single-path brand glyph as a self-contained, monochrome inline SVG. */
-function brandSvg(pathD: string): string {
+/**
+ * Canonical simple-icons brand `hex` per connector id — applied to the SVG
+ * `fill` so each mark renders in its real brand color. Keyed 1:1 with
+ * {@link BRAND_ICON_PATHS}. Several Google marks share Google-blue (#4285F4) as
+ * their published single-color brand hex.
+ */
+const BRAND_ICON_COLORS: Record<string, string> = {
+  git: '#F05032',
+  github: '#181717',
+  postgres: '#4169E1',
+  sqlite: '#003B57',
+  'chrome-devtools': '#4285F4',
+  postman: '#FF6C37',
+  sentry: '#362D59',
+  xcode: '#147EFB',
+  docker: '#2496ED',
+  notion: '#000000',
+  linear: '#5E6AD2',
+  slack: '#4A154B',
+  figma: '#F24E1E',
+  'google-drive': '#4285F4',
+  gmail: '#EA4335',
+  'google-calendar': '#4285F4',
+  tableau: '#E97627',
+  obsidian: '#7C3AED',
+  'brave-search': '#FB542B',
+  blender: '#E87D0D',
+  unity: '#000000',
+  spotify: '#1DB954',
+  discord: '#5865F2',
+  zoom: '#0B5CFF',
+};
+
+/** Below this WCAG relative luminance a brand hex reads as "near-black". */
+const NEAR_BLACK_LUMINANCE = 0.08;
+
+/** Linearize one 0–255 sRGB channel (WCAG relative-luminance transfer). */
+function channelLinear(value: number): number {
+  const s = value / 255;
+  return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+}
+
+/** WCAG relative luminance (0 = black, 1 = white) of a `#rrggbb` hex. */
+function relativeLuminance(hex: string): number {
+  const h = hex.replace('#', '');
+  const r = Number.parseInt(h.slice(0, 2), 16);
+  const g = Number.parseInt(h.slice(2, 4), 16);
+  const b = Number.parseInt(h.slice(4, 6), 16);
+  return 0.2126 * channelLinear(r) + 0.7152 * channelLinear(g) + 0.0722 * channelLinear(b);
+}
+
+/** A brand color so dark it would vanish on a dark surface (GitHub, Notion, …). */
+function isNearBlackBrand(color: string): boolean {
+  return color.startsWith('#') && relativeLuminance(color) < NEAR_BLACK_LUMINANCE;
+}
+
+/**
+ * Wrap a single-path brand glyph as a self-contained inline SVG filled in its
+ * brand color. Near-black brands flip to the box's ink (`--pd-connector-ink`,
+ * set to currentColor by the app on dark surfaces) so they stay legible on
+ * dark; the brand hex is the fallback so the mark is correct without app CSS.
+ */
+function brandSvg(pathD: string, color: string): string {
+  const fill = isNearBlackBrand(color) ? `var(--pd-connector-ink, ${color})` : color;
   return (
-    '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor" ' +
+    `<svg viewBox="0 0 24 24" width="100%" height="100%" fill="${fill}" ` +
     `xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="${pathD}"/></svg>`
   );
 }
@@ -113,7 +185,12 @@ const NEUTRAL_ICON_SVGS: Record<string, string> = {
  * canonical simple-icons glyph; everything else gets a neutral category glyph.
  */
 export const CONNECTOR_ICON_SVGS: Record<string, string> = {
-  ...Object.fromEntries(Object.entries(BRAND_ICON_PATHS).map(([id, d]) => [id, brandSvg(d)])),
+  ...Object.fromEntries(
+    Object.entries(BRAND_ICON_PATHS).map(([id, d]) => [
+      id,
+      brandSvg(d, BRAND_ICON_COLORS[id] ?? 'currentColor'),
+    ]),
+  ),
   ...NEUTRAL_ICON_SVGS,
 };
 

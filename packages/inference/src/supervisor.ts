@@ -5,11 +5,14 @@
  *
  * Launch modes encode the MTP exclusivity invariant that the later app-wiring
  * lane must respect:
- *   - 'fast-text'  → single slot (`--parallel 1`), MTP speculative decoding
- *                    (`--spec-type draft-mtp --spec-draft-n-max N`) when the
- *                    build supports it and the model carries an MTP head.
+ *   - 'fast-text'  → single slot (`--parallel 1`) + speculative decoding when the
+ *                    build supports it, one of:
+ *                      · MTP     — `--spec-type draft-mtp --spec-draft-n-max N`
+ *                        (embedded head, or a sibling head via `--model-draft`).
+ *                      · EAGLE-3 — `--spec-type draft-eagle3 --model-draft <draft>
+ *                        --spec-draft-n-max N` (a separate draft GGUF).
  *                    NEVER `--mmproj`.
- *   - 'multimodal' → `--mmproj`, MTP OFF, `--parallel` may be > 1.
+ *   - 'multimodal' → `--mmproj`, spec-decode OFF, `--parallel` may be > 1.
  * `assembleServerArgs()` is exported and pure so those flags can be inspected
  * and tested without spawning anything.
  */
@@ -76,6 +79,12 @@ export interface LaunchConfig {
   readonly mtpSupported?: boolean;
   /** Whether the model embeds its MTP head (Qwen3.6). */
   readonly mtpEmbedded?: boolean;
+  /** Speculative-decoding method for a fast-text launch (default 'draft-mtp'). */
+  readonly specType?: 'draft-mtp' | 'draft-eagle3';
+  /** EAGLE-3 draft model path (paired via `--model-draft`). */
+  readonly draftPath?: string;
+  /** Whether the build advertises `draft-eagle3` (from probeServerFeatures). */
+  readonly eagle3Supported?: boolean;
   readonly specDraftNMax?: number;
   readonly extraArgs?: readonly string[];
 }
@@ -92,12 +101,27 @@ export function assembleServerArgs(cfg: LaunchConfig): string[] {
   if (cfg.contextSize !== undefined) args.push('-c', String(cfg.contextSize));
 
   if (cfg.launchMode === 'fast-text') {
-    // MTP requires a single slot.
+    // Speculative decoding requires a single slot.
     args.push('--parallel', '1');
-    const mtpAvailable = cfg.mtpEmbedded === true || cfg.mtpPath !== undefined;
-    if (cfg.mtpSupported === true && mtpAvailable) {
-      args.push('--spec-type', 'draft-mtp', '--spec-draft-n-max', String(cfg.specDraftNMax ?? 2));
-      if (cfg.mtpPath !== undefined) args.push('--model-draft', cfg.mtpPath);
+    if ((cfg.specType ?? 'draft-mtp') === 'draft-eagle3') {
+      // EAGLE-3 always needs a separate draft model.
+      if (cfg.eagle3Supported === true && cfg.draftPath !== undefined) {
+        args.push(
+          '--spec-type',
+          'draft-eagle3',
+          '--spec-draft-n-max',
+          String(cfg.specDraftNMax ?? 3),
+          '--model-draft',
+          cfg.draftPath,
+        );
+      }
+    } else {
+      // MTP: an embedded head, or a sibling head passed via --model-draft.
+      const mtpAvailable = cfg.mtpEmbedded === true || cfg.mtpPath !== undefined;
+      if (cfg.mtpSupported === true && mtpAvailable) {
+        args.push('--spec-type', 'draft-mtp', '--spec-draft-n-max', String(cfg.specDraftNMax ?? 2));
+        if (cfg.mtpPath !== undefined) args.push('--model-draft', cfg.mtpPath);
+      }
     }
   } else {
     if (cfg.mmprojPath !== undefined) args.push('--mmproj', cfg.mmprojPath);
@@ -138,6 +162,9 @@ export interface SupervisorOptions {
   readonly mtpPath?: string;
   readonly mtpSupported?: boolean;
   readonly mtpEmbedded?: boolean;
+  readonly specType?: 'draft-mtp' | 'draft-eagle3';
+  readonly draftPath?: string;
+  readonly eagle3Supported?: boolean;
   readonly specDraftNMax?: number;
   readonly extraArgs?: readonly string[];
   readonly env?: Record<string, string | undefined>;
@@ -265,6 +292,9 @@ export class LlamaServerSupervisor {
       mtpPath: this.opts.mtpPath,
       mtpSupported: this.opts.mtpSupported,
       mtpEmbedded: this.opts.mtpEmbedded,
+      specType: this.opts.specType,
+      draftPath: this.opts.draftPath,
+      eagle3Supported: this.opts.eagle3Supported,
       specDraftNMax: this.opts.specDraftNMax,
       extraArgs: this.opts.extraArgs,
     });

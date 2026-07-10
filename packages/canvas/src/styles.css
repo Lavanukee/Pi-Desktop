@@ -1057,3 +1057,60 @@
 .pd-inline-widget-open {
   pointer-events: auto;
 }
+
+/*
+ * Codex-style resize grip (round-11 #4a) — the chat↔canvas divider. A thin
+ * divider LINE (::before) runs the full height at the panel's left edge, with a
+ * small rounded PILL (::after) centred on it. The hit area is a comfortable
+ * ~10px strip (wider than the visible 1px line) with a col-resize cursor. On
+ * HOVER — and while dragging (`data-dragging`) — the line and pill highlight to
+ * the accent colour. The rail owns the slide/overflow; this element only draws
+ * and grabs the divider.
+ */
+.pd-canvas-rail-handle {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  z-index: 10;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+/* the always-present thin divider line at the very edge */
+.pd-canvas-rail-handle::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 1px;
+  background: var(--pd-border-subtle);
+  transition: background var(--pd-duration-fast) var(--pd-easing-standard);
+}
+
+/* the grabber pill, vertically centred, hugging the divider line */
+.pd-canvas-rail-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 1px;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 32px;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-border-strong);
+  transition:
+    background var(--pd-duration-fast) var(--pd-easing-standard),
+    height var(--pd-duration-fast) var(--pd-easing-standard);
+}
+
+.pd-canvas-rail-handle:hover::before,
+.pd-canvas-rail-handle[data-dragging="true"]::before {
+  background: var(--pd-accent-primary);
+}
+
+.pd-canvas-rail-handle:hover::after,
+.pd-canvas-rail-handle[data-dragging="true"]::after {
+  background: var(--pd-accent-primary);
+  height: 44px;
+}

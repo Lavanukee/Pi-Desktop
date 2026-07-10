@@ -70,24 +70,42 @@ describe('detectApps', () => {
       const svg = c.iconSvg ?? '';
       expect(svg.startsWith('<svg'), `${c.id} iconSvg is not an <svg>`).toBe(true);
       expect(svg).toContain('</svg>');
-      // Monochrome via currentColor so it reads on light + dark.
-      expect(svg).toContain('currentColor');
       // No network/remote asset references (CSP + offline). xmlns namespace is fine.
       expect(svg, `${c.id} iconSvg pulls a remote/external asset`).not.toMatch(
         /href=|src=|url\(|<image/,
       );
+      // Branded marks fill in a brand color (a #rrggbb hex — bright brands
+      // directly, near-black brands as the --pd-connector-ink fallback); neutral
+      // fallbacks stay monochrome via currentColor so they read on light + dark.
+      if (BRANDED_CONNECTOR_IDS.includes(c.id)) {
+        expect(svg, `${c.id} branded mark has no brand color`).toMatch(
+          /fill="[^"]*#[0-9a-fA-F]{6}/,
+        );
+      } else {
+        expect(svg, `${c.id} neutral mark is not currentColor`).toContain('currentColor');
+      }
     }
   });
 
-  it('uses a REAL published brand glyph for github, figma, and blender', () => {
+  it('renders github, figma, and blender in their brand color (real published glyphs)', () => {
+    // Canonical simple-icons brand hex: figma #F24E1E, blender #E87D0D. GitHub
+    // #181717 is near-black, so it fills via --pd-connector-ink (currentColor on
+    // dark) with the brand hex as the light-theme fallback.
+    const brandHex: Record<string, string> = {
+      github: '#181717',
+      figma: '#F24E1E',
+      blender: '#E87D0D',
+    };
     for (const id of ['github', 'figma', 'blender'] as const) {
       expect(BRANDED_CONNECTOR_IDS).toContain(id);
       const connector = KNOWN_CONNECTORS_BY_ID[id];
       const svg = connector?.iconSvg ?? '';
       // The branded marks are filled simple-icons paths on the 24x24 canvas.
       expect(svg).toContain('viewBox="0 0 24 24"');
-      expect(svg).toContain('fill="currentColor"');
       expect(svg).toContain('<path');
+      // Filled in the brand color — no longer the old monochrome currentColor.
+      expect(svg).toContain(brandHex[id]);
+      expect(svg).not.toContain('fill="currentColor"');
       // The rendered card SVG matches the source-of-truth icon map.
       expect(svg).toBe(connectorIconSvg(id));
     }

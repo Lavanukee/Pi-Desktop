@@ -94,6 +94,30 @@ export function CanvasTabsPanel() {
     setRenderWidth(open ? sideWidth : 0);
   }, [open, sideWidth]);
 
+  // Round-11 (#2): keep the rail MOUNTED through its slide-OUT so closing an
+  // EMPTY canvas animates (width → 0) instead of vanishing. A closed-but-tabbed
+  // rail already stays mounted (`hasTabs`, so its tabs survive — the round-8
+  // slide). For the empty case we hold an `exiting` flag for the exit duration
+  // (> the width transition; reduced-motion safe) so the node lingers while it
+  // slides, then unmounts. Reopening mid-exit clears it. The width transition
+  // itself (both directions) is driven by `renderWidth` above.
+  const shown = open || hasTabs;
+  const [exiting, setExiting] = useState(false);
+  const prevShown = useRef(shown);
+  useEffect(() => {
+    const wasShown = prevShown.current;
+    prevShown.current = shown;
+    if (shown) {
+      setExiting(false);
+      return;
+    }
+    if (wasShown) {
+      setExiting(true);
+      const t = window.setTimeout(() => setExiting(false), 400);
+      return () => window.clearTimeout(t);
+    }
+  }, [shown]);
+
   const dragState = useRef<{ startX: number; startWidth: number } | null>(null);
   const onHandleDown = useCallback(
     (e: React.MouseEvent) => {
@@ -160,10 +184,12 @@ export function CanvasTabsPanel() {
     [controller, setCanvasOpen],
   );
 
-  // Render nothing only when the canvas is both empty AND closed. When the user
-  // opens it with no tabs (top-right toggle), the rail shows CanvasTabs' empty
-  // state (its `+` opens a browser tab); a routed-in surface fills it.
-  if (!open && !hasTabs && !fullscreen) return null;
+  // Render nothing only once the closed rail has finished sliding out AND has no
+  // tabs to preserve (`exiting` holds it through the exit transition above).
+  // When the user opens it with no tabs (top-right toggle), the rail shows
+  // CanvasTabs' empty state (its `+` opens a browser tab); a routed-in surface
+  // fills it.
+  if (!shown && !exiting && !fullscreen) return null;
 
   // `onCollapse` closes THIS panel (the app slides it out). `onCopy` defaults to
   // the clipboard inside CanvasTabs; the tab-bar Copy button appears for any
@@ -204,16 +230,22 @@ export function CanvasTabsPanel() {
 
   return (
     <aside
-      className="pd-canvas-rail relative flex h-full shrink-0 flex-col overflow-hidden border-border-subtle border-l bg-bg-raised"
+      className="pd-canvas-rail relative flex h-full shrink-0 flex-col overflow-hidden bg-bg-raised"
       data-dragging={dragging ? 'true' : undefined}
       data-open={open ? 'true' : 'false'}
       style={{ width: renderWidth }}
       data-testid="canvas-tabs-panel"
     >
       {open ? (
+        // Codex-style resize grip (round-11 #4a): a thin divider line + a small
+        // rounded pill, both accenting on hover/drag. The hit area is wider than
+        // the visible line for a comfortable col-resize grab. Styling lives in
+        // `.pd-canvas-rail-handle` (canvas styles.css).
         // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only resize affordance
         <div
-          className="pd-canvas-rail-handle absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize hover:bg-accent-primary/40"
+          className="pd-canvas-rail-handle"
+          data-dragging={dragging ? 'true' : undefined}
+          data-testid="canvas-rail-handle"
           onMouseDown={onHandleDown}
         />
       ) : null}

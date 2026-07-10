@@ -11,7 +11,7 @@
  */
 import { Button, Spinner, Switch, Tabs, TabsContent, TabsList, TabsTrigger } from '@pi-desktop/ui';
 import { useEffect, useState } from 'react';
-import type { LlmCatalogEntry } from '../../electron/ipc-contract';
+import type { LlmCatalogEntry, LlmSimplePick } from '../../electron/ipc-contract';
 import { afmAvailable, useAfmStore } from '../state/afm-store';
 import { useLlmStore } from '../state/llm-store';
 import { activateLocalModel } from '../state/local-model';
@@ -29,6 +29,13 @@ function isFavorite(entry: LlmCatalogEntry, favorites: string[]): boolean {
   );
 }
 
+/** Plain-language role label for a non-power-user simple pick. */
+const ROLE_LABEL: Record<LlmSimplePick['role'], string> = {
+  speed: 'Fastest',
+  vision: 'Best for images',
+  utility: 'Lightweight helper',
+};
+
 export function ModelManagerPanel() {
   const catalog = useLlmStore((s) => s.catalog);
   const hardware = useLlmStore((s) => s.hardware);
@@ -41,6 +48,7 @@ export function ModelManagerPanel() {
   const favorites = useSettingsStore((s) => s.settings.favoriteModels);
 
   const [recBusy, setRecBusy] = useState(false);
+  const [pickBusy, setPickBusy] = useState<string | null>(null);
   const [advanced, setAdvanced] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
 
@@ -75,6 +83,18 @@ export function ModelManagerPanel() {
       setRecBusy(false);
     }
   };
+
+  const onUsePick = async (pick: LlmSimplePick) => {
+    setPickBusy(pick.modelId);
+    try {
+      await applyModelEffortDefault(pick.modelId);
+      await activateLocalModel(pick.modelId, pick.quant);
+    } finally {
+      setPickBusy(null);
+    }
+  };
+
+  const simpleSet = recommendation?.simpleSet ?? [];
 
   return (
     <div className="flex flex-col gap-5" data-testid="model-manager">
@@ -149,6 +169,61 @@ export function ModelManagerPanel() {
                       ? 'Start recommended model'
                       : 'Download & start recommended model'}
                 </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Recommended for your Mac — a simple, non-power-user pick set
+              (fastest / best-for-images / lightweight helper), each a one-click. */}
+          {simpleSet.length > 0 ? (
+            <div className="flex flex-col gap-2" data-testid="recommended-for-mac">
+              <div>
+                <h3 className="text-body font-medium text-text-primary">
+                  Recommended for your Mac
+                </h3>
+                <p className="text-footnote text-text-muted">
+                  Simple picks tuned for your hardware — speed-optimized by default.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-2">
+                {simpleSet.map((pick) => {
+                  const active = status.serverRunning && status.model?.id === pick.modelId;
+                  return (
+                    <div
+                      key={`${pick.modelId}-${pick.role}`}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-border-default bg-bg-raised px-3 py-2"
+                      data-testid={`simple-pick-${pick.modelId}`}
+                    >
+                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                        <ModelTag kind="neutral" icon={null} title="What this pick is best at">
+                          {ROLE_LABEL[pick.role]}
+                        </ModelTag>
+                        <span className="truncate text-footnote font-medium text-text-primary">
+                          {pick.displayName}
+                        </span>
+                        {pick.spec === 'eagle3' ? (
+                          <ModelTag kind="eagle3">EAGLE-3</ModelTag>
+                        ) : pick.spec === 'mtp' ? (
+                          <ModelTag kind="mtp">MTP</ModelTag>
+                        ) : null}
+                        {pick.vision ? <ModelTag kind="vision">Vision</ModelTag> : null}
+                        <ModelTag kind="quant" icon={null}>
+                          {pick.quant}
+                        </ModelTag>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        loading={pickBusy === pick.modelId}
+                        disabled={active}
+                        data-testid={`simple-pick-use-${pick.modelId}`}
+                        onClick={() => void onUsePick(pick)}
+                      >
+                        {active ? 'Running' : 'Use'}
+                      </Button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ) : null}

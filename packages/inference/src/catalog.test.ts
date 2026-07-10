@@ -25,8 +25,49 @@ describe('catalog', () => {
     const m = getCatalogModel('qwen3.6-27b-mtp');
     expect(m?.hfRepo).toBe('unsloth/Qwen3.6-27B-MTP-GGUF');
     expect(m?.mtpEmbedded).toBe(true);
+    expect(m?.spec).toBe('mtp');
     expect(getCatalogModel('qwen3.6-35b-a3b-mtp')?.mtpEmbedded).toBe(true);
     expect(getCatalogModel('qwen3.6-35b-a3b-mtp')?.hfRepo).toBe('unsloth/Qwen3.6-35B-A3B-MTP-GGUF');
+  });
+
+  it('carries the round-11 speed variants across the 8→128GB tiers', () => {
+    const ids = CATALOG.map((m) => m.id);
+    for (const id of [
+      'qwen3.5-4b-mtp',
+      'qwen3.5-9b-mtp',
+      'gemma-4-26b-a4b-it',
+      'gemma-4-31b-it',
+      'qwen3.6-27b-eagle3',
+    ]) {
+      expect(ids).toContain(id);
+    }
+  });
+
+  it('Qwen3.5 MTP entries embed the head (no sibling), Gemma4 uses a sibling file', () => {
+    for (const id of ['qwen3.5-4b-mtp', 'qwen3.5-9b-mtp']) {
+      const m = getCatalogModel(id);
+      expect(m?.spec).toBe('mtp');
+      expect(m?.mtpEmbedded).toBe(true);
+      expect(m?.mtpFile).toBeUndefined();
+    }
+    // Gemma4 ships a separate Q8_0 MTP head sibling in the same repo.
+    for (const id of ['gemma-4-e2b-it', 'gemma-4-e4b-it', 'gemma-4-12b-it', 'gemma-4-31b-it']) {
+      const m = getCatalogModel(id);
+      expect(m?.spec).toBe('mtp');
+      expect(m?.mtpEmbedded).not.toBe(true);
+      expect(m?.mtpFile?.name).toMatch(/^mtp-gemma-4-.*\.gguf$/);
+      expect(m?.mtpFile?.sha256).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  it('encodes the EAGLE-3 pairing: plain base + a draft from a separate repo', () => {
+    const m = getCatalogModel('qwen3.6-27b-eagle3');
+    expect(m?.spec).toBe('eagle3');
+    expect(m?.hfRepo).toBe('unsloth/Qwen3.6-27B-GGUF'); // plain base, not the MTP repo
+    expect(m?.mtpEmbedded).not.toBe(true);
+    expect(m?.draftRepo).toBe('gelim/Qwen3.6-27B-PRISM-EAGLE3-GGUF');
+    expect(m?.draftModel?.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect((m?.draftModel?.bytes ?? 0) > 0).toBe(true);
   });
 
   it('has the headline models HF-verified with non-zero, sha-backed bytes', () => {

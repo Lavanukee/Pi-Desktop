@@ -183,6 +183,7 @@ function catalogEntry(model: CatalogModel, recommendedId: string | null): LlmCat
     input: [...model.input],
     license: model.license,
     mtp: model.mtpEmbedded === true || model.mtpFile !== undefined,
+    spec: model.spec,
     vision: model.input.includes('image'),
     downloaded: model.files.some((f) => isDownloaded(model, f)),
     recommended: model.id === recommendedId,
@@ -210,6 +211,15 @@ async function listCatalog(): Promise<LlmCatalogReply> {
       quant: rec.file.quant,
       tier: rec.tier,
       rationale: rec.rationale,
+      simpleSet: rec.simpleSet.map((p) => ({
+        role: p.role,
+        modelId: p.model.id,
+        displayName: p.model.displayName,
+        quant: p.file.quant,
+        launchMode: p.launchMode,
+        spec: p.spec,
+        vision: p.vision,
+      })),
     };
   } catch {
     recommendedModelId = null;
@@ -477,6 +487,20 @@ async function startServer(
     const features = await probeServerFeatures(install.serverPath);
     const contextWindow = Math.min(model.contextWindow, CONTEXT_CAP);
 
+    // Resolve the speed-decode sibling for a fast-text launch:
+    //   - Gemma4 MTP head (separate sibling in the same repo) → --model-draft.
+    //   - EAGLE-3 draft (from draftRepo) → --spec-type draft-eagle3 --model-draft.
+    // Both are downloaded alongside the main GGUF (see model-downloader).
+    const dir = modelDir(model.id);
+    const mtpSiblingPath =
+      model.mtpFile !== undefined && model.mtpEmbedded !== true
+        ? join(dir, model.mtpFile.name)
+        : undefined;
+    const draftPath =
+      model.spec === 'eagle3' && model.draftModel !== undefined
+        ? join(dir, model.draftModel.name)
+        : undefined;
+
     const supervisor = new LlamaServerSupervisor({
       serverPath: install.serverPath,
       modelPath,
@@ -484,6 +508,11 @@ async function startServer(
       contextSize: contextWindow,
       mtpSupported: features.mtp,
       mtpEmbedded: model.mtpEmbedded,
+      mtpPath:
+        mtpSiblingPath !== undefined && existsSync(mtpSiblingPath) ? mtpSiblingPath : undefined,
+      specType: model.spec === 'eagle3' ? 'draft-eagle3' : 'draft-mtp',
+      eagle3Supported: features.eagle3,
+      draftPath: draftPath !== undefined && existsSync(draftPath) ? draftPath : undefined,
     });
 
     supervisor.on((event) => {

@@ -11,6 +11,7 @@ import {
   IconGlobe,
   IconKeyboard,
   IconPencil,
+  IconSparkles,
   IconTerminal,
 } from './icons.tsx';
 
@@ -30,6 +31,10 @@ export type ToolIconKind =
   | 'read'
   | 'search'
   | 'file'
+  // A SKILL / tool-instructions read (a SKILL.md under the pi skills dir):
+  // reads distinctly as "Read a skill" with its own sparkle glyph — NOT the
+  // generic file sheet — because its content is instructions, not a plain file.
+  | 'skill'
   | 'image'
   | 'pdf'
   | 'canvas-open'
@@ -93,6 +98,10 @@ export function toolIcon(kind: ToolIconKind, filename?: string, size = 16): Reac
       return <IconTerminal size={size} />;
     case 'search':
       return <IconGlobe size={size} />;
+    case 'skill':
+      // The sparkle is the app's established "skills" mark (the add-menu Skills
+      // entry uses it), so a skill read reads as a skill everywhere.
+      return <IconSparkles size={size} />;
     case 'browser-navigate':
       return <IconCompass size={size} />;
     case 'browser-click':

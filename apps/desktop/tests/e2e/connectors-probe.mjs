@@ -85,6 +85,9 @@ try {
   // Round-10 Wave D: real brand marks render as self-contained inline SVG for
   // well-known connectors — github/figma in the Featured list, blender in the
   // Recommended row — each an actual <svg><path> (not the emoji fallback).
+  // Round-11 Wave A1: those marks now render in their BRAND COLOR — the svg's
+  // fill is a brand hex (figma #F24E1E, blender #E87D0D directly; github #181717
+  // via the --pd-connector-ink fallback), never the old monochrome currentColor.
   for (const scope of [
     '[data-testid="connector-card-github"]',
     '[data-testid="connector-card-figma"]',
@@ -94,6 +97,11 @@ try {
     await page.waitForSelector(svg, { timeout: 8000 });
     const paths = await page.locator(`${svg} path`).count();
     assert(paths > 0, `expected a brand SVG path inside ${scope}`);
+    const fill = (await page.locator(svg).first().getAttribute('fill')) ?? '';
+    assert(
+      fill.includes('#') && fill !== 'currentColor',
+      `expected a brand-color fill inside ${scope}, got "${fill}"`,
+    );
   }
 
   // ...and the trademark disclaimer sits under the gallery.

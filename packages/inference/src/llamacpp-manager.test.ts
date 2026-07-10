@@ -84,22 +84,24 @@ describe('probeServerFeatures', () => {
       '  --mmproj FILE            path to a multimodal projector file',
       '  --parallel N             number of parallel sequences',
       '  -md, --model-draft FILE  draft model for speculative decoding',
-      '  --spec-type TYPE         speculative type: draft, draft-mtp',
+      '  --spec-type TYPE         speculative type: draft, draft-mtp, draft-eagle3',
     ].join('\n');
     const features = await probeServerFeatures('/bin/llama-server', {
       execFileImpl: async () => ({ stdout: help, stderr: '' }),
     });
     expect(features.mtp).toBe(true);
+    expect(features.eagle3).toBe(true);
     expect(features.mmproj).toBe(true);
     expect(features.parallel).toBe(true);
     expect(features.draftModel).toBe(true);
   });
 
-  it('reports mtp:false when the build lacks draft-mtp', async () => {
+  it('reports mtp:false / eagle3:false when the build lacks those spec types', async () => {
     const features = await probeServerFeatures('/bin/llama-server', {
       execFileImpl: async () => ({ stdout: '  --parallel N\n  --mmproj FILE\n', stderr: '' }),
     });
     expect(features.mtp).toBe(false);
+    expect(features.eagle3).toBe(false);
     expect(features.mmproj).toBe(true);
   });
 });

@@ -154,6 +154,8 @@ export interface LlmCatalogEntry {
   license: string;
   /** Multi-token-prediction speedup (embedded head or sibling file). */
   mtp: boolean;
+  /** Speculative-decoding speed method this entry ships, if any. */
+  spec?: 'mtp' | 'eagle3';
   vision: boolean;
   downloaded: boolean;
   recommended: boolean;
@@ -175,11 +177,25 @@ export interface LlmHardware {
 
 /** The hardware-detected recommendation (from packages/inference `recommend`),
  * surfaced so the Model Manager can show the pick + its rationale prominently. */
+/** One non-power-user pick in the "Recommended for your Mac" simple set. */
+export interface LlmSimplePick {
+  role: 'speed' | 'vision' | 'utility';
+  modelId: string;
+  displayName: string;
+  quant: string;
+  launchMode: 'fast-text' | 'multimodal';
+  /** Speed method this pick runs with (fast-text picks only). */
+  spec?: 'mtp' | 'eagle3';
+  vision: boolean;
+}
+
 export interface LlmRecommendation {
   modelId: string;
   quant: string;
   tier: string;
   rationale: string;
+  /** 1–3 clearly-labelled picks for non-power-users (speed / vision / helper). */
+  simpleSet: LlmSimplePick[];
 }
 
 export type LlmInvokeMap = {

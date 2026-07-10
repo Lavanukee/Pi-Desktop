@@ -110,6 +110,14 @@ body {
   user-select: none;
 }
 
+/* Connector brand marks (packages/mcp-lite connector-icons): each fills in its
+ * brand color. Near-black brands (GitHub, Notion, Unity, Slack, SQLite, Sentry)
+ * fill with var(--pd-connector-ink, <brand hex>) — the hex on light, but flipped
+ * to the box's ink here on dark so they don't vanish against a dark surface. */
+:root[data-mode="dark"] .pd-connector-icon {
+  --pd-connector-ink: currentColor;
+}
+
 /* Lexical editor hosted in the composer shell: match the spec editor scale
  * (16px/24px in both flavors) and position the placeholder over the input. */
 .pd-composer-editor {
@@ -743,6 +751,11 @@ body {
   --pill-fg: #1d4ed8;
   --pill-border: #93c5fd;
 }
+.pd-mm-pill--eagle3 {
+  --pill-bg: #cffafe;
+  --pill-fg: #0e7490;
+  --pill-border: #67e8f9;
+}
 .pd-mm-pill--gated {
   --pill-bg: #e8ebf0;
   --pill-fg: #475569;
@@ -776,6 +789,11 @@ body {
   --pill-bg: #12233f;
   --pill-fg: #8fbcf5;
   --pill-border: #29497f;
+}
+:root[data-mode="dark"] .pd-mm-pill--eagle3 {
+  --pill-bg: #082f36;
+  --pill-fg: #5fd6e6;
+  --pill-border: #155e6b;
 }
 :root[data-mode="dark"] .pd-mm-pill--gated {
   --pill-bg: #232933;

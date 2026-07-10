@@ -63,7 +63,7 @@ export type ActivityStepData =
       added?: number;
       deleted?: number;
     })
-  | (ActivityStepCommon & { kind: 'read' | 'file'; preview?: ReactNode })
+  | (ActivityStepCommon & { kind: 'read' | 'file' | 'skill'; preview?: ReactNode })
   | (ActivityStepCommon & {
       kind: 'search';
       query?: string;
@@ -95,6 +95,7 @@ const VERBS: Record<ActivityStepKind, VerbSpec> = {
   edit: { verb: 'Edited', singular: 'a file', plural: 'files' },
   read: { verb: 'Read', singular: 'a file', plural: 'files' },
   file: { verb: 'Presented', singular: 'a file', plural: 'files' },
+  skill: { verb: 'Read', singular: 'a skill', plural: 'skills' },
   search: { verb: 'Searched', singular: 'the web', plural: '' },
   'browser-navigate': { verb: 'Visited', singular: 'a page', plural: 'pages' },
   'browser-click': { verb: 'Clicked', singular: '', plural: '' },
@@ -116,6 +117,7 @@ const KIND_ORDER: ActivityStepKind[] = [
   'edit',
   'read',
   'file',
+  'skill',
   'search',
   'browser-navigate',
   'browser-click',
@@ -183,6 +185,7 @@ const RUNNING_PHRASE: Record<ActivityStepKind, string> = {
   edit: 'Editing a file',
   read: 'Reading a file',
   file: 'Presenting a file',
+  skill: 'Reading a skill',
   search: 'Searching the web',
   'browser-navigate': 'Navigating',
   'browser-click': 'Clicking',
@@ -226,6 +229,7 @@ const PILL_LABEL: Partial<Record<ActivityStepKind, string>> = {
   edit: 'Diff',
   read: 'File',
   file: 'File',
+  skill: 'Skill',
   'browser-read': 'Page',
 };
 
@@ -306,6 +310,7 @@ function StepContent({ step, live = false }: { step: ActivityStepData; live?: bo
       ) : null;
     case 'read':
     case 'file':
+    case 'skill':
     case 'browser-read':
       return step.preview !== undefined ? (
         <div className="pd-chain-preview">{step.preview}</div>
@@ -329,6 +334,7 @@ function hasInlineContent(step: ActivityStepData): boolean {
       return step.results !== undefined;
     case 'read':
     case 'file':
+    case 'skill':
     case 'browser-read':
       return step.preview !== undefined;
     default:

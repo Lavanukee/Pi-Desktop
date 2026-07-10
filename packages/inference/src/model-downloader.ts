@@ -35,6 +35,8 @@ export interface DownloadedModel {
   readonly mmprojPath?: string;
   /** Absolute path to the separate MTP head (Gemma-style fast-text only). */
   readonly mtpPath?: string;
+  /** Absolute path to the EAGLE-3 draft model (fast-text only). */
+  readonly draftPath?: string;
 }
 
 function pickFile(model: CatalogModel, quant: string | undefined): CatalogFile {
@@ -76,7 +78,9 @@ async function fetchOne(
  *
  * - `multimodal` pulls the `mmproj` sibling (required for vision).
  * - `fast-text` pulls the separate `mtpFile` sibling when the model has one
- *   (Gemma4); Qwen3.6 embeds the MTP head so nothing extra is fetched.
+ *   (Gemma4); Qwen3.6 embeds the MTP head so nothing extra is fetched. For an
+ *   EAGLE-3 entry it pulls the `draftModel` from its (usually separate)
+ *   `draftRepo` so the launch can pass `--model-draft`.
  */
 export async function downloadModel(
   model: CatalogModel,
@@ -98,5 +102,11 @@ export async function downloadModel(
     mtpPath = await fetchOne(model.hfRepo, model.mtpFile, dir, opts);
   }
 
-  return { model, dir, modelPath, mmprojPath, mtpPath };
+  let draftPath: string | undefined;
+  if (mode === 'fast-text' && model.spec === 'eagle3' && model.draftModel !== undefined) {
+    // The EAGLE-3 draft usually lives in a separate repo (draftRepo).
+    draftPath = await fetchOne(model.draftRepo ?? model.hfRepo, model.draftModel, dir, opts);
+  }
+
+  return { model, dir, modelPath, mmprojPath, mtpPath, draftPath };
 }

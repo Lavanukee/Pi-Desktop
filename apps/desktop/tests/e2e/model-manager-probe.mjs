@@ -72,6 +72,19 @@ try {
   const recommendedPills = await page.locator('[data-pill-kind="recommended"]').count();
   assert(recommendedPills >= 1, `expected a recommended-hue pill, got ${recommendedPills}`);
 
+  // ── Round-11 Wave C: "Recommended for your Mac" simple set + a speed pill ────
+  // A non-power-user pick set (fastest / best-for-images / lightweight helper),
+  // hardware-detected, renders with a one-click "Use" per pick.
+  await page.waitForSelector('[data-testid="recommended-for-mac"]', { timeout: 8000 });
+  const simplePicks = await page.locator('[data-testid^="simple-pick-use-"]').count();
+  assert(simplePicks >= 1, `expected >=1 simple pick, got ${simplePicks}`);
+  // The catalog now ships speculative-decoding SPEED variants, so a fast pill
+  // (MTP blue or EAGLE-3 teal) must render somewhere on the surface.
+  const fastPills =
+    (await page.locator('[data-pill-kind="mtp"]').count()) +
+    (await page.locator('[data-pill-kind="eagle3"]').count());
+  assert(fastPills >= 1, `expected a fast (MTP/EAGLE-3) pill, got ${fastPills}`);
+
   // ── Drive download-progress → active WITHOUT a real download ─────────────────
   const modelId = await page.evaluate(() => window.__llm_store().getState().catalog[0].id);
 

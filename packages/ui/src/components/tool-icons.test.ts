@@ -13,6 +13,7 @@ import {
   IconFile,
   IconGlobe,
   IconKeyboard,
+  IconSparkles,
   IconTerminal,
 } from './icons.tsx';
 import { toolIcon } from './tool-icons.tsx';
@@ -44,5 +45,13 @@ describe('toolIcon (round-10 #17 browser glyphs)', () => {
     expect(glyphOf(toolIcon('bash'))).toBe(IconTerminal);
     expect(glyphOf(toolIcon('search'))).toBe(IconGlobe);
     expect(glyphOf(toolIcon('thinking'))).toBe(IconClock);
+  });
+
+  it('maps a skill read to its own sparkle glyph — not the file sheet (Wave B #3a)', () => {
+    // No filename badge for a skill: it always reads as the sparkle, never a
+    // file-extension tile (contrast `read`, which badges when given a filename).
+    expect(glyphOf(toolIcon('skill'))).toBe(IconSparkles);
+    expect(glyphOf(toolIcon('skill', 'SKILL.md'))).toBe(IconSparkles);
+    expect(glyphOf(toolIcon('skill'))).not.toBe(IconFile);
   });
 });

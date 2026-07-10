@@ -183,6 +183,42 @@ describe('mapToolStep', () => {
     expect(step).toMatchObject({ kind: 'read', filename: 'a.ts', preview: 'file body' });
   });
 
+  it('classifies a SKILL / skills-dir read as `skill` → "Read a skill" (Wave B #3a)', () => {
+    const step = mapToolStep(
+      call('c1', 'read', { path: '/Users/jedd/.pi/agent/skills/code-review/SKILL.md' }),
+      result('c1', 'You are a reviewer.'),
+      false,
+    ).data;
+    expect(step.kind).toBe('skill');
+    expect(step.label).toBe('Read a skill');
+    expect(step).toMatchObject({ filename: 'SKILL.md', preview: 'You are a reviewer.' });
+    // Present tense while running.
+    expect(
+      mapToolStep(call('c1', 'read', { path: '/x/.pi/skills/debugging/SKILL.md' }), undefined, true)
+        .data.label,
+    ).toBe('Reading a skill');
+  });
+
+  it('leaves a NORMAL file read as `read` (a look-alike name is not a skill)', () => {
+    expect(
+      mapToolStep(call('c1', 'read', { path: '/repo/src/app.ts' }), undefined, false).data.kind,
+    ).toBe('read');
+    // A doc that merely mentions skills but isn't a SKILL.md / under skills/.
+    expect(
+      mapToolStep(call('c1', 'read', { path: '/repo/docs/SKILLS.md' }), undefined, false).data.kind,
+    ).toBe('read');
+  });
+
+  it('does NOT promote an EDIT of a skill file to `skill` (only reads)', () => {
+    expect(
+      mapToolStep(
+        call('c1', 'edit', { path: '/x/.pi/agent/skills/x/SKILL.md', oldText: 'a', newText: 'b' }),
+        undefined,
+        false,
+      ).data.kind,
+    ).toBe('edit');
+  });
+
   it('browser navigate carries the url + a page-tense label (#17)', () => {
     const step = mapToolStep(
       call('c1', 'browser_navigate', { url: 'https://neal.fun' }),

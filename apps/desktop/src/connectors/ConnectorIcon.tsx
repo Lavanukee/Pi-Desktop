@@ -4,10 +4,13 @@
  * published brand glyph for known brands, a neutral category glyph otherwise —
  * else the emoji `icon` as a last resort.
  *
- * The SVG is monochrome (`fill`/`stroke: currentColor`), so it inherits the
- * box's text color and reads on both light and dark. The markup is trusted: it
- * originates from the in-repo connector catalog (packages/mcp-lite), never user
- * input or the network.
+ * Brand glyphs fill in their canonical brand color; neutral fallbacks stay
+ * `currentColor`. A handful of near-black brands (GitHub, Notion, Unity…) fill
+ * with `var(--pd-connector-ink, <brand hex>)`: the `.pd-connector-icon` CSS
+ * (global.css) sets `--pd-connector-ink: currentColor` on dark surfaces so they
+ * flip to the box's light ink and stay legible; on light they keep the brand
+ * hex. The markup is trusted: it originates from the in-repo connector catalog
+ * (packages/mcp-lite), never user input or the network.
  */
 import type { KnownConnector } from '@pi-desktop/mcp-lite';
 
@@ -22,7 +25,7 @@ export function ConnectorIcon({
   if (connector.iconSvg !== undefined && connector.iconSvg.length > 0) {
     return (
       <span
-        className="inline-flex items-center justify-center"
+        className="pd-connector-icon inline-flex items-center justify-center"
         style={{ width: size, height: size }}
         data-testid="connector-icon-svg"
         aria-hidden

@@ -126,7 +126,15 @@ export function ModelCard({
               </ModelTag>
             ) : null}
             {entry.vision ? <ModelTag kind="vision">Vision</ModelTag> : null}
-            {entry.mtp ? <ModelTag kind="mtp">MTP</ModelTag> : null}
+            {entry.spec === 'eagle3' ? (
+              <ModelTag kind="eagle3" title="EAGLE-3 speculative decoding (faster)">
+                EAGLE-3
+              </ModelTag>
+            ) : entry.mtp ? (
+              <ModelTag kind="mtp" title="Multi-token prediction (faster decode)">
+                MTP
+              </ModelTag>
+            ) : null}
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-text-muted">
             <ModelTag kind="size" icon={null}>

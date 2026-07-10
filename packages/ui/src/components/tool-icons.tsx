@@ -3,9 +3,13 @@ import type { HTMLAttributes, ReactNode } from 'react';
 import { forwardRef } from 'react';
 import {
   IconClock,
+  IconCompass,
+  IconCursor,
   IconExternal,
+  IconEye,
   IconFile,
   IconGlobe,
+  IconKeyboard,
   IconPencil,
   IconTerminal,
 } from './icons.tsx';
@@ -28,7 +32,12 @@ export type ToolIconKind =
   | 'file'
   | 'image'
   | 'pdf'
-  | 'canvas-open';
+  | 'canvas-open'
+  // Browser-action steps (round-10 #17): each carries its own glyph.
+  | 'browser-navigate'
+  | 'browser-click'
+  | 'browser-type'
+  | 'browser-read';
 
 /** Extract a short (<=4 char) uppercase extension from a filename/path. */
 export function fileExt(filename: string | undefined): string {
@@ -84,6 +93,14 @@ export function toolIcon(kind: ToolIconKind, filename?: string, size = 16): Reac
       return <IconTerminal size={size} />;
     case 'search':
       return <IconGlobe size={size} />;
+    case 'browser-navigate':
+      return <IconCompass size={size} />;
+    case 'browser-click':
+      return <IconCursor size={size} />;
+    case 'browser-type':
+      return <IconKeyboard size={size} />;
+    case 'browser-read':
+      return <IconEye size={size} />;
     case 'canvas-open':
       return <IconExternal size={size} />;
     case 'edit':

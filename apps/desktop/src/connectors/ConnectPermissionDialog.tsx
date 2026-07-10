@@ -16,6 +16,7 @@ import {
   IconCheck,
   IconInfo,
 } from '@pi-desktop/ui';
+import { ConnectorIcon } from './ConnectorIcon';
 
 function Reassurance({ title, body }: { title: string; body: string }) {
   return (
@@ -60,10 +61,10 @@ export function ConnectPermissionDialog({
                   ⇄
                 </span>
                 <span
-                  className="flex h-12 w-12 items-center justify-center rounded-2xl bg-bg-inset text-heading"
+                  className="flex h-12 w-12 items-center justify-center rounded-2xl bg-bg-inset text-heading text-text-primary"
                   aria-hidden
                 >
-                  {connector.icon}
+                  <ConnectorIcon connector={connector} size={26} />
                 </span>
               </div>
               <DialogTitle>Connect {connector.name}</DialogTitle>

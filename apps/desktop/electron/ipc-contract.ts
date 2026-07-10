@@ -4,6 +4,7 @@
  * Channel maps must be `type` aliases (not interfaces) to satisfy the
  * IpcInvokeMap / IpcEventMap constraints in @pi-desktop/shared.
  */
+import type { CanvasState } from '@pi-desktop/browser-use/protocol';
 import type { IpcClient, IpcEventMap, IpcInvokeMap } from '@pi-desktop/shared';
 import { AFM_INVOKE_CHANNELS, type AfmInvokeMap } from './afm/afm-contract';
 import {
@@ -269,8 +270,10 @@ export interface HfGgufFileDTO {
   minRamGB?: number;
 }
 
-/** Sort orders exposed in the Browse-HF UI (mapped to HF's raw sort keys). */
-export type HfSortOption = 'downloads' | 'likes' | 'recent';
+/** Sort orders exposed in the Browse-HF UI (mapped to HF's raw sort keys).
+ * `trending` (HF `trendingScore`) is the default used to surface a populated
+ * "trending on HF" list the moment the Browse view opens (Round-10 #20b). */
+export type HfSortOption = 'trending' | 'downloads' | 'likes' | 'recent';
 
 export type HfInvokeMap = {
   /** Text + filter search over HF GGUF repos (rate-limit aware; errors are
@@ -370,6 +373,11 @@ export type CanvasInvokeMap = {
   };
   /** File operation bar "Open in folder" → shell.showItemInFolder. */
   'canvas:reveal': { request: { path: string }; response: { ok: boolean } };
+  /** Renderer → main: report a compact snapshot of what's on the canvas right now
+   * (canvas-awareness). Main caches it and serves it to the pi child's `context`
+   * hook (browser url/title re-enriched from the live view). Debounced by the
+   * renderer; pushed on surface / active-tab changes. */
+  'canvas:report-state': { request: { state: CanvasState }; response: { ok: boolean } };
 };
 
 export const CANVAS_INVOKE_CHANNELS = [
@@ -379,6 +387,7 @@ export const CANVAS_INVOKE_CHANNELS = [
   'canvas:list-open-apps',
   'canvas:open-with',
   'canvas:reveal',
+  'canvas:report-state',
 ] as const satisfies readonly (keyof CanvasInvokeMap)[];
 
 export type AppInvokeMap = CoreInvokeMap &

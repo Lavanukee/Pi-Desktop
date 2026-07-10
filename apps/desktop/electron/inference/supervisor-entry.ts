@@ -111,6 +111,7 @@ function allModels(): CatalogModel[] {
 function toHfSort(sort: HfSortOption | undefined): HfSort {
   if (sort === 'likes') return 'likes';
   if (sort === 'recent') return 'lastModified';
+  if (sort === 'trending') return 'trendingScore';
   return 'downloads';
 }
 

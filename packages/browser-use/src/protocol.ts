@@ -40,7 +40,11 @@ export type BrowserAgentMethod =
   | 'forward'
   | 'reload'
   | 'waitForLoad'
-  | 'setDriving';
+  | 'setDriving'
+  // Canvas-awareness (round-10): the model asks "what is on the canvas right
+  // now?" before every LLM call. MAIN answers from the renderer-reported
+  // snapshot, enriching browser url/title from the live WebContentsView.
+  | 'getCanvasState';
 
 /** One request on the wire. */
 export interface BrowserAgentRequest {
@@ -64,4 +68,51 @@ export interface TabState {
   readonly tabId: string;
   readonly url: string;
   readonly title: string;
+}
+
+/**
+ * One surface open on the canvas, described compactly for the model's context
+ * (the `<canvas_state>` block). Every field is optional except `kind` so the
+ * renderer only sends what a given surface actually has; MAIN enriches the
+ * browser `url`/`title` from the authoritative live view keyed by `tabId`.
+ */
+export interface CanvasSurfaceState {
+  /**
+   * Surface kind — mirrors @pi-desktop/canvas's `CanvasTabKind` (browser | file
+   * | terminal | image | pdf | html | svg | markdown | code | subagent |
+   * filetree). Kept a bare string so this pure protocol module never imports the
+   * canvas React package.
+   */
+  readonly kind: string;
+  /** Tab title shown to the user. */
+  readonly title?: string;
+  /** Browser: the tab id MAIN uses to enrich url/title from the live view. */
+  readonly tabId?: string;
+  /** Browser: current URL. */
+  readonly url?: string;
+  /** File/code: the open file's path. */
+  readonly filePath?: string;
+  /** File/code: a short, length-capped excerpt of the file contents. */
+  readonly excerpt?: string;
+  /** File/code: unsaved edits or an in-flight write. */
+  readonly dirty?: boolean;
+  /** Terminal: working directory. */
+  readonly cwd?: string;
+  /** Terminal: the most recent command, when known. */
+  readonly lastCommand?: string;
+  /** Media (image/pdf): the media MIME/type label. */
+  readonly mediaType?: string;
+}
+
+/**
+ * A compact snapshot of everything on the canvas right now — the model's "what
+ * is the user looking at" context. Reported renderer→main over
+ * `canvas:report-state`, cached per-window, and served to the pi child via the
+ * `getCanvasState` bridge method so the `context` hook can inject it.
+ */
+export interface CanvasState {
+  /** The focused surface, or null when the canvas is empty. */
+  readonly active: CanvasSurfaceState | null;
+  /** The other open surfaces (excludes `active`), left→right. */
+  readonly others: readonly CanvasSurfaceState[];
 }

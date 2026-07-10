@@ -217,6 +217,35 @@ async function hydrateOpenApps(
   }
 }
 
+/** Stable upsert key for the single full-canvas file-tree surface. */
+const FILE_TREE_TAB_KEY = 'pi:files';
+
+/**
+ * Open (or focus) the full-canvas project FILE TREE surface (round-10 #4) — the
+ * `+ › Files` entry point. Rooted at the active project's working folder (else
+ * the session cwd); the tree is read from `fs:list-tree` and picking a file
+ * routes through the tree's onSelect → `openFileInCanvas`. A stable key means
+ * re-opening focuses the same surface instead of piling up (NOT a blank
+ * "untitled" file, which was the bug).
+ */
+export async function openProjectFileTree(
+  controller: CanvasController,
+  cwd?: string,
+): Promise<void> {
+  const root = useProjectStore.getState().activePath ?? cwd ?? null;
+  const label = root ? basename(root) : 'Files';
+  controller.upsertTab(FILE_TREE_TAB_KEY, {
+    kind: 'filetree',
+    key: FILE_TREE_TAB_KEY,
+    title: 'Files',
+    fileTreeRootLabel: label,
+  });
+  if (root === null) return;
+  const tree = await readTree(root);
+  const tab = controller.getState().tabs.find((t) => t.key === FILE_TREE_TAB_KEY);
+  if (tab) controller.updateTab(tab.id, { fileTree: tree });
+}
+
 /**
  * Open (or focus) a file tab and fill it from disk. Used by the file-tree
  * panel's select handler. Focuses the tab and un-collapses the canvas.

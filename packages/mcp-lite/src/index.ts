@@ -38,6 +38,11 @@ export {
   type ConnectResult,
 } from './connector-host';
 export {
+  BRANDED_CONNECTOR_IDS,
+  CONNECTOR_ICON_SVGS,
+  connectorIconSvg,
+} from './connector-icons';
+export {
   APP_CONNECTOR_MAP,
   type AppConnectorMapping,
   type ConnectorCategory,

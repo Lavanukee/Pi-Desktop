@@ -67,6 +67,13 @@ interface PiSliceState {
   artifacts: ArtifactCandidate[];
   composerText: string;
   windowTitle: string | null;
+  /**
+   * True once the user has explicitly renamed THIS session's title, which pins
+   * it: the harness's auto-generated title must not clobber a user rename. Reset
+   * on every session switch/new (setMessagesExternal) so a fresh conversation is
+   * eligible for auto-titling again. Set by `setSessionName` (pi-connect).
+   */
+  titleLocked: boolean;
   bridgeExited: { code: number | null; signal: string | null } | null;
   /** Set true by restartPi / model-switch before a DELIBERATE dispose+respawn
    *  so the paired pi-exit is not surfaced as a crash toast; the sink consumes
@@ -136,6 +143,7 @@ export const usePiStore = create<PiSliceState>((set) => ({
   artifacts: [],
   composerText: '',
   windowTitle: null,
+  titleLocked: false,
   bridgeExited: null,
   intentionalRestart: false,
   historyTruncated: false,
@@ -163,6 +171,10 @@ export const usePiStore = create<PiSliceState>((set) => ({
       uiRequests: [],
       bridgeExited: null,
       branches: {},
+      // A new/switched session is eligible for harness auto-titling again — the
+      // previous session's user-rename lock must not carry over. (windowTitle is
+      // set from the loaded session / republished harness title downstream.)
+      titleLocked: false,
       // A new/switched session must not inherit the previous session's live
       // harness panels (checklist / subagents), which are published under the
       // `harness*` status keys. Drop them now so a stale plan can't flash until

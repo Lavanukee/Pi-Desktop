@@ -38,6 +38,24 @@ export interface CallModelRequest {
   }[];
   readonly temperature?: number;
   readonly maxTokens?: number;
+  /**
+   * OpenAI-compatible `response_format` for constrained/structured decoding,
+   * e.g. `{type:'json_schema', json_schema:{…}}`. llama-server compiles this to
+   * a grammar, guaranteeing a parseable object from a small model — used by the
+   * classify+title piggyback. Ignored by callers that don't set it (the
+   * fixer/reviewer). Kept as `unknown` so this seam stays provider-agnostic.
+   */
+  readonly responseFormat?: unknown;
+  /**
+   * Extra top-level fields merged into the request body — an escape hatch for
+   * provider-specific params the OpenAI schema doesn't cover. The classify+title
+   * piggyback uses it to pass llama.cpp's
+   * `chat_template_kwargs: {enable_thinking:false}` so a reasoning model doesn't
+   * burn its whole token budget "thinking" before emitting the tiny JSON (a ~9×
+   * speedup on Gemma E2B: ~350ms vs ~3.2s). Servers that don't know these fields
+   * ignore them. Does NOT override the fields this seam sets explicitly.
+   */
+  readonly extraBody?: Readonly<Record<string, unknown>>;
   readonly signal?: AbortSignal;
 }
 
@@ -91,11 +109,14 @@ export function createOpenAiCompatCallModel(config: OpenAiCompatConfig): CallMod
       method: 'POST',
       headers,
       body: JSON.stringify({
+        // Provider-specific extras first so the fields this seam sets always win.
+        ...(req.extraBody ?? {}),
         model: config.model,
         messages,
         stream: false,
         temperature: req.temperature ?? 0,
         ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+        ...(req.responseFormat !== undefined ? { response_format: req.responseFormat } : {}),
       }),
       signal,
     });

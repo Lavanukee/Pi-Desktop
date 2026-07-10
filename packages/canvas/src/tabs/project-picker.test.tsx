@@ -1,7 +1,14 @@
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { click, render } from '../test-utils.tsx';
-import { ProjectPicker, type ProjectPickerItem } from './project-picker.tsx';
+import { ProjectPicker, type ProjectPickerItem, placeProjectMenu } from './project-picker.tsx';
+
+/** A fake anchor with a fixed client rect for placement tests. */
+function anchorAt(rect: Partial<DOMRect>): HTMLElement {
+  return {
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, ...rect }) as DOMRect,
+  } as unknown as HTMLElement;
+}
 
 const projects: ProjectPickerItem[] = [
   { id: 'a', name: 'Alpha' },
@@ -98,5 +105,46 @@ describe('ProjectPicker', () => {
       ) ?? null,
     );
     expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the dropdown with fixed positioning so it never clips (round-10 #10)', async () => {
+    const { container } = await render(
+      <ProjectPicker projects={projects} onSelect={noop} onNew={noop} onClear={noop} />,
+    );
+    await click(container.querySelector('.pd-project-chip'));
+    const menu = container.querySelector<HTMLElement>('.pd-menu');
+    expect(menu?.style.position).toBe('fixed');
+    // A width + a max-height keep it clamped to the viewport.
+    expect(menu?.style.maxHeight).not.toBe('');
+    expect(menu?.style.width).not.toBe('');
+  });
+});
+
+describe('placeProjectMenu', () => {
+  const viewport = { width: 1000, height: 800 };
+
+  it('returns null without an anchor', () => {
+    expect(placeProjectMenu(null, viewport)).toBeNull();
+  });
+
+  it('opens downward when there is room below', () => {
+    const pos = placeProjectMenu(anchorAt({ left: 20, top: 40, bottom: 68 }), viewport);
+    expect(pos?.top).toBe(68 + 6);
+    expect(pos?.bottom).toBeUndefined();
+    expect(pos?.left).toBe(20);
+  });
+
+  it('flips ABOVE the chip when below is tight (picker near the window bottom)', () => {
+    // Chip sits near the bottom (above the composer) → not enough room below.
+    const pos = placeProjectMenu(anchorAt({ left: 20, top: 740, bottom: 768 }), viewport);
+    expect(pos?.top).toBeUndefined();
+    expect(pos?.bottom).toBe(viewport.height - 740 + 6);
+  });
+
+  it('clamps the left edge into the viewport', () => {
+    const pos = placeProjectMenu(anchorAt({ left: 980, top: 40, bottom: 68 }), viewport);
+    // width caps at 280 → left clamps to width - margin.
+    expect(pos?.left).toBeLessThanOrEqual(viewport.width - (pos?.width ?? 0) - 8 + 0.5);
+    expect(pos?.left).toBeGreaterThanOrEqual(8);
   });
 });

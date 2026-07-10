@@ -71,6 +71,77 @@ describe('CanvasTabs', () => {
     expect(c.getState().tabs[3]?.kind).toBe('browser');
   });
 
+  it('shows a rich empty state (icon + prompt + the + control) when no tabs are open', async () => {
+    const c = new CanvasController({ idFactory: () => 'e1' });
+    const { container } = await render(<CanvasTabs controller={c} />);
+    const home = container.querySelector('.pd-canvas-empty--home');
+    expect(home).toBeTruthy();
+    expect(home?.querySelector('.pd-canvas-empty-icon svg')).toBeTruthy();
+    expect(container.querySelector('.pd-canvas-empty-title')?.textContent).toBe(
+      'Nothing on the canvas yet',
+    );
+    // The empty state still offers the `+` new-tab control.
+    expect(container.querySelector('.pd-canvas-newtab')).toBeTruthy();
+    expect(container.querySelector('.pd-canvas-empty-sub')).toBeTruthy();
+  });
+
+  it('Files opens the full-canvas file tree surface, NOT a blank "untitled" file', async () => {
+    const c = new CanvasController({ idFactory: () => 'ft' });
+    // From the empty-state + menu, pick "Files".
+    const { container } = await render(<CanvasTabs controller={c} />);
+    await click(container.querySelector('.pd-canvas-newtab'));
+    const files = [...container.querySelectorAll('.pd-menu-item')].find((n) =>
+      n.textContent?.includes('Files'),
+    );
+    await click(files ?? null);
+    // A filetree surface tab opened (the tree), not a `file` "Untitled" tab.
+    expect(c.getState().tabs).toHaveLength(1);
+    expect(c.getState().tabs[0]?.kind).toBe('filetree');
+    expect(c.getState().tabs.some((t) => t.kind === 'file')).toBe(false);
+    expect(container.querySelector('.pd-canvas-filetree .pd-file-tree')).toBeTruthy();
+  });
+
+  it('renders the file tree in a filetree surface and routes a file pick to onFileTreeSelect', async () => {
+    const c = new CanvasController({ idFactory: () => 'ft' });
+    c.openTab({
+      kind: 'filetree',
+      title: 'Files',
+      fileTreeRootLabel: 'proj',
+      fileTree: [{ name: 'a.ts', path: 'a.ts', kind: 'file' }],
+    });
+    const onFileTreeSelect = vi.fn();
+    const { container } = await render(
+      <CanvasTabs controller={c} handlers={{ onFileTreeSelect }} />,
+    );
+    expect(container.querySelector('.pd-canvas-filetree')).toBeTruthy();
+    await click(container.querySelector('.pd-file-tree-row[data-kind="file"]'));
+    expect(onFileTreeSelect).toHaveBeenCalledWith('ft', expect.objectContaining({ path: 'a.ts' }));
+  });
+
+  it('hides the tab-bar Copy control on a browser tab (round-10 #3)', async () => {
+    const c = new CanvasController({ idFactory: () => 'b1' });
+    c.openTab({ kind: 'browser', title: 'Example', url: 'https://example.com' });
+    const { container } = await render(<CanvasTabs controller={c} />);
+    // A browser tab exposes no Copy control even with a URL set.
+    expect(container.querySelector('[aria-label="Copy"]')).toBeNull();
+  });
+
+  it('fires onMenuOpenChange when the + menu opens and closes', async () => {
+    const c = seededController();
+    const onMenuOpenChange = vi.fn();
+    const { container } = await render(
+      <CanvasTabs controller={c} onMenuOpenChange={onMenuOpenChange} />,
+    );
+    await click(container.querySelector('.pd-canvas-newtab'));
+    expect(onMenuOpenChange).toHaveBeenLastCalledWith(true);
+    // Picking an item closes the menu → onMenuOpenChange(false).
+    const terminal = [...container.querySelectorAll('.pd-menu-item')].find((n) =>
+      n.textContent?.includes('Terminal'),
+    );
+    await click(terminal ?? null);
+    expect(onMenuOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
   it('renders a live subagent tab and fires onSubagentSelect on a row click', async () => {
     const c = new CanvasController({ idFactory: () => 'sa' });
     c.openTab({

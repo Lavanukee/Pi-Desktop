@@ -153,6 +153,10 @@ const STEP_LABELS: Record<ActivityStepKind, [running: string, done: string]> = {
   read: ['Reading a file', 'Read a file'],
   file: ['Presenting a file', 'Presented a file'],
   search: ['Searching the web', 'Searched the web'],
+  'browser-navigate': ['Navigating', 'Visited a page'],
+  'browser-click': ['Clicking', 'Clicked'],
+  'browser-type': ['Typing', 'Typed'],
+  'browser-read': ['Reading the page', 'Read the page'],
   image: ['Generating an image', 'Generated an image'],
   pdf: ['Creating a PDF', 'Created a PDF'],
   'canvas-open': ['Opening the canvas', 'Opened the canvas'],
@@ -180,11 +184,24 @@ export function toolStepKind(name: string): ActivityStepKind {
     return 'edit';
   if (n === 'web_search' || n === 'brave_search' || n === 'google' || n === 'search_web')
     return 'search';
+  // Browser-use tool steps (round-10 #17/#9): keep them OFF the generic file
+  // "read" glyph. Detected inside the browser/playwright/puppeteer namespace, then
+  // split by verb so each renders its own icon + label (compass/pointer/keyboard/
+  // eye) instead of a wrong "Read a file" row.
+  if (n.includes('browser') || n.includes('playwright') || n.includes('puppeteer')) {
+    if (/navigate|goto|go_to|open|visit|url|back|forward|reload|refresh/.test(n))
+      return 'browser-navigate';
+    if (/type|fill|input|press|key|sendkeys|clear/.test(n)) return 'browser-type';
+    if (/click|tap|hover|select|choose|drag|check|scroll|swipe|mouse/.test(n))
+      return 'browser-click';
+    // read / snapshot / screenshot / get_text / content / accessibility / wait…
+    return 'browser-read';
+  }
   if (n.includes('image') || n === 'dalle' || n === 'generate_image' || n === 'imagegen')
     return 'image';
   if (n.includes('pdf')) return 'pdf';
-  // read / cat / ls / list / glob / grep / find / fetch / browse and unknowns
-  // all read-ish: a file/preview step that expands its output inline.
+  // read / cat / ls / list / glob / grep / find / fetch and unknowns all read-ish:
+  // a file/preview step that expands its output inline.
   return 'read';
 }
 
@@ -306,6 +323,20 @@ export function mapToolStep(
           status,
           query: str(args.query) ?? str(args.q),
           results: parseSearchResults(result),
+        },
+      };
+    case 'browser-navigate':
+    case 'browser-click':
+    case 'browser-type':
+    case 'browser-read':
+      return {
+        data: {
+          kind,
+          label,
+          status,
+          url: str(args.url) ?? str(args.href) ?? str(args.link),
+          // Only the read/snapshot step expands the page text it returned.
+          preview: kind === 'browser-read' ? str(result?.text) : undefined,
         },
       };
     case 'image':

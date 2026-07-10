@@ -48,6 +48,14 @@ asarUnpack:
   # execve), so unpack the whole @pi-desktop/afm package to real disk; afm-main.ts
   # rewrites the resolved app.asar path → app.asar.unpacked so `spawn` finds it.
   - node_modules/@pi-desktop/afm/**
+  # The `pi-mac` Swift helper (Mac computer-use: indexed AX-tree snapshot +
+  # CGEvent click/type/key/scroll) is likewise a mach-o that main spawns
+  # (`pi-mac --serve`), so the whole @pi-desktop/pi-mac package is unpacked to
+  # real disk; mac-agent.ts rewrites the resolved app.asar path →
+  # app.asar.unpacked so `spawn` finds it. Spawning from main (not the pi child)
+  # is what binds the Accessibility + Screen-Recording TCC grants to the signed
+  # Pi Desktop.app bundle.
+  - node_modules/@pi-desktop/pi-mac/**
 mac:
   target: dir
   category: public.app-category.developer-tools

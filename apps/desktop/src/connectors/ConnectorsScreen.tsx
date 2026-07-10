@@ -39,6 +39,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { installedServer, isEnabled, useConnectorsStore } from '../state/connectors-store';
 import { useSettingsStore } from '../state/settings-store';
 import { ConnectorDetail } from './ConnectorDetail';
+import { ConnectorIcon } from './ConnectorIcon';
 import { ConnectPermissionDialog } from './ConnectPermissionDialog';
 import { SkillsTab } from './SkillsTab';
 
@@ -85,8 +86,8 @@ function ConnectorRow({
         className="flex min-w-0 flex-1 items-center gap-3 text-left"
         onClick={onOpen}
       >
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-bg-inset text-heading">
-          {connector.icon}
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-bg-inset text-heading text-text-primary">
+          <ConnectorIcon connector={connector} size={22} />
         </span>
         <span className="min-w-0">
           <span className="flex items-center gap-1.5">
@@ -156,8 +157,8 @@ function RecommendedCard({
       data-testid={`connectors-recommended-item-${suggestion.id}`}
     >
       <button type="button" className="flex items-center gap-2 text-left" onClick={onOpen}>
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-bg-inset text-body">
-          {suggestion.icon}
+        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-bg-inset text-body text-text-primary">
+          <ConnectorIcon connector={suggestion} size={20} />
         </span>
         <span className="min-w-0 truncate text-body text-text-primary">{suggestion.name}</span>
       </button>
@@ -358,9 +359,9 @@ export function ConnectorsScreen({ onClose }: { onClose: () => void }) {
                             data-testid={`connectors-installed-${c.id}`}
                             aria-label={c.name}
                             onClick={() => setSelectedId(c.id)}
-                            className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-bg-inset text-heading hover:bg-bg-hover"
+                            className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-bg-inset text-heading text-text-primary hover:bg-bg-hover"
                           >
-                            {c.icon}
+                            <ConnectorIcon connector={c} size={22} />
                             {!isEnabled(registry, c.id) ? (
                               <span className="absolute right-0.5 bottom-0.5 h-2 w-2 rounded-full bg-text-muted" />
                             ) : null}
@@ -420,6 +421,18 @@ export function ConnectorsScreen({ onClose }: { onClose: () => void }) {
                       )}
                     </div>
                   </section>
+
+                  {/* Trademark disclaimer: the gallery renders third-party brand
+                      marks for identification only. */}
+                  <footer
+                    className="border-border-subtle border-t pt-4 text-caption text-text-muted leading-relaxed"
+                    data-testid="connectors-disclaimer"
+                  >
+                    All third-party product names, logos, and brands are property of their
+                    respective owners. All company, product, and service names used in this
+                    interface are for identification purposes only. Use of these names, logos, and
+                    brands does not imply endorsement.
+                  </footer>
                 </div>
               )}
             </div>

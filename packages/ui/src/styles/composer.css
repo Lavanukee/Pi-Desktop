@@ -18,6 +18,11 @@
   display: flex;
   flex-direction: column;
   width: 100%;
+  /* Round-10 (#12): scale the input area ~1.18x (font, padding, min-height, the
+   * placeholder offsets). Kept as ONE token so the whole input bar grows
+   * proportionally (and jedd can retune the single number). Inherited by the
+   * editor / input / placeholder below. */
+  --pd-composer-scale: 1.18;
   border-radius: var(--pd-radius-surface);
   background: color-mix(
     in srgb,
@@ -58,18 +63,20 @@
 }
 
 .pd-composer-editor {
-  max-height: 7.5rem;
+  max-height: calc(7.5rem * var(--pd-composer-scale, 1));
   overflow-y: auto;
-  padding: 14px 16px 8px;
+  padding: calc(14px * var(--pd-composer-scale, 1)) calc(16px * var(--pd-composer-scale, 1))
+    calc(8px * var(--pd-composer-scale, 1));
 }
 
 .pd-composer-editor .pd-autogrow::after,
 .pd-composer-editor .pd-autogrow > .pd-textarea,
 .pd-composer-editor .pd-autogrow > textarea {
   /* Editor text is 16px/24px in BOTH apps (claude quick-launcher input; codex
-   * runtime editor) — a shared constant, deliberately off the body scale. */
-  font-size: 16px;
-  line-height: 24px;
+   * runtime editor) — a shared constant, deliberately off the body scale.
+   * Round-10 (#12): scaled ~1.18x with the rest of the input bar. */
+  font-size: calc(16px * var(--pd-composer-scale, 1));
+  line-height: calc(24px * var(--pd-composer-scale, 1));
   font-weight: var(--pd-font-weight-body);
 }
 

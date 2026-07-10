@@ -76,6 +76,23 @@
 }
 
 /*
+ * Round-10 (#11): opt a menu OUT of the open/close motion entirely — it appears
+ * and disappears instantly (no clip-reveal, slide, scale or fade). Used by the
+ * footer model dropdown and the composer "+" menu. The `[data-side]` / `[data-state]`
+ * variants outrank the directional reveal + closed fade-out rules above (equal
+ * specificity, declared later), and `animation: none` on the closed state makes
+ * Radix unmount immediately instead of waiting out an exit animation.
+ */
+.pd-menu--instant,
+.pd-menu--instant[data-side],
+.pd-menu--instant[data-state] {
+  animation: none;
+  clip-path: none;
+  transform: none;
+  opacity: 1;
+}
+
+/*
  * Clip-reveal keyframes. inset(top right bottom left): the collapsed edge starts
  * at 100% (fully clipped away from that side) and shrinks to 0, so the container
  * appears to unroll from the opposite (trigger-side) edge outward. A small

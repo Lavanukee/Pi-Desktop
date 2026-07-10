@@ -20,7 +20,12 @@ import type { HfSortOption } from '../../electron/ipc-contract';
 import { useHfStore } from '../state/hf-store';
 import { useSettingsStore } from '../state/settings-store';
 import { HfResultCard } from './HfResultCard';
-import { IconGlobe, IconKey } from './icons';
+import { IconFlame, IconGlobe, IconKey } from './icons';
+
+/** Same `?piE2E=1` opt-in the other stores use: in E2E the model-manager probe
+ * injects trending/search results at the store boundary, so we skip the live
+ * on-open HF fetch (which would hit the network non-deterministically). */
+const IS_E2E = new URLSearchParams(window.location.search).has('piE2E');
 
 type GatedFilter = 'any' | 'gated' | 'ungated';
 
@@ -31,6 +36,7 @@ const TASK_OPTIONS: Array<{ value: string; label: string }> = [
 ];
 
 const SORT_OPTIONS: Array<{ value: HfSortOption; label: string }> = [
+  { value: 'trending', label: 'Trending' },
   { value: 'downloads', label: 'Most downloads' },
   { value: 'likes', label: 'Most likes' },
   { value: 'recent', label: 'Recently updated' },
@@ -42,6 +48,7 @@ export function HfBrowseView() {
   const results = useHfStore((s) => s.results);
   const searchError = useHfStore((s) => s.searchError);
   const rateLimited = useHfStore((s) => s.rateLimited);
+  const defaultTrending = useHfStore((s) => s.defaultTrending);
 
   const savedToken = useSettingsStore((s) => s.settings.hfToken);
   const updateSettings = useSettingsStore((s) => s.update);
@@ -50,10 +57,19 @@ export function HfBrowseView() {
   const [family, setFamily] = useState('');
   const [task, setTask] = useState('any');
   const [gated, setGated] = useState<GatedFilter>('any');
-  const [sort, setSort] = useState<HfSortOption>('downloads');
+  const [sort, setSort] = useState<HfSortOption>('trending');
   const [token, setToken] = useState(savedToken);
 
   useEffect(() => setToken(savedToken), [savedToken]);
+
+  // On open, immediately surface a populated "trending on HF" list rather than an
+  // empty prompt (Round-10 #20b). Only when the view is fresh (idle) so a user's
+  // prior search is preserved; skipped in E2E (probe injects at the boundary).
+  useEffect(() => {
+    if (IS_E2E) return;
+    if (useHfStore.getState().searchStatus !== 'idle') return;
+    void search({ query: '', sort: 'trending', limit: 24 }, { trending: true });
+  }, [search]);
 
   const runSearch = () => {
     void search({
@@ -183,7 +199,8 @@ export function HfBrowseView() {
       {/* Results / status. */}
       {searchStatus === 'searching' ? (
         <div className="flex items-center gap-2 py-6 text-footnote text-text-muted">
-          <Spinner size={14} /> Searching Hugging Face…
+          <Spinner size={14} />
+          {defaultTrending ? 'Loading trending models…' : 'Searching Hugging Face…'}
         </div>
       ) : searchStatus === 'error' ? (
         <div className="rounded-xl border border-border-default bg-bg-raised p-4 text-footnote text-status-danger-fg">
@@ -196,14 +213,26 @@ export function HfBrowseView() {
           No GGUF models matched. Try a broader query or clear a filter.
         </div>
       ) : results.length > 0 ? (
-        <div className="grid grid-cols-1 gap-3" data-testid="hf-results">
-          {results.map((hit) => (
-            <HfResultCard key={hit.id} hit={hit} />
-          ))}
+        <div className="flex flex-col gap-3">
+          {defaultTrending ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="pd-mm-trending-header" data-testid="hf-trending-header">
+                <IconFlame size={15} /> Trending on Hugging Face
+              </span>
+              <span className="text-caption text-text-muted">
+                Popular GGUF models — search above to go deeper
+              </span>
+            </div>
+          ) : null}
+          <div className="grid grid-cols-1 gap-3" data-testid="hf-results">
+            {results.map((hit) => (
+              <HfResultCard key={hit.id} hit={hit} />
+            ))}
+          </div>
         </div>
       ) : (
-        <div className="py-6 text-footnote text-text-muted">
-          Search to discover thousands of community GGUF models beyond the recommended set.
+        <div className="flex items-center gap-2 py-6 text-footnote text-text-muted">
+          <Spinner size={14} /> Loading trending models…
         </div>
       )}
     </div>

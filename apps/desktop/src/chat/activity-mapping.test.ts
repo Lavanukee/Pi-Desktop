@@ -125,6 +125,18 @@ describe('toolStepKind', () => {
     expect(toolStepKind('read_file')).toBe('read');
     expect(toolStepKind('grep')).toBe('read');
   });
+
+  it('classifies browser-use tools by verb (#17) — never the generic file read', () => {
+    expect(toolStepKind('browser_navigate')).toBe('browser-navigate');
+    expect(toolStepKind('browser_click')).toBe('browser-click');
+    expect(toolStepKind('browser_type')).toBe('browser-type');
+    expect(toolStepKind('browser_read')).toBe('browser-read');
+    expect(toolStepKind('browser_snapshot')).toBe('browser-read');
+    expect(toolStepKind('browser_scroll')).toBe('browser-click');
+    expect(toolStepKind('playwright_goto')).toBe('browser-navigate');
+    // A plain file read must stay a file read, not get diverted to a browser kind.
+    expect(toolStepKind('read_file')).toBe('read');
+  });
 });
 
 describe('mapToolStep', () => {
@@ -169,6 +181,27 @@ describe('mapToolStep', () => {
       false,
     ).data;
     expect(step).toMatchObject({ kind: 'read', filename: 'a.ts', preview: 'file body' });
+  });
+
+  it('browser navigate carries the url + a page-tense label (#17)', () => {
+    const step = mapToolStep(
+      call('c1', 'browser_navigate', { url: 'https://neal.fun' }),
+      undefined,
+      false,
+    ).data;
+    expect(step.kind).toBe('browser-navigate');
+    expect(step.label).toBe('Visited a page');
+    if (step.kind === 'browser-navigate') expect(step.url).toBe('https://neal.fun');
+  });
+
+  it('browser read expands the returned page text inline (#17)', () => {
+    const step = mapToolStep(
+      call('c1', 'browser_read', {}),
+      result('c1', 'the page body'),
+      false,
+    ).data;
+    expect(step.kind).toBe('browser-read');
+    if (step.kind === 'browser-read') expect(step.preview).toBe('the page body');
   });
 
   it('image opens in canvas and yields a media tab spec', () => {

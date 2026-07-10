@@ -59,6 +59,19 @@ try {
   const recBadges = await page.locator('[data-testid^="recommended-badge-"]').count();
   assert(recBadges >= 1, 'expected a recommended badge on the recommended card');
 
+  // ── Round-10 #20b: colored capability PILL TAGS render on curated cards ─────
+  const pillCount = await page.locator('[data-pill-kind]').count();
+  assert(pillCount > 0, `expected colored pill tags on the cards, got ${pillCount}`);
+  // Each ModelCard carries a size pill, so there is at least one per card.
+  const sizePills = await page.locator('[data-pill-kind="size"]').count();
+  assert(
+    sizePills >= cardCount,
+    `expected a size pill per card, got ${sizePills} for ${cardCount}`,
+  );
+  // The recommended attribute renders as its own (green) hue pill.
+  const recommendedPills = await page.locator('[data-pill-kind="recommended"]').count();
+  assert(recommendedPills >= 1, `expected a recommended-hue pill, got ${recommendedPills}`);
+
   // ── Drive download-progress → active WITHOUT a real download ─────────────────
   const modelId = await page.evaluate(() => window.__llm_store().getState().catalog[0].id);
 
@@ -145,6 +158,44 @@ try {
   await page.click('[data-testid="mm-tab-browse"]');
   await page.waitForSelector('[data-testid="hf-browse"]', { timeout: 8000 });
 
+  // ── Round-10 #20b: TRENDING renders on open + colored pills on HF cards ─────
+  // The live on-open trending fetch is skipped under ?piE2E (as with every other
+  // HF path), so inject the trending set the loader would produce and assert the
+  // "Trending on Hugging Face" header + per-attribute pill hues (gated/vision/audio).
+  const trendingHit = {
+    id: 'trend-org/Trending-VL-GGUF',
+    author: 'trend-org',
+    name: 'Trending-VL-GGUF',
+    downloads: 999000,
+    likes: 4200,
+    tags: ['gguf', 'image-text-to-text', 'audio'],
+    gated: true,
+    pipelineTag: 'image-text-to-text',
+    updatedAt: '2026-07-01T00:00:00Z',
+  };
+  await page.evaluate((hit) => {
+    window.__hf_store().setState({ searchStatus: 'done', defaultTrending: true, results: [hit] });
+  }, trendingHit);
+  await page.waitForSelector('[data-testid="hf-trending-header"]', { timeout: 8000 });
+  await page.waitForSelector('[data-pill-kind="gated"]', { timeout: 8000 });
+  const trendingPillKinds = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-pill-kind]')).map((el) =>
+      el.getAttribute('data-pill-kind'),
+    ),
+  );
+  assert(
+    trendingPillKinds.includes('vision'),
+    `expected a vision pill on the trending card, got ${trendingPillKinds}`,
+  );
+  assert(
+    trendingPillKinds.includes('audio'),
+    `expected an audio pill on the trending card, got ${trendingPillKinds}`,
+  );
+  assert(
+    trendingPillKinds.includes('gated'),
+    `expected a gated pill on the trending card, got ${trendingPillKinds}`,
+  );
+
   const hfHit = {
     id: 'probe-org/Probe-Model-GGUF',
     author: 'probe-org',
@@ -159,7 +210,7 @@ try {
   // Inject search results (mocks the hf:search IPC at the store boundary — the
   // same technique the download-progress path above uses, no live network).
   await page.evaluate((hit) => {
-    window.__hf_store().setState({ searchStatus: 'done', results: [hit] });
+    window.__hf_store().setState({ searchStatus: 'done', defaultTrending: false, results: [hit] });
   }, hfHit);
   await page.waitForSelector('[data-testid="hf-results"]', { timeout: 8000 });
   const resultCards = await page.locator('[data-testid^="hf-result-"]').count();
@@ -225,9 +276,10 @@ try {
   await page.waitForSelector('[data-testid="model-manager"]', { timeout: 8000 });
 
   console.log(
-    `model-manager-probe OK — ${cardCount} cards + RAM badges + recommendation; progress→active UI; ` +
-      'cancel-download clears the bar; advanced effort-default + favorite persist; ' +
-      'Browse-HF search→quant-list + HF favorite; footer deep-link verified',
+    `model-manager-probe OK — ${cardCount} cards + RAM badges + recommendation + colored pill tags; ` +
+      'progress→active UI; cancel-download clears the bar; advanced effort-default + favorite persist; ' +
+      'Browse-HF trending-on-open header + capability pills, search→quant-list + HF favorite; ' +
+      'footer deep-link verified',
   );
 } finally {
   await app.close();

@@ -8,6 +8,7 @@ import {
 } from './presets.js';
 
 // The full v0.1+ tool universe, as it would appear once every workstream lands.
+// The browser_* names are the REAL ones registered by @pi-desktop/browser-use.
 const ALL_TOOLS = [
   'read',
   'write',
@@ -20,9 +21,15 @@ const ALL_TOOLS = [
   'web_fetch',
   'python_run',
   'browser_navigate',
+  'browser_snapshot',
   'browser_click',
-  'browser_eval',
-  'browser_screenshot',
+  'browser_type',
+  'browser_scroll',
+  'browser_read',
+  'browser_wait',
+  'browser_back',
+  'browser_forward',
+  'browser_key',
   'image_generate',
   'image_edit',
   'video_generate',
@@ -66,16 +73,35 @@ describe('resolvePresetTools — full tool universe', () => {
     ]);
   });
 
-  it('browser-use → browser tools + web_fetch + read + tool_search', () => {
+  it('browser-use → the REAL browser tools (snapshot present + early) + web_fetch + tool_search', () => {
     expect(resolvePresetTools('browser-use', ALL_TOOLS)).toEqual([
       'browser_navigate',
+      'browser_snapshot',
       'browser_click',
-      'browser_eval',
-      'browser_screenshot',
+      'browser_type',
+      'browser_scroll',
+      'browser_read',
+      'browser_wait',
+      'browser_back',
+      'browser_forward',
+      'browser_key',
       'web_fetch',
-      'read',
       'tool_search',
     ]);
+  });
+
+  it('browser-use regression guard (round-10 #9): snapshot active; no fake/attractor tools', () => {
+    const tools = resolvePresetTools('browser-use', ALL_TOOLS);
+    // The perception tool MUST be present so the model can SEE the page, and
+    // near the front (right after navigate) so it reaches for it early.
+    expect(tools).toContain('browser_snapshot');
+    expect(tools.indexOf('browser_snapshot')).toBeLessThanOrEqual(1);
+    // The bug names + the attractive-nuisance file `read` must be gone.
+    expect(tools).not.toContain('browser_eval');
+    expect(tools).not.toContain('browser_screenshot');
+    expect(tools).not.toContain('read');
+    // The page-text reader replaces the file reader for browsing.
+    expect(tools).toContain('browser_read');
   });
 
   it('simple-QA → tool-search-only', () => {
@@ -116,20 +142,17 @@ describe('resolvePresetTools — graceful degradation (v0.1 tool set)', () => {
       'advanced-video',
       '3d',
       '2d-art',
+      // browser-use no longer smuggles in the file `read` tool, so with no
+      // browser tools + no web_fetch registered it collapses cleanly.
       'browser-use',
     ] as const) {
       const tools = resolvePresetTools(cls, V01_TOOLS);
-      // browser-use still keeps its available "read"; the rest are gen-only.
-      if (cls === 'browser-use') {
-        expect(tools).toEqual(['read', 'tool_search']);
-      } else {
-        expect(isToolSearchOnly(tools)).toBe(true);
-      }
+      expect(isToolSearchOnly(tools)).toBe(true);
     }
   });
 
   it('never returns a tool that is not registered', () => {
-    const tools = resolvePresetTools('full-shebang', V01_TOOLS);
+    const tools = resolvePresetTools('coding', V01_TOOLS);
     for (const t of tools) expect(V01_TOOLS).toContain(t);
   });
 

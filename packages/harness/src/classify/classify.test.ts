@@ -61,10 +61,13 @@ const CORPUS: readonly [string, TaskClass][] = [
   ['Set up a Slack integration for notifications.', 'other'],
   ['Sync my Google Calendar events.', 'other'],
 
-  // full-shebang — complex, multi-step, no dominant modality.
-  ['Build a full-stack todo app with authentication and deploy it.', 'full-shebang'],
-  ['Set up a new project, write the code, and run everything.', 'full-shebang'],
-  ['Plan and execute a marketing campaign end to end.', 'full-shebang'],
+  // Fallback — complex, multi-step, no dominant modality. The `full-shebang`
+  // everything-tier was removed (round-10 #7): agentic build verbs fall back to
+  // `basic-tools` (python + web; tool_search pulls in the rest on demand), and a
+  // no-tool-signal prompt falls back to tool-search-only `other`.
+  ['Build a full-stack todo app with authentication and deploy it.', 'basic-tools'],
+  ['Set up a new project, write the code, and run everything.', 'basic-tools'],
+  ['Plan and execute a marketing campaign end to end.', 'other'],
 ];
 
 describe('classify — tier-1 heuristics corpus', () => {

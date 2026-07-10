@@ -186,6 +186,9 @@ export function ChatComposer({
   const [skipped, setSkipped] = useState<string[]>([]);
   const [commands, setCommands] = useState<SlashCommand[]>(BUILTIN_COMMANDS);
   const [webSearch, setWebSearch] = useState(false);
+  // #19: whether the (empty-state) placeholder overflows the visible editor and
+  // must fade at the bottom rather than hard-clip. Measured below.
+  const [phClipped, setPhClipped] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const editorScrollRef = useRef<HTMLDivElement>(null);
   const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -424,6 +427,37 @@ export function ChatComposer({
       ? 'Run a shell command…'
       : 'Ask Pi anything. @ to mention files, / for commands, ! to run bash.';
 
+  // #19: fade the placeholder's bottom rather than slicing it. We flip the fade
+  // ON only when the empty-state placeholder actually overflows the visible
+  // editor box — a single-line placeholder stays crisp. Re-measured on composer
+  // resize (window / canvas) and whenever the placeholder text changes, so the
+  // now-1.18x-scaled text that wraps at narrow widths melts out cleanly.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: placeholder is a re-measure trigger (its text drives wrap height), not read in the effect
+  useEffect(() => {
+    const container = editorScrollRef.current;
+    if (container === null) return;
+    // Only the empty composer shows the placeholder; typed content hides it (and
+    // owns the scrolled top-mask instead), so never fade once the user types.
+    if (text.trim().length > 0) {
+      setPhClipped(false);
+      return;
+    }
+    const measure = () => {
+      const ph = container.querySelector<HTMLElement>('.pd-composer-placeholder');
+      if (ph === null) {
+        setPhClipped(false);
+        return;
+      }
+      // Natural placeholder height vs the room below its top offset.
+      const visible = container.clientHeight - ph.offsetTop;
+      setPhClipped(ph.scrollHeight > visible + 1);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [text, placeholder]);
+
   return (
     <div className="mx-auto w-full max-w-[700px]">
       <div className="pd-composer-root relative">
@@ -469,6 +503,7 @@ export function ChatComposer({
           <div
             ref={editorScrollRef}
             className="pd-composer-editor pd-scroll"
+            data-ph-clip={phClipped ? 'true' : undefined}
             onScroll={onEditorScroll}
           >
             <ComposerEditor

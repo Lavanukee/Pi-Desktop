@@ -24,6 +24,8 @@ import type {
 } from '@mariozechner/pi-coding-agent';
 import {
   type AsyncClassifier,
+  type ClassifyInput,
+  type ClassifyMessage,
   classify,
   classifyWithEscalation,
   TASK_CLASSES,
@@ -50,6 +52,7 @@ import {
   HARNESS_CONFIG_ENTRY,
   HARNESS_REPAIR_ENTRY,
   HARNESS_REVIEW_ENTRY,
+  HARNESS_TITLE_ENTRY,
   type HarnessConfig,
   type HarnessStatus,
   type PlanItem,
@@ -75,6 +78,8 @@ export const packageName = '@pi-desktop/harness';
 interface HarnessRuntime {
   config: HarnessConfig;
   activeClass: TaskClass | null;
+  /** Conversation title from the classify+title piggyback (computed once). */
+  title: string | null;
   activeTools: string[];
   taskStart: number | null;
   turnIndex: number;
@@ -121,6 +126,62 @@ export interface HarnessHandle {
 function getEntries(ctx: ExtensionContext): StoredEntryLike[] {
   const sm = ctx.sessionManager as unknown as { getEntries?: () => StoredEntryLike[] };
   return sm.getEntries?.() ?? [];
+}
+
+/** Restore a persisted conversation title (last write wins), or null. */
+function restoreTitle(entries: readonly StoredEntryLike[]): string | null {
+  let title: string | null = null;
+  for (const e of entries) {
+    if (e.type !== 'custom' || e.customType !== HARNESS_TITLE_ENTRY) continue;
+    const data = e.data as { title?: unknown } | undefined;
+    if (typeof data?.title === 'string' && data.title.length > 0) title = data.title;
+  }
+  return title;
+}
+
+/** Flatten a message's content (string | content blocks) to plain text. */
+function messageText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  const parts: string[] = [];
+  for (const b of content) {
+    const block = b as { type?: unknown; text?: unknown };
+    if (block.type === 'text' && typeof block.text === 'string') parts.push(block.text);
+  }
+  return parts.join('\n');
+}
+
+/**
+ * Assemble the live conversation as [system, …user/assistant turns, current
+ * prompt] so the tier-2 classify+title piggyback SHARES the exact prefix the
+ * real turn will process — reusing the single-slot llama-server's KV cache
+ * (round-10 #8). Tool-result / thinking blocks are dropped (they aren't
+ * user/assistant text): a minor prefix-fidelity limit on tool-heavy turns; plain
+ * text turns share fully. The heuristic tier-1 ignores this field.
+ */
+function buildConversationPrefix(
+  entries: readonly StoredEntryLike[],
+  systemPrompt: string,
+  currentPrompt: string,
+): ClassifyMessage[] {
+  const messages: ClassifyMessage[] = [];
+  if (systemPrompt.trim().length > 0) messages.push({ role: 'system', content: systemPrompt });
+  for (const e of entries) {
+    if (e.type !== 'message') continue;
+    const msg = (e as { message?: { role?: unknown; content?: unknown } }).message;
+    const role = msg?.role;
+    if (role !== 'user' && role !== 'assistant') continue;
+    const text = messageText(msg?.content).trim();
+    if (text.length === 0) continue;
+    messages.push({ role, content: text });
+  }
+  // Ensure the current user prompt is the LAST message — pi may not have
+  // persisted it as an entry yet when before_agent_start fires.
+  const last = messages.at(-1);
+  if (!(last?.role === 'user' && last.content === currentPrompt)) {
+    messages.push({ role: 'user', content: currentPrompt });
+  }
+  return messages;
 }
 
 function countRepairFailures(entries: readonly StoredEntryLike[]): Record<string, number> {
@@ -174,6 +235,7 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
   const runtime: HarnessRuntime = {
     config: DEFAULT_CONFIG,
     activeClass: null,
+    title: null,
     activeTools: [],
     taskStart: null,
     turnIndex: 0,
@@ -368,6 +430,7 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     return {
       ...runtime.config,
       activeClass: runtime.activeClass,
+      title: runtime.title,
       activeTools: runtime.activeTools,
       model: runtime.model?.id ?? null,
       modelParams: runtime.model ? parseModelParams(runtime.model.name ?? runtime.model.id) : null,
@@ -431,6 +494,22 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     pi.appendEntry(HARNESS_CONFIG_ENTRY, runtime.config);
   }
 
+  /**
+   * Record + publish the conversation title from the classify+title piggyback.
+   * Emits it over the SAME status channel as the plan/repair status: a `title`
+   * field in the structured harness status JSON, plus a dedicated `harness-title`
+   * key. Persisted so a reloaded session keeps its title. (App-side display is a
+   * separate follow-up wave — this just makes the title available.)
+   */
+  function setTitle(title: string, ctx: ExtensionContext): void {
+    const trimmed = title.trim();
+    if (trimmed.length === 0 || runtime.title === trimmed) return;
+    runtime.title = trimmed;
+    pi.appendEntry(HARNESS_TITLE_ENTRY, { title: trimmed });
+    ctx.ui.setStatus('harness-title', trimmed);
+    publishStatus(ctx);
+  }
+
   // Restore persisted config + start the status timer on session start.
   pi.on('session_start', (_event, ctx) => {
     runtime.currentCtx = ctx;
@@ -443,6 +522,8 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     runtime.plan = null;
     runtime.planTitle = null;
     runtime.subagentSnapshot = null;
+    // A new/switched session gets a fresh title (recomputed on its first turn).
+    runtime.title = restoreTitle(getEntries(ctx));
     // Push repair deps now that the effort level is known (abortThreshold etc.).
     bridge.push();
     if (runtime.statusTimer !== null) clearInterval(runtime.statusTimer);
@@ -467,16 +548,29 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     runtime.lastPrompt = event.prompt;
     let cls: TaskClass;
     if (runtime.config.preset === 'auto') {
-      const input = {
+      const input: ClassifyInput = {
         prompt: event.prompt,
         hasImages: (event.images?.length ?? 0) > 0,
         priorClass: runtime.activeClass ?? undefined,
         turnIndex: runtime.turnIndex,
+        // Live conversation prefix for the cache-reusing tier-2 piggyback (only
+        // read when it escalates; tier-1 heuristics ignore it).
+        priorMessages: buildConversationPrefix(
+          getEntries(ctx),
+          event.systemPrompt ?? '',
+          event.prompt,
+        ),
       };
-      cls =
-        asyncClassifier !== undefined
-          ? (await classifyWithEscalation(input, { asyncClassifier })).class
-          : classify(input).class;
+      if (asyncClassifier !== undefined) {
+        // Force the {title, class} piggyback on the first turn (until we have a
+        // title) so the title is produced even when the class is unambiguous.
+        const forceEscalate = runtime.turnIndex === 1 && runtime.title === null;
+        const result = await classifyWithEscalation(input, { asyncClassifier, forceEscalate });
+        cls = result.class;
+        if (result.title !== undefined) setTitle(result.title, ctx);
+      } else {
+        cls = classify(input).class;
+      }
     } else {
       cls = runtime.config.preset;
     }
@@ -622,6 +716,7 @@ export {
   type AsyncClassifier,
   type Attachment,
   type ClassifyInput,
+  type ClassifyMessage,
   type ClassifyOptions,
   type ClassifyResult,
   classify,
@@ -730,6 +825,7 @@ export {
   HARNESS_CONFIG_ENTRY,
   HARNESS_REPAIR_ENTRY,
   HARNESS_REVIEW_ENTRY,
+  HARNESS_TITLE_ENTRY,
   type HarnessConfig,
   type HarnessStatus,
   isPlanItemStatus,

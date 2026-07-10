@@ -438,27 +438,24 @@ function BrowserOps({
     const value = draft.trim();
     if (value) onBrowserNavigate?.(value);
   };
+  // Browser chrome scales up to the app's standard control size (round-10 #1) —
+  // the icons render a touch larger (18px) and the CSS bar sizes the buttons +
+  // URL field to `--pd-control-md`, matching inputs/buttons elsewhere.
   return (
     <>
       <div className="pd-browser-nav">
-        <IconButton
-          size="sm"
-          aria-label="Back"
-          disabled={!tab.canGoBack}
-          onClick={() => onBrowserBack?.()}
-        >
-          <IconArrowLeft size={16} />
+        <IconButton aria-label="Back" disabled={!tab.canGoBack} onClick={() => onBrowserBack?.()}>
+          <IconArrowLeft size={18} />
         </IconButton>
         <IconButton
-          size="sm"
           aria-label="Forward"
           disabled={!tab.canGoForward}
           onClick={() => onBrowserForward?.()}
         >
-          <IconArrowRight size={16} />
+          <IconArrowRight size={18} />
         </IconButton>
-        <IconButton size="sm" aria-label="Refresh" onClick={() => onBrowserReload?.()}>
-          <IconRefresh size={16} />
+        <IconButton aria-label="Refresh" onClick={() => onBrowserReload?.()}>
+          <IconRefresh size={18} />
         </IconButton>
       </div>
       <form className="pd-browser-urlform" onSubmit={submit}>
@@ -473,15 +470,11 @@ function BrowserOps({
         />
         {tab.loading ? <span className="pd-browser-loading" aria-hidden="true" /> : null}
       </form>
-      <IconButton
-        size="sm"
-        aria-label="Open in external browser"
-        onClick={() => onBrowserOpenExternal?.()}
-      >
-        <IconExternal size={16} />
+      <IconButton aria-label="Open in external browser" onClick={() => onBrowserOpenExternal?.()}>
+        <IconExternal size={18} />
       </IconButton>
-      <IconButton size="sm" aria-label="Browser menu" onClick={() => onBrowserMenu?.()}>
-        <IconMore size={16} />
+      <IconButton aria-label="Browser menu" onClick={() => onBrowserMenu?.()}>
+        <IconMore size={18} />
       </IconButton>
     </>
   );

@@ -11,6 +11,7 @@ import type { Artifact } from '../model.ts';
 export type CanvasTabKind =
   | 'browser'
   | 'file'
+  | 'filetree'
   | 'terminal'
   | 'html'
   | 'svg'

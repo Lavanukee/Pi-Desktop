@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BRANDED_CONNECTOR_IDS, connectorIconSvg } from './connector-icons';
 import {
   connectorNeedsConfig,
   type DetectAppsEnv,
@@ -60,6 +61,44 @@ describe('detectApps', () => {
     for (const c of KNOWN_CONNECTORS) {
       expect(typeof c.category).toBe('string');
       expect(typeof c.official).toBe('boolean');
+    }
+  });
+
+  it('carries a self-contained inline SVG mark on every card (no remote refs)', () => {
+    for (const c of KNOWN_CONNECTORS) {
+      expect(c.iconSvg, `${c.id} has no iconSvg`).toBeDefined();
+      const svg = c.iconSvg ?? '';
+      expect(svg.startsWith('<svg'), `${c.id} iconSvg is not an <svg>`).toBe(true);
+      expect(svg).toContain('</svg>');
+      // Monochrome via currentColor so it reads on light + dark.
+      expect(svg).toContain('currentColor');
+      // No network/remote asset references (CSP + offline). xmlns namespace is fine.
+      expect(svg, `${c.id} iconSvg pulls a remote/external asset`).not.toMatch(
+        /href=|src=|url\(|<image/,
+      );
+    }
+  });
+
+  it('uses a REAL published brand glyph for github, figma, and blender', () => {
+    for (const id of ['github', 'figma', 'blender'] as const) {
+      expect(BRANDED_CONNECTOR_IDS).toContain(id);
+      const connector = KNOWN_CONNECTORS_BY_ID[id];
+      const svg = connector?.iconSvg ?? '';
+      // The branded marks are filled simple-icons paths on the 24x24 canvas.
+      expect(svg).toContain('viewBox="0 0 24 24"');
+      expect(svg).toContain('fill="currentColor"');
+      expect(svg).toContain('<path');
+      // The rendered card SVG matches the source-of-truth icon map.
+      expect(svg).toBe(connectorIconSvg(id));
+    }
+  });
+
+  it('falls back to a neutral (stroked) glyph for connectors without a brand mark', () => {
+    // playwright/filesystem have no simple, published brand glyph in the set.
+    for (const id of ['filesystem', 'playwright'] as const) {
+      expect(BRANDED_CONNECTOR_IDS).not.toContain(id);
+      const svg = KNOWN_CONNECTORS_BY_ID[id]?.iconSvg ?? '';
+      expect(svg).toContain('stroke="currentColor"');
     }
   });
 

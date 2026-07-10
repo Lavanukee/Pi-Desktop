@@ -18,6 +18,7 @@ import {
   DropdownMenuTrigger,
   IconButton,
   IconChevronDown,
+  IconChevronRight,
   IconInfo,
   ProgressBar,
   Spinner,
@@ -30,6 +31,7 @@ import { useLlmStore } from '../state/llm-store';
 import { activateLocalModel } from '../state/local-model';
 import { setModel } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
+import { downloadedCatalog, hasSwitchableModel } from './footer-models';
 import { HarnessStatusCluster } from './HarnessStatus';
 
 /** 73000 → "73,000"; small numbers pass through. */
@@ -143,6 +145,18 @@ export function ComposerFooter({
   const inputPct = usage !== undefined ? fmtPct(usage.input, contextWindow) : null;
   const outputPct = usage !== undefined ? fmtPct(usage.output, contextWindow) : null;
 
+  // #20a: the footer popup surfaces ONLY models you can switch to immediately —
+  // pi's available models, on-device Apple Intelligence, and already-downloaded
+  // local models. Non-downloaded catalog entries are dropped here (they live in
+  // the Model Manager). `activeId` marks the current model in the list.
+  const activeId = agentModel?.id ?? null;
+  const downloadedModels = downloadedCatalog(catalog);
+  const hasAvailable = hasSwitchableModel(
+    piModels.length,
+    afmAvailable(afmAvailability),
+    downloadedModels.length,
+  );
+
   const onUseLocal = async (modelId: string) => {
     setBusy(modelId);
     try {
@@ -177,29 +191,32 @@ export function ComposerFooter({
             <IconChevronDown size={16} />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" side="top">
-          {piModels.length > 0 ? (
-            <>
-              <DropdownMenuLabel>Models</DropdownMenuLabel>
-              {piModels.map((m) => (
-                <DropdownMenuItem
-                  key={`${m.provider}/${m.id}`}
-                  description={`${m.provider}/${m.id}`}
-                  onSelect={() => void setModel(m.provider, m.id)}
-                >
-                  {m.name ?? m.id}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
-            </>
-          ) : null}
+        {/* Round-10 (#20a): the footer popup lists ONLY the models you can switch
+            to RIGHT NOW — pi's available models, on-device Apple Intelligence, and
+            already-downloaded local models — then a divider and a single "More
+            models" row into the full Model Manager. The long "download these N GB"
+            catalog no longer lives here (that's the manager's job). (#11) opens
+            instantly, no animation. */}
+        <DropdownMenuContent
+          className="pd-menu--instant"
+          align="start"
+          side="top"
+          data-testid="footer-model-menu"
+        >
+          {hasAvailable ? <DropdownMenuLabel>Models</DropdownMenuLabel> : null}
 
-          <DropdownMenuLabel>Local models</DropdownMenuLabel>
-          {onOpenModels !== undefined ? (
-            <DropdownMenuItem data-testid="footer-open-manager" onSelect={() => onOpenModels()}>
-              Manage models…
+          {piModels.map((m) => (
+            <DropdownMenuItem
+              key={`${m.provider}/${m.id}`}
+              data-testid="footer-pi-model"
+              description={`${m.provider}/${m.id}`}
+              hint={m.id === activeId ? 'Current' : undefined}
+              onSelect={() => void setModel(m.provider, m.id)}
+            >
+              {m.name ?? m.id}
             </DropdownMenuItem>
-          ) : null}
+          ))}
+
           {afmAvailable(afmAvailability) ? (
             <DropdownMenuItem
               data-testid="footer-afm-item"
@@ -214,32 +231,39 @@ export function ComposerFooter({
               Apple Intelligence
             </DropdownMenuItem>
           ) : null}
-          {catalog.length === 0 ? (
-            <DropdownMenuItem disabled>Loading catalog…</DropdownMenuItem>
-          ) : (
-            catalog.map((entry) => (
+
+          {downloadedModels.map((entry) => (
+            <DropdownMenuItem
+              key={entry.id}
+              data-testid="footer-downloaded-model"
+              disabled={busy !== null}
+              description={`${entry.minRamGB} GB RAM · downloaded${entry.recommended ? ' · recommended' : ''}`}
+              hint={busy === entry.id ? <Spinner size={12} /> : 'Start'}
+              onSelect={(e) => {
+                e.preventDefault();
+                void onUseLocal(entry.id);
+              }}
+            >
+              {entry.displayName}
+            </DropdownMenuItem>
+          ))}
+
+          {!hasAvailable && catalog.length === 0 ? (
+            <DropdownMenuItem disabled>Loading models…</DropdownMenuItem>
+          ) : null}
+
+          {onOpenModels !== undefined ? (
+            <>
+              {hasAvailable ? <DropdownMenuSeparator /> : null}
               <DropdownMenuItem
-                key={entry.id}
-                disabled={busy !== null}
-                description={`${entry.minRamGB} GB RAM · ${entry.downloaded ? 'downloaded' : `${((entry.quants[0]?.bytes ?? 0) / 1e9) | 0} GB`}${entry.recommended ? ' · recommended' : ''}`}
-                hint={
-                  busy === entry.id ? (
-                    <Spinner size={12} />
-                  ) : entry.downloaded ? (
-                    'Start'
-                  ) : (
-                    'Download'
-                  )
-                }
-                onSelect={(e) => {
-                  e.preventDefault();
-                  void onUseLocal(entry.id);
-                }}
+                data-testid="footer-open-manager"
+                hint={<IconChevronRight size={14} />}
+                onSelect={() => onOpenModels()}
               >
-                {entry.displayName}
+                More models
               </DropdownMenuItem>
-            ))
-          )}
+            </>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
 

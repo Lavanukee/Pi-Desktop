@@ -6,6 +6,7 @@
  */
 import type { KnownConnector, McpServerConfig } from '@pi-desktop/mcp-lite';
 import { Badge, Button, IconChevronRight, Spinner, Switch } from '@pi-desktop/ui';
+import { ConnectorIcon } from './ConnectorIcon';
 
 /** Best-effort developer label: the homepage host, else first-party/community. */
 function developerOf(connector: KnownConnector): string {
@@ -95,8 +96,8 @@ export function ConnectorDetail({
 
       {/* Header */}
       <div className="mb-4 flex items-start gap-4">
-        <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-bg-inset text-title">
-          {connector.icon}
+        <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-bg-inset text-title text-text-primary">
+          <ConnectorIcon connector={connector} size={30} />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">

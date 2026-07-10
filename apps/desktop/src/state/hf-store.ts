@@ -29,6 +29,10 @@ interface HfStoreState {
   results: HfModelHitDTO[];
   searchError: string | null;
   rateLimited: boolean;
+  /** True when `results` is the default "trending on HF" set shown on open
+   * (empty query, trending sort) rather than a user-typed search. Drives the
+   * "Trending on Hugging Face" header instead of a plain results list. */
+  defaultTrending: boolean;
   /** The repo whose files are shown (its GGUF quant picker is open). */
   selected: HfModelHitDTO | null;
   filesStatus: FilesStatus;
@@ -37,7 +41,9 @@ interface HfStoreState {
   /** The selected repo needs a token/licence (401/403 on the tree). */
   gatedRepo: boolean;
 
-  search: (params: HfSearchParams) => Promise<void>;
+  /** Run an HF search. Pass `{ trending: true }` for the on-open default load so
+   * the view flags it as the trending set (see {@link HfStoreState.defaultTrending}). */
+  search: (params: HfSearchParams, meta?: { trending?: boolean }) => Promise<void>;
   selectRepo: (hit: HfModelHitDTO, contextWindow?: number) => Promise<void>;
   clearSelection: () => void;
   /**
@@ -61,14 +67,20 @@ export const useHfStore = create<HfStoreState>((set) => ({
   results: [],
   searchError: null,
   rateLimited: false,
+  defaultTrending: false,
   selected: null,
   filesStatus: 'idle',
   files: [],
   filesError: null,
   gatedRepo: false,
 
-  search: async (params) => {
-    set({ searchStatus: 'searching', searchError: null, rateLimited: false });
+  search: async (params, meta) => {
+    set({
+      searchStatus: 'searching',
+      searchError: null,
+      rateLimited: false,
+      defaultTrending: meta?.trending === true,
+    });
     try {
       const res = await window.piDesktop.invoke('hf:search', {
         query: params.query,

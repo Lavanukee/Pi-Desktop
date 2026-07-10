@@ -45,6 +45,11 @@ const EXTENSION_PACKAGE_DIRS = [
   // export-default probe below, so both land automatically once present.
   'browser-use',
   'mac-connectors',
+  // mac-computer-use drives ANY Mac app via the pi-mac Accessibility/CGEvent
+  // helper over the mac-agent socket bridge (PI_MAC_SOCK/_TOKEN, published by
+  // mac-agent.ts before spawn). Its src/index.ts export-defaults an activate, so
+  // the probe below picks it up automatically.
+  'mac-computer-use',
   // mcp-lite (W8): connects the user's ~/.pi/desktop/mcp-connectors.json servers
   // and exposes them to the model per the configured mode (lite proxy / native /
   // bash-cli). Its src/index.ts re-exports the extension's default so the

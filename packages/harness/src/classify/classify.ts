@@ -2,8 +2,8 @@
  * Tier-1 task classifier (heuristics-only, pure, <1ms).
  *
  * Given a user prompt + attachments + light conversation state, decide which
- * harness toolset preset to load. The result is one of three tiers
- * (`simple-QA` | `basic-tools` | `full-shebang`) or a category preset
+ * harness toolset preset to load. The result is one of two tiers
+ * (`simple-QA` | `basic-tools`) or a category preset
  * (`browser-use` | `file-ops` | `coding` | `motion-graphics` |
  * `advanced-video` | `3d` | `2d-art` | `other`).
  *
@@ -13,8 +13,8 @@
  * pure heuristics so classification works with zero model headroom.
  */
 
-/** The three complexity tiers. */
-export type TaskTier = 'simple-QA' | 'basic-tools' | 'full-shebang';
+/** The complexity tiers. */
+export type TaskTier = 'simple-QA' | 'basic-tools';
 
 /** The specialized category presets. `other` → tool-search-only. */
 export type TaskCategory =
@@ -30,7 +30,7 @@ export type TaskCategory =
 /** A classification result: a tier or a category. */
 export type TaskClass = TaskTier | TaskCategory;
 
-export const TASK_TIERS: readonly TaskTier[] = ['simple-QA', 'basic-tools', 'full-shebang'];
+export const TASK_TIERS: readonly TaskTier[] = ['simple-QA', 'basic-tools'];
 export const TASK_CATEGORIES: readonly TaskCategory[] = [
   'browser-use',
   'file-ops',
@@ -51,6 +51,12 @@ export interface Attachment {
   readonly mimeType?: string;
 }
 
+/** A minimal chat message used to share the live conversation prefix (below). */
+export interface ClassifyMessage {
+  readonly role: 'system' | 'user' | 'assistant';
+  readonly content: string;
+}
+
 export interface ClassifyInput {
   /** The user prompt text (after expansion). */
   readonly prompt: string;
@@ -62,6 +68,14 @@ export interface ClassifyInput {
   readonly priorClass?: TaskClass;
   /** 0-based turn index within the session. */
   readonly turnIndex?: number;
+  /**
+   * The live conversation so far (system + prior user/assistant turns, ending
+   * with the current user prompt). Used ONLY by the tier-2 piggyback so it can
+   * share the exact conversation prefix with the main model and reuse the
+   * single-slot llama-server's KV cache (round-10 #8). The pure tier-1 heuristic
+   * ignores this field entirely.
+   */
+  readonly priorMessages?: readonly ClassifyMessage[];
 }
 
 export interface ClassifyResult {
@@ -73,6 +87,12 @@ export interface ClassifyResult {
   readonly signals: readonly string[];
   /** True when confidence is low enough that a tier-2 model should double-check. */
   readonly ambiguous: boolean;
+  /**
+   * A short conversation title, produced ONLY by the tier-2 `{title, class}`
+   * piggyback (never by tier-1 heuristics). The harness emits it over the status
+   * channel for the app to display. Absent on the pure heuristic path.
+   */
+  readonly title?: string;
 }
 
 interface CategoryRule {
@@ -371,11 +391,17 @@ export function classify(input: ClassifyInput): ClassifyResult {
     return { class: 'simple-QA', confidence, signals, ambiguous: confidence < 0.6 };
   }
 
-  // full-shebang: complex / multi-step agentic work with no dominant modality.
+  // Fallback: complex / multi-step agentic work with no dominant modality. The
+  // `full-shebang` everything-tier was removed (round-10 #7); fall back among the
+  // kept classes. Light tool signals (agentic build verbs, or a lookup/compute
+  // need) → `basic-tools` (python + web); the always-active tool_search pulls in
+  // read/write/edit/bash on demand. No signal at all → tool-search-only `other`.
   signals.push(...agenticHits.map((h) => `agentic:${h}`));
-  if (agenticHits.length === 0) signals.push('fallback');
+  const hasToolSignal = agenticHits.length > 0 || basicHits.length > 0;
+  if (!hasToolSignal) signals.push('fallback');
+  const cls: TaskClass = hasToolSignal ? 'basic-tools' : 'other';
   const confidence = clamp01(0.45 + agenticHits.length * 0.12);
-  return { class: 'full-shebang', confidence, signals, ambiguous: confidence < 0.6 };
+  return { class: cls, confidence, signals, ambiguous: confidence < 0.6 };
 }
 
 function classifyAttachments(input: ClassifyInput): TaskCategory | undefined {
@@ -416,6 +442,14 @@ export interface ClassifyOptions {
   readonly asyncClassifier?: AsyncClassifier;
   /** Only escalate to tier 2 when tier 1 is ambiguous. Default true. */
   readonly escalateOnlyWhenAmbiguous?: boolean;
+  /**
+   * Force the tier-2 piggyback even when tier-1 is confident — e.g. the FIRST
+   * turn needs a conversation `title` regardless of how clear the class is. When
+   * forced on a turn tier-1 was already confident about, the fast heuristic's
+   * CLASS is kept (the model isn't second-guessing a clear class) but the
+   * model's `title` is carried through. Default false.
+   */
+  readonly forceEscalate?: boolean;
 }
 
 /**
@@ -427,12 +461,19 @@ export async function classifyWithEscalation(
   opts: ClassifyOptions = {},
 ): Promise<ClassifyResult> {
   const tier1 = classify(input);
-  const { asyncClassifier, escalateOnlyWhenAmbiguous = true } = opts;
+  const { asyncClassifier, escalateOnlyWhenAmbiguous = true, forceEscalate = false } = opts;
   if (asyncClassifier === undefined) return tier1;
-  if (escalateOnlyWhenAmbiguous && !tier1.ambiguous) return tier1;
+  const shouldEscalate = tier1.ambiguous || forceEscalate;
+  if (escalateOnlyWhenAmbiguous && !shouldEscalate) return tier1;
   try {
     const tier2 = await asyncClassifier(input, tier1);
-    return tier2 ?? tier1;
+    if (tier2 === undefined) return tier1;
+    // Forced only for the title on an already-confident turn → keep the fast
+    // heuristic class, but surface the model's title.
+    if (!tier1.ambiguous && forceEscalate) {
+      return tier2.title !== undefined ? { ...tier1, title: tier2.title } : tier1;
+    }
+    return tier2;
   } catch {
     return tier1;
   }

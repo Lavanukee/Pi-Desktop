@@ -1,6 +1,6 @@
 import { IconFile, IconGlobe, IconImage, type IconProps, IconTerminal } from '@pi-desktop/ui';
 import type { ComponentType } from 'react';
-import { IconCode, IconMarkup, IconPdf, IconSubagent } from '../tab-icons.tsx';
+import { IconCode, IconFolder, IconMarkup, IconPdf, IconSubagent } from '../tab-icons.tsx';
 import type { CanvasTabKind } from './tab-model.ts';
 
 /** Per-kind chrome + routing metadata — the single source the tab bar reads. */
@@ -26,6 +26,9 @@ export interface CanvasTabKindMeta {
 export const CANVAS_TAB_KINDS: Record<CanvasTabKind, CanvasTabKindMeta> = {
   browser: { kind: 'browser', label: 'New tab', icon: IconGlobe, live: true, opensInCanvas: true },
   file: { kind: 'file', label: 'File', icon: IconFile, live: false, opensInCanvas: true },
+  // Full-canvas project file tree (the `+ › Files` surface). App-fed like a live
+  // surface (the tree comes from the app), rendered directly (no artifact).
+  filetree: { kind: 'filetree', label: 'Files', icon: IconFolder, live: true, opensInCanvas: true },
   terminal: {
     kind: 'terminal',
     label: 'Terminal',

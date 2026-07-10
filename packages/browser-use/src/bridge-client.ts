@@ -14,6 +14,7 @@ import {
   type BrowserAgentMethod,
   type BrowserAgentRequest,
   type BrowserAgentResponse,
+  type CanvasState,
 } from './protocol.js';
 
 interface Pending {
@@ -161,6 +162,16 @@ export class BrowserAgentClient {
         reject(err instanceof Error ? err : new Error(String(err)));
       }
     });
+  }
+
+  /**
+   * Fetch the compact canvas snapshot MAIN caches (what the user is looking at),
+   * for the `context` hook to inject as a `<canvas_state>` block. Returns `null`
+   * when the bridge is unreachable or nothing is on the canvas, so the caller can
+   * simply skip injection — a transport failure must never wedge an LLM call.
+   */
+  async getCanvasState(): Promise<CanvasState | null> {
+    return this.request<CanvasState | null>('getCanvasState');
   }
 
   dispose(): void {

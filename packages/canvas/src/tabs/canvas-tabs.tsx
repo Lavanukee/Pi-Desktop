@@ -21,14 +21,16 @@ import { TerminalSurface } from '../surfaces/terminal-surface.tsx';
 import { IconFolder, IconPanelRight, IconPopout, IconSubagent } from '../tab-icons.tsx';
 import { CanvasOperationBar, hasViewToggle, viewModeDefault } from './canvas-operation-bar.tsx';
 import type { CanvasController } from './controller.ts';
+import { FileTree } from './file-tree.tsx';
 import { CANVAS_TAB_KINDS } from './tab-kinds.ts';
 import type { CanvasTab, FileTreeNode, FileViewMode } from './tab-model.ts';
 import { useCanvasTabs } from './use-canvas-tabs.tsx';
 import { useOutsideClose } from './use-outside-close.ts';
 
-/** The tab kinds the `+` menu can open. `subagent` opens the live subagent list
- * surface (the app also opens/feeds it automatically as children spawn). */
-export type NewTabKind = 'file' | 'browser' | 'terminal' | 'subagent';
+/** The tab kinds the `+` menu can open. `filetree` opens the full-canvas project
+ * file tree (NOT a blank "untitled" file — round-10 #4); `subagent` opens the
+ * live subagent list surface (the app also opens/feeds it as children spawn). */
+export type NewTabKind = 'filetree' | 'browser' | 'terminal' | 'subagent';
 
 /** The `+` menu rows: kind, label, optional shortcut hint, and type glyph. */
 const NEW_TAB_ITEMS: ReadonlyArray<{
@@ -37,7 +39,7 @@ const NEW_TAB_ITEMS: ReadonlyArray<{
   hint?: string;
   icon: ComponentType<{ size?: number }>;
 }> = [
-  { kind: 'file', label: 'Files', hint: '⌘P', icon: IconFolder },
+  { kind: 'filetree', label: 'Files', hint: '⌘P', icon: IconFolder },
   { kind: 'browser', label: 'Browser', hint: '⌘T', icon: IconGlobe },
   { kind: 'terminal', label: 'Terminal', icon: IconTerminal },
   { kind: 'subagent', label: 'Subagents', icon: IconSubagent },
@@ -118,6 +120,13 @@ export interface CanvasTabsProps {
   onExport?: (content: ArtifactContent) => void;
   /** Fully override the active surface body (else the built-in per-kind renderer). */
   renderSurface?: (tab: CanvasTab) => ReactNode;
+  /**
+   * The `+` new-tab menu opened/closed. The app uses this to get a native
+   * browser WebContentsView out of the way while the menu is up — the overlay
+   * paints ABOVE the DOM, so without this the menu is occluded on a browser tab
+   * (round-10 #2). Fired with `true` on open, `false` on close.
+   */
+  onMenuOpenChange?: (open: boolean) => void;
   className?: string;
 }
 
@@ -141,6 +150,7 @@ export function CanvasTabs({
   onCopy,
   onExport,
   renderSurface,
+  onMenuOpenChange,
   className,
 }: CanvasTabsProps) {
   const canvas = useCanvasTabs(controller);
@@ -232,7 +242,7 @@ export function CanvasTabs({
                       <IconClose size={12} />
                     </button>
                   </div>
-                  {active ? <NewTabButton onPick={newTab} /> : null}
+                  {active ? <NewTabButton onPick={newTab} onOpenChange={onMenuOpenChange} /> : null}
                 </div>
               );
             })}
@@ -311,9 +321,15 @@ export function CanvasTabs({
               />
             )
           ) : (
-            <div className="pd-canvas-empty">
-              <p className="pd-canvas-empty-title">No surfaces open</p>
-              <NewTabButton onPick={newTab} />
+            <div className="pd-canvas-empty pd-canvas-empty--home">
+              <span className="pd-canvas-empty-icon" aria-hidden="true">
+                <IconPanelRight size={40} />
+              </span>
+              <p className="pd-canvas-empty-title">Nothing on the canvas yet</p>
+              <p className="pd-canvas-empty-sub">
+                Open a file tree, a browser, or a terminal to see it here.
+              </p>
+              <NewTabButton onPick={newTab} onOpenChange={onMenuOpenChange} />
             </div>
           )}
         </div>
@@ -327,23 +343,40 @@ export function CanvasTabs({
  * new Files / Browser / Terminal tab. The trigger keeps the `.pd-canvas-newtab`
  * hook + "New tab" label so it stays discoverable; picking a row calls `onPick`.
  */
-function NewTabButton({ onPick }: { onPick: (kind: NewTabKind) => void }) {
+function NewTabButton({
+  onPick,
+  onOpenChange,
+}: {
+  onPick: (kind: NewTabKind) => void;
+  onOpenChange?: (open: boolean) => void;
+}) {
   const [open, setOpen] = useState(false);
   // The `+` lives inside the horizontally-scrolling tab strip (overflow clips
   // both axes), so an absolute dropdown would be cut off at the 40px strip. Pin
   // the menu with position:fixed, measured from the anchor, so it escapes the
   // clip while staying inline (no portal — keeps it self-contained + testable).
+  // Clamp the left edge to the viewport so the full menu is always visible.
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-  useOutsideClose(ref, open, () => setOpen(false));
+  // Notify the app so it can lower any native browser overlay while the menu is
+  // up (round-10 #2); that view otherwise paints over this DOM dropdown.
+  const setMenuOpen = (next: boolean): void => {
+    setOpen(next);
+    onOpenChange?.(next);
+  };
+  useOutsideClose(ref, open, () => setMenuOpen(false));
   const toggle = (): void => {
     if (open) {
-      setOpen(false);
+      setMenuOpen(false);
       return;
     }
     const rect = ref.current?.getBoundingClientRect();
-    if (rect) setPos({ top: rect.bottom + 4, left: rect.left });
-    setOpen(true);
+    if (rect) {
+      const MENU_WIDTH = 200;
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - MENU_WIDTH - 8));
+      setPos({ top: rect.bottom + 4, left });
+    }
+    setMenuOpen(true);
   };
   return (
     <div ref={ref} className="pd-canvas-menu-anchor">
@@ -372,7 +405,7 @@ function NewTabButton({ onPick }: { onPick: (kind: NewTabKind) => void }) {
                 role="menuitem"
                 className="pd-menu-item"
                 onClick={() => {
-                  setOpen(false);
+                  setMenuOpen(false);
                   onPick(item.kind);
                 }}
               >
@@ -441,6 +474,19 @@ function DefaultSurface({
           subagents={tab.subagents ?? []}
           onSelect={(subagentId) => handlers?.onSubagentSelect?.(id, subagentId)}
         />
+      );
+    case 'filetree':
+      // The full-canvas project file tree (round-10 #4). The app feeds `fileTree`
+      // (rooted at the active project/cwd) + `fileTreeRootLabel`; picking a FILE
+      // routes through onFileTreeSelect (the app opens it in its own file tab).
+      return (
+        <div className="pd-canvas-filetree">
+          <FileTree
+            tree={tab.fileTree ?? []}
+            rootLabel={tab.fileTreeRootLabel}
+            onSelect={(node) => handlers?.onFileTreeSelect?.(id, node)}
+          />
+        </div>
       );
     case 'image':
     case 'pdf':
@@ -521,13 +567,17 @@ function basename(path: string | undefined): string | undefined {
 
 /**
  * The copyable text for the active tab: artifact source (code/text/markdown/svg)
- * for artifact-backed surfaces, the media `src`/URL for image/pdf, and the page
- * URL for a browser tab. Live terminal/subagent tabs have nothing to copy → ''
- * (the tab bar hides the Copy control).
+ * for artifact-backed surfaces and the media `src`/URL for image/pdf. Live
+ * browser/terminal/subagent/filetree tabs have nothing to copy → '' (the tab bar
+ * hides the Copy control) — a browser tab's URL lives in its address bar, not a
+ * Copy button (round-10 #3).
  */
 function activeCopyText(tab: CanvasTab | null): string {
   if (!tab) return '';
-  if (tab.kind === 'browser') return tab.url ?? '';
+  // Copy is for code/text/media surfaces — NOT a live browser tab (round-10 #3):
+  // "copy the URL" doesn't belong on the browser chrome, so the tab-bar Copy
+  // control is hidden there.
+  if (tab.kind === 'browser') return '';
   if (tab.kind === 'image' || tab.kind === 'pdf') {
     return tab.mediaSrc ?? tab.artifact?.content.text ?? '';
   }

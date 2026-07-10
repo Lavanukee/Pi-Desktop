@@ -9,16 +9,7 @@
  * provider/spec details); it is off by default (progressive disclosure).
  * Favorites and per-model effort defaults persist in settings.json.
  */
-import {
-  Badge,
-  Button,
-  Spinner,
-  Switch,
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@pi-desktop/ui';
+import { Button, Spinner, Switch, Tabs, TabsContent, TabsList, TabsTrigger } from '@pi-desktop/ui';
 import { useEffect, useState } from 'react';
 import type { LlmCatalogEntry } from '../../electron/ipc-contract';
 import { afmAvailable, useAfmStore } from '../state/afm-store';
@@ -29,6 +20,7 @@ import { AFM_MODEL_ID, AfmModelCard } from './AfmModelCard';
 import { HfBrowseView } from './HfBrowseView';
 import { IconCpu, IconStar } from './icons';
 import { ModelCard } from './ModelCard';
+import { ModelTag } from './model-tags';
 
 /** True when this entry is starred (by its id or, for an HF add, its repo id). */
 function isFavorite(entry: LlmCatalogEntry, favorites: string[]): boolean {
@@ -130,14 +122,16 @@ export function ModelManagerPanel() {
               className="flex flex-col gap-3 rounded-xl border border-border-default bg-accent-subtle p-4"
               data-testid="recommendation-banner"
             >
-              <div className="flex items-center gap-2">
-                <Badge tone="accent" size="sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <ModelTag kind="recommended" data-testid="recommendation-banner-pill">
                   Recommended
-                </Badge>
+                </ModelTag>
                 <span className="text-body font-medium text-text-primary">
                   {recommended.displayName}
                 </span>
-                <span className="text-caption text-text-muted">{recommendation.quant}</span>
+                <ModelTag kind="quant" icon={null}>
+                  {recommendation.quant}
+                </ModelTag>
               </div>
               <p className="text-footnote text-text-secondary">{recommendation.rationale}</p>
               <div>

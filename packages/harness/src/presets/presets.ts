@@ -11,6 +11,7 @@
  * present therefore degrade gracefully to tool-search-only.
  */
 
+import { BROWSER_TOOL_NAMES } from '@pi-desktop/browser-use/tool-names';
 import type { TaskClass } from '../classify/classify.js';
 import { SPAWN_SUBAGENT_TOOL_NAME } from '../subagent/types.js';
 
@@ -33,12 +34,13 @@ export const ALWAYS_ACTIVE_TOOLS: readonly string[] = [
 const CORE_FS = ['read', 'write', 'edit', 'ls', 'find', 'grep'] as const;
 const WEB = ['web_search', 'web_fetch'] as const;
 const PYTHON = ['python_run'] as const;
-const BROWSER = [
-  'browser_navigate',
-  'browser_click',
-  'browser_eval',
-  'browser_screenshot',
-] as const;
+// The browser set is imported from browser-use (single source of truth) so a
+// tool rename is a COMPILE error here, not a silent runtime miss. It leads with
+// browser_navigate then browser_snapshot — the model MUST be able to SEE the
+// page (snapshot) before it can click/type. (Round-10 bug #9: this list had
+// drifted to non-existent `browser_eval`/`browser_screenshot` and omitted
+// `browser_snapshot`/`browser_read`, so browser tasks looped, blind.)
+const BROWSER = BROWSER_TOOL_NAMES;
 const IMAGE_GEN = ['image_generate', 'image_edit'] as const;
 const VIDEO_GEN = ['video_generate', 'video_edit'] as const;
 const MOTION_GEN = ['motion_graphics_render'] as const;
@@ -52,11 +54,13 @@ export const PRESET_TOOLS: Record<TaskClass, readonly string[]> = {
   // Tiers.
   'simple-QA': [],
   'basic-tools': [...PYTHON, ...WEB],
-  'full-shebang': [...CORE_FS, 'bash', ...WEB, ...PYTHON],
   // Categories.
   coding: [...CORE_FS, 'bash', ...PYTHON],
   'file-ops': [...CORE_FS, 'bash'],
-  'browser-use': [...BROWSER, 'web_fetch', 'read'],
+  // NOTE: the bare file `read` tool is deliberately NOT here — it was an
+  // attractive nuisance that a small model grabbed ("Read a file") instead of
+  // browsing. Page reading is browser_read; page perception is browser_snapshot.
+  'browser-use': [...BROWSER, 'web_fetch'],
   'motion-graphics': [...MOTION_GEN, ...IMAGE_GEN],
   'advanced-video': [...VIDEO_GEN, ...IMAGE_GEN],
   '3d': [...THREE_D_GEN, ...IMAGE_GEN],

@@ -1,7 +1,63 @@
 import { IconCheck, IconChevronDown, IconFolderPlus, IconSearch } from '@pi-desktop/ui';
-import { useMemo, useRef, useState } from 'react';
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import { IconFolder } from '../tab-icons.tsx';
 import { useOutsideClose } from './use-outside-close.ts';
+
+/** Fixed-viewport placement for the dropdown so it never clips off-screen. */
+interface MenuPos {
+  left: number;
+  width: number;
+  maxHeight: number;
+  top?: number;
+  bottom?: number;
+}
+
+/**
+ * Place the "Search projects" dropdown in FIXED/viewport coords so it is never
+ * clipped (round-10 #10): it opens below the chip, but FLIPS above when there
+ * isn't room below (the picker sits near the bottom of the window, above the
+ * composer), and clamps its left edge + height to the viewport. Pure so it's
+ * unit-testable; returns null with no anchor / outside a DOM.
+ */
+export function placeProjectMenu(
+  anchor: HTMLElement | null,
+  viewport: { width: number; height: number } = {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  },
+): MenuPos | null {
+  if (!anchor) return null;
+  const rect = anchor.getBoundingClientRect();
+  const gap = 6;
+  const margin = 8;
+  const width = Math.min(280, viewport.width - margin * 2);
+  const left = Math.max(margin, Math.min(rect.left, viewport.width - width - margin));
+  const spaceBelow = viewport.height - rect.bottom - gap - margin;
+  const spaceAbove = rect.top - gap - margin;
+  // Prefer below; flip up when below is tight AND there's more room above.
+  const flipUp = spaceBelow < 240 && spaceAbove > spaceBelow;
+  return flipUp
+    ? {
+        left,
+        width,
+        bottom: viewport.height - rect.top + gap,
+        maxHeight: Math.max(140, spaceAbove),
+      }
+    : { left, width, top: rect.bottom + gap, maxHeight: Math.max(140, spaceBelow) };
+}
+
+function menuStyle(pos: MenuPos): CSSProperties {
+  return {
+    position: 'fixed',
+    left: pos.left,
+    right: 'auto',
+    top: pos.top,
+    bottom: pos.bottom,
+    width: pos.width,
+    maxHeight: pos.maxHeight,
+    overflowY: 'auto',
+  };
+}
 
 /** One selectable project (pure data — no UI coupling). */
 export interface ProjectPickerItem {
@@ -46,8 +102,31 @@ export function ProjectPicker({
 }: ProjectPickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [pos, setPos] = useState<MenuPos | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+  const chipRef = useRef<HTMLButtonElement>(null);
   useOutsideClose(ref, open, () => setOpen(false));
+
+  const toggle = (): void => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setPos(placeProjectMenu(chipRef.current));
+    setOpen(true);
+  };
+
+  // Keep the placement correct if the window resizes / scrolls while open.
+  useEffect(() => {
+    if (!open) return;
+    const update = (): void => setPos(placeProjectMenu(chipRef.current));
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [open]);
 
   const activeProject = active != null ? projects.find((p) => p.id === active) : undefined;
   const filtered = useMemo(() => {
@@ -64,11 +143,12 @@ export function ProjectPicker({
   return (
     <div ref={ref} className={rootClass}>
       <button
+        ref={chipRef}
         type="button"
         className="pd-project-chip"
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
       >
         <span className="pd-project-chip-icon" aria-hidden="true">
           <IconFolder size={14} />
@@ -77,7 +157,11 @@ export function ProjectPicker({
         <IconChevronDown size={12} />
       </button>
       {open ? (
-        <div className="pd-menu pd-canvas-popmenu" data-align="start" role="menu">
+        <div
+          className="pd-menu pd-project-menu"
+          role="menu"
+          style={pos ? menuStyle(pos) : undefined}
+        >
           <div className="pd-project-search">
             <IconSearch size={14} />
             <input

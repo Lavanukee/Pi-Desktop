@@ -50,6 +50,31 @@ describe('createOpenAiCompatCallModel', () => {
     expect(headers.authorization).toBe('Bearer secret');
   });
 
+  it('forwards response_format and extraBody, but never lets extraBody override core fields', async () => {
+    const { fetchImpl, calls } = jsonFetch('{}');
+    const callModel = createOpenAiCompatCallModel({
+      baseUrl: 'http://x/v1',
+      model: 'gemma',
+      fetchImpl,
+    });
+    await callModel({
+      prompt: 'hi',
+      responseFormat: { type: 'json_object' },
+      // extraBody tries (and must fail) to clobber model/messages/stream.
+      extraBody: {
+        chat_template_kwargs: { enable_thinking: false },
+        model: 'HIJACK',
+        stream: true,
+      },
+    });
+    const body = JSON.parse(calls[0]?.body as string);
+    expect(body.response_format).toEqual({ type: 'json_object' });
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+    // Core fields set by the seam win over extraBody.
+    expect(body.model).toBe('gemma');
+    expect(body.stream).toBe(false);
+  });
+
   it('throws on a non-OK response', async () => {
     const fetchImpl = (async () =>
       ({ ok: false, status: 503 }) as unknown as Response) as unknown as typeof fetch;

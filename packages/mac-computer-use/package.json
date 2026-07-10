@@ -1,0 +1,28 @@
+{
+  "name": "@pi-desktop/mac-computer-use",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "pi extension: mac_* tools that let the model drive ANY Mac app (indexed Accessibility snapshot + CGEvent click/type/key/scroll) over a token-authed Unix-socket bridge to the pi-mac helper hosted in Electron main. Gated behind a per-session consent + app denylist.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": "./src/protocol.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "@pi-desktop/shared": "workspace:*",
+    "@types/node": "^24.13.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "0.68.1",
+    "@sinclair/typebox": "^0.34.49"
+  }
+}

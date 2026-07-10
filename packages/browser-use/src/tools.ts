@@ -17,17 +17,22 @@ import type { BrowserBridge } from './bridge-client.js';
 import { formatSnapshot } from './format.js';
 import { type PageSnapshot, perceptionScript, readScript, scrollScript } from './perception.js';
 import type { TabState } from './protocol.js';
+import {
+  BROWSER_BACK_TOOL,
+  BROWSER_CLICK_TOOL,
+  BROWSER_FORWARD_TOOL,
+  BROWSER_KEY_TOOL,
+  BROWSER_NAVIGATE_TOOL,
+  BROWSER_READ_TOOL,
+  BROWSER_SCROLL_TOOL,
+  BROWSER_SNAPSHOT_TOOL,
+  BROWSER_TYPE_TOOL,
+  BROWSER_WAIT_TOOL,
+} from './tool-names.js';
 
-export const BROWSER_NAVIGATE_TOOL = 'browser_navigate';
-export const BROWSER_SNAPSHOT_TOOL = 'browser_snapshot';
-export const BROWSER_CLICK_TOOL = 'browser_click';
-export const BROWSER_TYPE_TOOL = 'browser_type';
-export const BROWSER_SCROLL_TOOL = 'browser_scroll';
-export const BROWSER_READ_TOOL = 'browser_read';
-export const BROWSER_WAIT_TOOL = 'browser_wait';
-export const BROWSER_BACK_TOOL = 'browser_back';
-export const BROWSER_FORWARD_TOOL = 'browser_forward';
-export const BROWSER_KEY_TOOL = 'browser_key';
+// Re-export the tool names (single source of truth: ./tool-names.ts) so existing
+// importers of `@pi-desktop/browser-use` keep working unchanged.
+export * from './tool-names.js';
 
 const DEFAULT_ELEMENT_CAP = 60;
 const READ_MAX_CHARS = 8000;

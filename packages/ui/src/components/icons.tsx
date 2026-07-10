@@ -368,3 +368,49 @@ export function IconFolderPlus(props: IconProps) {
     </Icon>
   );
 }
+
+/*
+ * Browser-action glyphs (round-10 #17): each browser tool step gets its own
+ * icon so the activity chain reads "navigated / clicked / typed / viewed" at a
+ * glance instead of the generic file sheet. Compass = navigate, pointer =
+ * click, keyboard = type, eye = read/snapshot.
+ */
+
+/** Compass — browser navigate / goto / open / back / forward. */
+export function IconCompass(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="8" r="5.75" />
+      <path d="M10.6 5.4 9 9 5.4 10.6 7 7z" />
+    </Icon>
+  );
+}
+
+/** Arrow pointer — browser click / hover / select / scroll. */
+export function IconCursor(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3.5 2.8 3.5 12.4 6 10 7.6 13.4 9.4 12.6 7.8 9.3 11.2 9.2z" />
+    </Icon>
+  );
+}
+
+/** Keyboard — browser type / fill / press key. */
+export function IconKeyboard(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="1.75" y="4.5" width="12.5" height="7.5" rx="1.5" />
+      <path d="M4.2 7.3h.01M6.6 7.3h.01M9 7.3h.01M11.4 7.3h.01M5 9.7h6" />
+    </Icon>
+  );
+}
+
+/** Eye — browser read / snapshot / screenshot. */
+export function IconEye(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M1.5 8S4 3.75 8 3.75 14.5 8 14.5 8 12 12.25 8 12.25 1.5 8 1.5 8z" />
+      <circle cx="8" cy="8" r="2" />
+    </Icon>
+  );
+}

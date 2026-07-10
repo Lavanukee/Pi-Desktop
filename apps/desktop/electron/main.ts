@@ -27,6 +27,7 @@ import { fsHandlers } from './fs-handlers';
 import { registerImportIpc } from './import/import-main';
 import { registerLlmIpc } from './inference/llm-main';
 import type { AppEventMap, CoreInvokeMap, FsInvokeMap } from './ipc-contract';
+import { registerMacAgentIpc } from './mac/mac-agent';
 import { registerPiIpc } from './pi/pi-main';
 import { registerProjectIpc } from './project/project-main';
 import { applySettingsEnvFromDisk, registerSettingsIpc } from './settings/settings-main';
@@ -152,13 +153,15 @@ function createMainWindow(): BrowserWindow {
     // macOS shows the dock image (set in whenReady); icon is used on win/linux.
     ...(icon !== null ? { icon } : {}),
     titleBarStyle: 'hiddenInset',
-    // Round-7 (img56): pin the traffic lights to a deterministic spot so they
-    // sit comfortably INSIDE the floating sidebar card (top edge ~y=8) with clear
-    // inset, and their vertical centre (~y=33) lines up with the sidebar's
-    // collapse toggle (centred in the top-bar-height header strip + its 4px top
-    // pad — see .pd-sidebar-tl). Without this, the default hiddenInset y left them
-    // hugging the card's top edge + misaligned.
-    trafficLightPosition: { x: 19, y: 26 },
+    // Round-10 (#1): VERTICALLY CENTRE the macOS traffic lights inside the 46px
+    // top bar (--pd-height-topbar). ROOT CAUSE of the recurring misalignment:
+    // earlier rounds kept pushing `y` DOWN (…→26) chasing a "sit lower" target,
+    // which parked the ~14px-tall light cluster's centre near y=33 — a full ~10px
+    // BELOW the bar's true vertical centre (46 / 2 = 23). Centring the cluster is
+    // `y = (topbarHeight - clusterHeight) / 2 = (46 - 14) / 2 = 16`, putting the
+    // circles' centre at y≈23 — dead-centre of the bar and the sidebar's matching
+    // 46px top strip. `x` keeps the left inset that clears into the sidebar gutter.
+    trafficLightPosition: { x: 19, y: Math.round((46 - 14) / 2) },
     // Claude-dark bg-base; avoids a white flash before the renderer paints.
     backgroundColor: '#262624',
     webPreferences: SHARED_WEB_PREFERENCES,
@@ -256,6 +259,13 @@ function registerAppIpc(): void {
   // for the pi child BEFORE its first spawn. Targets the main window for the
   // agent's browser tab.
   registerBrowserAgentIpc(() => (mainWindow !== null ? mainWindow.webContents : null));
+
+  // Mac computer-use bridge: stands up the local socket the mac-computer-use
+  // extension drives ANY Mac app through, publishing PI_MAC_SOCK/_TOKEN for the
+  // pi child BEFORE its first spawn. The pi-mac Accessibility/CGEvent helper is
+  // spawned from MAIN so the Accessibility + Screen-Recording TCC grants bind to
+  // the signed Pi Desktop.app bundle (never the pi child's exec path).
+  registerMacAgentIpc();
 
   // Desktop settings (theme/permissions/effort/search keys/mcp mode/capabilities).
   registerSettingsIpc(ipcMain, allowSender);

@@ -180,3 +180,55 @@ export function IconLock(props: LocalIconProps) {
     </Svg>
   );
 }
+
+/** Eye glyph — the "vision / multimodal" capability pill. */
+export function IconEye(props: LocalIconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M1.6 8s2.5-4.4 6.4-4.4S14.4 8 14.4 8s-2.5 4.4-6.4 4.4S1.6 8 1.6 8z" />
+      <circle cx="8" cy="8" r="1.9" />
+    </Svg>
+  );
+}
+
+/** Waveform glyph — the "audio" capability pill. */
+export function IconWaveform(props: LocalIconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M2.5 6.4v3.2M5 4.3v7.4M8 2.4v11.2M11 4.9v6.2M13.5 6.8v2.4" />
+    </Svg>
+  );
+}
+
+/** Bolt glyph — the "MTP" (faster decode) capability pill. */
+export function IconBolt(props: LocalIconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M8.6 1.8 3.4 8.7h3.4l-1 5.5 5.8-7.2H8.1z" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+/** Sparkle glyph — the "recommended" capability pill. */
+export function IconSparkle(props: LocalIconProps) {
+  return (
+    <Svg {...props}>
+      <path
+        d="M8 1.8c.4 2.9 1.5 4 4.4 4.4-2.9.4-4 1.5-4.4 4.4-.4-2.9-1.5-4-4.4-4.4 2.9-.4 4-1.5 4.4-4.4z"
+        fill="currentColor"
+        stroke="none"
+      />
+      <path d="M12.6 10.4c.2 1.3.7 1.8 2 2-1.3.2-1.8.7-2 2-.2-1.3-.7-1.8-2-2 1.3-.2 1.8-.7 2-2z" />
+    </Svg>
+  );
+}
+
+/** Flame glyph — the "trending on Hugging Face" default results header. */
+export function IconFlame(props: LocalIconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M8 1.7c.6 2.3 2 3 2 3s.5-.7.5-1.6c1.6 1.2 2.8 3.2 2.8 5.3a5.3 5.3 0 1 1-10.6 0c0-1.7.9-3.1 1.8-4 .1.8.6 1.4 1.2 1.7C5.5 5 6.6 3.4 8 1.7z" />
+      <path d="M8 13.4a2.3 2.3 0 0 1-1-4.3c.1.6.5 1 1 1.2.4-.6 1-1.5.9-2.4 1 .6 1.4 1.6 1.4 2.5A2.3 2.3 0 0 1 8 13.4z" />
+    </Svg>
+  );
+}

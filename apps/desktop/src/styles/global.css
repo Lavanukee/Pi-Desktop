@@ -116,9 +116,10 @@ body {
   position: relative;
 }
 .pd-composer-input {
-  font-size: 16px;
-  line-height: 24px;
-  min-height: 24px;
+  /* Round-10 (#12): scaled ~1.18x via --pd-composer-scale (set on .pd-composer). */
+  font-size: calc(16px * var(--pd-composer-scale, 1));
+  line-height: calc(24px * var(--pd-composer-scale, 1));
+  min-height: calc(24px * var(--pd-composer-scale, 1));
   white-space: pre-wrap;
   word-break: break-word;
   caret-color: var(--pd-text-primary);
@@ -129,12 +130,16 @@ body {
 }
 /* #A11: align the placeholder with the first line of input. The editor pads its
  * content 14px/16px (composer.css), and the placeholder is absolutely positioned
- * inside it — top:0 left:0 sat it above/left of the caret line ("squished"). */
+ * inside it — top:0 left:0 sat it above/left of the caret line ("squished").
+ * Round-10 (#12): offsets + metrics scale in lock-step with the input so the
+ * placeholder stays glued to the caret line. `right` lets it wrap within the
+ * editor width so the bottom fade (#19) has multi-line text to act on. */
 .pd-composer-placeholder {
-  top: 14px;
-  left: 16px;
-  font-size: 16px;
-  line-height: 24px;
+  top: calc(14px * var(--pd-composer-scale, 1));
+  left: calc(16px * var(--pd-composer-scale, 1));
+  right: calc(16px * var(--pd-composer-scale, 1));
+  font-size: calc(16px * var(--pd-composer-scale, 1));
+  line-height: calc(24px * var(--pd-composer-scale, 1));
   user-select: none;
 }
 
@@ -570,7 +575,7 @@ body {
  * ChatComposer's scroll handler, so the mask is off at rest).
  */
 .pd-composer-editor {
-  min-height: 3rem;
+  min-height: calc(3rem * var(--pd-composer-scale, 1));
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -581,6 +586,20 @@ body {
 .pd-composer-editor[data-scrolled="true"] {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
   mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
+}
+/*
+ * Round-10 (#19): when the placeholder wraps past the compact resting height it
+ * was HARD-CLIPPED at the editor's bottom edge (jedd img82 — the "…! to run bash"
+ * line sliced flat). `data-ph-clip` is set by ChatComposer only when the (empty)
+ * placeholder actually overflows the visible editor, so the fade appears solely
+ * in that case: a single-line placeholder is never touched, a wrapping one melts
+ * out at the bottom instead of being sliced. It's mutually exclusive with the
+ * scrolled top-mask above (that needs typed content, which hides the placeholder),
+ * so the two masks never fight. jedd VISUALLY VERIFIES this fade.
+ */
+.pd-composer-editor[data-ph-clip="true"] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent 100%);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -670,4 +689,119 @@ body {
   .pd-onboard-step {
     animation: none;
   }
+}
+
+/*
+ * Round-10 Wave C (#20b): capability / attribute PILL TAGS for the Model
+ * Manager. Larger, colored pills (vs. the old tiny grey text) with a distinct
+ * hue per attribute so a model's traits read at a glance:
+ *   vision = violet · recommended = green · audio = amber · MTP = blue ·
+ *   gated / size / quant = neutral.
+ * App-local by design (NOT in @pi-desktop/ui — Wave B owns that). Each hue sets
+ * its own bg / fg / border via the `--pill-*` locals, tuned for AA contrast of
+ * the 12px label in BOTH modes (light defaults here, dark override below).
+ */
+.pd-mm-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.15;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  border: 1px solid var(--pill-border, transparent);
+  background: var(--pill-bg, var(--pd-bg-inset));
+  color: var(--pill-fg, var(--pd-text-secondary));
+}
+.pd-mm-pill svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+/* --- Light (default) hues ------------------------------------------------- */
+.pd-mm-pill--vision {
+  --pill-bg: #ede9fe;
+  --pill-fg: #6d28d9;
+  --pill-border: #c4b5fd;
+}
+.pd-mm-pill--recommended {
+  --pill-bg: #dcfce7;
+  --pill-fg: #15803d;
+  --pill-border: #86efac;
+}
+.pd-mm-pill--audio {
+  --pill-bg: #fef1c8;
+  --pill-fg: #a15c07;
+  --pill-border: #f5cf6b;
+}
+.pd-mm-pill--mtp {
+  --pill-bg: #dbeafe;
+  --pill-fg: #1d4ed8;
+  --pill-border: #93c5fd;
+}
+.pd-mm-pill--gated {
+  --pill-bg: #e8ebf0;
+  --pill-fg: #475569;
+  --pill-border: #cbd5e1;
+}
+.pd-mm-pill--size,
+.pd-mm-pill--quant,
+.pd-mm-pill--neutral {
+  --pill-bg: #eef1f5;
+  --pill-fg: #4b5563;
+  --pill-border: #d7dde5;
+}
+
+/* --- Dark overrides ------------------------------------------------------- */
+:root[data-mode="dark"] .pd-mm-pill--vision {
+  --pill-bg: #251b3d;
+  --pill-fg: #cbb9ff;
+  --pill-border: #4a2f86;
+}
+:root[data-mode="dark"] .pd-mm-pill--recommended {
+  --pill-bg: #0f2a1a;
+  --pill-fg: #5fd58a;
+  --pill-border: #1c5233;
+}
+:root[data-mode="dark"] .pd-mm-pill--audio {
+  --pill-bg: #33260a;
+  --pill-fg: #f0b52e;
+  --pill-border: #6b4e12;
+}
+:root[data-mode="dark"] .pd-mm-pill--mtp {
+  --pill-bg: #12233f;
+  --pill-fg: #8fbcf5;
+  --pill-border: #29497f;
+}
+:root[data-mode="dark"] .pd-mm-pill--gated {
+  --pill-bg: #232933;
+  --pill-fg: #9aa6b5;
+  --pill-border: #38414d;
+}
+:root[data-mode="dark"] .pd-mm-pill--size,
+:root[data-mode="dark"] .pd-mm-pill--quant,
+:root[data-mode="dark"] .pd-mm-pill--neutral {
+  --pill-bg: #23272e;
+  --pill-fg: #97a1ad;
+  --pill-border: #353b44;
+}
+
+/* Trending-on-open results header in the Browse-Hugging-Face view. */
+.pd-mm-trending-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--pd-font-size-footnote);
+  font-weight: var(--pd-font-weight-medium, 600);
+  color: var(--pd-text-secondary);
+}
+.pd-mm-trending-header svg {
+  color: #ea580c;
+}
+:root[data-mode="dark"] .pd-mm-trending-header svg {
+  color: #fb923c;
 }

@@ -118,6 +118,37 @@ describe('wireHarness', () => {
     expect(lastCall).toContain('tool_search');
   });
 
+  it('emits the classify+title piggyback title over the status channel (turn 1)', async () => {
+    const f = makeFakePi(['read', 'write', 'edit', 'ls', 'find', 'grep', 'bash', 'python_run']);
+    // A mock CallModel standing in for the utility llama-server: returns the
+    // grammar-shaped {title, class} object the piggyback expects.
+    const callModel = vi.fn(async () => '{"title":"Auth refactor","class":"coding"}');
+    wireHarness(f.pi, { callModel });
+    const { ctx, setStatus } = makeCtx(f.entries);
+    await f.fire('session_start', { type: 'session_start', reason: 'startup' }, ctx);
+    await f.fire(
+      'before_agent_start',
+      {
+        type: 'before_agent_start',
+        prompt: 'Refactor the auth module.',
+        systemPrompt: '',
+        systemPromptOptions: {},
+      },
+      ctx,
+    );
+    expect(callModel).toHaveBeenCalled();
+    // Dedicated title status key…
+    expect(
+      setStatus.mock.calls.some((c) => c[0] === 'harness-title' && c[1] === 'Auth refactor'),
+    ).toBe(true);
+    // …and carried in the structured harness status JSON.
+    const last = setStatus.mock.calls.filter((c) => c[0] === 'harness').at(-1)?.[1] as string;
+    expect(JSON.parse(last).title).toBe('Auth refactor');
+    // The fast heuristic still owns the (unambiguous) class → coding preset.
+    const tools = f.setActiveTools.mock.calls.at(-1)?.[0] as string[];
+    expect(tools).toContain('python_run');
+  });
+
   it('publishes a status JSON under the "harness" key', async () => {
     const f = makeFakePi(['read']);
     wireHarness(f.pi);

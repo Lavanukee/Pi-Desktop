@@ -29,6 +29,8 @@ import {
   type BrowserAgentMethod,
   type BrowserAgentRequest,
   type BrowserAgentResponse,
+  type CanvasState,
+  type CanvasSurfaceState,
 } from '@pi-desktop/browser-use/protocol';
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
 import { type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
@@ -63,6 +65,13 @@ let getAgentWindow: () => WebContents | null = () => null;
 
 /** The browser tab the model currently drives (renderer-owned id). */
 let agentTabId: string | null = null;
+/**
+ * The latest compact canvas snapshot the renderer reported (canvas:report-state).
+ * Served to the pi child via `getCanvasState` (browser url/title re-enriched from
+ * the live view at read time, so it reflects the model's own navigation). Reset
+ * on dispose; a fresh window re-reports.
+ */
+let cachedCanvasState: CanvasState | null = null;
 /** Resolver for an in-flight ensureAgentTab awaiting the renderer's register. */
 let pendingOpen: { resolve: (id: string) => void; reject: (e: Error) => void } | null = null;
 /** Cached page reduced-motion preference (refreshed on navigate). */
@@ -210,6 +219,31 @@ async function typeInto(params: Record<string, unknown>): Promise<Resolved> {
   return { found: true };
 }
 
+// ── canvas state (canvas-awareness) ──────────────────────────────────────────
+
+/** Enrich a browser surface's url/title from the authoritative live view. The
+ * renderer's reported url can lag a model-driven navigation; browserManager is
+ * the source of truth for whatever tab id it holds. */
+function enrichSurface(s: CanvasSurfaceState): CanvasSurfaceState {
+  if (s.kind !== 'browser' || s.tabId === undefined) return s;
+  const live = browserManager.stateOf(s.tabId);
+  if (live === null) return s;
+  return {
+    ...s,
+    url: live.url !== '' ? live.url : s.url,
+    title: live.title !== '' ? live.title : s.title,
+  };
+}
+
+/** The cached snapshot with every browser surface re-enriched from the live view. */
+function enrichedCanvasState(): CanvasState | null {
+  if (cachedCanvasState === null) return null;
+  return {
+    active: cachedCanvasState.active !== null ? enrichSurface(cachedCanvasState.active) : null,
+    others: cachedCanvasState.others.map(enrichSurface),
+  };
+}
+
 async function dispatch(
   method: BrowserAgentMethod,
   params: Record<string, unknown>,
@@ -267,6 +301,8 @@ async function dispatch(
       setDriving(params.driving === true);
       return { ok: true };
     }
+    case 'getCanvasState':
+      return enrichedCanvasState();
     default:
       throw new Error(`unknown method: ${String(method)}`);
   }
@@ -363,6 +399,14 @@ export function registerBrowserAgentIpc(getWindow: () => WebContents | null): vo
     if (agentTabId === req.tabId) agentTabId = null;
     return { ok: true };
   });
+  // Canvas-awareness: the renderer pushes a compact snapshot of what's on the
+  // canvas whenever surfaces / the active tab change (debounced). We just cache
+  // it; getCanvasState re-enriches the browser url/title from the live view.
+  ipcMain.handle('canvas:report-state', (event, req: { state: CanvasState }) => {
+    guard(event, 'canvas:report-state');
+    cachedCanvasState = req.state ?? null;
+    return { ok: true };
+  });
 }
 
 /** Test/lifecycle hook: close the socket server. */
@@ -370,4 +414,5 @@ export function disposeBrowserAgent(): void {
   server?.close();
   server = null;
   agentTabId = null;
+  cachedCanvasState = null;
 }

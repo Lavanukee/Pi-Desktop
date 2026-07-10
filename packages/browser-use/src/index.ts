@@ -14,10 +14,12 @@
  * Architecture / the extension→browser seam is documented in ./protocol.ts.
  */
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
-import { BrowserAgentClient, type BrowserBridge } from './bridge-client.js';
+import { BrowserAgentClient } from './bridge-client.js';
+import { registerCanvasContext } from './canvas-context.js';
 import { type BrowserUseOptions, registerBrowserUseTools } from './tools.js';
 
 export * from './bridge-client.js';
+export * from './canvas-context.js';
 export * from './format.js';
 export * from './perception.js';
 export * from './protocol.js';
@@ -30,6 +32,9 @@ export function registerBrowserUse(pi: ExtensionAPI, options: BrowserUseOptions)
 
 /** pi extension factory (zero-config; reads the bridge socket from env). */
 export default function activate(pi: ExtensionAPI): void {
-  const bridge: BrowserBridge | null = BrowserAgentClient.fromEnv();
+  const bridge = BrowserAgentClient.fromEnv();
   registerBrowserUseTools(pi, { bridge });
+  // Canvas-awareness: only when running inside Pi Desktop (bridge present) is
+  // there a canvas to report. The same token-authed socket serves getCanvasState.
+  if (bridge !== null) registerCanvasContext(pi, bridge);
 }

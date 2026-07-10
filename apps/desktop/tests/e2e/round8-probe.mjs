@@ -173,19 +173,21 @@ try {
     undefined,
     { timeout: 8000 },
   );
+  // Round-10 #4: "Files" opens the project FILE TREE surface (not a blank
+  // "untitled" file tab).
   await pickNewTab(page, 'Files');
   await page.waitForFunction(
     () =>
       window
         .__pi_canvas()
         .getState()
-        .tabs.some((t) => t.kind === 'file'),
+        .tabs.some((t) => t.kind === 'filetree'),
     undefined,
     { timeout: 8000 },
   );
   const kinds = await tabKinds(page);
   assert(
-    ['terminal', 'browser', 'file'].every((k) => kinds.includes(k)),
+    ['terminal', 'browser', 'filetree'].every((k) => kinds.includes(k)),
     `+ menu did not open all three tab kinds: ${JSON.stringify(kinds)}`,
   );
 

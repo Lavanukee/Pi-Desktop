@@ -16,6 +16,7 @@
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { CONNECTOR_ICON_SVGS } from './connector-icons';
 import type { McpMode, McpServerConfig } from './registry';
 
 /** Gallery grouping category. */
@@ -40,7 +41,15 @@ export type ConnectorCategory =
 export interface KnownConnector {
   id: string;
   name: string;
+  /** Emoji fallback mark (used only if {@link iconSvg} is absent). */
   icon: string;
+  /**
+   * Self-contained, monochrome inline SVG brand mark (no remote URLs, CSP/offline
+   * safe) rendered by the gallery in place of {@link icon}. A real published brand
+   * glyph for known brands, a neutral category glyph otherwise. Attached from
+   * {@link CONNECTOR_ICON_SVGS} when the catalog is built — see the file footer.
+   */
+  iconSvg?: string;
   description: string;
   homepage?: string;
   /** Gallery grouping. */
@@ -96,8 +105,11 @@ function tmpl(
  * packages with the current, maintained servers. Secrets/OAuth connectors are
  * catalog cards only (install-on-demand, disabled until configured); the
  * install flow never seeds a token.
+ *
+ * Each card's `iconSvg` (the real brand mark / neutral fallback the gallery
+ * renders) is attached from {@link CONNECTOR_ICON_SVGS} just below the array.
  */
-export const KNOWN_CONNECTORS: KnownConnector[] = [
+const CATALOG_BASE: KnownConnector[] = [
   // ── Reference / foundational (MCP steering group; no secrets) ──────────────
   {
     id: 'filesystem',
@@ -681,6 +693,17 @@ export const KNOWN_CONNECTORS: KnownConnector[] = [
     }),
   },
 ];
+
+/**
+ * The rendered catalog: every card annotated with its self-contained inline SVG
+ * mark ({@link CONNECTOR_ICON_SVGS}) — a real brand glyph where one is published,
+ * a neutral category glyph otherwise. The emoji `icon` stays as a last-resort
+ * fallback for any card without an SVG.
+ */
+export const KNOWN_CONNECTORS: KnownConnector[] = CATALOG_BASE.map((c) => ({
+  ...c,
+  iconSvg: CONNECTOR_ICON_SVGS[c.id] ?? c.iconSvg,
+}));
 
 /** Lookup a known connector by id. */
 export const KNOWN_CONNECTORS_BY_ID: Record<string, KnownConnector> = Object.fromEntries(

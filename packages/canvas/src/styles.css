@@ -215,6 +215,35 @@
   font-size: var(--pd-font-size-caption);
 }
 
+/* Rich empty state shown when the canvas is open with no surfaces (round-10 #6):
+ * a soft glyph, a title, a one-line prompt, then the `+` new-tab control. */
+.pd-canvas-empty--home {
+  gap: var(--pd-space-xs);
+  padding: var(--pd-space-lg);
+  text-align: center;
+}
+
+.pd-canvas-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: var(--pd-space-sm);
+  color: var(--pd-text-ghost);
+}
+
+.pd-canvas-empty-title {
+  margin: 0;
+  color: var(--pd-text-secondary);
+  font-size: var(--pd-font-size-body);
+}
+
+.pd-canvas-empty-sub {
+  margin: 0 0 var(--pd-space-md);
+  max-width: 24rem;
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-caption);
+}
+
 /* ── Per-tab operation bar (SECOND bar under the tab strip) ───────────── */
 
 .pd-canvas-opbar {
@@ -333,11 +362,13 @@
 }
 
 /* The new-tab + menu pins with fixed coords (top/left set inline) so it escapes
- * the tab strip's overflow clipping. */
+ * the tab strip's overflow clipping. jedd wants it INSTANT (round-10 #8) — no
+ * open/close animation on this menu specifically. */
 .pd-menu.pd-canvas-popmenu--fixed {
   position: fixed;
   right: auto;
   left: auto;
+  animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -527,6 +558,22 @@
   text-align: center;
 }
 
+/* Full-canvas file-tree surface (round-10 #4) — the FileTree fills the panel
+ * height (its list scrolls) instead of the compact popover the op-bar toggles. */
+.pd-canvas-filetree {
+  height: 100%;
+  min-height: 0;
+}
+
+.pd-canvas-filetree .pd-file-tree {
+  height: 100%;
+  max-height: none;
+}
+
+.pd-canvas-filetree .pd-file-tree-list {
+  max-height: none;
+}
+
 /* ── Project picker (📁 <project> chip → search dropdown) ─────────────── */
 
 .pd-project-picker {
@@ -611,6 +658,21 @@
 
 /* ── Browser surface ─────────────────────────────────────────────────── */
 
+/* Browser chrome scales to the app's standard control size (round-10 #1): the
+ * bar was noticeably smaller than the rest of the app. Size the nav buttons +
+ * URL field to `--pd-control-md` (same as inputs/buttons elsewhere), with a
+ * comfortable bar height + gap. */
+.pd-canvas-opbar[data-kind="browser"] {
+  gap: var(--pd-space-sm);
+  min-height: 48px;
+  padding: var(--pd-space-sm);
+}
+
+.pd-canvas-opbar[data-kind="browser"] .pd-icon-btn {
+  width: var(--pd-control-md);
+  height: var(--pd-control-md);
+}
+
 .pd-browser {
   display: flex;
   flex-direction: column;
@@ -620,7 +682,7 @@
 
 .pd-browser-nav {
   display: inline-flex;
-  gap: 2px;
+  gap: 4px;
   flex: 0 0 auto;
 }
 
@@ -636,13 +698,13 @@
 .pd-browser-url {
   flex: 1 1 auto;
   min-width: 0;
-  height: 28px;
+  height: var(--pd-control-md);
   padding: 0 var(--pd-space-md);
   border: 1px solid var(--pd-border-default);
   border-radius: var(--pd-radius-full);
   background: var(--pd-bg-inset);
   color: var(--pd-text-primary);
-  font-size: var(--pd-font-size-caption);
+  font-size: var(--pd-font-size-body);
 }
 
 .pd-browser-url::placeholder {
@@ -742,6 +804,9 @@
 
 /* ── Terminal surface ────────────────────────────────────────────────── */
 
+/* The terminal chrome uses the app theme (round-10 #5): the container bg matches
+ * the xterm theme background the app derives from `--pd-code-block-bg`, so the
+ * padding around the grid blends in instead of framing a raw black box. */
 .pd-terminal {
   display: flex;
   flex-direction: column;

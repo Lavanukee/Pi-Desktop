@@ -76,7 +76,8 @@ export function ComposerAddMenu({
           </IconButton>
         )}
       </DropdownMenuTrigger>
-      <DropdownMenuContent side={side} align={align}>
+      {/* Round-10 (#11): the composer "+" menu opens/closes instantly. */}
+      <DropdownMenuContent className="pd-menu--instant" side={side} align={align}>
         <DropdownMenuItem
           icon={<IconPaperclip size={16} />}
           hint="⌘U"

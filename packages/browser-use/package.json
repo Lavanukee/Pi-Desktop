@@ -7,7 +7,8 @@
   "description": "pi extension: browser_* tools that let the model drive the canvas browser (efficient indexed DOM perception + index/coordinate acting) over a local RPC bridge to the app.",
   "exports": {
     ".": "./src/index.ts",
-    "./protocol": "./src/protocol.ts"
+    "./protocol": "./src/protocol.ts",
+    "./tool-names": "./src/tool-names.ts"
   },
   "scripts": {
     "lint": "biome check .",

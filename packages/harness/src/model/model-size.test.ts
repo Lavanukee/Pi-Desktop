@@ -57,8 +57,12 @@ describe('smallModelWarning', () => {
     expect(smallModelWarning({ id: 'gemma4-e2b' }, 'basic-tools')).toBeNull();
   });
 
-  it('warns on full-shebang with a small model', () => {
-    expect(smallModelWarning({ id: 'llama-3.1-8b' }, 'full-shebang')).not.toBeNull();
+  it('warns on browser-use with a small model', () => {
+    expect(smallModelWarning({ id: 'llama-3.1-8b' }, 'browser-use')).not.toBeNull();
+  });
+
+  it('does not warn on a fallback tier (basic-tools) with a small model', () => {
+    expect(smallModelWarning({ id: 'llama-3.1-8b' }, 'basic-tools')).toBeNull();
   });
 
   it("warns on 'other' with a small model (connector/integration work)", () => {

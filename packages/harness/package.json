@@ -24,6 +24,7 @@
   "dependencies": {
     "@mariozechner/pi-ai": "0.68.1",
     "@mariozechner/pi-coding-agent": "0.68.1",
+    "@pi-desktop/browser-use": "workspace:*",
     "@sinclair/typebox": "^0.34.49"
   },
   "devDependencies": {

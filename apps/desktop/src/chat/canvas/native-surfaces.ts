@@ -21,7 +21,7 @@
 import '@xterm/xterm/css/xterm.css';
 import type { CanvasController, CanvasTab, CanvasTabsHandlers } from '@pi-desktop/canvas';
 import { FitAddon } from '@xterm/addon-fit';
-import { Terminal } from '@xterm/xterm';
+import { type ITheme, Terminal } from '@xterm/xterm';
 import { useEffect, useRef } from 'react';
 import type { BrowserBounds } from '../../../electron/canvas/browser-contract';
 import { usePiStore } from '../../state/pi-slice';
@@ -29,6 +29,35 @@ import { fileArtifactFromText, openFileInCanvas } from './file-tabs';
 
 const MONO_STACK =
   'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
+
+/** Read a --pd-* theme token off the document root, falling back when unset. */
+function cssVar(name: string, fallback: string): string {
+  if (typeof document === 'undefined') return fallback;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+/**
+ * xterm theme derived from the app's `--pd-*` tokens (round-10 #5) so the
+ * terminal reads as part of the app instead of a raw black box: background +
+ * foreground + a subtle accent cursor + selection all come from the theme.
+ */
+function terminalTheme(): ITheme {
+  const bg = cssVar('--pd-code-block-bg', '#1e1e24');
+  const fg = cssVar('--pd-text-primary', '#e6e6ea');
+  const accent = cssVar('--pd-accent-primary', '#8aa2ff');
+  const muted = cssVar('--pd-text-muted', '#9aa0a6');
+  const selection = cssVar('--pd-bg-selected', 'rgba(138,162,255,0.28)');
+  return {
+    background: bg,
+    foreground: fg,
+    cursor: accent,
+    cursorAccent: bg,
+    selectionBackground: selection,
+    black: bg,
+    brightBlack: muted,
+  };
+}
 
 /** Same `?piE2E=1` opt-in as the other E2E hooks (pi-connect.ts). */
 const IS_E2E = new URLSearchParams(window.location.search).has('piE2E');
@@ -230,6 +259,27 @@ class NativeSurfaces {
     void window.piDesktop.invoke('browser:set-bounds', { tabId, bounds, visible: false });
   }
 
+  /**
+   * A canvas DOM menu (the `+` new-tab menu) opened/closed (round-10 #2). A live
+   * browser WebContentsView paints ABOVE the DOM, so it would occlude the menu on
+   * a browser tab — hide the ACTIVE browser view while the menu is up and re-show
+   * it on close. Stateless: keyed off the currently-active tab each call, so a
+   * pick that switches tabs leaves visibility to the normal mount/rect path.
+   */
+  setOverlayOpen(open: boolean): void {
+    const activeId = this.#controller.getState().activeTabId;
+    if (activeId === null) return;
+    const tab = this.#tab(activeId);
+    if (tab?.kind !== 'browser') return;
+    const entry = this.#browsers.get(tab.id);
+    if (entry === undefined) return;
+    void window.piDesktop.invoke('browser:set-bounds', {
+      tabId: tab.id,
+      bounds: entry.lastBounds,
+      visible: !open,
+    });
+  }
+
   applyBrowserState(patch: {
     tabId: string;
     url?: string;
@@ -261,10 +311,16 @@ class NativeSurfaces {
     const mirror = this.#tab(tabId)?.data?.mirror === true;
     const term = new Terminal({
       cursorBlink: !mirror,
+      // A thin bar cursor (not the default chunky block) + the app theme so the
+      // terminal matches the rest of the app (round-10 #5).
+      cursorStyle: 'bar',
+      cursorWidth: 2,
       disableStdin: mirror,
-      fontFamily: MONO_STACK,
+      fontFamily: cssVar('--pd-font-mono', MONO_STACK),
       fontSize: 13,
+      lineHeight: 1.2,
       allowProposedApi: true,
+      theme: terminalTheme(),
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -300,10 +356,14 @@ class NativeSurfaces {
         this.#writeMirror(tabId, true);
       } else if (!entry.spawned) {
         entry.spawned = true;
+        // Start the shell in the active project's cwd (round-10 #5) — the same
+        // folder pi runs in — not the OS home default. `#cwd` is the live session
+        // cwd (respawned to the project path when a project is active).
         void window.piDesktop.invoke('pty:spawn', {
           tabId,
           cols: entry.term.cols,
           rows: entry.term.rows,
+          cwd: this.#cwd,
         });
         entry.term.focus();
       } else {
@@ -399,12 +459,22 @@ class NativeSurfaces {
   }
 }
 
+/** What {@link useNativeSurfaces} returns: the handlers bag for `<CanvasTabs>`
+ * plus the overlay-open seam that hides a native browser view while a DOM menu
+ * is up (round-10 #2). */
+export interface NativeSurfacesApi {
+  handlers: CanvasTabsHandlers;
+  /** The `+` new-tab menu opened/closed — lower/raise the active browser view. */
+  setOverlayOpen: (open: boolean) => void;
+}
+
 /**
  * Wire the native-surface managers for the panel: subscribes to the controller
  * (tab-removal → destroy) and to the `browser:*` / `pty:*` event streams, and
- * returns the stable handlers bag for `<CanvasTabs handlers={…}>`.
+ * returns the stable handlers bag for `<CanvasTabs handlers={…}>` plus the
+ * overlay-open seam.
  */
-export function useNativeSurfaces(controller: CanvasController): CanvasTabsHandlers {
+export function useNativeSurfaces(controller: CanvasController): NativeSurfacesApi {
   const ref = useRef<NativeSurfaces | null>(null);
   if (ref.current === null) ref.current = new NativeSurfaces(controller);
   const manager = ref.current;
@@ -429,5 +499,5 @@ export function useNativeSurfaces(controller: CanvasController): CanvasTabsHandl
     };
   }, [controller, manager]);
 
-  return manager.handlers;
+  return { handlers: manager.handlers, setOverlayOpen: (open) => manager.setOverlayOpen(open) };
 }

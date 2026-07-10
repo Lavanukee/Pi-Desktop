@@ -16,6 +16,7 @@ import { applyModelEffortDefault } from '../state/settings-store';
 import { IconDownload, IconLock, IconPlay } from './icons';
 import { FavoriteStar } from './model-controls';
 import { formatBytes, percent, ramVerdict } from './model-manager-logic';
+import { hfHasAudio, hfHasVision, ModelTag } from './model-tags';
 
 /** Context window HF repos are sized/registered against (HF doesn't expose it). */
 const HF_CONTEXT_WINDOW = 8192;
@@ -101,13 +102,15 @@ export function HfResultCard({ hit }: { hit: HfModelHitDTO }) {
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <span className="truncate text-body font-medium text-text-primary">{hit.name}</span>
             {hit.gated ? (
-              <Badge tone="warning" size="sm" data-testid={`hf-gated-${hit.id}`}>
-                <IconLock size={11} /> Gated
-              </Badge>
+              <ModelTag kind="gated" data-testid={`hf-gated-${hit.id}`}>
+                Gated
+              </ModelTag>
             ) : null}
+            {hfHasVision(hit) ? <ModelTag kind="vision">Vision</ModelTag> : null}
+            {hfHasAudio(hit) ? <ModelTag kind="audio">Audio</ModelTag> : null}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-text-muted">
             <span>{hit.author}</span>
@@ -127,15 +130,15 @@ export function HfResultCard({ hit }: { hit: HfModelHitDTO }) {
       </div>
 
       {hit.tags.length > 0 ? (
-        <div className="flex flex-wrap gap-1">
-          {hit.tags.slice(0, 6).map((tag) => (
-            <span
-              key={tag}
-              className="rounded-md bg-bg-track px-1.5 py-0.5 text-caption text-text-muted"
-            >
-              {tag}
-            </span>
-          ))}
+        <div className="flex flex-wrap gap-1.5">
+          {hit.tags
+            .filter((t) => t.toLowerCase() !== 'gguf')
+            .slice(0, 5)
+            .map((tag) => (
+              <ModelTag key={tag} kind="neutral" icon={null}>
+                {tag}
+              </ModelTag>
+            ))}
         </div>
       ) : null}
 
@@ -179,23 +182,17 @@ export function HfResultCard({ hit }: { hit: HfModelHitDTO }) {
                   data-testid={`hf-quant-${hit.id}-${file.quant ?? 'file'}`}
                 >
                   <div className="flex min-w-0 flex-col gap-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-caption font-medium text-text-primary">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <ModelTag kind="quant" icon={null}>
                         {file.quant ?? file.path}
-                      </span>
-                      <span className="text-caption text-text-muted">
+                      </ModelTag>
+                      <ModelTag kind="size" icon={null}>
                         {formatBytes(file.sizeBytes ?? 0)}
-                      </span>
+                      </ModelTag>
                       {siblings.mmproj !== undefined ? (
-                        <Badge tone="info" size="sm">
-                          + vision
-                        </Badge>
+                        <ModelTag kind="vision">Vision</ModelTag>
                       ) : null}
-                      {siblings.mtp !== undefined ? (
-                        <Badge tone="info" size="sm">
-                          + MTP
-                        </Badge>
-                      ) : null}
+                      {siblings.mtp !== undefined ? <ModelTag kind="mtp">MTP</ModelTag> : null}
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">

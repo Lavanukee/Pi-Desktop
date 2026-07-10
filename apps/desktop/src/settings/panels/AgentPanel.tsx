@@ -12,6 +12,7 @@ import { classLabel, useHarnessStatus } from '../../chat/harness-status';
 import { applyHarnessPreset } from '../../state/pi-connect';
 import { useSettingsStore } from '../../state/settings-store';
 import { SettingRow, SettingSection } from '../parts';
+import { PRESET_OPTIONS } from './agent-presets';
 
 const PERMISSION_HINT: Record<PermissionMode, string> = {
   bypass: 'Run every tool call without review — fastest, least safe.',
@@ -26,24 +27,6 @@ const EFFORT_HINT: Record<EffortLevel, string> = {
   high: 'More repair attempts, extra review, adversarial checks.',
   max: 'Maximum reliability passes — slowest.',
 };
-
-/** Preset options: `auto` (classifier) + each task class. Mirrors the harness's
- * TASK_CLASSES (tiers then categories) — kept as a local list so the settings
- * panel doesn't pull the harness runtime into the renderer bundle. */
-const PRESET_OPTIONS: { value: string; label: string }[] = [
-  { value: 'auto', label: 'Auto (classifier)' },
-  { value: 'simple-QA', label: 'Simple Q&A' },
-  { value: 'basic-tools', label: 'Basic tools' },
-  { value: 'full-shebang', label: 'Full shebang' },
-  { value: 'coding', label: 'Coding' },
-  { value: 'file-ops', label: 'File ops' },
-  { value: 'browser-use', label: 'Browser use' },
-  { value: 'motion-graphics', label: 'Motion graphics' },
-  { value: 'advanced-video', label: 'Advanced video' },
-  { value: '3d', label: '3D' },
-  { value: '2d-art', label: '2D art' },
-  { value: 'other', label: 'Other' },
-];
 
 export function AgentPanel() {
   const settings = useSettingsStore((s) => s.settings);

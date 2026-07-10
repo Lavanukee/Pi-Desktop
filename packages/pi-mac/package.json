@@ -1,0 +1,24 @@
+{
+  "name": "@pi-desktop/pi-mac",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Mac computer-use bridge helper: Swift pi-mac CLI (indexed AX-tree snapshot + CGEvent click/type/key/scroll + TCC check) + Node wrapper (checkTcc, MacHelperClient) speaking NDJSON over stdio.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build:swift": "swift build -c release --package-path swift"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "@pi-desktop/shared": "workspace:*",
+    "@types/node": "^24.13.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

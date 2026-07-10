@@ -14,6 +14,8 @@ export const HARNESS_CLASSIFY_ENTRY = 'harness/classify';
 export const HARNESS_REPAIR_ENTRY = 'harness/repair';
 /** Reviewer/adversarial pass outcome (effort high/max). */
 export const HARNESS_REVIEW_ENTRY = 'harness/review';
+/** The conversation title produced by the classify+title piggyback (turn 1). */
+export const HARNESS_TITLE_ENTRY = 'harness/title';
 
 /** Preset selection: a fixed class, or `auto` to let the classifier decide. */
 export type PresetSelection = TaskClass | 'auto';
@@ -61,6 +63,12 @@ export const DEFAULT_CONFIG: HarnessConfig = {
 export interface HarnessStatus extends HarnessConfig {
   /** The class chosen for the current/last task (null before first classify). */
   readonly activeClass: TaskClass | null;
+  /**
+   * The conversation title from the classify+title piggyback, or null before it
+   * runs / when no utility model is configured. The app renders this as the
+   * chat title (app-side display is a separate follow-up wave).
+   */
+  readonly title: string | null;
   /** Tools currently active after applying the preset. */
   readonly activeTools: readonly string[];
   /** Current model id, if any. */

@@ -23,6 +23,7 @@ import { ChatComposer } from './ChatComposer';
 import { ChatThread } from './ChatThread';
 import { ChatTitle } from './ChatTitle';
 import { CanvasTabsPanel } from './canvas/CanvasTabsPanel';
+import { useHarnessTitleSync } from './harness-title';
 import { SessionSidebar, type SidebarStub } from './SessionSidebar';
 import { ToastHost } from './ToastHost';
 import { UiRequestDialogs } from './UiRequestDialogs';
@@ -114,6 +115,10 @@ export function ChatApp({
   const messageCount = usePiStore((s) => s.messages.length);
   const windowTitle = usePiStore((s) => s.windowTitle);
   const modelId = usePiStore((s) => s.agent.model?.id ?? null);
+
+  // Consume the harness's auto-generated conversation title → session title
+  // (new chats get a real name; a user rename is never clobbered).
+  useHarnessTitleSync();
   const flavor = useThemeStore((s) => s.flavor);
   const [piModels, setPiModels] = useState<Model[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);

@@ -82,6 +82,28 @@ try {
     timeout: 8000,
   });
 
+  // Round-10 Wave D: real brand marks render as self-contained inline SVG for
+  // well-known connectors — github/figma in the Featured list, blender in the
+  // Recommended row — each an actual <svg><path> (not the emoji fallback).
+  for (const scope of [
+    '[data-testid="connector-card-github"]',
+    '[data-testid="connector-card-figma"]',
+    '[data-testid="connectors-recommended-item-blender"]',
+  ]) {
+    const svg = `${scope} [data-testid="connector-icon-svg"] svg`;
+    await page.waitForSelector(svg, { timeout: 8000 });
+    const paths = await page.locator(`${svg} path`).count();
+    assert(paths > 0, `expected a brand SVG path inside ${scope}`);
+  }
+
+  // ...and the trademark disclaimer sits under the gallery.
+  const disclaimer = (await page.textContent('[data-testid="connectors-disclaimer"]')) ?? '';
+  assert(
+    disclaimer.includes('property of their respective owners') &&
+      disclaimer.includes('does not imply endorsement'),
+    'trademark disclaimer present under the gallery',
+  );
+
   // Install a plain (no-secret) connector → persists enabled to the registry.
   await page.click('[data-testid="connector-install-memory"]');
   await waitFor(() => serverById('memory')?.enabled === true, 'memory installed + enabled');
@@ -112,7 +134,8 @@ try {
   await waitFor(() => readJson(mcpPath).mode === 'bash-cli', 'mcp registry mode rewritten');
 
   console.log(
-    'connectors-probe OK — recommended rendered from mocked scan; install + enable/disable persisted; ' +
+    'connectors-probe OK — recommended rendered from mocked scan; real brand SVGs render for ' +
+      'github/figma/blender; trademark disclaimer present; install + enable/disable persisted; ' +
       'detail page + permission popup rendered; bash-cli mode persisted',
   );
 } finally {

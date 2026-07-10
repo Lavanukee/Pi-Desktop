@@ -161,12 +161,29 @@ export async function setModel(provider: string, modelId: string) {
  * Optimistically pushes the new name to `windowTitle` so the title reflects the
  * edit immediately (pi doesn't reliably echo a title event for a rename), then
  * persists it to the session. Best-effort: a no-pi session keeps the local echo.
+ *
+ * A user rename LOCKS the title (`titleLocked`) so the harness's auto-generated
+ * title can no longer overwrite it — the lock resets on the next session change.
  */
 export async function setSessionName(name: string) {
   const trimmed = name.trim();
   if (trimmed.length === 0) return { success: false, error: 'empty name' };
-  usePiStore.setState({ windowTitle: trimmed });
+  usePiStore.setState({ windowTitle: trimmed, titleLocked: true });
   return window.piDesktop.invoke('pi:set-session-name', { name: trimmed });
+}
+
+/**
+ * Apply the harness's auto-generated conversation title to the active session
+ * (sidebar + top-bar). Unlike {@link setSessionName} this does NOT lock the
+ * title — a subsequent user rename still wins. Persisted via the same RPC so a
+ * reload / the sidebar list reflects it. Gated by `useHarnessTitleSync` (which
+ * checks the user-rename lock), so it never clobbers a user-chosen name.
+ */
+export async function applyHarnessTitle(name: string): Promise<void> {
+  const trimmed = name.trim();
+  if (trimmed.length === 0) return;
+  usePiStore.setState({ windowTitle: trimmed });
+  await window.piDesktop.invoke('pi:set-session-name', { name: trimmed }).catch(() => {});
 }
 
 /**
@@ -338,6 +355,6 @@ export async function switchSession(
 // Same-context code can reach the store anyway, so this is not a privilege
 // boundary; gating just keeps production builds from shipping a stable
 // read/tamper handle to the whole chat state.
-if (new URLSearchParams(window.location.search).has('piE2E')) {
+if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('piE2E')) {
   window.__pi_store = () => usePiStore;
 }

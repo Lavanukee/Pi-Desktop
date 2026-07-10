@@ -69,6 +69,13 @@ export type ActivityStepData =
       query?: string;
       results?: WebSearchResultData[];
     })
+  | (ActivityStepCommon & {
+      // Browser-action steps (round-10 #17): the URL/target is carried for a tag,
+      // and browser-read expands the page text it returned as an inline preview.
+      kind: 'browser-navigate' | 'browser-click' | 'browser-type' | 'browser-read';
+      url?: string;
+      preview?: ReactNode;
+    })
   | (ActivityStepCommon & { kind: 'image' | 'pdf' | 'canvas-open' });
 
 /* ------------------------------------------------------------------ */
@@ -89,6 +96,10 @@ const VERBS: Record<ActivityStepKind, VerbSpec> = {
   read: { verb: 'Read', singular: 'a file', plural: 'files' },
   file: { verb: 'Presented', singular: 'a file', plural: 'files' },
   search: { verb: 'Searched', singular: 'the web', plural: '' },
+  'browser-navigate': { verb: 'Visited', singular: 'a page', plural: 'pages' },
+  'browser-click': { verb: 'Clicked', singular: '', plural: '' },
+  'browser-type': { verb: 'Typed', singular: '', plural: '' },
+  'browser-read': { verb: 'Read', singular: 'the page', plural: 'pages' },
   image: { verb: 'Generated', singular: 'an image', plural: 'images' },
   pdf: { verb: 'Created', singular: 'a PDF', plural: 'PDFs' },
   'canvas-open': { verb: 'Opened', singular: 'the canvas', plural: '' },
@@ -106,6 +117,10 @@ const KIND_ORDER: ActivityStepKind[] = [
   'read',
   'file',
   'search',
+  'browser-navigate',
+  'browser-click',
+  'browser-type',
+  'browser-read',
   'image',
   'pdf',
   'canvas-open',
@@ -169,6 +184,10 @@ const RUNNING_PHRASE: Record<ActivityStepKind, string> = {
   read: 'Reading a file',
   file: 'Presenting a file',
   search: 'Searching the web',
+  'browser-navigate': 'Navigating',
+  'browser-click': 'Clicking',
+  'browser-type': 'Typing',
+  'browser-read': 'Reading the page',
   image: 'Generating an image',
   pdf: 'Creating a PDF',
   'canvas-open': 'Opening the canvas',
@@ -207,6 +226,7 @@ const PILL_LABEL: Partial<Record<ActivityStepKind, string>> = {
   edit: 'Diff',
   read: 'File',
   file: 'File',
+  'browser-read': 'Page',
 };
 
 /** Char count past which an in-chain thought fades + offers "Show more". */
@@ -286,6 +306,7 @@ function StepContent({ step, live = false }: { step: ActivityStepData; live?: bo
       ) : null;
     case 'read':
     case 'file':
+    case 'browser-read':
       return step.preview !== undefined ? (
         <div className="pd-chain-preview">{step.preview}</div>
       ) : null;
@@ -308,6 +329,7 @@ function hasInlineContent(step: ActivityStepData): boolean {
       return step.results !== undefined;
     case 'read':
     case 'file':
+    case 'browser-read':
       return step.preview !== undefined;
     default:
       return false;

@@ -18,7 +18,6 @@ export const SMALL_MODEL_THRESHOLD_B = 12;
  * multi-step, so a ≤12B model warrants the same small-model warning.
  */
 export const ADVANCED_CLASSES: ReadonlySet<TaskClass> = new Set<TaskClass>([
-  'full-shebang',
   'browser-use',
   'motion-graphics',
   'advanced-video',

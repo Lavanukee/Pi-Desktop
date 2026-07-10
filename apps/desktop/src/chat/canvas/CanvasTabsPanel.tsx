@@ -18,10 +18,13 @@ import { type CanvasTab, CanvasTabs, type NewTabKind, useCanvasTabs } from '@pi-
 import { IconButton, IconClose } from '@pi-desktop/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CANVAS_MAX_WIDTH, CANVAS_MIN_WIDTH, useCanvasStore } from '../../state/canvas-store';
+import { usePiStore } from '../../state/pi-slice';
 import { artifactToPayload } from './artifacts';
 import { useBrowserAgent } from './browser-agent';
-import { useFileWriteCanvasRouting } from './file-tabs';
+import { useCanvasStateReporter } from './canvas-state-report';
+import { openProjectFileTree, useFileWriteCanvasRouting } from './file-tabs';
 import { useNativeSurfaces } from './native-surfaces';
+import { shouldCollapseOnResize } from './resize-collapse';
 import { useSubagentCanvasRouting } from './subagent-routing';
 import { useArtifactCanvasRouting } from './tabs-routing';
 import { useBashTerminalCanvasRouting } from './terminal-routing';
@@ -40,13 +43,22 @@ export function CanvasTabsPanel() {
   // animates its width between `sideWidth` (open) and 0 (slid out).
   const canvasOpen = useCanvasStore((s) => s.canvasOpen);
   const setCanvasOpen = useCanvasStore((s) => s.setCanvasOpen);
+  // The active project / session cwd — where a new terminal or the Files tree
+  // surface should be rooted (round-10 #4/#5).
+  const cwd = usePiStore((s) => s.session?.cwd ?? undefined);
   const prevTabCount = useRef(tabs.length);
 
-  // Phase 2b: the real WebContentsView / PTY handlers for the live surfaces.
-  const surfaceHandlers = useNativeSurfaces(controller);
+  // Phase 2b: the real WebContentsView / PTY handlers for the live surfaces, plus
+  // the overlay-open seam that lowers a native browser view while the `+` menu is
+  // up (round-10 #2 — the view otherwise paints over the DOM menu).
+  const { handlers: surfaceHandlers, setOverlayOpen } = useNativeSurfaces(controller);
   // browser-use: open/focus + register the agent browser tab on request from
   // the main-process bridge, and reflect its "driving" chrome.
   useBrowserAgent(controller);
+  // Canvas-awareness: report a compact snapshot of what's on the canvas to main
+  // on every surface / active-tab change, so the model's `context` hook always
+  // knows what the user is looking at (jedd's gotcha).
+  useCanvasStateReporter(controller);
   // subagents: open/feed the live subagent list tab from the harness-subagents
   // extension status stream (spawn_subagent progress).
   useSubagentCanvasRouting(controller);
@@ -88,22 +100,30 @@ export function CanvasTabsPanel() {
       e.preventDefault();
       dragState.current = { startX: e.clientX, startWidth: sideWidth };
       setDragging(true);
-      const onMove = (ev: MouseEvent) => {
-        const st = dragState.current;
-        if (st === null) return;
-        const next = st.startWidth + (st.startX - ev.clientX);
-        setSideWidth(Math.max(CANVAS_MIN_WIDTH, Math.min(CANVAS_MAX_WIDTH, next)));
-      };
-      const onUp = () => {
+      const cleanup = () => {
         dragState.current = null;
         setDragging(false);
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
       };
+      const onMove = (ev: MouseEvent) => {
+        const st = dragState.current;
+        if (st === null) return;
+        const next = st.startWidth + (st.startX - ev.clientX);
+        // Dragged the handle well past the minimum (more than halfway below it)
+        // → treat as Collapse and close the panel (round-10 #14).
+        if (shouldCollapseOnResize(next)) {
+          cleanup();
+          setCanvasOpen(false);
+          return;
+        }
+        setSideWidth(Math.max(CANVAS_MIN_WIDTH, Math.min(CANVAS_MAX_WIDTH, next)));
+      };
+      const onUp = () => cleanup();
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
     },
-    [sideWidth, setSideWidth],
+    [sideWidth, setSideWidth, setCanvasOpen],
   );
 
   // Pop the active artifact-backed tab out to the standalone canvas window
@@ -113,19 +133,20 @@ export function CanvasTabsPanel() {
     void window.piDesktop.invoke('canvas:popout', { artifact: artifactToPayload(tab.artifact) });
   }, []);
 
-  // Canvas `+` menu (round-8 #10): open a new file / browser / terminal tab,
+  // Canvas `+` menu (round-8 #10): open a new browser / terminal / subagent tab,
   // reusing the existing native-surface mount paths (browser:create, PTY spawn).
-  // A `file` tab opens empty and can be filled from the tree panel.
+  // `filetree` (round-10 #4) opens the full-canvas project file tree — NOT a
+  // blank "untitled" file (the previous bug).
   const onNewTab = useCallback(
     (kind: NewTabKind) => {
       if (kind === 'terminal') controller.openTab({ kind: 'terminal', title: 'Terminal' });
       else if (kind === 'browser') controller.openTab({ kind: 'browser', title: 'New tab' });
       else if (kind === 'subagent')
         controller.upsertTab('pi:subagents', { kind: 'subagent', title: 'Subagents' });
-      else controller.openTab({ kind: 'file', title: 'Untitled' });
+      else if (kind === 'filetree') void openProjectFileTree(controller, cwd);
       setCanvasOpen(true);
     },
-    [controller, setCanvasOpen],
+    [controller, cwd, setCanvasOpen],
   );
 
   // Clicking a subagent row focuses the (live) subagent tab. Only the summary of
@@ -151,6 +172,7 @@ export function CanvasTabsPanel() {
     <CanvasTabs
       handlers={{ ...surfaceHandlers, onSubagentSelect }}
       onNewTab={onNewTab}
+      onMenuOpenChange={setOverlayOpen}
       onPopout={popOut}
       onCollapse={() => setCanvasOpen(false)}
       // Round-8 #11/#16: the canvas is only rendered while open, so its top-right

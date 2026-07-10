@@ -23,7 +23,6 @@ import { applyModelEffortDefault } from '../state/settings-store';
 import {
   IconCheckCircle,
   IconDownload,
-  IconLock,
   IconPause,
   IconPlay,
   IconStop,
@@ -38,6 +37,7 @@ import {
   percent,
   ramVerdict,
 } from './model-manager-logic';
+import { ModelTag } from './model-tags';
 
 function portOf(baseUrl: string | null): string | null {
   if (baseUrl === null) return null;
@@ -108,12 +108,12 @@ export function ModelCard({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-body font-medium text-text-primary">{entry.displayName}</span>
             {entry.recommended ? (
-              <Badge tone="accent" size="sm" data-testid={`recommended-badge-${entry.id}`}>
+              <ModelTag kind="recommended" data-testid={`recommended-badge-${entry.id}`}>
                 Recommended
-              </Badge>
+              </ModelTag>
             ) : null}
             {isActive ? (
               <Badge tone="success" size="sm" data-testid={`active-badge-${entry.id}`}>
@@ -121,27 +121,20 @@ export function ModelCard({
               </Badge>
             ) : null}
             {entry.gated ? (
-              <Badge tone="warning" size="sm" data-testid={`gated-badge-${entry.id}`}>
-                <IconLock size={11} /> Gated
-              </Badge>
+              <ModelTag kind="gated" data-testid={`gated-badge-${entry.id}`}>
+                Gated
+              </ModelTag>
             ) : null}
+            {entry.vision ? <ModelTag kind="vision">Vision</ModelTag> : null}
+            {entry.mtp ? <ModelTag kind="mtp">MTP</ModelTag> : null}
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-text-muted">
-            <span>{formatBytes(sizeBytes)}</span>
-            <span>·</span>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-text-muted">
+            <ModelTag kind="size" icon={null}>
+              {formatBytes(sizeBytes)}
+            </ModelTag>
             <span>{(entry.contextWindow / 1000).toFixed(0)}K context</span>
             <span>·</span>
             <span>{entry.license}</span>
-            {entry.mtp ? (
-              <Badge tone="info" size="sm">
-                MTP
-              </Badge>
-            ) : null}
-            {entry.vision ? (
-              <Badge tone="info" size="sm">
-                Vision
-              </Badge>
-            ) : null}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -239,7 +232,9 @@ export function ModelCard({
             </SelectContent>
           </Select>
         ) : (
-          <span className="text-caption text-text-muted">{entry.quants[0]?.quant}</span>
+          <ModelTag kind="quant" icon={null}>
+            {entry.quants[0]?.quant ?? '—'}
+          </ModelTag>
         )}
 
         <div className="flex items-center gap-2">

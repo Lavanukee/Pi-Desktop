@@ -19,12 +19,17 @@ import type { HfModelHitDTO } from '../../electron/ipc-contract';
 import {
   IconBolt,
   IconCpu,
+  IconCube,
   IconEye,
+  IconFilm,
+  IconImage,
   IconLock,
+  IconMusic,
   IconShield,
   IconSparkle,
   IconWaveform,
 } from './icons';
+import type { ModalityCategory } from './modality-catalog-logic';
 import { type SpecMethod, VARIANT_LABEL } from './model-manager-logic';
 
 /** The attribute a pill represents; drives its colour class + default glyph. */
@@ -32,6 +37,7 @@ export type ModelTagKind =
   | 'vision'
   | 'recommended'
   | 'audio'
+  | 'modality'
   | 'mtp'
   | 'eagle3'
   | 'dflash'
@@ -88,6 +94,33 @@ export function ModelTag({ kind, children, icon, title, ...rest }: ModelTagProps
       {glyph}
       {children}
     </span>
+  );
+}
+
+/** Icon + label per generation category, for the modality pill. */
+const MODALITY_PILL: Record<ModalityCategory, { label: string; icon: ReactNode }> = {
+  image: { label: 'Image', icon: <IconImage size={12} /> },
+  video: { label: 'Video', icon: <IconFilm size={12} /> },
+  audio: { label: 'Audio', icon: <IconWaveform size={12} /> },
+  music: { label: 'Music', icon: <IconMusic size={12} /> },
+  '3d': { label: '3D', icon: <IconCube size={12} /> },
+  perception: { label: 'Perception', icon: <IconEye size={12} /> },
+};
+
+/** The generation-modality pill (Image / Video / Audio / Music / 3D) — one hue,
+ * a per-category glyph, so a modality card's kind reads at a glance. */
+export function ModalityPill({
+  category,
+  ...rest
+}: {
+  category: ModalityCategory;
+  'data-testid'?: string;
+}) {
+  const { label, icon } = MODALITY_PILL[category];
+  return (
+    <ModelTag kind="modality" icon={icon} data-testid={rest['data-testid']}>
+      {label}
+    </ModelTag>
   );
 }
 

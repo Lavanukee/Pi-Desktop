@@ -101,6 +101,61 @@ const LTX_PARAM_MAP = {
   seed: '73.inputs.noise_seed',
 } as const;
 
+/**
+ * Wan2.1 T2V (text → video) via native ComfyUI nodes. Shares the LTX node-id
+ * skeleton (positive/negative encode, empty latent video, scheduler, sampler,
+ * VAE decode, save) so the SAME `LTX_PARAM_MAP` binds it and the fill mechanism
+ * is what's tested; exact Wan class_types / connections are `[fwd]` placeholders.
+ */
+function wanVideoGraph(): ComfyGraph {
+  return {
+    '38': {
+      class_type: 'CLIPLoader',
+      inputs: { clip_name: 'umt5_xxl_fp8_e4m3fn.safetensors', type: 'wan' },
+    },
+    '44': {
+      class_type: 'UNETLoader',
+      inputs: { unet_name: 'wan2.1_t2v_1.3B_bf16.safetensors', weight_dtype: 'default' },
+    },
+    '45': { class_type: 'VAELoader', inputs: { vae_name: 'wan_2.1_vae.safetensors' } },
+    '6': {
+      class_type: 'CLIPTextEncode',
+      inputs: { text: '', clip: ['38', 0] },
+      _meta: { title: 'Positive prompt' },
+    },
+    '7': {
+      class_type: 'CLIPTextEncode',
+      inputs: { text: '', clip: ['38', 0] },
+      _meta: { title: 'Negative prompt' },
+    },
+    '70': {
+      class_type: 'EmptyHunyuanLatentVideo',
+      inputs: { width: 480, height: 480, length: 33, batch_size: 1 },
+    },
+    '72': {
+      class_type: 'BasicScheduler',
+      inputs: { steps: 20, denoise: 1, scheduler: 'simple', model: ['44', 0], latent: ['70', 0] },
+    },
+    '73': {
+      class_type: 'KSampler',
+      inputs: {
+        noise_seed: 0,
+        sampler_name: 'euler',
+        model: ['44', 0],
+        positive: ['6', 0],
+        negative: ['7', 0],
+        latent_image: ['70', 0],
+        sigmas: ['72', 0],
+      },
+    },
+    '8': { class_type: 'VAEDecode', inputs: { samples: ['73', 0], vae: ['45', 0] } },
+    '9': {
+      class_type: 'SaveVideo',
+      inputs: { images: ['8', 0], filename_prefix: 'pi-video', format: 'mp4', fps: 16 },
+    },
+  };
+}
+
 /** ACE-Step (text → music) via native ComfyUI core nodes. */
 function aceStepGraph(): ComfyGraph {
   return {
@@ -252,6 +307,11 @@ export const WORKFLOW_TEMPLATES: Readonly<Record<string, WorkflowTemplate>> = {
     graph: ltxVideoGraph(),
     paramMap: LTX_PARAM_MAP,
   },
+  'wan2.1-t2v-1.3b': {
+    id: 'wan2.1-t2v-1.3b',
+    graph: wanVideoGraph(),
+    paramMap: LTX_PARAM_MAP,
+  },
   'ace-step-music': {
     id: 'ace-step-music',
     graph: aceStepGraph(),
@@ -259,6 +319,11 @@ export const WORKFLOW_TEMPLATES: Readonly<Record<string, WorkflowTemplate>> = {
   },
   'stable-audio-open': {
     id: 'stable-audio-open',
+    graph: stableAudioGraph(),
+    paramMap: STABLE_AUDIO_PARAM_MAP,
+  },
+  'stable-audio-open-small': {
+    id: 'stable-audio-open-small',
     graph: stableAudioGraph(),
     paramMap: STABLE_AUDIO_PARAM_MAP,
   },

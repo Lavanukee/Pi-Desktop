@@ -21,10 +21,11 @@ import type { Backend } from './protocol.js';
 export const MFLUX_PIN = '0.18.0';
 
 /**
- * Pin passed to `uv --with mlx-audio==<pin>` for the TTS worker path. Forward-
- * dated — verify the exact release at build time. [projected]
+ * Pin passed to `uv --with mlx-audio==<pin>` for the TTS worker path. Correction
+ * #5: 0.4.5 is the release that actually ships Qwen3-TTS / MOSS / Voxtral (and
+ * worker.py's header documents 0.4.5). GitHub release [200]. [measured header]
  */
-export const MLX_AUDIO_PIN = '0.2.3';
+export const MLX_AUDIO_PIN = '0.4.5';
 
 /** uv-provisioned CPython version for the worker (matches web-tools/mlx). */
 export const DEFAULT_PYTHON_VERSION = '3.12';
@@ -46,9 +47,15 @@ export function baseWorkerWith(backend: Backend, mfluxPin: string = MFLUX_PIN): 
       return [`mflux==${mfluxPin}`];
     case 'mlx-audio':
       return [`mlx-audio==${MLX_AUDIO_PIN}`];
+    case 'torch-tts':
+      // Chatterbox (ResembleAI) — torch/MPS→CPU TTS, NOT the mlx-audio CLI; Perth
+      // watermark on all output. Reserved until the torch-tts path lands. [projected]
+      return ['chatterbox-tts'];
     case 'triposr':
-      // TripoSR one-shot LRM; MPS-fallback torch stack. [projected deps]
-      return ['torch', 'torchvision', 'transformers'];
+      // TripoSR one-shot LRM; MPS-fallback torch stack. Correction #4: transformers
+      // PINNED to 4.35.0 (newer transformers break TripoSR's LRM load) +
+      // PYTORCH_ENABLE_MPS_FALLBACK=1 at spawn. [projected deps]
+      return ['torch', 'torchvision', 'transformers==4.35.0'];
     case 'trellis':
       // trellis2-mlx persistent MLX worker (NOT ComfyUI). [fwd slug + projected]
       return ['mlx', 'trellis2-mlx'];

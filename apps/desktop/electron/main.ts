@@ -24,6 +24,7 @@ import {
 } from './canvas/canvas-main';
 import { registerConnectorsIpc } from './connectors/connectors-main';
 import { fsHandlers } from './fs-handlers';
+import { registerGenCatalogIpc } from './gen/gen-manager';
 import { registerImportIpc } from './import/import-main';
 import { registerLlmIpc } from './inference/llm-main';
 import type { AppEventMap, CoreInvokeMap, FsInvokeMap } from './ipc-contract';
@@ -249,6 +250,11 @@ function registerAppIpc(): void {
 
   // Inference supervisor (utilityProcess) proxy channels.
   registerLlmIpc(ipcMain, allowSender);
+
+  // Generation modality catalog → renderer DTOs (gen:modality-catalog). Read-only
+  // surfacing of the vetted image/audio/video/3d models the model browser lists;
+  // the full generation socket bridge (registerGenIpc) lands with gen-as-tools.
+  registerGenCatalogIpc(ipcMain, allowSender);
 
   // Apple Foundation Models (on-device) capability gate + set-active. Also
   // publishes PI_AFM_HELPER_PATH so the pi child's provider-afm finds the helper.

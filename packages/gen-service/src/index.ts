@@ -54,6 +54,7 @@ export type {
 } from './job-queue.js';
 export { JobQueue } from './job-queue.js';
 export type {
+  AudioJobSpec,
   Backend,
   ComfyBackendConfig,
   ComfyJobSpec,

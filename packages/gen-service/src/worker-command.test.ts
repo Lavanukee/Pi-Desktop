@@ -127,6 +127,23 @@ describe('baseWorkerWith', () => {
     expect(baseWorkerWith('trellis')).toContain('trellis2-mlx');
   });
 
+  it('pins mlx-audio at 0.4.5 (correction #5: the Qwen3-TTS/MOSS/Voxtral release)', () => {
+    expect(MLX_AUDIO_PIN).toBe('0.4.5');
+    expect(baseWorkerWith('mlx-audio')).toEqual(['mlx-audio==0.4.5']);
+  });
+
+  it('pins TripoSR transformers to 4.35.0 (correction #4)', () => {
+    expect(baseWorkerWith('triposr')).toContain('transformers==4.35.0');
+    // The un-pinned bare `transformers` must NOT be requested.
+    expect(baseWorkerWith('triposr')).not.toContain('transformers');
+  });
+
+  it('maps the new torch-tts backend (Chatterbox) to its torch base, not mlx-audio', () => {
+    const base = baseWorkerWith('torch-tts');
+    expect(base).toContain('chatterbox-tts');
+    expect(base.some((p) => p.startsWith('mlx-audio'))).toBe(false);
+  });
+
   it('returns no base package for the persistent-server / Node backends', () => {
     expect(baseWorkerWith('comfyui')).toEqual([]);
     expect(baseWorkerWith('hyperframes')).toEqual([]);

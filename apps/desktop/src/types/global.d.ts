@@ -1,5 +1,6 @@
 import type { CanvasController } from '@pi-desktop/canvas';
 import type { PiDesktopBridge } from '../../electron/ipc-contract';
+import type { useGenStore } from '../state/gen-store';
 import type { useHfStore } from '../state/hf-store';
 import type { useLlmStore } from '../state/llm-store';
 import type { usePiStore } from '../state/pi-slice';
@@ -30,6 +31,9 @@ declare global {
     /** E2E hook: accessor for the Browse-HF store (inject search results / files
      * without live network). Present only with ?piE2E=1 (see state/hf-store.ts). */
     __hf_store?: () => typeof useHfStore;
+    /** E2E hook: accessor for the generation modality-catalog store (read the
+     * image/audio/video/3d DTOs). Present only with ?piE2E=1 (see gen-store.ts). */
+    __gen_store?: () => typeof useGenStore;
     /** E2E hook: accessor for the project (working-folder) store — set/clear the
      * working folder without a native dialog. Present only with ?piE2E=1 (see
      * state/project-store.ts). */

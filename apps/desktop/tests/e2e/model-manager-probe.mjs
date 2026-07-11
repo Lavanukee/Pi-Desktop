@@ -205,6 +205,54 @@ try {
   await page.waitForSelector(`[data-testid="model-card-${modelId}"]`, { timeout: 8000 });
   await page.click('[data-testid="mm-favorites-toggle"]');
 
+  // ── Phase-0 SURFACE: generation modality category tabs ──────────────────────
+  // The vetted MODALITY_CATALOG is surfaced over gen:modality-catalog → useGenStore,
+  // categorized into Image · Video · Audio · Music · 3D · Perception tabs, each a
+  // Recommended-first grid with modality + recommended + gated pills.
+  await page.waitForSelector('[data-testid="mm-category-tabs"]', { timeout: 8000 });
+
+  // Image → recommended-first modality cards, each with a modality pill.
+  await page.click('[data-testid="mm-cat-image"]');
+  await page.waitForSelector('[data-testid="modality-grid-image"]', { timeout: 8000 });
+  const imageCards = await page.locator('[data-testid^="modality-card-"]').count();
+  assert(imageCards > 0, `expected image modality cards, got ${imageCards}`);
+  // The recommended default image model renders its green recommended pill.
+  await page.waitForSelector('[data-testid="recommended-badge-flux2-klein-4b"]', { timeout: 8000 });
+  // Every modality card carries a (pink) modality pill.
+  const modalityPills = await page.locator('[data-pill-kind="modality"]').count();
+  assert(
+    modalityPills >= imageCards,
+    `expected a modality pill per image card, got ${modalityPills} for ${imageCards}`,
+  );
+
+  // Video → a GATED lock pill (LTX-Video is commercialUse:false) + the
+  // commercial-clean Wan2.1 recommended pick.
+  await page.click('[data-testid="mm-cat-video"]');
+  await page.waitForSelector('[data-testid="modality-grid-video"]', { timeout: 8000 });
+  await page.waitForSelector('[data-testid="gated-badge-ltx-video-2b-distilled"]', {
+    timeout: 8000,
+  });
+  await page.waitForSelector('[data-testid="recommended-badge-wan2.1-t2v-1.3b"]', {
+    timeout: 8000,
+  });
+  const videoGatedPills = await page.locator('[data-pill-kind="gated"]').count();
+  assert(videoGatedPills >= 1, `expected a gated pill on the video tab, got ${videoGatedPills}`);
+
+  // Audio (TTS) vs Music (ComfyUI synthesis) are split into separate tabs.
+  await page.click('[data-testid="mm-cat-audio"]');
+  await page.waitForSelector('[data-testid="modality-card-qwen3-tts-1.7b"]', { timeout: 8000 });
+  await page.click('[data-testid="mm-cat-music"]');
+  await page.waitForSelector('[data-testid="modality-card-ace-step"]', { timeout: 8000 });
+
+  // 3D tab + the per-category Browse-Hugging-Face escape hatch.
+  await page.click('[data-testid="mm-cat-3d"]');
+  await page.waitForSelector('[data-testid="modality-card-triposr"]', { timeout: 8000 });
+  await page.waitForSelector('[data-testid="mm-modality-browse-hf-3d"]', { timeout: 8000 });
+
+  // Back to the Language tab for the existing Browse-Hugging-Face assertions.
+  await page.click('[data-testid="mm-cat-language"]');
+  await page.waitForSelector('[data-testid="mm-tab-browse"]', { timeout: 8000 });
+
   // ── Browse Hugging Face: mock a search + a repo file listing ────────────────
   await page.click('[data-testid="mm-tab-browse"]');
   await page.waitForSelector('[data-testid="hf-browse"]', { timeout: 8000 });
@@ -338,6 +386,8 @@ try {
       'Qwen3.6 27B collapsed to ONE card w/ variant+quant dropdowns + DFlash pill + reliable badges; ' +
       'progress→active UI; cancel-download clears the bar; MLX preference toggle + engine badge persist; ' +
       'advanced effort-default + favorite persist; ' +
+      `modality category tabs (Image/Video/Audio/Music/3D) render ${imageCards} recommended-first image cards ` +
+      'with modality + recommended + gated pills + per-category Browse-HF escape hatch; ' +
       'Browse-HF trending-on-open header + capability pills, search→quant-list + HF favorite; ' +
       'footer deep-link verified',
   );

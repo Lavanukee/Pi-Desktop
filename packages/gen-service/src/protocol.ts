@@ -30,9 +30,19 @@ export type Modality = 'image' | 'audio' | 'video' | '3d';
  *     on `127.0.0.1` that the ComfyUI adapter POSTs workflow JSON to and whose
  *     ws messages it translates into the SAME {@link GenEvent} union (video /
  *     music / advanced-image graphs);
- *   - `hyperframes` — the Node+ffmpeg motion-graphics path.
+ *   - `hyperframes` — the Node+ffmpeg motion-graphics path;
+ *   - `torch-tts` — a torch/MPS→CPU TTS path (Chatterbox) that is NOT the
+ *     mlx-audio CLI (slower, Perth-watermarked output); driven by the same uv
+ *     worker but with a torch base package instead of mlx-audio.
  */
-export type Backend = 'mflux' | 'mlx-audio' | 'triposr' | 'trellis' | 'hyperframes' | 'comfyui';
+export type Backend =
+  | 'mflux'
+  | 'mlx-audio'
+  | 'torch-tts'
+  | 'triposr'
+  | 'trellis'
+  | 'hyperframes'
+  | 'comfyui';
 
 /**
  * Backend-resolved image parameters. The app resolves a catalog entry
@@ -63,6 +73,52 @@ export interface ImageJobSpec {
   readonly guidance?: number;
   /** mflux `-q` weight quantization (3|4|5|6|8); omitted → full precision. */
   readonly quantize?: 3 | 4 | 5 | 6 | 8;
+}
+
+/**
+ * Backend-resolved TTS parameters — the `mlx-audio` / `torch-tts` analogue of
+ * {@link ImageJobSpec}. The app resolves a catalog entry into these concrete
+ * fields; the worker stays catalog-free (important for a remote worker). These
+ * are exactly what `worker.py`'s `build_audio_cmd` consumes.
+ */
+export interface AudioJobSpec {
+  /** Text to synthesize. */
+  readonly prompt: string;
+  /** Catalog id — stamped as the output FOOTNOTE (e.g. `kokoro-82m`). */
+  readonly modelId: string;
+  /**
+   * The RESOLVED HF repo id passed to mlx-audio `--model`. This is NOT always the
+   * provenance repo: Kokoro's card is `hexgrad/Kokoro-82M` but mlx-audio loads
+   * `prince-canuma/Kokoro-82M` — the catalog carries the resolved value.
+   */
+  readonly mlxAudioModel: string;
+  /** `--voice` preset (e.g. `af_heart` / `Chelsie`). */
+  readonly voice?: string;
+  /** `--speed`. */
+  readonly speed?: number;
+  /** `--lang_code` (e.g. `a` = American English). */
+  readonly lang?: string;
+  /** `--steps` (model-specific diffusion steps). */
+  readonly steps?: number;
+  /** `--audio_format` (default `wav`). */
+  readonly audioFormat?: string;
+  /**
+   * Reference audio clip for ZERO-SHOT VOICE CLONING (`--ref_audio`). Present
+   * only for the models that expose a clone path (Qwen3-TTS, MOSS, Dia, Voxtral,
+   * Chatterbox). Without it, synthesis uses a preset voice only — so this is the
+   * field that makes every "3s zero-shot clone" claim real in-product.
+   */
+  readonly refAudio?: string;
+  /**
+   * Transcript of {@link refAudio} (`--ref_text`), when the clone model wants the
+   * reference text alongside the reference clip. Only meaningful with `refAudio`.
+   */
+  readonly refText?: string;
+  /**
+   * One seed per candidate; the TTS CLI has no seed knob, so length drives the
+   * candidate COUNT + the output stamp.
+   */
+  readonly seeds: readonly number[];
 }
 
 /**
@@ -122,6 +178,8 @@ export interface GenJob {
   readonly outputDir: string;
   /** Image spec — the uv/mflux worker path (backend `mflux`). */
   readonly image?: ImageJobSpec;
+  /** TTS spec — the uv/mlx-audio (or torch-tts) worker path. */
+  readonly audio?: AudioJobSpec;
   /** ComfyUI spec — video / music / advanced-image graphs (backend `comfyui`). */
   readonly comfy?: ComfyJobSpec;
 }

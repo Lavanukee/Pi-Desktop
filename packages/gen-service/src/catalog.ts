@@ -19,6 +19,10 @@ export type License =
   | 'apache-2.0'
   | 'mit'
   | 'cc-by-nc-4.0'
+  // Use-restriction / community EULA families that still gate commercial use:
+  | 'openrail' // cubepart (Roblox) — OpenRAIL use-restrictions
+  | 'nvidia-nc' // LocateAnything (NVIDIA) — non-commercial
+  | 'gemma' // EmbeddingGemma (Google) — Gemma terms EULA
   | 'ltx-2-community'
   | 'tencent-community'
   | 'stability-community'
@@ -45,6 +49,13 @@ export interface ModalityModel {
   readonly backend: Backend;
   /** HuggingFace repo (provenance / download surfacing). */
   readonly repo?: string;
+  /**
+   * The RESOLVED HF repo id passed to mlx-audio `--model` when it differs from the
+   * provenance {@link repo}. Kokoro's card is `hexgrad/Kokoro-82M` (provenance)
+   * but mlx-audio loads `prince-canuma/Kokoro-82M`. When omitted, the app resolves
+   * `--model` from `repo`. Only meaningful for `mlx-audio` backend entries.
+   */
+  readonly mlxAudioModel?: string;
   readonly license: License;
   /** Whether the license permits commercial use without a gate. Drives install-EULA gating. */
   readonly commercialUse: boolean;
@@ -76,6 +87,15 @@ export interface ModalityModel {
   readonly defaultQuantize?: 3 | 4 | 5 | 6 | 8;
   /** RESERVED entry: enumerated + gated now, backend lands in a later phase. */
   readonly reserved?: boolean;
+  /**
+   * Vetted first-class pick for its modality — renders the green "recommended"
+   * sparkle and heads its category's Recommended-first grid in the model browser.
+   * Explicit and independent of gating/reserved (a recommended pick can still be
+   * gated or await its backend). The browser MAY also treat any
+   * `!reserved && runsLocally` entry as implicitly recommended (see
+   * {@link activeModels}); this flag is the explicit override.
+   */
+  readonly recommended?: boolean;
   readonly notes?: string;
 }
 
@@ -97,11 +117,17 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
     minUnifiedMemoryGB: 6,
     runsLocally: true,
     heavy: false,
-    mflux: { kind: 'mflux', command: 'mflux-generate-flux2', model: 'flux2-klein-4b' },
+    recommended: true,
+    // Correction #1: point --model at the PRE-QUANTIZED 4-bit mflux repo and do
+    // NOT pass -q (mflux expects the pre-quant weights, not on-the-fly quantize).
+    mflux: {
+      kind: 'mflux',
+      command: 'mflux-generate-flux2',
+      model: 'RunPod/FLUX.2-klein-4B-mflux-4bit',
+    },
     defaultSteps: 4,
-    defaultQuantize: 4,
     notes:
-      'Default. Apache, mflux auto-fetches text-enc+VAE (no manual aux). ~5-6s/512 · ~85s/1024 [measured].',
+      'Default. Apache, mflux auto-fetches text-enc+VAE (no manual aux). Pre-quantized 4-bit mflux repo (no on-the-fly -q). ~5-6s/512 · ~85s/1024 [measured].',
   },
   {
     id: 'z-image-turbo',
@@ -115,10 +141,17 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
     minUnifiedMemoryGB: 5,
     runsLocally: true,
     heavy: false,
-    mflux: { kind: 'mflux', command: 'mflux-generate-z-image-turbo' },
+    recommended: true,
+    // Correction #1: dedicated command REQUIRED (unified mflux-generate mis-routes
+    // Z-Image → FLUX loader). --model points at the PRE-QUANTIZED 4-bit repo; no -q.
+    mflux: {
+      kind: 'mflux',
+      command: 'mflux-generate-z-image-turbo',
+      model: 'filipstrand/Z-Image-Turbo-mflux-4bit',
+    },
     defaultSteps: 8,
-    defaultQuantize: 4,
-    notes: 'Fast / smoke model. Few-step turbo; seconds per 1024. Verified end-to-end on M5 Pro.',
+    notes:
+      'Fast / smoke model. Few-step turbo; seconds per 1024. Pre-quantized 4-bit mflux repo (no on-the-fly -q). Verified end-to-end on M5 Pro.',
   },
   {
     id: 'qwen-image-2512',
@@ -132,6 +165,7 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
     minUnifiedMemoryGB: 24,
     runsLocally: true,
     heavy: true,
+    recommended: true,
     mflux: { kind: 'mflux', command: 'mflux-generate-qwen' },
     defaultSteps: 20,
     defaultQuantize: 4,
@@ -160,8 +194,9 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
     label: 'FLUX.1-dev GGUF Q6_K (advanced)',
     backend: 'comfyui',
     repo: 'city96/FLUX.1-dev-gguf',
-    license: 'apache-2.0',
-    commercialUse: true,
+    // Correction #8: FLUX.1 [dev] is NON-COMMERCIAL, not Apache. Gate it.
+    license: 'cc-by-nc-4.0',
+    commercialUse: false,
     approxSizeGB: 10,
     minUnifiedMemoryGB: 16,
     runsLocally: true,
@@ -180,7 +215,7 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
       },
     },
     notes:
-      'Advanced ComfyUI graph (Q6_K + ControlNet/upscale) beyond what mflux one-shots. Q6_K sweet spot, <=6% loss [measured, community]. fp8 checkpoints gated OFF on darwin. Reserved until the ComfyUI backend (Phase A/B) lands. Workflow id/node paths [fwd].',
+      'Advanced ComfyUI graph (Q6_K + ControlNet/upscale) beyond what mflux one-shots. Q6_K sweet spot, <=6% loss [measured, community]. FLUX.1 [dev] weights are NON-COMMERCIAL (CC BY-NC) — gated, never auto-enabled for commercial use. fp8 checkpoints gated OFF on darwin. Reserved until the ComfyUI backend (Phase A/B) lands. Workflow id/node paths [fwd].',
   },
 
   // ---- AUDIO · TTS (mlx-audio fast-path: active, NOT ComfyUI) ------------
@@ -196,23 +231,46 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
     minUnifiedMemoryGB: 6,
     runsLocally: true,
     heavy: false,
+    recommended: true,
     notes:
-      'Default TTS: Apache, self-contained codec, 3s zero-shot voice clone. MLX fast-path (uv worker run_audio), NOT ComfyUI. Base uv --with is mlx-audio (per backend).',
+      'Default TTS: Apache, self-contained codec, 3s zero-shot voice clone (--ref_audio). MLX fast-path (uv worker run_audio), NOT ComfyUI. Base uv --with is mlx-audio (per backend).',
+  },
+  {
+    id: 'qwen3-tts-0.6b',
+    modality: 'audio',
+    label: 'Qwen3-TTS (0.6B, light)',
+    backend: 'mlx-audio',
+    repo: 'Qwen/Qwen3-TTS-12Hz-0.6B-Base',
+    license: 'apache-2.0',
+    commercialUse: true,
+    approxSizeGB: 2.5,
+    minUnifiedMemoryGB: 4,
+    runsLocally: true,
+    heavy: false,
+    recommended: true,
+    notes:
+      'Lighter default TTS: Apache, self-contained codec, 3s zero-shot voice clone (--ref_audio). MLX fast-path (mlx-audio 0.4.5 run_audio), NOT ComfyUI.',
   },
   {
     id: 'kokoro-82m',
     modality: 'audio',
     label: 'Kokoro-82M',
     backend: 'mlx-audio',
+    // Correction #7: provenance card is hexgrad/Kokoro-82M, but the resolved
+    // mlx-audio --model must be prince-canuma/Kokoro-82M (+ the misaki[en] G2P
+    // extra, without which the KokoroPipeline import fails).
     repo: 'hexgrad/Kokoro-82M',
+    mlxAudioModel: 'prince-canuma/Kokoro-82M',
     license: 'apache-2.0',
     commercialUse: true,
     approxSizeGB: 0.3,
     minUnifiedMemoryGB: 2,
     runsLocally: true,
     heavy: false,
+    recommended: true,
+    auxDeps: ['misaki[en]'],
     notes:
-      'Fast TTS: tiny (0.3GB) narration presets (no clone), ~1500 words <1min [measured]. MLX fast-path, NOT ComfyUI.',
+      'Fast TTS: tiny (0.3GB) narration presets (no clone), ~1500 words <1min [measured]. Resolved --model = prince-canuma/Kokoro-82M (+ misaki[en] aux). MLX fast-path, NOT ComfyUI.',
   },
   {
     id: 'voxtral-4b-tts',
@@ -229,6 +287,69 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
     notes:
       'Quality TTS — NON-COMMERCIAL (CC BY-NC), gated. Audio encoder withheld → presets-only unless clone repo added. MLX fast-path, NOT ComfyUI.',
   },
+  {
+    id: 'moss-ttsd-8b',
+    modality: 'audio',
+    label: 'MOSS-TTSD (8B, dialogue)',
+    backend: 'mlx-audio',
+    repo: 'mlx-community/MOSS-TTS-8B-8bit',
+    license: 'apache-2.0',
+    commercialUse: true,
+    approxSizeGB: 9,
+    minUnifiedMemoryGB: 12,
+    runsLocally: true,
+    heavy: false,
+    recommended: true,
+    notes:
+      'Dialogue / podcast TTS (multi-speaker), 20 langs, 3-10s zero-shot voice clone (--ref_audio). 8-bit; provenance OpenMOSS-Team/MOSS-TTSD. MLX fast-path (mlx-audio 0.4.5), NOT ComfyUI. [Re-confirm exact 8-bit repo id/version at build — v1.0 changelog vs v0.5 live-API.]',
+  },
+  {
+    id: 'moss-tts-local-1.7b',
+    modality: 'audio',
+    label: 'MOSS-TTS Local (1.7B)',
+    backend: 'mlx-audio',
+    repo: 'OpenMOSS-Team/MOSS-TTS',
+    license: 'apache-2.0',
+    commercialUse: true,
+    approxSizeGB: 4,
+    minUnifiedMemoryGB: 6,
+    runsLocally: true,
+    heavy: false,
+    notes:
+      'Light single-speaker MOSS (MossTTSLocal); mlx-audio quantizes on load. Apache, no gate. MLX fast-path, NOT ComfyUI.',
+  },
+  {
+    id: 'dia-1.6b',
+    modality: 'audio',
+    label: 'Dia (1.6B, expressive)',
+    backend: 'mlx-audio',
+    repo: 'mlx-community/Dia-1.6B',
+    license: 'apache-2.0',
+    commercialUse: true,
+    approxSizeGB: 3,
+    minUnifiedMemoryGB: 5,
+    runsLocally: true,
+    heavy: false,
+    recommended: true,
+    notes:
+      'Expressive dialogue TTS with zero-shot voice clone via --ref_audio (demo model). Provenance nari-labs/Dia-1.6B. MLX fast-path (mlx-audio 0.4.5), NOT ComfyUI.',
+  },
+  {
+    id: 'chatterbox',
+    modality: 'audio',
+    label: 'Chatterbox (voice clone)',
+    backend: 'torch-tts',
+    repo: 'ResembleAI/chatterbox',
+    license: 'mit',
+    commercialUse: true,
+    approxSizeGB: 1,
+    minUnifiedMemoryGB: 3,
+    runsLocally: true,
+    heavy: false,
+    reserved: true,
+    notes:
+      'Best-quality zero-shot clone tier, SLOWER: torch/MPS→CPU fork (NOT the mlx-audio CLI). Perth WATERMARK embedded in ALL output. MIT, no gate. Reserved until the torch-tts worker path lands.',
+  },
 
   // ---- AUDIO · Music / SFX (ComfyUI native core nodes; reserved) --------
   {
@@ -236,7 +357,9 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
     modality: 'audio',
     label: 'ACE-Step (3.5B)',
     backend: 'comfyui',
-    repo: 'ACE-Step/ACE-Step',
+    // Correction #3: ACE-Step/ACE-Step (org) is a 401 — the weights repo is
+    // ACE-Step/ACE-Step-v1-3.5B.
+    repo: 'ACE-Step/ACE-Step-v1-3.5B',
     license: 'apache-2.0',
     commercialUse: true,
     approxSizeGB: 7,
@@ -244,6 +367,7 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
     runsLocally: true,
     heavy: true,
     reserved: true,
+    recommended: true,
     comfy: {
       kind: 'comfyui',
       workflowTemplate: 'ace-step-music', // [fwd]
@@ -283,7 +407,35 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
       },
     },
     notes:
-      'Quality/SFX music via native ComfyUI nodes (+t5_base). stability-community EULA — NON-COMMERCIAL, gated. Reserved until the ComfyUI backend lands. Workflow id/node paths [fwd].',
+      'Quality/SFX music via native ComfyUI nodes (+t5_base). Correction #9: Stability Community license is NOT flat NC — free commercial UNDER $1M revenue, GATED above. commercialUse:false marks the gate (EULA on install). Reserved until the ComfyUI backend lands. Workflow id/node paths [fwd].',
+  },
+  {
+    id: 'stable-audio-open-small',
+    modality: 'audio',
+    label: 'Stable Audio Open Small (SFX)',
+    backend: 'comfyui',
+    repo: 'stabilityai/stable-audio-open-small',
+    license: 'stability-community',
+    commercialUse: false,
+    approxSizeGB: 1.5,
+    minUnifiedMemoryGB: 3,
+    runsLocally: true,
+    heavy: false,
+    reserved: true,
+    recommended: true,
+    comfy: {
+      kind: 'comfyui',
+      workflowTemplate: 'stable-audio-open-small', // [fwd]
+      paramMap: {
+        prompt: '6.inputs.text',
+        negativePrompt: '7.inputs.text',
+        seconds: '11.inputs.seconds',
+        steps: '3.inputs.steps',
+        seed: '3.inputs.seed',
+      },
+    },
+    notes:
+      'Tiny SFX/audio: ARM/CPU-optimized, genuinely light (~1.5GB). Same Stability Community license as the 1.0 row — free commercial under $1M revenue, GATED above. Reserved until the ComfyUI backend lands. Workflow id/node paths [fwd].',
   },
 
   // ---- VIDEO (LTX via ComfyUI + the Node/ffmpeg path; reserved) ---------
@@ -301,13 +453,44 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
     heavy: false,
     auxDeps: ['ffmpeg', 'headless-chrome'],
     reserved: true,
+    recommended: true,
     notes:
       'Only genuinely-local non-diffusion video path: Node+ffmpeg+headless-Chrome, agent authors HTML/CSS/JS→MP4. Deterministic, CPU. Not photoreal.',
   },
   {
+    id: 'wan2.1-t2v-1.3b',
+    modality: 'video',
+    label: 'Wan2.1 T2V (1.3B)',
+    backend: 'comfyui',
+    repo: 'Wan-AI/Wan2.1-T2V-1.3B',
+    license: 'apache-2.0',
+    commercialUse: true,
+    approxSizeGB: 8,
+    minUnifiedMemoryGB: 16,
+    runsLocally: true,
+    heavy: true,
+    reserved: true,
+    recommended: true,
+    comfy: {
+      kind: 'comfyui',
+      workflowTemplate: 'wan2.1-t2v-1.3b', // [fwd]
+      paramMap: {
+        prompt: '6.inputs.text',
+        negativePrompt: '7.inputs.text',
+        width: '70.inputs.width',
+        height: '70.inputs.height',
+        length: '70.inputs.length',
+        steps: '72.inputs.steps',
+        seed: '73.inputs.noise_seed',
+      },
+    },
+    notes:
+      'Most Mac-realistic diffusion text→video pick: Apache (commercial-clean, NO gate), ~1.3B, runs via native ComfyUI. Minutes/clip on Apple Silicon. Reserved until the ComfyUI backend lands. Workflow id/node paths [fwd].',
+  },
+  {
     id: 'ltx-video-2b-distilled',
     modality: 'video',
-    label: 'LTX-Video 2B distilled GGUF (fast)',
+    label: 'LTX-Video 2B distilled (safetensors, fast)',
     backend: 'comfyui',
     repo: 'Lightricks/LTX-Video',
     license: 'ltx-2-community',
@@ -331,12 +514,12 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
       },
     },
     notes:
-      'Safe 16GB video pick: real LTX-Video 2B distilled GGUF Q4, ~2-4s @480-512p, ~15min M1 / ~3-5min M3-M4 [measured]. LTX-2 Community EULA — gated. fp8 hard-excluded on darwin; Euler sampler + --force-upcast-attention. Reserved until the ComfyUI backend lands. Workflow id/node paths [fwd].',
+      'Safe 16GB video pick: real LTX-Video 2B distilled. Correction #2: use the single-file ComfyUI-repackaged SAFETENSORS (not the diffusers layout / not GGUF). ~2-4s @480-512p, ~15min M1 / ~3-5min M3-M4 [measured]. LTX-2 Community EULA — gated. fp8 hard-excluded on darwin; Euler sampler + --force-upcast-attention. Reserved until the ComfyUI backend lands. Workflow id/node paths [fwd].',
   },
   {
     id: 'ltx-2',
     modality: 'video',
-    label: 'LTX-2 distilled GGUF (default)',
+    label: 'LTX-2 distilled (safetensors, default)',
     backend: 'comfyui',
     repo: 'Lightricks/LTX-2',
     license: 'ltx-2-community',
@@ -360,7 +543,7 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
       },
     },
     notes:
-      'Default video — flipped from mis-tagged remote-only hyperframes to local ComfyUI with tier gating. LTX-2 distilled GGUF Q4_K_M stack ~24GB on disk [projected fwd]; 24GB needs ComfyUI weight-offload (a 24GB Mac addresses ~16-18GB on-GPU), 32GB+ comfortable. tech-demo, minutes/clip; Euler, fp8-excluded. LTX-2 Community EULA — gated. Reserved until the ComfyUI backend lands.',
+      'Default video — flipped from mis-tagged remote-only hyperframes to local ComfyUI with tier gating. Correction #2: single-file ComfyUI-repackaged SAFETENSORS (not diffusers / not GGUF). ~24GB on disk [projected fwd]; 24GB needs ComfyUI weight-offload (a 24GB Mac addresses ~16-18GB on-GPU), 32GB+ comfortable. tech-demo, minutes/clip; Euler, fp8-excluded. LTX-2 Community EULA — gated. Reserved until the ComfyUI backend lands.',
   },
   {
     id: 'ltx-2-22b',
@@ -389,7 +572,7 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
       },
     },
     notes:
-      'Quality tier: 22B bf16 / GGUF Q6-Q8. runsLocally:false below 64GB → routes to a remote ComfyUI (same adapter, http://host:port). 22B reliability is tech-demo (2-stage VAE decode hit NaN on analogue). LTX-2 Community EULA — gated.',
+      'Quality tier: 22B bf16 / single-file ComfyUI-repackaged SAFETENSORS (correction #2: not diffusers / not GGUF). runsLocally:false below 64GB → routes to a remote ComfyUI (same adapter, http://host:port). 22B reliability is tech-demo (2-stage VAE decode hit NaN on analogue). LTX-2 Community EULA — gated.',
   },
 
   // ---- 3D (direct MLX/uv workers, NOT ComfyUI on Mac; reserved) ---------
@@ -406,15 +589,19 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
     runsLocally: true,
     heavy: false,
     reserved: true,
+    recommended: true,
     notes:
-      'Fast / 16GB fallback: image→geometry, vertex colors, no PBR. uv worker one-shot (PYTORCH_ENABLE_MPS_FALLBACK=1). Seconds-to-low-minutes on Mac [unverified — MPS-fallback].',
+      'Fast / 16GB fallback: image→geometry, vertex colors, no PBR. uv worker one-shot (correction #4: transformers==4.35.0 pin + PYTORCH_ENABLE_MPS_FALLBACK=1). Seconds-to-low-minutes on Mac [unverified — MPS-fallback].',
   },
   {
     id: 'trellis-2-4b',
     modality: '3d',
     label: 'TRELLIS.2 (4B)',
     backend: 'trellis',
-    repo: 'microsoft/TRELLIS',
+    // Correction #6: microsoft/TRELLIS (401) → microsoft/TRELLIS.2-4B (MIT
+    // weights); the MLX runner is xocialize/trellis2-mlx (the pedronaugusto/*
+    // 401 and gtrg55/* 404 ports are dead).
+    repo: 'microsoft/TRELLIS.2-4B',
     license: 'mit',
     commercialUse: true,
     approxSizeGB: 15,
@@ -422,8 +609,9 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
     runsLocally: true,
     heavy: true,
     reserved: true,
+    recommended: true,
     notes:
-      'Default/quality image→textured GLB with full PBR. DIRECT MLX worker (trellis2-mlx), NOT ComfyUI — the community ComfyUI TRELLIS nodes are CUDA-bound. ~15GB weights, persistent worker, ~3.5-5min / ~18GB peak @512³ [measured on analogue]. Resolution knob: 512³ ≤24GB, 1024³ ≥32GB. 16GB unvalidated → use TripoSR. Experimental (sparse-MPS texture sampling; Fast Repair not guaranteed watertight). [fwd slug]',
+      'Default/quality image→textured GLB with full PBR. DIRECT MLX worker (xocialize/trellis2-mlx over MIT weights microsoft/TRELLIS.2-4B), NOT ComfyUI — the community ComfyUI TRELLIS nodes are CUDA-bound. ~15GB weights, persistent worker. Resolution knob: 512³ ≤24GB, 1024³ ≥32GB. 16GB unvalidated → use TripoSR. Perf UNPINNED until re-measured against the resolvable port. Experimental (sparse-MPS texture sampling; Fast Repair not guaranteed watertight). [fwd slug]',
   },
 ];
 

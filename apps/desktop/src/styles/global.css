@@ -746,6 +746,11 @@ body {
   --pill-fg: #a15c07;
   --pill-border: #f5cf6b;
 }
+.pd-mm-pill--modality {
+  --pill-bg: #fce7f3;
+  --pill-fg: #be185d;
+  --pill-border: #f9a8d4;
+}
 .pd-mm-pill--mtp {
   --pill-bg: #dbeafe;
   --pill-fg: #1d4ed8;
@@ -799,6 +804,11 @@ body {
   --pill-bg: #33260a;
   --pill-fg: #f0b52e;
   --pill-border: #6b4e12;
+}
+:root[data-mode="dark"] .pd-mm-pill--modality {
+  --pill-bg: #3a0f26;
+  --pill-fg: #f4a8cd;
+  --pill-border: #7a2350;
 }
 :root[data-mode="dark"] .pd-mm-pill--mtp {
   --pill-bg: #12233f;

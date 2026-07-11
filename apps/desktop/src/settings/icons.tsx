@@ -223,6 +223,49 @@ export function IconSparkle(props: LocalIconProps) {
   );
 }
 
+/** Framed-picture glyph — the "image" modality pill. */
+export function IconImage(props: LocalIconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="2.2" y="3" width="11.6" height="10" rx="1.6" />
+      <circle cx="5.9" cy="6.2" r="1.2" />
+      <path d="M3 11.6l3.2-3 2.2 2 2.1-2.3 2.5 3.3" />
+    </Svg>
+  );
+}
+
+/** Film-strip glyph — the "video" modality pill. */
+export function IconFilm(props: LocalIconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="2.2" y="3.2" width="11.6" height="9.6" rx="1.4" />
+      <path d="M5.4 3.2v9.6M10.6 3.2v9.6" />
+      <path d="M2.2 6.4h3.2M10.6 6.4h3.2M2.2 9.6h3.2M10.6 9.6h3.2" />
+    </Svg>
+  );
+}
+
+/** Beamed-notes glyph — the "music" modality pill. */
+export function IconMusic(props: LocalIconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M6.2 11.2V4l6.4-1.5v7.2" />
+      <circle cx="4.5" cy="11.2" r="1.7" />
+      <circle cx="10.9" cy="9.7" r="1.7" />
+    </Svg>
+  );
+}
+
+/** Isometric-cube glyph — the "3D" modality pill. */
+export function IconCube(props: LocalIconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M8 2.2l5.2 2.9v5.8L8 13.8 2.8 10.9V5.1z" />
+      <path d="M2.8 5.1 8 8l5.2-2.9M8 8v5.8" />
+    </Svg>
+  );
+}
+
 /** Flame glyph — the "trending on Hugging Face" default results header. */
 export function IconFlame(props: LocalIconProps) {
   return (

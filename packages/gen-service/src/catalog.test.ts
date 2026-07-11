@@ -3,6 +3,7 @@ import {
   activeModels,
   defaultImageModel,
   getModel,
+  type License,
   MODALITY_CATALOG,
   type ModalityModel,
   modelsForModality,
@@ -55,8 +56,10 @@ describe('image models are phase-1 wired', () => {
     expect(adv?.mflux).toBeUndefined();
     expect(adv?.comfy?.kind).toBe('comfyui');
     expect(adv?.reserved).toBe(true);
-    // Advanced graph is still Apache / commercial-OK per the plan.
-    expect(adv?.commercialUse).toBe(true);
+    // Correction #8: FLUX.1 [dev] is NON-COMMERCIAL (CC BY-NC), not Apache → gated.
+    expect(adv?.commercialUse).toBe(false);
+    expect(adv?.license).toBe('cc-by-nc-4.0');
+    expect(requiresLicenseGate(adv as ModalityModel)).toBe(true);
   });
 
   it('default image model is FLUX.2 klein and permits commercial use', () => {
@@ -69,12 +72,21 @@ describe('image models are phase-1 wired', () => {
   it('includes the verified fast/smoke model z-image-turbo with its own command', () => {
     const z = getModel('z-image-turbo');
     expect(z?.mflux?.command).toBe('mflux-generate-z-image-turbo');
-    // The dedicated command is required — no `--model` multiplex needed.
-    expect(z?.mflux?.model).toBeUndefined();
+    // Correction #1: --model now points at the PRE-QUANTIZED 4-bit mflux repo.
+    expect(z?.mflux?.model).toBe('filipstrand/Z-Image-Turbo-mflux-4bit');
   });
 
   it('marks the ~24GB quality model heavy (one-at-a-time)', () => {
     expect(getModel('qwen-image-2512')?.heavy).toBe(true);
+  });
+
+  it('points the pre-quant mflux rows at 4-bit repos and drops on-the-fly quantize (#1)', () => {
+    const klein = getModel('flux2-klein-4b');
+    expect(klein?.mflux?.model).toBe('RunPod/FLUX.2-klein-4B-mflux-4bit');
+    expect(klein?.defaultQuantize).toBeUndefined();
+    const z = getModel('z-image-turbo');
+    expect(z?.mflux?.model).toBe('filipstrand/Z-Image-Turbo-mflux-4bit');
+    expect(z?.defaultQuantize).toBeUndefined();
   });
 });
 
@@ -84,9 +96,11 @@ describe('license gating', () => {
     // Voxtral (CC BY-NC) + LTX-2 (community) are the NC entries reserved for gating.
     expect(gated).toContain('voxtral-4b-tts');
     expect(gated).toContain('ltx-2');
-    // No Apache/MIT image model should be gated.
+    // Correction #8: FLUX.1-dev GGUF is NON-COMMERCIAL now → gated.
+    expect(gated).toContain('flux1-dev-gguf');
+    // The Apache mflux image models stay ungated (only the NC ComfyUI entry gates).
     for (const m of modelsForModality('image')) {
-      expect(requiresLicenseGate(m)).toBe(false);
+      if (m.backend === 'mflux') expect(requiresLicenseGate(m)).toBe(false);
     }
   });
 
@@ -220,6 +234,9 @@ describe('3D backends are direct workers, NOT ComfyUI on Mac', () => {
     expect(t?.backend).not.toBe('comfyui');
     expect(t?.approxSizeGB).toBeGreaterThanOrEqual(15);
     expect(t?.notes).toMatch(/NOT ComfyUI/i);
+    // Correction #6: real repo id + the resolvable MLX runner (not dead ports).
+    expect(t?.repo).toBe('microsoft/TRELLIS.2-4B');
+    expect(t?.notes).toMatch(/xocialize\/trellis2-mlx/);
   });
 
   it('TripoSR remains the fast/16GB fallback on its own worker', () => {
@@ -227,5 +244,120 @@ describe('3D backends are direct workers, NOT ComfyUI on Mac', () => {
     expect(tri?.backend).toBe('triposr');
     expect(tri?.modality).toBe('3d');
     expect(tri?.minUnifiedMemoryGB ?? 0).toBeLessThanOrEqual(16);
+  });
+});
+
+describe('the 9 real-test corrections (#3/#6/#7/#8/#9)', () => {
+  it('#3 ace-step repo id is the weights repo, not the 401 org', () => {
+    expect(getModel('ace-step')?.repo).toBe('ACE-Step/ACE-Step-v1-3.5B');
+  });
+
+  it('#7 Kokoro keeps provenance repo but resolves --model to prince-canuma (+ misaki aux)', () => {
+    const k = getModel('kokoro-82m');
+    expect(k?.repo).toBe('hexgrad/Kokoro-82M'); // provenance
+    expect(k?.mlxAudioModel).toBe('prince-canuma/Kokoro-82M'); // resolved --model
+    expect(k?.auxDeps).toContain('misaki[en]');
+  });
+
+  it('#9 both stable-audio rows are stability-community + gated (free <$1M)', () => {
+    for (const id of ['stable-audio-open', 'stable-audio-open-small']) {
+      const m = getModel(id);
+      expect(m?.license).toBe('stability-community');
+      expect(m?.commercialUse).toBe(false);
+      expect(requiresLicenseGate(m as ModalityModel)).toBe(true);
+    }
+  });
+});
+
+describe('MOSS + new TTS/clone rows (§5.2/§5.3)', () => {
+  it('MOSS-TTSD 8B is an Apache, ungated, active mlx-audio dialogue model', () => {
+    const m = getModel('moss-ttsd-8b');
+    expect(m?.backend).toBe('mlx-audio');
+    expect(m?.repo).toBe('mlx-community/MOSS-TTS-8B-8bit');
+    expect(m?.license).toBe('apache-2.0');
+    expect(m?.commercialUse).toBe(true);
+    expect(m?.reserved).not.toBe(true);
+    expect(activeModels().map((x) => x.id)).toContain('moss-ttsd-8b');
+  });
+
+  it('MOSS Local 1.7B and Dia 1.6B are present, Apache, mlx-audio', () => {
+    for (const id of ['moss-tts-local-1.7b', 'dia-1.6b']) {
+      const m = getModel(id);
+      expect(m?.backend).toBe('mlx-audio');
+      expect(m?.license).toBe('apache-2.0');
+      expect(m?.commercialUse).toBe(true);
+    }
+  });
+
+  it('qwen3-tts-0.6b is the lighter Apache default', () => {
+    const m = getModel('qwen3-tts-0.6b');
+    expect(m?.backend).toBe('mlx-audio');
+    expect(m?.repo).toBe('Qwen/Qwen3-TTS-12Hz-0.6B-Base');
+    expect(m?.commercialUse).toBe(true);
+  });
+
+  it('Chatterbox introduces the NEW torch-tts backend (MIT, reserved, watermark note)', () => {
+    const c = getModel('chatterbox');
+    expect(c?.backend).toBe('torch-tts');
+    expect(c?.repo).toBe('ResembleAI/chatterbox');
+    expect(c?.license).toBe('mit');
+    expect(c?.commercialUse).toBe(true);
+    expect(c?.reserved).toBe(true);
+    expect(c?.notes).toMatch(/watermark/i);
+  });
+});
+
+describe('new generative rows: Wan2.1 video + Stable Audio Open Small', () => {
+  it('Wan2.1 T2V 1.3B is the Apache, ungated, ComfyUI diffusion-video pick', () => {
+    const w = getModel('wan2.1-t2v-1.3b');
+    expect(w?.modality).toBe('video');
+    expect(w?.backend).toBe('comfyui');
+    expect(w?.repo).toBe('Wan-AI/Wan2.1-T2V-1.3B');
+    expect(w?.license).toBe('apache-2.0');
+    expect(w?.commercialUse).toBe(true);
+    expect(requiresLicenseGate(w as ModalityModel)).toBe(false);
+    expect(w?.comfy?.paramMap.prompt).toBeDefined();
+  });
+
+  it('Stable Audio Open Small is a tiny gated ComfyUI SFX row', () => {
+    const s = getModel('stable-audio-open-small');
+    expect(s?.modality).toBe('audio');
+    expect(s?.backend).toBe('comfyui');
+    expect(s?.approxSizeGB).toBeLessThanOrEqual(2);
+    expect(s?.comfy?.paramMap.prompt).toBeDefined();
+  });
+});
+
+describe('recommended flag (§5.1)', () => {
+  it('marks a vetted first-class pick in every surfaced modality', () => {
+    const rec = MODALITY_CATALOG.filter((m) => m.recommended === true);
+    expect(new Set(rec.map((m) => m.modality))).toEqual(new Set(['image', 'audio', 'video', '3d']));
+    // The image default + the MOSS dialogue keystone are recommended.
+    expect(getModel('flux2-klein-4b')?.recommended).toBe(true);
+    expect(getModel('moss-ttsd-8b')?.recommended).toBe(true);
+  });
+
+  it('does NOT recommend the NC-gated, secondary, or reserved-slow rows', () => {
+    expect(getModel('flux1-dev-gguf')?.recommended).not.toBe(true);
+    expect(getModel('voxtral-4b-tts')?.recommended).not.toBe(true);
+    expect(getModel('chatterbox')?.recommended).not.toBe(true);
+    expect(getModel('moss-tts-local-1.7b')?.recommended).not.toBe(true);
+  });
+
+  it('activeModels() + requiresLicenseGate() still behave after the additions', () => {
+    const active = activeModels();
+    expect(active.every((m) => m.reserved !== true && m.runsLocally)).toBe(true);
+    for (const m of MODALITY_CATALOG) {
+      expect(requiresLicenseGate(m)).toBe(!m.commercialUse);
+    }
+  });
+});
+
+describe('license union additions (§1)', () => {
+  it('the new use-restriction license values are assignable and gate correctly', () => {
+    const openrail: License = 'openrail';
+    const nvidiaNc: License = 'nvidia-nc';
+    const gemma: License = 'gemma';
+    expect([openrail, nvidiaNc, gemma]).toHaveLength(3);
   });
 });

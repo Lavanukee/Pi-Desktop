@@ -13,6 +13,7 @@ import { Button, Spinner, Switch, Tabs, TabsContent, TabsList, TabsTrigger } fro
 import { useEffect, useState } from 'react';
 import type { LlmCatalogEntry, LlmSimplePick } from '../../electron/ipc-contract';
 import { afmAvailable, useAfmStore } from '../state/afm-store';
+import { useGenStore } from '../state/gen-store';
 import { useLlmStore } from '../state/llm-store';
 import { activateLocalModel } from '../state/local-model';
 import {
@@ -24,7 +25,9 @@ import {
 import { AFM_MODEL_ID, AfmModelCard } from './AfmModelCard';
 import { HfBrowseView } from './HfBrowseView';
 import { IconCpu, IconStar } from './icons';
+import { ModalityCategoryView } from './ModalityCategoryView';
 import { ModelCard } from './ModelCard';
+import { MODALITY_CATEGORIES } from './modality-catalog-logic';
 import { categorizeByFamily, groupCatalog, type ModelGroup } from './model-manager-logic';
 import { ModelTag, SpecPill } from './model-tags';
 
@@ -57,6 +60,7 @@ export function ModelManagerPanel() {
   const status = useLlmStore((s) => s.status);
   const refreshCatalog = useLlmStore((s) => s.refreshCatalog);
   const refreshStatus = useLlmStore((s) => s.refreshStatus);
+  const refreshGenCatalog = useGenStore((s) => s.refreshCatalog);
   const afmAvailability = useAfmStore((s) => s.availability);
   const refreshAfm = useAfmStore((s) => s.refresh);
   const favorites = useSettingsStore((s) => s.settings.favoriteModels);
@@ -71,7 +75,8 @@ export function ModelManagerPanel() {
     void refreshCatalog();
     void refreshStatus();
     void refreshAfm();
-  }, [refreshCatalog, refreshStatus, refreshAfm]);
+    void refreshGenCatalog();
+  }, [refreshCatalog, refreshStatus, refreshAfm, refreshGenCatalog]);
 
   const recommended = catalog.find((m) => m.id === recommendation?.modelId) ?? null;
   const recActive =
@@ -141,197 +146,223 @@ export function ModelManagerPanel() {
         </div>
       </div>
 
-      <Tabs defaultValue="recommended">
-        <TabsList className="w-full max-w-[380px]" data-testid="mm-tabs">
-          <TabsTrigger value="recommended" data-testid="mm-tab-recommended">
-            Recommended
+      {/* Category tabs — Language is the existing LLM catalog; the rest are the
+          vetted generation modalities (surfaced from MODALITY_CATALOG over IPC). */}
+      <Tabs defaultValue="language">
+        <TabsList className="w-full flex-wrap justify-start gap-1" data-testid="mm-category-tabs">
+          <TabsTrigger value="language" data-testid="mm-cat-language">
+            Language
           </TabsTrigger>
-          <TabsTrigger value="browse" data-testid="mm-tab-browse">
-            Browse Hugging Face
-          </TabsTrigger>
+          {MODALITY_CATEGORIES.map((c) => (
+            <TabsTrigger key={c.id} value={c.id} data-testid={`mm-cat-${c.id}`}>
+              {c.label}
+            </TabsTrigger>
+          ))}
         </TabsList>
 
-        <TabsContent value="recommended" className="mt-4 flex flex-col gap-5">
-          {/* Recommendation flow. */}
-          {recommendation !== null && recommended !== null ? (
-            <div
-              className="flex flex-col gap-3 rounded-xl border border-border-default bg-accent-subtle p-4"
-              data-testid="recommendation-banner"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <ModelTag kind="recommended" data-testid="recommendation-banner-pill">
-                  Recommended
-                </ModelTag>
-                <span className="text-body font-medium text-text-primary">
-                  {recommended.displayName}
-                </span>
-                <ModelTag kind="quant" icon={null}>
-                  {recommendation.quant}
-                </ModelTag>
-              </div>
-              <p className="text-footnote text-text-secondary">{recommendation.rationale}</p>
-              <div>
-                <Button
-                  variant="accent"
-                  size="sm"
-                  loading={recBusy}
-                  disabled={recActive}
-                  data-testid="recommendation-oneclick"
-                  onClick={onOneClick}
+        {/* Generation modality tabs: a Recommended-first grid + per-category
+            Browse-Hugging-Face escape hatch. */}
+        {MODALITY_CATEGORIES.map((c) => (
+          <TabsContent key={c.id} value={c.id} className="mt-4">
+            <ModalityCategoryView category={c.id} advanced={advanced} />
+          </TabsContent>
+        ))}
+
+        <TabsContent value="language" className="mt-4">
+          {/* The existing Language catalog: Recommended vs Browse-Hugging-Face. */}
+          <Tabs defaultValue="recommended">
+            <TabsList className="w-full max-w-[380px]" data-testid="mm-tabs">
+              <TabsTrigger value="recommended" data-testid="mm-tab-recommended">
+                Recommended
+              </TabsTrigger>
+              <TabsTrigger value="browse" data-testid="mm-tab-browse">
+                Browse Hugging Face
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="recommended" className="mt-4 flex flex-col gap-5">
+              {/* Recommendation flow. */}
+              {recommendation !== null && recommended !== null ? (
+                <div
+                  className="flex flex-col gap-3 rounded-xl border border-border-default bg-accent-subtle p-4"
+                  data-testid="recommendation-banner"
                 >
-                  {recActive
-                    ? 'Running'
-                    : recommended.downloaded
-                      ? 'Start recommended model'
-                      : 'Download & start recommended model'}
-                </Button>
-              </div>
-            </div>
-          ) : null}
-
-          {/* Recommended for your Mac — a simple, non-power-user pick set
-              (fastest / best-for-images / lightweight helper), each a one-click. */}
-          {simpleSet.length > 0 ? (
-            <div className="flex flex-col gap-2" data-testid="recommended-for-mac">
-              <div>
-                <h3 className="text-body font-medium text-text-primary">
-                  Recommended for your Mac
-                </h3>
-                <p className="text-footnote text-text-muted">
-                  Simple picks tuned for your hardware — speed-optimized by default.
-                </p>
-              </div>
-              <div className="grid grid-cols-1 gap-2">
-                {simpleSet.map((pick) => {
-                  const active = status.serverRunning && status.model?.id === pick.modelId;
-                  return (
-                    <div
-                      key={`${pick.modelId}-${pick.role}`}
-                      className="flex items-center justify-between gap-3 rounded-lg border border-border-default bg-bg-raised px-3 py-2"
-                      data-testid={`simple-pick-${pick.modelId}`}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ModelTag kind="recommended" data-testid="recommendation-banner-pill">
+                      Recommended
+                    </ModelTag>
+                    <span className="text-body font-medium text-text-primary">
+                      {recommended.displayName}
+                    </span>
+                    <ModelTag kind="quant" icon={null}>
+                      {recommendation.quant}
+                    </ModelTag>
+                  </div>
+                  <p className="text-footnote text-text-secondary">{recommendation.rationale}</p>
+                  <div>
+                    <Button
+                      variant="accent"
+                      size="sm"
+                      loading={recBusy}
+                      disabled={recActive}
+                      data-testid="recommendation-oneclick"
+                      onClick={onOneClick}
                     >
-                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                        <ModelTag kind="neutral" icon={null} title="What this pick is best at">
-                          {ROLE_LABEL[pick.role]}
-                        </ModelTag>
-                        <span className="truncate text-footnote font-medium text-text-primary">
-                          {pick.displayName}
-                        </span>
-                        {pick.spec !== undefined ? <SpecPill method={pick.spec} /> : null}
-                        {pick.vision ? <ModelTag kind="vision">Vision</ModelTag> : null}
-                        <ModelTag kind="quant" icon={null}>
-                          {pick.quant}
-                        </ModelTag>
-                      </div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        loading={pickBusy === pick.modelId}
-                        disabled={active}
-                        data-testid={`simple-pick-use-${pick.modelId}`}
-                        onClick={() => void onUsePick(pick)}
-                      >
-                        {active ? 'Running' : 'Use'}
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-
-          {/* Favorites filter (only when the user has starred something). */}
-          {hasFavorites ? (
-            <button
-              type="button"
-              data-testid="mm-favorites-toggle"
-              aria-pressed={favoritesOnly}
-              onClick={() => setFavoritesOnly((v) => !v)}
-              className={
-                favoritesOnly
-                  ? 'pd-focusable flex w-fit items-center gap-2 rounded-lg border border-border-strong bg-bg-active px-3 py-1.5 text-footnote text-text-primary'
-                  : 'pd-focusable flex w-fit items-center gap-2 rounded-lg border border-border-default px-3 py-1.5 text-footnote text-text-secondary hover:bg-bg-hover'
-              }
-            >
-              <IconStar size={14} filled={favoritesOnly} />
-              {favoritesOnly ? 'Showing favorites' : 'Favorites only'}
-            </button>
-          ) : null}
-
-          {/* Advanced: the "Prefer MLX (experimental)" engine preference. The
-              MLX backend itself is a later wave — this persists the preference +
-              drives the per-card engine badge. */}
-          {advanced ? (
-            <div
-              className="flex flex-col gap-2 rounded-xl border border-border-default bg-bg-raised p-4"
-              data-testid="mm-advanced-panel"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <label
-                    id="mm-mlx-label"
-                    htmlFor="mm-mlx-toggle"
-                    className="text-body font-medium text-text-primary"
-                  >
-                    Prefer MLX (experimental)
-                  </label>
-                  <p className="mt-0.5 text-footnote text-text-muted">
-                    Use Apple&apos;s MLX engine on Apple Silicon where available. MLX uses different
-                    (non-GGUF) model files; the backend lands in a later update — this saves your
-                    preference and labels each model with its engine.
-                  </p>
-                </div>
-                <Switch
-                  id="mm-mlx-toggle"
-                  size="sm"
-                  checked={enginePref === 'mlx'}
-                  onCheckedChange={(on) => void setEnginePreference(on ? 'mlx' : 'llamacpp')}
-                  aria-labelledby="mm-mlx-label"
-                  data-testid="mm-mlx-toggle"
-                />
-              </div>
-            </div>
-          ) : null}
-
-          {/* Apple on-device model first when this machine supports it. */}
-          {showAfm ? (
-            <div className="grid grid-cols-1 gap-3">
-              <AfmModelCard advanced={advanced} availability={afmAvailability} />
-            </div>
-          ) : null}
-
-          {/* De-duplicated models, categorized by family and sorted by size. */}
-          {catalog.length === 0 ? (
-            <div className="flex items-center gap-2 py-8 text-footnote text-text-muted">
-              <Spinner size={14} /> Loading catalog…
-            </div>
-          ) : sections.length === 0 ? (
-            <div className="py-8 text-footnote text-text-muted">
-              No favorites yet — star a model to pin it here.
-            </div>
-          ) : (
-            <div className="flex flex-col gap-5" data-testid="mm-family-sections">
-              {sections.map((section) => (
-                <div key={section.family} className="flex flex-col gap-3">
-                  <h3
-                    className="text-footnote font-medium uppercase tracking-wide text-text-muted"
-                    data-testid={`mm-family-${section.family}`}
-                  >
-                    {section.family}
-                  </h3>
-                  <div className="grid grid-cols-1 gap-3">
-                    {section.groups.map((group) => (
-                      <ModelCard key={group.key} group={group} advanced={advanced} />
-                    ))}
+                      {recActive
+                        ? 'Running'
+                        : recommended.downloaded
+                          ? 'Start recommended model'
+                          : 'Download & start recommended model'}
+                    </Button>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </TabsContent>
+              ) : null}
 
-        <TabsContent value="browse" className="mt-4">
-          <HfBrowseView />
+              {/* Recommended for your Mac — a simple, non-power-user pick set
+              (fastest / best-for-images / lightweight helper), each a one-click. */}
+              {simpleSet.length > 0 ? (
+                <div className="flex flex-col gap-2" data-testid="recommended-for-mac">
+                  <div>
+                    <h3 className="text-body font-medium text-text-primary">
+                      Recommended for your Mac
+                    </h3>
+                    <p className="text-footnote text-text-muted">
+                      Simple picks tuned for your hardware — speed-optimized by default.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2">
+                    {simpleSet.map((pick) => {
+                      const active = status.serverRunning && status.model?.id === pick.modelId;
+                      return (
+                        <div
+                          key={`${pick.modelId}-${pick.role}`}
+                          className="flex items-center justify-between gap-3 rounded-lg border border-border-default bg-bg-raised px-3 py-2"
+                          data-testid={`simple-pick-${pick.modelId}`}
+                        >
+                          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                            <ModelTag kind="neutral" icon={null} title="What this pick is best at">
+                              {ROLE_LABEL[pick.role]}
+                            </ModelTag>
+                            <span className="truncate text-footnote font-medium text-text-primary">
+                              {pick.displayName}
+                            </span>
+                            {pick.spec !== undefined ? <SpecPill method={pick.spec} /> : null}
+                            {pick.vision ? <ModelTag kind="vision">Vision</ModelTag> : null}
+                            <ModelTag kind="quant" icon={null}>
+                              {pick.quant}
+                            </ModelTag>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            loading={pickBusy === pick.modelId}
+                            disabled={active}
+                            data-testid={`simple-pick-use-${pick.modelId}`}
+                            onClick={() => void onUsePick(pick)}
+                          >
+                            {active ? 'Running' : 'Use'}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Favorites filter (only when the user has starred something). */}
+              {hasFavorites ? (
+                <button
+                  type="button"
+                  data-testid="mm-favorites-toggle"
+                  aria-pressed={favoritesOnly}
+                  onClick={() => setFavoritesOnly((v) => !v)}
+                  className={
+                    favoritesOnly
+                      ? 'pd-focusable flex w-fit items-center gap-2 rounded-lg border border-border-strong bg-bg-active px-3 py-1.5 text-footnote text-text-primary'
+                      : 'pd-focusable flex w-fit items-center gap-2 rounded-lg border border-border-default px-3 py-1.5 text-footnote text-text-secondary hover:bg-bg-hover'
+                  }
+                >
+                  <IconStar size={14} filled={favoritesOnly} />
+                  {favoritesOnly ? 'Showing favorites' : 'Favorites only'}
+                </button>
+              ) : null}
+
+              {/* Advanced: the "Prefer MLX (experimental)" engine preference. The
+              MLX backend itself is a later wave — this persists the preference +
+              drives the per-card engine badge. */}
+              {advanced ? (
+                <div
+                  className="flex flex-col gap-2 rounded-xl border border-border-default bg-bg-raised p-4"
+                  data-testid="mm-advanced-panel"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <label
+                        id="mm-mlx-label"
+                        htmlFor="mm-mlx-toggle"
+                        className="text-body font-medium text-text-primary"
+                      >
+                        Prefer MLX (experimental)
+                      </label>
+                      <p className="mt-0.5 text-footnote text-text-muted">
+                        Use Apple&apos;s MLX engine on Apple Silicon where available. MLX uses
+                        different (non-GGUF) model files; the backend lands in a later update — this
+                        saves your preference and labels each model with its engine.
+                      </p>
+                    </div>
+                    <Switch
+                      id="mm-mlx-toggle"
+                      size="sm"
+                      checked={enginePref === 'mlx'}
+                      onCheckedChange={(on) => void setEnginePreference(on ? 'mlx' : 'llamacpp')}
+                      aria-labelledby="mm-mlx-label"
+                      data-testid="mm-mlx-toggle"
+                    />
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Apple on-device model first when this machine supports it. */}
+              {showAfm ? (
+                <div className="grid grid-cols-1 gap-3">
+                  <AfmModelCard advanced={advanced} availability={afmAvailability} />
+                </div>
+              ) : null}
+
+              {/* De-duplicated models, categorized by family and sorted by size. */}
+              {catalog.length === 0 ? (
+                <div className="flex items-center gap-2 py-8 text-footnote text-text-muted">
+                  <Spinner size={14} /> Loading catalog…
+                </div>
+              ) : sections.length === 0 ? (
+                <div className="py-8 text-footnote text-text-muted">
+                  No favorites yet — star a model to pin it here.
+                </div>
+              ) : (
+                <div className="flex flex-col gap-5" data-testid="mm-family-sections">
+                  {sections.map((section) => (
+                    <div key={section.family} className="flex flex-col gap-3">
+                      <h3
+                        className="text-footnote font-medium uppercase tracking-wide text-text-muted"
+                        data-testid={`mm-family-${section.family}`}
+                      >
+                        {section.family}
+                      </h3>
+                      <div className="grid grid-cols-1 gap-3">
+                        {section.groups.map((group) => (
+                          <ModelCard key={group.key} group={group} advanced={advanced} />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="browse" className="mt-4">
+              <HfBrowseView />
+            </TabsContent>
+          </Tabs>
         </TabsContent>
       </Tabs>
     </div>

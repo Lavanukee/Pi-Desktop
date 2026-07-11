@@ -21,6 +21,7 @@ import {
   CONNECTORS_INVOKE_CHANNELS,
   type ConnectorsInvokeMap,
 } from './connectors/connectors-contract';
+import { GEN_CATALOG_INVOKE_CHANNELS, type GenCatalogInvokeMap } from './gen/gen-ipc-contract';
 import { IMPORT_INVOKE_CHANNELS, type ImportInvokeMap } from './import/import-contract';
 import { PI_INVOKE_CHANNELS, type PiEventMap, type PiInvokeMap } from './pi/contract';
 import { PROJECT_INVOKE_CHANNELS, type ProjectInvokeMap } from './project/project-contract';
@@ -460,6 +461,7 @@ export type AppInvokeMap = CoreInvokeMap &
   ConnectorsInvokeMap &
   SkillsInvokeMap &
   ImportInvokeMap &
+  GenCatalogInvokeMap &
   BrowserInvokeMap &
   BrowserAgentInvokeMap &
   PtyInvokeMap &
@@ -481,6 +483,7 @@ export const APP_INVOKE_CHANNELS = [
   ...CONNECTORS_INVOKE_CHANNELS,
   ...SKILLS_INVOKE_CHANNELS,
   ...IMPORT_INVOKE_CHANNELS,
+  ...GEN_CATALOG_INVOKE_CHANNELS,
   ...BROWSER_INVOKE_CHANNELS,
   ...BROWSER_AGENT_INVOKE_CHANNELS,
   ...PTY_INVOKE_CHANNELS,

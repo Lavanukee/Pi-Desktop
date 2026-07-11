@@ -46,6 +46,55 @@ export type GenEventMap = {
   'gen:comfy-install': ComfyInstallEvent;
 };
 
+/**
+ * A plain, JSON-serializable mirror of one `@pi-desktop/gen-service`
+ * `ModalityModel` row — the model-browser DTO. Kept structural (NOT a package
+ * import) so the RENDERER never value-imports the gen-service barrel; the
+ * main-process gen-manager maps `MODALITY_CATALOG` onto this shape and answers
+ * `gen:modality-catalog`, and the renderer's `useGenStore` consumes it. Mirrors
+ * how `LlmCatalogEntry` surfaces the inference catalog. The union fields
+ * (`modality`/`backend`/`license`) are widened here — the browser only groups +
+ * labels them, it never re-derives backend behaviour.
+ */
+export interface ModalityCatalogEntry {
+  readonly id: string;
+  /** = gen-service `Modality`. Drives the category tab (image/audio/video/3d). */
+  readonly modality: 'image' | 'audio' | 'video' | '3d';
+  readonly label: string;
+  /** = gen-service `Backend` (widened). Splits Audio (TTS) from Music (comfyui). */
+  readonly backend: string;
+  /** = gen-service `License` (widened). */
+  readonly license: string;
+  /** False → the row needs a commercial/EULA gate (renders the gated lock pill). */
+  readonly commercialUse: boolean;
+  readonly approxSizeGB: number;
+  readonly minUnifiedMemoryGB?: number;
+  readonly runsLocally: boolean;
+  readonly heavy: boolean;
+  /** Enumerated + gated now, backend lands in a later phase. */
+  readonly reserved: boolean;
+  /** Vetted first-class pick — renders the green recommended sparkle + heads its grid. */
+  readonly recommended: boolean;
+  /** HF repo id (provenance / Advanced view). */
+  readonly repo?: string;
+  readonly notes?: string;
+}
+
+/**
+ * The modality-catalog surfacing channel — its OWN map (composed into the app
+ * contract on its own) so the model browser can read the vetted generation
+ * catalog WITHOUT standing up the full generation socket bridge
+ * ({@link GenInvokeMap}, which the gen-as-tools phase wires). Answered by the
+ * gen-manager's `registerGenCatalogIpc`.
+ */
+export type GenCatalogInvokeMap = {
+  'gen:modality-catalog': { request: undefined; response: { models: ModalityCatalogEntry[] } };
+};
+
+export const GEN_CATALOG_INVOKE_CHANNELS = [
+  'gen:modality-catalog',
+] as const satisfies readonly (keyof GenCatalogInvokeMap)[];
+
 /** renderer→main invoke channels. Compose into AppInvokeMap. */
 export type GenInvokeMap = {
   'gen:register': { request: { tabId: string }; response: { ok: boolean } };

@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { connectGen } from './state/gen-store';
 import { connectHf } from './state/hf-store';
 import { connectLlm } from './state/llm-store';
 import { connectPi } from './state/pi-connect';
@@ -15,6 +16,7 @@ if (!new URLSearchParams(window.location.search).has('canvasPopout')) {
   connectPi();
   connectLlm();
   connectHf();
+  connectGen();
   connectSettings();
 }
 

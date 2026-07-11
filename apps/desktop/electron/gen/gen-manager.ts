@@ -40,6 +40,7 @@ import {
   GenServiceClient,
   getModel,
   JobQueue,
+  MODALITY_CATALOG,
   type ModalityModel,
 } from '@pi-desktop/gen-service';
 import {
@@ -51,9 +52,10 @@ import {
   type GenerateImageResult,
   type GenModelSummary,
 } from '@pi-desktop/gen-tools/contract';
-import { createLogger } from '@pi-desktop/shared';
-import { type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
-import type { GenEventMap, GenSurfacePayload } from './gen-ipc-contract';
+import { createLogger, registerIpcHandlers } from '@pi-desktop/shared';
+import { type IpcMain, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
+import { toModalityCatalogEntry } from './gen-catalog-dto';
+import type { GenCatalogInvokeMap, GenEventMap, GenSurfacePayload } from './gen-ipc-contract';
 
 const log = createLogger('desktop:gen');
 
@@ -304,6 +306,28 @@ export function registerGenIpc(opts: GenManagerOptions): void {
     guard(event, 'gen:register');
     return { ok: true };
   });
+}
+
+/**
+ * Surface the vetted modality catalog to the renderer as plain DTOs
+ * (`gen:modality-catalog`), mirroring how `registerLlmIpc` surfaces the
+ * inference catalog. Deliberately SEPARATE from {@link registerGenIpc}: the
+ * model browser must be able to enumerate every vetted generation model without
+ * standing up the generation socket bridge (that lands with gen-as-tools). The
+ * renderer's `useGenStore` consumes the result; nothing here touches the
+ * gen-service barrel on the renderer side.
+ */
+export function registerGenCatalogIpc(
+  ipc: IpcMain,
+  allowSender: (event: unknown) => boolean,
+): void {
+  registerIpcHandlers<GenCatalogInvokeMap>(
+    ipc,
+    {
+      'gen:modality-catalog': () => ({ models: MODALITY_CATALOG.map(toModalityCatalogEntry) }),
+    },
+    { allowSender },
+  );
 }
 
 /** Test/lifecycle hook: close the socket server. */

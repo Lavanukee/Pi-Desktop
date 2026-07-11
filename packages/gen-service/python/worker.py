@@ -287,6 +287,11 @@ def run_image(job):
 #   lang          str?   --lang_code (e.g. "a" = American English)
 #   steps         int?   --steps (model-specific diffusion steps)
 #   audioFormat   str?   --audio_format (default "wav")
+#   refAudio      str?   --ref_audio : reference clip for ZERO-SHOT voice clone
+#                        (Qwen3-TTS / MOSS / Dia / Voxtral / Chatterbox). Absent
+#                        → preset voice only.
+#   refText       str?   --ref_text  : transcript of refAudio (only emitted when
+#                        refAudio is present, for clone models that want it).
 #   seeds         [int]? one per candidate (default [0]); the TTS CLI has no seed
 #                        knob, so seeds drive candidate COUNT + the output stamp.
 # ---------------------------------------------------------------------------
@@ -323,6 +328,13 @@ def build_audio_cmd(spec, prefix, out_dir, fmt):
         cmd += ["--lang_code", str(spec["lang"])]
     if spec.get("steps"):
         cmd += ["--steps", str(spec["steps"])]
+    # Zero-shot voice clone: pass the reference clip (and its transcript, when the
+    # clone model wants it). Without --ref_audio, mlx-audio uses a preset voice, so
+    # this is the flag that makes every "3s zero-shot clone" claim real in-product.
+    if spec.get("refAudio"):
+        cmd += ["--ref_audio", str(spec["refAudio"])]
+        if spec.get("refText"):
+            cmd += ["--ref_text", str(spec["refText"])]
     return cmd
 
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type AudioJobSpec,
   type Backend,
   type ComfyBackendConfig,
   type ComfyJobSpec,
@@ -58,10 +59,11 @@ describe('isGenEvent', () => {
 });
 
 describe('Backend union + ComfyUI job shape', () => {
-  it('admits comfyui alongside the uv-worker backends', () => {
+  it('admits comfyui + the new torch-tts backend alongside the uv-worker backends', () => {
     const backends: Backend[] = [
       'mflux',
       'mlx-audio',
+      'torch-tts',
       'triposr',
       'trellis',
       'hyperframes',
@@ -69,6 +71,8 @@ describe('Backend union + ComfyUI job shape', () => {
     ];
     // The comfyui persistent-server backend is a first-class member of the union.
     expect(backends).toContain('comfyui');
+    // torch-tts (Chatterbox) is the new torch/MPS→CPU TTS path.
+    expect(backends).toContain('torch-tts');
   });
 
   it('resolves a comfyui job through the `comfy` arm (image arm left empty)', () => {
@@ -111,6 +115,52 @@ describe('Backend union + ComfyUI job shape', () => {
     }
     const kinds = ['start', 'download', 'progress', 'candidate', 'done', 'error', 'log'];
     for (const kind of kinds) expect(isGenEvent({ event: kind })).toBe(true);
+  });
+});
+
+describe('AudioJobSpec (TTS arm + zero-shot clone wiring)', () => {
+  it('resolves a TTS job through the `audio` arm with the resolved mlx-audio model', () => {
+    const spec: AudioJobSpec = {
+      prompt: 'hello from pi',
+      modelId: 'kokoro-82m',
+      mlxAudioModel: 'prince-canuma/Kokoro-82M',
+      voice: 'af_heart',
+      seeds: [0],
+    };
+    const job: GenJob = {
+      id: 'a1',
+      modality: 'audio',
+      backend: 'mlx-audio',
+      outputDir: '/out',
+      audio: spec,
+    };
+    expect(job.audio?.mlxAudioModel).toBe('prince-canuma/Kokoro-82M');
+    expect(job.audio?.seeds).toEqual([0]);
+    // The image / comfy arms are untouched by the audio arm.
+    expect(job.image).toBeUndefined();
+    expect(job.comfy).toBeUndefined();
+  });
+
+  it('carries optional refAudio/refText for zero-shot voice clone', () => {
+    const spec: AudioJobSpec = {
+      prompt: 'clone this voice',
+      modelId: 'qwen3-tts-1.7b',
+      mlxAudioModel: 'Qwen/Qwen3-TTS-12Hz-1.7B-Base',
+      refAudio: '/refs/sample.wav',
+      refText: 'the quick brown fox',
+      seeds: [1, 2],
+    };
+    expect(spec.refAudio).toBe('/refs/sample.wav');
+    expect(spec.refText).toBe('the quick brown fox');
+    // Preset-voice jobs simply omit both fields (they are optional).
+    const preset: AudioJobSpec = {
+      prompt: 'preset only',
+      modelId: 'kokoro-82m',
+      mlxAudioModel: 'prince-canuma/Kokoro-82M',
+      seeds: [0],
+    };
+    expect(preset.refAudio).toBeUndefined();
+    expect(preset.refText).toBeUndefined();
   });
 });
 

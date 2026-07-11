@@ -225,6 +225,34 @@ class BuildAudioCmdTest(unittest.TestCase):
         self.assertNotIn("--voice", cmd)
         self.assertNotIn("--speed", cmd)
         self.assertNotIn("--lang_code", cmd)
+        self.assertNotIn("--ref_audio", cmd)
+        self.assertNotIn("--ref_text", cmd)
+
+    def test_ref_audio_and_ref_text_clone_flags(self):
+        spec = {
+            "prompt": "clone me",
+            "mlxAudioModel": "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+            "refAudio": "/refs/sample.wav",
+            "refText": "the quick brown fox",
+        }
+        cmd = worker.build_audio_cmd(spec, "p", "/out", "wav")
+        self.assertEqual(cmd[cmd.index("--ref_audio") + 1], "/refs/sample.wav")
+        self.assertEqual(cmd[cmd.index("--ref_text") + 1], "the quick brown fox")
+
+    def test_ref_text_is_omitted_without_ref_audio(self):
+        # ref_text is only meaningful alongside a reference clip.
+        cmd = worker.build_audio_cmd(
+            {"prompt": "x", "mlxAudioModel": "m", "refText": "orphan"}, "p", "/out", "wav"
+        )
+        self.assertNotIn("--ref_audio", cmd)
+        self.assertNotIn("--ref_text", cmd)
+
+    def test_ref_audio_without_ref_text_is_allowed(self):
+        cmd = worker.build_audio_cmd(
+            {"prompt": "x", "mlxAudioModel": "m", "refAudio": "/r.wav"}, "p", "/out", "wav"
+        )
+        self.assertEqual(cmd[cmd.index("--ref_audio") + 1], "/r.wav")
+        self.assertNotIn("--ref_text", cmd)
 
 
 class FindAudioOutputTest(unittest.TestCase):

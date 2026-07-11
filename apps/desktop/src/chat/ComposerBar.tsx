@@ -8,8 +8,10 @@
  *            on the footer model chip ("Auto · <tier>"), so the bar no longer
  *            renders a center tier control.
  *   RIGHT  — the "Effort" button; the effort SLIDER (blue→hot temperature pill)
- *            opens in a popover (round-14 #2). Auto · <level> by default, or an
- *            explicit level once dragged (max only reachable by an explicit drag).
+ *            opens in a popover (round-14 #2). The button reads the labeled
+ *            "Effort · <Level>" ("Effort · Balanced" by default, mirroring the
+ *            model chip's "Auto · Balanced"); a drag pins an explicit level (max
+ *            only reachable by an explicit drag).
  *
  * Reads harness status (`useHarnessStatus`), the project store, and settings;
  * writes effort through the existing settings-store `update` (which persists +

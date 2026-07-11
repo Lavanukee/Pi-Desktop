@@ -34,7 +34,9 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   activeModels,
+  ComfyClient,
   defaultImageModel,
+  defaultVideoModel,
   type GenEvent,
   type GenJob,
   GenServiceClient,
@@ -50,12 +52,22 @@ import {
   type GenBridgeResponse,
   type GenerateImageParams,
   type GenerateImageResult,
+  type GenerateVideoParams,
+  type GenerateVideoResult,
   type GenModelSummary,
 } from '@pi-desktop/gen-tools/contract';
 import { createLogger, registerIpcHandlers } from '@pi-desktop/shared';
 import { type IpcMain, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
 import { toModalityCatalogEntry } from './gen-catalog-dto';
 import type { GenCatalogInvokeMap, GenEventMap, GenSurfacePayload } from './gen-ipc-contract';
+import {
+  buildVideoJob,
+  defaultExtractPosterFrame,
+  type FrameExtractor,
+  type HyperFramesRender,
+  HyperFramesRunner,
+  makeVideoAwareRunner,
+} from './video-dispatch';
 
 const log = createLogger('desktop:gen');
 
@@ -76,6 +88,19 @@ export interface GenManagerOptions {
   readonly outputRoot?: string;
   /** Max concurrent LIGHT jobs (default 2). Heavy models always run alone. */
   readonly maxConcurrent?: number;
+  /**
+   * ComfyUI http origin resolver for `comfyui`-backed video (LTX/Wan) jobs.
+   * Default REJECTS (ComfyUI not configured) — the real app starts the supervisor
+   * and returns its `http://127.0.0.1:<port>` origin (or a remote host).
+   */
+  readonly comfyResolveOrigin?: () => Promise<string>;
+  /**
+   * Node HyperFrames motion-graphics renderer (ffmpeg + headless Chrome). Default
+   * emits a clear "not installed" error until the aux deps land.
+   */
+  readonly hyperFramesRender?: HyperFramesRender;
+  /** Poster-frame extractor for video self-critique. Default: ffmpeg best-effort. */
+  readonly extractPosterFrame?: FrameExtractor;
 }
 
 let server: net.Server | null = null;
@@ -116,9 +141,22 @@ function toSrc(p: string): string {
 export function registerGenIpc(opts: GenManagerOptions): void {
   const outputRoot = opts.outputRoot ?? path.join(tmpdir(), 'pi-generated');
   const client = new GenServiceClient({ resolveUv: opts.resolveUv });
+  // Video routes to a persistent ComfyUI server (LTX/Wan) or the Node HyperFrames
+  // runner — never the uv worker. Both default to a clear "not configured" error
+  // until their runtimes install; image (mflux) still runs on the uv `client`.
+  const comfy = new ComfyClient({
+    resolveOrigin:
+      opts.comfyResolveOrigin ??
+      (() =>
+        Promise.reject(
+          new Error('ComfyUI is not configured for local video generation on this machine'),
+        )),
+  });
+  const hyperframes = new HyperFramesRunner(opts.hyperFramesRender);
+  const extractPoster = opts.extractPosterFrame ?? defaultExtractPosterFrame;
   const jobQueue = new JobQueue({
     maxConcurrent: opts.maxConcurrent ?? 2,
-    runner: (job, o) => client.run(job, o),
+    runner: makeVideoAwareRunner({ comfy, hyperframes, fallback: client }),
   });
 
   const send = <K extends keyof GenEventMap>(channel: K, payload: GenEventMap[K]): void => {
@@ -220,10 +258,91 @@ export function registerGenIpc(opts: GenManagerOptions): void {
     }
   }
 
+  async function handleGenerateVideo(raw: GenerateVideoParams): Promise<GenerateVideoResult> {
+    const model = getModel(raw.model ?? defaultVideoModel().id);
+    if (model === undefined || model.modality !== 'video') {
+      throw new Error(`unknown or non-video model "${raw.model ?? ''}"`);
+    }
+    const jobId = `gen_${Date.now()}_${randomBytes(3).toString('hex')}`;
+    const outputDir = path.join(outputRoot, jobId);
+    await mkdir(outputDir, { recursive: true });
+
+    const clamp = (n: number, lo: number, hi: number): number =>
+      Math.max(lo, Math.min(hi, Math.round(n)));
+    const { width, height } = parseSize(raw.size);
+    const seconds = clamp(raw.seconds ?? 5, 1, 60);
+    const fps = clamp(raw.fps ?? 24, 1, 60);
+    const seed = raw.seed ?? randomInt(0, 1_000_000_000);
+
+    const job: GenJob = buildVideoJob(
+      model,
+      {
+        prompt: raw.prompt,
+        width,
+        height,
+        seconds,
+        fps,
+        steps: model.defaultSteps,
+        negativePrompt: raw.negativePrompt,
+        seed,
+      },
+      jobId,
+      outputDir,
+    );
+
+    const tabId = `pi:gen-${jobId}`;
+    const modelInfo = { id: model.id, label: model.label, license: model.license };
+    // One candidate (video generation is one clip per job); reuse the image
+    // surface payload shape (candidate.finalSrc carries the produced MP4 url).
+    let candidate: GenSurfacePayload['candidates'][number] = { seed, status: 'pending' };
+    let progress: GenSurfacePayload['progress'];
+
+    const payload = (status: GenSurfacePayload['status'], error?: string): GenSurfacePayload => ({
+      model: modelInfo,
+      prompt: raw.prompt,
+      candidates: [{ ...candidate }],
+      progress,
+      status,
+      error,
+    });
+
+    send('gen:open', { tabId, payload: payload('generating') });
+
+    const onEvent = (event: GenEvent): void => {
+      if (event.event === 'progress') {
+        candidate = { ...candidate, status: 'generating' };
+        progress = { candidate: 0, step: event.step, total: event.total };
+        send('gen:update', { tabId, payload: payload('generating') });
+      } else if (event.event === 'candidate') {
+        candidate = { ...candidate, status: 'done', finalSrc: toSrc(event.output.outputPath) };
+        send('gen:update', { tabId, payload: payload('generating') });
+      }
+    };
+
+    try {
+      const outputs = await jobQueue.enqueue(job, { heavy: model.heavy, onEvent }).result;
+      progress = undefined;
+      send('gen:update', { tabId, payload: payload('done') });
+      // A chat model can't watch an MP4 — extract a still poster frame (best-effort).
+      let posterFramePath: string | undefined;
+      const first = outputs[0];
+      if (first !== undefined) {
+        posterFramePath = await extractPoster(first.outputPath, outputDir);
+      }
+      return { jobId, outputs, posterFramePath };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      send('gen:update', { tabId, payload: payload('error', message) });
+      throw err;
+    }
+  }
+
   async function dispatch(method: string, params: Record<string, unknown>): Promise<unknown> {
     switch (method) {
       case 'generate':
         return handleGenerate(params as unknown as GenerateImageParams);
+      case 'generateVideo':
+        return handleGenerateVideo(params as unknown as GenerateVideoParams);
       case 'cancel': {
         const jobId = String((params as { jobId?: unknown }).jobId ?? '');
         return { canceled: jobQueue.cancel(jobId) };

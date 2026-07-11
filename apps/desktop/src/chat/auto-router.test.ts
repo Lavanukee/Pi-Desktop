@@ -44,6 +44,21 @@ describe('tierForPrompt (classify → tier)', () => {
   it('routes a web lookup to balanced', () => {
     expect(tierForPrompt('search the web for today’s weather in Tokyo')).toBe('balanced');
   });
+
+  // Composer "+" force-actions carry a forcedClass through the classify path so
+  // the routed model matches the pinned task class regardless of the prompt.
+  it('honors forcedClass — advanced-video pins intelligent, overriding a fast prompt', () => {
+    // Same prompt that routes to fast above…
+    expect(tierForPrompt('what is the capital of France?')).toBe('fast');
+    // …is overridden to advanced-video's tier when the "+" action forces it.
+    expect(tierForPrompt('what is the capital of France?', { forcedClass: 'advanced-video' })).toBe(
+      'intelligent',
+    );
+  });
+
+  it('honors forcedClass — perception pins balanced', () => {
+    expect(tierForPrompt('hello', { forcedClass: 'perception' })).toBe('balanced');
+  });
 });
 
 describe('tierForModelId', () => {

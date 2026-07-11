@@ -4,6 +4,7 @@
  * test hook and exposes the thin invoke wrappers the chat UI calls.
  */
 import { createEventRouter, type ImageContent, rehydrateSessionJsonl } from '@pi-desktop/engine';
+import type { TaskClass } from '@pi-desktop/harness';
 import { maybeRouteAuto } from '../chat/auto-router';
 import { ensureVisionMode } from './local-model';
 import { createPiSink, usePiStore } from './pi-slice';
@@ -146,6 +147,7 @@ export async function sendPrompt(
   message: string,
   imageDataUris: string[] = [],
   agentMessage?: string,
+  forcedClass?: TaskClass,
 ) {
   usePiStore.getState().appendUser(message, imageDataUris);
   if (messageNeedsVision({ imageDataUris })) {
@@ -159,8 +161,10 @@ export async function sendPrompt(
     // Round-12 Auto router (W3): when the selection is Auto, classify this prompt
     // and (per the hysteresis) switch the running model to the routed tier BEFORE
     // dispatch, so the turn runs on the picked model. Awaited so the send waits on
-    // the (surfaced) restart; a no-op unless mode==='auto'; never throws.
-    await maybeRouteAuto(agentMessage ?? message, { hasImages: false });
+    // the (surfaced) restart; a no-op unless mode==='auto'; never throws. A
+    // composer "+" force-action passes `forcedClass` so the routed model matches
+    // the pinned task class (e.g. "+ → Generate video" → advanced-video tier).
+    await maybeRouteAuto(agentMessage ?? message, { hasImages: false, forcedClass });
   }
   const images = imageDataUris
     .map(dataUriToImage)

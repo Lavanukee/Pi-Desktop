@@ -299,6 +299,16 @@ export function IconImage(props: IconProps) {
   );
 }
 
+export function IconFilm(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
+      <path d="M5.5 3v10M10.5 3v10" />
+      <path d="M2.5 6.3h3M2.5 9.7h3M10.5 6.3h3M10.5 9.7h3" />
+    </Icon>
+  );
+}
+
 export function IconPaperclip(props: IconProps) {
   return (
     <Icon {...props}>

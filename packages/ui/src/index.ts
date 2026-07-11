@@ -32,8 +32,13 @@ export {
   formatDuration,
   summarizeActivity,
 } from './components/activity-chain.tsx';
-export type { ComposerAddMenuProps } from './components/add-menu.tsx';
-export { ComposerAddMenu } from './components/add-menu.tsx';
+export type {
+  ComposerAddMenuProps,
+  GenActionDescriptor,
+  GenActionHandlers,
+  GenActionKey,
+} from './components/add-menu.tsx';
+export { COMPOSER_GEN_ACTIONS, ComposerAddMenu, selectGenAction } from './components/add-menu.tsx';
 export type { ArtifactPanelProps, ArtifactPanelState } from './components/artifact-panel.tsx';
 export { ArtifactPanel } from './components/artifact-panel.tsx';
 export type {

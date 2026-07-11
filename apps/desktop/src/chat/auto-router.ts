@@ -34,7 +34,7 @@
 // and node/browser-safe, so a direct source import keeps the bundle clean. (A
 // tidier fix would be a renderer-safe `@pi-desktop/harness/classify` subpath
 // export — that's W5's package to touch.)
-import { classify } from '../../../../packages/harness/src/classify/classify.ts';
+import { classify, type TaskClass } from '../../../../packages/harness/src/classify/classify.ts';
 import {
   MODEL_TIERS,
   type ModelTier,
@@ -64,9 +64,16 @@ export function tierRank(tier: ModelTier): number {
 
 // --- Pure classification / resolution --------------------------------------
 
-/** Classify a prompt and map it to the capability tier the Auto router targets. */
-export function tierForPrompt(prompt: string, opts: { hasImages?: boolean } = {}): ModelTier {
-  return modelTierForClass(classify({ prompt, hasImages: opts.hasImages }).class);
+/** Classify a prompt and map it to the capability tier the Auto router targets.
+ * A `forcedClass` (from a composer "+" force-action) short-circuits the heuristic
+ * so the routed model matches the pinned task class regardless of prompt text. */
+export function tierForPrompt(
+  prompt: string,
+  opts: { hasImages?: boolean; forcedClass?: TaskClass } = {},
+): ModelTier {
+  return modelTierForClass(
+    classify({ prompt, hasImages: opts.hasImages, forcedClass: opts.forcedClass }).class,
+  );
 }
 
 /** The tier whose resolved model matches `modelId` (the currently-running one),
@@ -267,7 +274,7 @@ async function performSwitch(tier: ModelTier, pick: LlmTierPick): Promise<void> 
  */
 export async function maybeRouteAuto(
   prompt: string,
-  opts: { hasImages?: boolean } = {},
+  opts: { hasImages?: boolean; forcedClass?: TaskClass } = {},
 ): Promise<void> {
   try {
     if (useSettingsStore.getState().settings.modelSelection.mode !== 'auto') return;
@@ -275,7 +282,10 @@ export async function maybeRouteAuto(
     if (models === undefined) return; // catalog not loaded → nothing to route to
 
     const currentModelId = useLlmStore.getState().status.model?.id ?? null;
-    const desiredTier = tierForPrompt(prompt, { hasImages: opts.hasImages });
+    const desiredTier = tierForPrompt(prompt, {
+      hasImages: opts.hasImages,
+      forcedClass: opts.forcedClass,
+    });
     // Auto effort tracks the classifier's tier for this turn (independent of
     // whether the MODEL switches — two tiers can share one model but want
     // different effort).

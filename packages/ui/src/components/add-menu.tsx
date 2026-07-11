@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { IconButton } from './button.tsx';
 import {
   DropdownMenu,
@@ -10,6 +10,7 @@ import {
 } from './dropdown-menu.tsx';
 import {
   IconConnector,
+  IconFilm,
   IconFolderPlus,
   IconGithub,
   IconGlobe,
@@ -26,7 +27,76 @@ import {
  * img3). `variant="attach"` shows just the file entries; `variant="full"` adds
  * the connectors/extensions/research/web-search block. Presentational — each
  * row calls its handler; the web-search row is a controlled toggle-check.
+ *
+ * Modality force-actions (spec §3.2): the `variant="full"` menu also carries a
+ * generation block (Generate image / Generate video / Motion graphics / Find /
+ * segment). These are "force actions" — selecting one pins the harness task
+ * class for the next send (via the composer's `forcedClass` seam) instead of
+ * merely toggling a tool, so "+ → Generate video" deterministically loads the
+ * advanced-video preset regardless of what the prompt text reads like.
  */
+
+/** The four modality force-actions, keyed for a stable dispatch + test list. */
+export type GenActionKey = 'image' | 'video' | 'motion' | 'perception';
+
+export interface GenActionDescriptor {
+  readonly key: GenActionKey;
+  readonly label: string;
+  /** Stable `data-testid` on the rendered row. */
+  readonly testid: string;
+}
+
+/**
+ * The gen block's rows, in menu order. This is the single source of truth the
+ * menu maps over (and the render test asserts against — the Radix menu content
+ * lives in a portal, so the node/SSR test verifies the driving descriptor list
+ * rather than the portalled DOM).
+ */
+export const COMPOSER_GEN_ACTIONS: readonly GenActionDescriptor[] = [
+  { key: 'image', label: 'Generate image', testid: 'add-generate-image' },
+  { key: 'video', label: 'Generate video', testid: 'add-generate-video' },
+  { key: 'motion', label: 'Motion graphics', testid: 'add-generate-motion' },
+  { key: 'perception', label: 'Find / segment in image or video', testid: 'add-perception' },
+];
+
+/** The subset of {@link ComposerAddMenuProps} the gen block dispatches to. */
+export interface GenActionHandlers {
+  onGenerateImage?: () => void;
+  onGenerateVideo?: () => void;
+  onGenerateMotion?: () => void;
+  onPerception?: () => void;
+}
+
+/**
+ * Pure dispatch: invoke the handler a gen-action key maps to (a no-op when that
+ * handler is absent). The menu's `onSelect` and its unit test both call this, so
+ * the "selecting a row invokes the right callback" wiring is covered without a
+ * DOM (the descriptor→handler mapping is the whole behavior).
+ */
+export function selectGenAction(key: GenActionKey, handlers: GenActionHandlers): void {
+  switch (key) {
+    case 'image':
+      handlers.onGenerateImage?.();
+      break;
+    case 'video':
+      handlers.onGenerateVideo?.();
+      break;
+    case 'motion':
+      handlers.onGenerateMotion?.();
+      break;
+    case 'perception':
+      handlers.onPerception?.();
+      break;
+  }
+}
+
+/** Row icon per gen-action (video/motion share the film glyph family). */
+const GEN_ACTION_ICON: Record<GenActionKey, ReactElement> = {
+  image: <IconImage size={16} />,
+  video: <IconFilm size={16} />,
+  motion: <IconSparkles size={16} />,
+  perception: <IconSearch size={16} />,
+};
 
 export interface ComposerAddMenuProps {
   /** Trigger element; defaults to a "+" IconButton. */
@@ -44,6 +114,11 @@ export interface ComposerAddMenuProps {
   onResearch?: () => void;
   webSearch?: boolean;
   onWebSearchChange?: (value: boolean) => void;
+  /** Modality force-actions (spec §3.2) — `variant="full"` only. */
+  onGenerateImage?: () => void;
+  onGenerateVideo?: () => void;
+  onGenerateMotion?: () => void;
+  onPerception?: () => void;
   /** Force-open for galleries/screenshots. */
   open?: boolean;
   defaultOpen?: boolean;
@@ -64,9 +139,19 @@ export function ComposerAddMenu({
   onResearch,
   webSearch = false,
   onWebSearchChange,
+  onGenerateImage,
+  onGenerateVideo,
+  onGenerateMotion,
+  onPerception,
   open,
   defaultOpen,
 }: ComposerAddMenuProps) {
+  const genHandlers: GenActionHandlers = {
+    onGenerateImage,
+    onGenerateVideo,
+    onGenerateMotion,
+    onPerception,
+  };
   return (
     <DropdownMenu open={open} defaultOpen={defaultOpen}>
       <DropdownMenuTrigger asChild>
@@ -112,6 +197,17 @@ export function ComposerAddMenu({
             <DropdownMenuItem icon={<IconPuzzle size={16} />} onSelect={() => onAddPlugins?.()}>
               Add plugins…
             </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {COMPOSER_GEN_ACTIONS.map((action) => (
+              <DropdownMenuItem
+                key={action.key}
+                data-testid={action.testid}
+                icon={GEN_ACTION_ICON[action.key]}
+                onSelect={() => selectGenAction(action.key, genHandlers)}
+              >
+                {action.label}
+              </DropdownMenuItem>
+            ))}
             <DropdownMenuSeparator />
             <DropdownMenuItem icon={<IconSearch size={16} />} onSelect={() => onResearch?.()}>
               Research

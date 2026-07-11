@@ -12,8 +12,10 @@ import { MediaPreviewSurface } from './media-preview-surface.tsx';
 import { SvgSurface } from './svg-surface.tsx';
 
 /**
- * Adapt an image/pdf artifact to the media preview surface: `content.text` is
- * the src (URL / data: URI), the type comes from the mime subtype or the kind.
+ * Adapt an image/video/pdf artifact to the media preview surface: `content.text`
+ * is the src (URL / data: URI), the type comes from the mime subtype or the kind
+ * (so `video/mp4` → `MP4`, a bare `video` kind → `VIDEO`), and MediaPreviewSurface
+ * picks the `<img>` / `<video>` / pdf-iframe branch off that type.
  */
 function MediaSurfaceAdapter({ content }: SurfaceProps) {
   const subtype = content.mimeType?.split('/')[1];
@@ -70,6 +72,15 @@ export function registerBuiltinSurfaces(
       canStream: false,
       opensInCanvas: true,
       match: matchKind('image'),
+      component: MediaSurfaceAdapter,
+    }),
+    // One video surface carries generated MP4s, HyperFrames output, ffmpeg edits,
+    // and burned perception overlays (MediaPreviewSurface's <video> branch).
+    registry.register({
+      kind: 'video',
+      canStream: false,
+      opensInCanvas: true,
+      match: matchKind('video'),
       component: MediaSurfaceAdapter,
     }),
     registry.register({

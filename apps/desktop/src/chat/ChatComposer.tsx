@@ -11,9 +11,22 @@
  * window-level fullscreen overlay (#A8) which feeds files through `useDropStore`.
  */
 import type { Model } from '@pi-desktop/engine';
-import { ComposerAddMenu, IconArrowUp, IconButton, IconClose } from '@pi-desktop/ui';
+import {
+  ComposerAddMenu,
+  type GenActionKey,
+  IconArrowUp,
+  IconButton,
+  IconClose,
+} from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
-import { abortPi, getCommands, runBash, sendPrompt, steerPrompt } from '../state/pi-connect';
+import {
+  abortPi,
+  applyHarnessPreset,
+  getCommands,
+  runBash,
+  sendPrompt,
+  steerPrompt,
+} from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { useThemeStore } from '../store/theme';
 import { ComposerBar } from './ComposerBar';
@@ -26,6 +39,7 @@ import {
 } from './composer/ComposerEditor';
 import { useDropStore } from './composer/drop-store';
 import { type AcToken, EMPTY_TOKEN } from './composer/tokens';
+import { GEN_ACTION_PLANS, type TaskClass } from './composer-gen-actions';
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -187,6 +201,11 @@ export function ChatComposer({
   const [skipped, setSkipped] = useState<string[]>([]);
   const [commands, setCommands] = useState<SlashCommand[]>(BUILTIN_COMMANDS);
   const [webSearch, setWebSearch] = useState(false);
+  // A composer "+" force-action (spec §3.2) pins the harness task class for the
+  // NEXT send; consumed + cleared in submit(). Drives the renderer Auto-route
+  // classify via `forcedClass` (the toolset preset is pinned eagerly on select,
+  // over the `/harness preset` seam).
+  const [forcedClass, setForcedClass] = useState<TaskClass | null>(null);
   // #19: whether the (empty-state) placeholder overflows the visible editor and
   // must fade at the bottom rather than hard-clip. Measured below.
   const [phClipped, setPhClipped] = useState(false);
@@ -370,9 +389,26 @@ export function ChatComposer({
     close: () => setToken(EMPTY_TOKEN),
   }).current;
 
+  // A composer "+" modality force-action: (a) prefill the tiny prompt scaffold
+  // and focus, and (b) pin the harness class for the next send — eagerly over the
+  // `/harness preset` seam (so the toolset preset loads and the active-class UI
+  // reflects it now) AND by stashing the class for submit() to feed the Auto-route
+  // classify. Deterministic: "+ → Generate video" ⇒ advanced-video regardless of
+  // what the user then types.
+  const onGenAction = (key: GenActionKey) => {
+    const plan = GEN_ACTION_PLANS[key];
+    apiRef.current?.setText(plan.scaffold);
+    apiRef.current?.focus();
+    setForcedClass(plan.forcedClass);
+    void applyHarnessPreset(plan.forcedClass);
+  };
+
   const submit = async () => {
     const raw = text.trim();
     if (raw === '' && attachments.length === 0) return;
+    // One-shot: capture + clear the pinned class so only THIS send is forced.
+    const pinnedClass = forcedClass;
+    setForcedClass(null);
     const imageUris = attachments
       .filter((a) => a.kind === 'image')
       .map((a) => a.dataUri)
@@ -401,7 +437,7 @@ export function ChatComposer({
       raw.length > 0 ? raw : textFiles.length > 0 ? textFiles.map((a) => a.name).join(', ') : raw;
 
     if (usePiStore.getState().agent.isStreaming) await steerPrompt(echo, agentMessage);
-    else await sendPrompt(echo, imageUris, agentMessage);
+    else await sendPrompt(echo, imageUris, agentMessage, pinnedClass ?? undefined);
   };
 
   // THEME 4 click-target fix: clicking any blank area of the composer focuses
@@ -539,6 +575,10 @@ export function ChatComposer({
               onAddFiles={() => fileInputRef.current?.click()}
               webSearch={webSearch}
               onWebSearchChange={setWebSearch}
+              onGenerateImage={() => onGenAction('image')}
+              onGenerateVideo={() => onGenAction('video')}
+              onGenerateMotion={() => onGenAction('motion')}
+              onPerception={() => onGenAction('perception')}
             />
             <div className="pd-composer-footer-spacer" />
             <ComposerFooter piModels={piModels} onOpenModels={onOpenModels} />

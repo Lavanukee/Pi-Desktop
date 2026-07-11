@@ -34,6 +34,12 @@ const ALL_TOOLS = [
   'image_edit',
   'video_generate',
   'video_edit',
+  'extract_frames',
+  'probe',
+  'video_locate',
+  'image_segment',
+  'image_detect',
+  'image_ocr',
   'motion_graphics_render',
   'model_3d_generate',
   'model_3d_view',
@@ -102,6 +108,43 @@ describe('resolvePresetTools — full tool universe', () => {
     expect(tools).not.toContain('read');
     // The page-text reader replaces the file reader for browsing.
     expect(tools).toContain('browser_read');
+  });
+
+  it('video-edit → ffmpeg façade + fs + video_locate + tool_search (generation stays in advanced-video)', () => {
+    expect(resolvePresetTools('video-edit', ALL_TOOLS)).toEqual([
+      'video_edit',
+      'extract_frames',
+      'probe',
+      'read',
+      'write',
+      'edit',
+      'ls',
+      'find',
+      'grep',
+      'video_locate',
+      'tool_search',
+    ]);
+  });
+
+  it('perception → segment/detect/locate/ocr + video_edit + tool_search', () => {
+    expect(resolvePresetTools('perception', ALL_TOOLS)).toEqual([
+      'image_segment',
+      'image_detect',
+      'video_locate',
+      'image_ocr',
+      'video_edit',
+      'tool_search',
+    ]);
+  });
+
+  it('advanced-video preset is unchanged by the video split (still generation-shaped)', () => {
+    expect(resolvePresetTools('advanced-video', ALL_TOOLS)).toEqual([
+      'video_generate',
+      'video_edit',
+      'image_generate',
+      'image_edit',
+      'tool_search',
+    ]);
   });
 
   it('simple-QA → tool-search-only', () => {

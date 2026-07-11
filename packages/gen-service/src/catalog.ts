@@ -640,6 +640,24 @@ export function defaultImageModel(): ModalityModel {
   return first;
 }
 
+/**
+ * The default VIDEO model the `generate_video` tool picks when the caller names
+ * none AND the prompt is not motion-graphics: the first RECOMMENDED, commercial-
+ * clean photoreal (ComfyUI) text→video entry — currently Wan2.1-T2V-1.3B (Apache,
+ * "most Mac-realistic"). Motion-graphics prompts route to the `hyperframes` entry
+ * instead (the tool special-cases that by backend). Falls back to any recommended
+ * video model, then the first video entry.
+ */
+export function defaultVideoModel(): ModalityModel {
+  const videos = modelsForModality('video');
+  const first =
+    videos.find((m) => m.recommended === true && m.backend === 'comfyui') ??
+    videos.find((m) => m.recommended === true) ??
+    videos[0];
+  if (first === undefined) throw new Error('catalog has no video model');
+  return first;
+}
+
 /** Whether a model needs an install-EULA / commercial gate before use. */
 export function requiresLicenseGate(model: ModalityModel): boolean {
   return model.commercialUse === false;

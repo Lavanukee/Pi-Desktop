@@ -1,10 +1,14 @@
 import { act } from 'react';
 import { describe, expect, it } from 'vitest';
 import { click, render } from '../test-utils.tsx';
-import { MediaPreviewSurface, mediaPreviewTransition } from './media-preview-surface.tsx';
+import {
+  isVideoType,
+  MediaPreviewSurface,
+  mediaPreviewTransition,
+} from './media-preview-surface.tsx';
 
 /** Fire a non-bubbling media event React attaches directly to the element. */
-async function fire(element: Element | null, type: 'load' | 'error'): Promise<void> {
+async function fire(element: Element | null, type: 'load' | 'error' | 'loadeddata'): Promise<void> {
   if (!element) throw new Error(`fire: no element for ${type}`);
   await act(async () => {
     element.dispatchEvent(new Event(type));
@@ -28,6 +32,17 @@ describe('mediaPreviewTransition', () => {
   it('reload always returns to loading', () => {
     expect(mediaPreviewTransition('loaded', { type: 'reload' })).toBe('loading');
     expect(mediaPreviewTransition('error', { type: 'reload' })).toBe('loading');
+  });
+});
+
+describe('isVideoType', () => {
+  it('matches video subtypes/kinds and rejects images + pdf', () => {
+    for (const t of ['mp4', 'MOV', 'webm', 'video', 'quicktime']) {
+      expect(isVideoType(t)).toBe(true);
+    }
+    for (const t of ['png', 'JPEG', 'svg', 'pdf', 'gif']) {
+      expect(isVideoType(t)).toBe(false);
+    }
   });
 });
 
@@ -69,6 +84,27 @@ describe('MediaPreviewSurface (body-only)', () => {
   it('self-manages error (never a dead spinner) when src is missing', async () => {
     const { container } = await render(<MediaPreviewSurface type="PNG" />);
     expect(container.querySelector('.pd-media-status')).toBeNull();
+    expect(container.querySelector('.pd-media-error-title')?.textContent).toBe(
+      'Failed to load file content',
+    );
+  });
+
+  it('renders a <video> (not <img>) for a video type and drives its load state', async () => {
+    const { container } = await render(<MediaPreviewSurface src="clip.mp4" type="MP4" />);
+    // A video element is used — never an img/iframe — and starts loading.
+    expect(container.querySelector('video')).toBeTruthy();
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('.pd-media-status')).toBeTruthy();
+
+    // `loadeddata` → loaded: spinner gone, video visible.
+    await fire(container.querySelector('video'), 'loadeddata');
+    expect(container.querySelector('.pd-media-status')).toBeNull();
+    expect(container.querySelector('video')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('shows the error panel when the video element errors', async () => {
+    const { container } = await render(<MediaPreviewSurface src="clip.webm" type="WEBM" />);
+    await fire(container.querySelector('video'), 'error');
     expect(container.querySelector('.pd-media-error-title')?.textContent).toBe(
       'Failed to load file content',
     );

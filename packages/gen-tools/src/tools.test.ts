@@ -2,7 +2,7 @@ import type { ExtensionAPI, ToolDefinition } from '@mariozechner/pi-coding-agent
 import { describe, expect, it } from 'vitest';
 import type { GenBridge } from './gen-bridge-client.ts';
 import type { GenBridgeMethod } from './gen-contract.ts';
-import { GENERATE_IMAGE_TOOL, parseSize, registerGenTools } from './tools.ts';
+import { GENERATE_IMAGE_TOOL, GENERATE_VIDEO_TOOL, parseSize, registerGenTools } from './tools.ts';
 
 type Handler = (params: Record<string, unknown> | undefined) => unknown;
 
@@ -36,6 +36,13 @@ function collectTools(
 async function run(tools: Map<string, ToolDefinition>, params: Record<string, unknown>) {
   const tool = tools.get(GENERATE_IMAGE_TOOL);
   if (tool === undefined) throw new Error('missing generate_image tool');
+  // biome-ignore lint/suspicious/noExplicitAny: minimal ctx stub for tests.
+  return tool.execute('call-1', params as any, undefined, undefined, {} as any);
+}
+
+async function runVideo(tools: Map<string, ToolDefinition>, params: Record<string, unknown>) {
+  const tool = tools.get(GENERATE_VIDEO_TOOL);
+  if (tool === undefined) throw new Error('missing generate_video tool');
   // biome-ignore lint/suspicious/noExplicitAny: minimal ctx stub for tests.
   return tool.execute('call-1', params as any, undefined, undefined, {} as any);
 }
@@ -155,5 +162,111 @@ describe('generate_image tool', () => {
     const res = await run(tools, { prompt: 'a cat', model: 'z-image-turbo' });
     expect(details(res).ok).toBe(false);
     expect(details(res).error).toContain('metal out of memory');
+  });
+});
+
+describe('generate_video tool', () => {
+  const okVideo = (params?: Record<string, unknown>) => ({
+    jobId: 'vid-7',
+    outputs: [{ outputPath: '/out/clip.mp4', modality: 'video', model: params?.model, seed: 3 }],
+    posterFramePath: '/out/poster.png',
+  });
+
+  it('registers the tool and advertises the catalog video models', () => {
+    const tools = collectTools(new FakeBridge());
+    const tool = tools.get(GENERATE_VIDEO_TOOL);
+    expect(tool?.label).toBe('Generate: Video');
+    expect(tool?.description).toContain('hyperframes');
+    expect(tool?.description).toContain('wan2.1-t2v-1.3b');
+  });
+
+  it('reports unavailable when no bridge (loaded outside Pi Desktop)', async () => {
+    const tools = collectTools(null);
+    const res = await runVideo(tools, { prompt: 'a wave' });
+    expect(details(res).ok).toBe(false);
+    expect(details(res).error).toContain('bridge unavailable');
+  });
+
+  it('rejects an unknown model against the catalog', async () => {
+    const tools = collectTools(new FakeBridge());
+    const res = await runVideo(tools, { prompt: 'a wave', model: 'sora' });
+    expect(details(res).ok).toBe(false);
+    expect(details(res).error).toContain('unknown video model');
+  });
+
+  it('routes a motion-graphics prompt to hyperframes by default', async () => {
+    const bridge = new FakeBridge().on('generateVideo', okVideo);
+    const tools = collectTools(bridge, async () => Buffer.from('x'));
+    await runVideo(tools, { prompt: 'animated title card with kinetic typography' });
+    expect(bridge.calls[0]?.method).toBe('generateVideo');
+    expect(bridge.calls[0]?.params?.model).toBe('hyperframes');
+  });
+
+  it('routes a photoreal prompt to the default video model', async () => {
+    const bridge = new FakeBridge().on('generateVideo', okVideo);
+    const tools = collectTools(bridge, async () => Buffer.from('x'));
+    await runVideo(tools, { prompt: 'a photoreal drone shot over a canyon at sunset' });
+    expect(bridge.calls[0]?.params?.model).toBe('wan2.1-t2v-1.3b');
+  });
+
+  it('enqueues via the bridge and returns the path + footnote + the poster-frame image', async () => {
+    const bridge = new FakeBridge().on('generateVideo', okVideo);
+    const reads: string[] = [];
+    const readImage = async (p: string): Promise<Buffer> => {
+      reads.push(p);
+      return Buffer.from(`png:${p}`);
+    };
+    const tools = collectTools(bridge, readImage);
+
+    const res = await runVideo(tools, {
+      prompt: 'a fox running',
+      model: 'wan2.1-t2v-1.3b',
+      size: '768x512',
+      seconds: 4,
+    });
+
+    expect(bridge.calls[0]?.method).toBe('generateVideo');
+    expect(bridge.calls[0]?.params).toMatchObject({
+      prompt: 'a fox running',
+      model: 'wan2.1-t2v-1.3b',
+      seconds: 4,
+    });
+
+    expect(details(res).ok).toBe(true);
+    expect(details(res).jobId).toBe('vid-7');
+    const text = (res.content.find((c) => c.type === 'text') as { text: string }).text;
+    expect(text).toContain('/out/clip.mp4');
+    expect(text).toContain('Model: Wan2.1 T2V (1.3B) (wan2.1-t2v-1.3b, apache-2.0)');
+    // The extracted poster frame is attached for self-critique.
+    const images = res.content.filter((c) => c.type === 'image');
+    expect(images).toHaveLength(1);
+    expect(reads).toEqual(['/out/poster.png']);
+  });
+
+  it('omits the self-critique image when no poster frame was extracted', async () => {
+    const bridge = new FakeBridge().on('generateVideo', () => ({
+      jobId: 'vid-8',
+      outputs: [{ outputPath: '/out/c.mp4', modality: 'video', model: 'hyperframes' }],
+      // posterFramePath absent (extraction failed)
+    }));
+    const reads: string[] = [];
+    const tools = collectTools(bridge, async (p) => {
+      reads.push(p);
+      return Buffer.from('x');
+    });
+    const res = await runVideo(tools, { prompt: 'a spinning logo', model: 'hyperframes' });
+    expect(details(res).ok).toBe(true);
+    expect(res.content.filter((c) => c.type === 'image')).toHaveLength(0);
+    expect(reads).toEqual([]);
+  });
+
+  it('surfaces a generator error as a structured (never-thrown) result', async () => {
+    const bridge = new FakeBridge().on('generateVideo', () => {
+      throw new Error('comfyui not configured');
+    });
+    const tools = collectTools(bridge, async () => Buffer.from('x'));
+    const res = await runVideo(tools, { prompt: 'a wave', model: 'wan2.1-t2v-1.3b' });
+    expect(details(res).ok).toBe(false);
+    expect(details(res).error).toContain('comfyui not configured');
   });
 });

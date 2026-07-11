@@ -16,6 +16,8 @@ import {
   type GenBridgeResponse,
   type GenerateImageParams,
   type GenerateImageResult,
+  type GenerateVideoParams,
+  type GenerateVideoResult,
   type GenModelSummary,
 } from './gen-contract.js';
 
@@ -174,6 +176,15 @@ export class GenBridgeClient implements GenBridge {
   /** Enqueue an image generation and await its outputs. */
   generate(params: GenerateImageParams): Promise<GenerateImageResult> {
     return this.request<GenerateImageResult>('generate', { ...params });
+  }
+
+  /**
+   * Enqueue a video generation and await its outputs + a poster frame. Distinct
+   * from {@link generate} (image): the app-side bridge dispatches this to
+   * ComfyUI (LTX/Wan) or the Node HyperFrames runner, never the uv worker.
+   */
+  generateVideo(params: GenerateVideoParams): Promise<GenerateVideoResult> {
+    return this.request<GenerateVideoResult>('generateVideo', { ...params });
   }
 
   /** Cancel a running/queued job by id. */

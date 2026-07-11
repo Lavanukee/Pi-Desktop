@@ -12,6 +12,7 @@ export type { License, MfluxBackendConfig, ModalityModel } from './catalog.js';
 export {
   activeModels,
   defaultImageModel,
+  defaultVideoModel,
   getModel,
   MODALITY_CATALOG,
   modelsForModality,
@@ -64,6 +65,7 @@ export type {
   ImageJobSpec,
   Modality,
   TerminalGenEvent,
+  VideoJobSpec,
 } from './protocol.js';
 export { isGenEvent, NdjsonParser, parseGenEventLine } from './protocol.js';
 export type { WorkerUvArgsOptions } from './worker-command.js';

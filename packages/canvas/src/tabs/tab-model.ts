@@ -16,6 +16,7 @@ export type CanvasTabKind =
   | 'html'
   | 'svg'
   | 'image'
+  | 'video'
   | 'pdf'
   | 'subagent'
   | 'markdown'

@@ -122,6 +122,36 @@ export interface AudioJobSpec {
 }
 
 /**
+ * Backend-resolved motion-graphics video parameters — the `hyperframes` analogue
+ * of {@link ImageJobSpec}. The app resolves a catalog VIDEO entry + user params
+ * into these concrete fields; the Node HyperFrames runner (ffmpeg + headless
+ * Chrome) consumes them to author an HTML/CSS/JS scene and encode it to an MP4.
+ *
+ * This arm is ONLY the deterministic, CPU, non-diffusion path. Photoreal
+ * text→video (LTX / Wan) instead resolves to a {@link ComfyJobSpec} and runs on
+ * the persistent ComfyUI server — video NEVER goes through the uv worker (whose
+ * `dispatch()` deliberately errors on video). Kept catalog-free (like
+ * {@link ImageJobSpec}) so a remote runner needs no TS catalog.
+ */
+export interface VideoJobSpec {
+  readonly prompt: string;
+  /** Catalog id — stamped as the output FOOTNOTE (e.g. `hyperframes`). */
+  readonly modelId: string;
+  readonly width?: number;
+  readonly height?: number;
+  /** Clip duration in seconds. */
+  readonly seconds?: number;
+  /** Frames per second. */
+  readonly fps?: number;
+  readonly negativePrompt?: string;
+  /**
+   * One seed per candidate; length drives how many clips the job produces (the
+   * motion-graphics runner is deterministic, so the seed also stamps the output).
+   */
+  readonly seeds: readonly number[];
+}
+
+/**
  * ComfyUI catalog wiring — analogous to {@link ../catalog!MfluxBackendConfig},
  * but for the persistent-server `comfyui` backend. A catalog entry names the
  * parameterized workflow-JSON `workflowTemplate` and a `paramMap` that binds each
@@ -167,8 +197,10 @@ export interface ComfyJobSpec {
 
 /**
  * One generation job. The modality-specific spec is a set of optional arms keyed
- * off `backend` — the `image` arm drives the uv/mflux worker; the `comfy` arm
- * drives the persistent ComfyUI adapter. `GenEvent` is shared across both.
+ * off `backend` — the `image`/`audio` arms drive the uv worker; the `comfy` arm
+ * drives the persistent ComfyUI adapter (LTX/Wan video, music, advanced image);
+ * the `video` arm drives the Node HyperFrames (ffmpeg) motion-graphics runner.
+ * `GenEvent` is shared across all of them.
  */
 export interface GenJob {
   readonly id: string;
@@ -182,6 +214,8 @@ export interface GenJob {
   readonly audio?: AudioJobSpec;
   /** ComfyUI spec — video / music / advanced-image graphs (backend `comfyui`). */
   readonly comfy?: ComfyJobSpec;
+  /** Motion-graphics video spec — the Node HyperFrames (ffmpeg) runner (backend `hyperframes`). */
+  readonly video?: VideoJobSpec;
 }
 
 /** A finished artifact a job produced. */

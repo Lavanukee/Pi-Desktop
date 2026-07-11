@@ -45,6 +45,10 @@ const IMAGE_GEN = ['image_generate', 'image_edit'] as const;
 const VIDEO_GEN = ['video_generate', 'video_edit'] as const;
 const MOTION_GEN = ['motion_graphics_render'] as const;
 const THREE_D_GEN = ['model_3d_generate', 'model_3d_view'] as const;
+// Typed ffmpeg façade (safe argv, no denoise) — the video-edit preset core.
+const VIDEO_EDIT = ['video_edit', 'extract_frames', 'probe'] as const;
+// On-device perception: Falcon-Perception (MLX) + ffmpeg-sampled video locate.
+const PERCEPTION = ['image_segment', 'image_detect', 'video_locate', 'image_ocr'] as const;
 
 /**
  * Desired preset tool lists per class. `tool_search` is appended by
@@ -62,7 +66,12 @@ export const PRESET_TOOLS: Record<TaskClass, readonly string[]> = {
   // browsing. Page reading is browser_read; page perception is browser_snapshot.
   'browser-use': [...BROWSER, 'web_fetch'],
   'motion-graphics': [...MOTION_GEN, ...IMAGE_GEN],
+  // advanced-video = GENERATION (text→video). Preset unchanged by the video split.
   'advanced-video': [...VIDEO_GEN, ...IMAGE_GEN],
+  // video-edit = the ffmpeg façade + fs tools; video_locate bridges to perception.
+  'video-edit': [...VIDEO_EDIT, ...CORE_FS, 'video_locate'],
+  // perception = analysis (segment/detect/locate/ocr); video_edit burns overlays.
+  perception: [...PERCEPTION, 'video_edit'],
   '3d': [...THREE_D_GEN, ...IMAGE_GEN],
   '2d-art': [...IMAGE_GEN],
   // 'other' → tool-search-only (empty desired list; tool_search still appended).

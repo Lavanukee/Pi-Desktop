@@ -43,9 +43,20 @@ const CORPUS: readonly [string, TaskClass][] = [
   ['Create a motion graphics intro with animated text.', 'motion-graphics'],
   ['Animate this logo with a smooth keyframe transition.', 'motion-graphics'],
 
-  // advanced-video
+  // advanced-video (GENERATION: text→video)
   ['Edit this footage and export a highlight video.', 'advanced-video'],
-  ['Add subtitles to my movie.mp4 file.', 'advanced-video'],
+  ['Render a video of a rocket launching into space.', 'advanced-video'],
+
+  // video-edit (the ffmpeg façade: trim/concat/subtitles/…)
+  ['Add subtitles to my movie.mp4 file.', 'video-edit'],
+  ['Trim the first 10 seconds off my clip.', 'video-edit'],
+  ['Splice these two clips together and remove silence.', 'video-edit'],
+  ['Add a watermark to the corner of this video.', 'video-edit'],
+
+  // perception (analysis: segment/detect/track/OCR)
+  ['Segment the people in this photo.', 'perception'],
+  ['Detect all the cars in the video and track them.', 'perception'],
+  ['Find the red car in this image and draw a bounding box.', 'perception'],
 
   // 3d
   ['Model a low-poly character in Blender and export to .glb.', '3d'],
@@ -85,11 +96,23 @@ describe('classify — attachments steer the class', () => {
     ).toBe('3d');
   });
 
-  it('a video/* mime forces advanced-video', () => {
+  it('a bare video attachment (no verb) defaults to video-edit', () => {
     expect(
       classify({ prompt: 'here you go', attachments: [{ name: 'clip', mimeType: 'video/mp4' }] })
         .class,
-    ).toBe('advanced-video');
+    ).toBe('video-edit');
+  });
+
+  it('a video attachment + an edit verb → video-edit', () => {
+    expect(
+      classify({ prompt: 'trim the first 5 seconds', attachments: [{ name: 'clip.mp4' }] }).class,
+    ).toBe('video-edit');
+  });
+
+  it('a video attachment + an analysis verb → perception', () => {
+    expect(
+      classify({ prompt: 'detect the people in this', attachments: [{ name: 'clip.mp4' }] }).class,
+    ).toBe('perception');
   });
 
   it('a source file forces coding', () => {
@@ -113,6 +136,33 @@ describe('classify — conversation continuity', () => {
   it('does not inherit on the first turn', () => {
     const r = classify({ prompt: 'continue', priorClass: 'coding', turnIndex: 0 });
     expect(r.class).not.toBe('coding');
+  });
+});
+
+describe('classify — forcedClass short-circuit (composer "+" force actions)', () => {
+  it('pins the forced class regardless of the prompt text or attachments', () => {
+    // The prompt reads like a plain question, but the "+ → Generate video"
+    // force action must still deterministically load advanced-video.
+    const r = classify({
+      prompt: 'what should I make?',
+      forcedClass: 'advanced-video',
+      attachments: [{ name: 'notes.txt' }],
+    });
+    expect(r.class).toBe('advanced-video');
+    expect(r.confidence).toBe(1);
+    expect(r.ambiguous).toBe(false);
+    expect(r.signals).toContain('forced');
+  });
+
+  it('pins perception for "+ → Find / segment"', () => {
+    expect(classify({ prompt: 'go', forcedClass: 'perception' }).class).toBe('perception');
+  });
+
+  it('wins over an otherwise-clear heuristic class', () => {
+    // "Refactor the auth module" would classify as coding; the force wins.
+    expect(classify({ prompt: 'Refactor the auth module.', forcedClass: 'video-edit' }).class).toBe(
+      'video-edit',
+    );
   });
 });
 

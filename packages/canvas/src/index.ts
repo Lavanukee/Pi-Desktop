@@ -74,7 +74,11 @@ export type {
   MediaPreviewStatus,
   MediaPreviewSurfaceProps,
 } from './surfaces/media-preview-surface.tsx';
-export { MediaPreviewSurface, mediaPreviewTransition } from './surfaces/media-preview-surface.tsx';
+export {
+  isVideoType,
+  MediaPreviewSurface,
+  mediaPreviewTransition,
+} from './surfaces/media-preview-surface.tsx';
 export { ensureDefaultSurfaces, registerBuiltinSurfaces } from './surfaces/register-builtins.tsx';
 export type { SubagentSurfaceProps } from './surfaces/subagent-surface.tsx';
 export { SubagentSurface } from './surfaces/subagent-surface.tsx';
@@ -89,6 +93,7 @@ export {
   IconCode,
   IconDownload,
   IconExpand,
+  IconFilm,
   IconFolder,
   IconFolders,
   IconMarkup,

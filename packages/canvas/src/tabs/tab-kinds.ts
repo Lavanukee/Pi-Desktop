@@ -1,6 +1,13 @@
 import { IconFile, IconGlobe, IconImage, type IconProps, IconTerminal } from '@pi-desktop/ui';
 import type { ComponentType } from 'react';
-import { IconCode, IconFolder, IconMarkup, IconPdf, IconSubagent } from '../tab-icons.tsx';
+import {
+  IconCode,
+  IconFilm,
+  IconFolder,
+  IconMarkup,
+  IconPdf,
+  IconSubagent,
+} from '../tab-icons.tsx';
 import type { CanvasTabKind } from './tab-model.ts';
 
 /** Per-kind chrome + routing metadata — the single source the tab bar reads. */
@@ -39,6 +46,9 @@ export const CANVAS_TAB_KINDS: Record<CanvasTabKind, CanvasTabKindMeta> = {
   html: { kind: 'html', label: 'Preview', icon: IconMarkup, live: false, opensInCanvas: false },
   svg: { kind: 'svg', label: 'SVG', icon: IconMarkup, live: false, opensInCanvas: false },
   image: { kind: 'image', label: 'Image', icon: IconImage, live: false, opensInCanvas: true },
+  // One video surface carries generated MP4s, HyperFrames output, ffmpeg edits,
+  // and burned perception overlays — all via MediaPreviewSurface's <video> branch.
+  video: { kind: 'video', label: 'Video', icon: IconFilm, live: false, opensInCanvas: true },
   pdf: { kind: 'pdf', label: 'PDF', icon: IconPdf, live: false, opensInCanvas: true },
   subagent: {
     kind: 'subagent',

@@ -35,10 +35,30 @@ export function mediaPreviewTransition(
   }
 }
 
+/** Media types that render in a `<video>` element rather than `<img>`/iframe. */
+const VIDEO_TYPES = new Set([
+  'VIDEO',
+  'MP4',
+  'M4V',
+  'MOV',
+  'QUICKTIME',
+  'WEBM',
+  'MKV',
+  'X-MATROSKA',
+  'OGV',
+  'OGG',
+  'AVI',
+]);
+
+/** Whether an upper-cased media type should render as a `<video>`. */
+export function isVideoType(type: string): boolean {
+  return VIDEO_TYPES.has(type.toUpperCase());
+}
+
 export interface MediaPreviewSurfaceProps {
   /** Source URL or data: URI. */
   src?: string;
-  /** Upper-cased media type ("PNG", "PDF", …); selects img vs. pdf iframe. */
+  /** Upper-cased media type ("PNG", "MP4", "PDF", …); selects img / video / pdf iframe. */
   type: string;
   /** Index used for the default alt text ("Preview N"). */
   index?: number;
@@ -82,6 +102,7 @@ export function MediaPreviewSurface({
   // fire `load`/`error`, so it resolves to `error` immediately (no dead spinner).
   const status = controlledStatus ?? (src ? internalStatus : 'error');
   const isPdf = type.toUpperCase() === 'PDF';
+  const isVideo = isVideoType(type);
 
   // A new src OR a refresh nonce is a fresh load — both re-run trigger, not read
   // in the body.
@@ -115,7 +136,21 @@ export function MediaPreviewSurface({
                 <Spinner size={24} />
               </div>
             ) : null}
-            {src && !isPdf ? (
+            {src && isVideo ? (
+              // biome-ignore lint/a11y/useMediaCaption: generated/edited clips have no track.
+              <video
+                key={attempt}
+                className="pd-media-video"
+                src={src}
+                controls
+                playsInline
+                data-status={status}
+                hidden={status !== 'loaded'}
+                onLoadedData={() => dispatch({ type: 'loaded' })}
+                onError={() => dispatch({ type: 'error' })}
+              />
+            ) : null}
+            {src && !isVideo && !isPdf ? (
               <img
                 key={attempt}
                 className="pd-media-image"

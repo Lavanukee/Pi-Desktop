@@ -5,7 +5,11 @@
  * harness toolset preset to load. The result is one of two tiers
  * (`simple-QA` | `basic-tools`) or a category preset
  * (`browser-use` | `file-ops` | `coding` | `motion-graphics` |
- * `advanced-video` | `3d` | `2d-art` | `other`).
+ * `advanced-video` | `video-edit` | `perception` | `3d` | `2d-art` | `other`).
+ *
+ * Note the video split (spec §3.4): `advanced-video` is GENERATION (text→video,
+ * LTX/Wan), `video-edit` is the typed ffmpeg façade (trim/concat/subtitles/…),
+ * and `perception` is analysis (segment/detect/track/OCR over an image or video).
  *
  * Design (plan §F): heuristics-first with a clean, optional tier-2 escalation
  * seam. Tier 2 (a utility-model classifier) is injectable via
@@ -23,6 +27,8 @@ export type TaskCategory =
   | 'coding'
   | 'motion-graphics'
   | 'advanced-video'
+  | 'video-edit'
+  | 'perception'
   | '3d'
   | '2d-art'
   | 'other';
@@ -37,6 +43,8 @@ export const TASK_CATEGORIES: readonly TaskCategory[] = [
   'coding',
   'motion-graphics',
   'advanced-video',
+  'video-edit',
+  'perception',
   '3d',
   '2d-art',
   'other',
@@ -66,6 +74,16 @@ export interface ClassifyInput {
   readonly hasImages?: boolean;
   /** The class chosen for the previous turn, if the conversation is ongoing. */
   readonly priorClass?: TaskClass;
+  /**
+   * A UI-forced class that SHORT-CIRCUITS the heuristics: when set, {@link classify}
+   * returns exactly this class (confidence 1, unambiguous) regardless of the
+   * prompt text or attachments. This is the seam for the composer "+" force
+   * actions (e.g. "+ → Generate video" pins `advanced-video`; "+ → Find / segment"
+   * pins `perception`) so the deterministic preset loads no matter how the prompt
+   * reads. Same spirit as the `priorClass` continuation branch, but unconditional
+   * and driven by an explicit user action rather than inferred continuity.
+   */
+  readonly forcedClass?: TaskClass;
   /** 0-based turn index within the session. */
   readonly turnIndex?: number;
   /**
@@ -144,6 +162,44 @@ const CATEGORY_RULES: readonly CategoryRule[] = [
       [/\banimate\b/, 1],
       [/\banimation\b/, 1],
       [/\btransition\b/, 1],
+    ],
+  },
+  // Perception (analysis of an image/video: segment/detect/track/OCR). Placed
+  // before advanced-video/video-edit so an explicit analysis verb wins a .mp4 /
+  // "video" tie against generation or editing.
+  {
+    category: 'perception',
+    patterns: [
+      [/\bsegment\b/, 2],
+      [/\bdetect\b/, 2],
+      [/\bbounding box(es)?\b/, 2],
+      [/\bmask\b/, 2],
+      [/\btrack\b/, 2],
+      [/\blabel the\b/, 2],
+      [/\bfind the .* in (this|the) (image|video|photo|frame)\b/, 2],
+      [/\bannotate\b/, 2],
+    ],
+  },
+  // Video editing (typed ffmpeg façade: trim/concat/subtitles/…). Placed before
+  // advanced-video so an edit verb + `.mp4` resolves to EDIT, not GENERATION.
+  {
+    category: 'video-edit',
+    patterns: [
+      [/\btrim\b/, 2],
+      [/\bcut\b.*\b(clip|video)\b/, 2],
+      [/\b(concat|splice|stitch)/, 2],
+      [/\bwatermark\b/, 2],
+      [/\b(subtitles?|captions?)\b/, 2],
+      [/\bremove silence\b/, 2],
+      [/\boverlay\b/, 2],
+      [/\bcrop the video\b/, 2],
+      [/\b(transcode|re-?encode)\b/, 2],
+      [/\b(speed up|slow (down|mo))\b/, 2],
+      // A `.mp4` file named together with an edit verb → decisively an edit.
+      [
+        /(?=.*\.mp4)(?=.*\b(trim|cut|crop|edit|overlay|watermark|subtitles?|captions?|concat|splice|stitch|mux|transcode|re-?encode|speed up|slow)\b)/,
+        2,
+      ],
     ],
   },
   {
@@ -310,11 +366,22 @@ function countMatches(text: string, patterns: readonly RegExp[]): string[] {
  * Tier-1 heuristic classification. Pure, deterministic, allocation-light.
  */
 export function classify(input: ClassifyInput): ClassifyResult {
+  // 0a. A UI force-action (composer "+") pins the class deterministically, ahead
+  // of every heuristic — the preset must load regardless of the prompt text.
+  if (input.forcedClass !== undefined) {
+    return {
+      class: input.forcedClass,
+      confidence: 1,
+      signals: ['forced'],
+      ambiguous: false,
+    };
+  }
+
   const trimmed = input.prompt.trim();
   const text = ` ${trimmed.toLowerCase()} `;
   const signals: string[] = [];
 
-  // 0. Conversation continuity: a terse follow-up inherits the prior class.
+  // 0b. Conversation continuity: a terse follow-up inherits the prior class.
   if (
     input.priorClass !== undefined &&
     (input.turnIndex ?? 0) > 0 &&
@@ -404,12 +471,23 @@ export function classify(input: ClassifyInput): ClassifyResult {
   return { class: cls, confidence, signals, ambiguous: confidence < 0.6 };
 }
 
+// Analysis intent over an ATTACHED video → the perception preset (not editing).
+// A bare video attachment, or one with an edit verb, defaults to video-edit.
+const PERCEPTION_VERB =
+  /\b(segment|detect|bounding box|mask|track|label|annotate|locate|find|recogni[sz]e|identify|count)\b/;
+
 function classifyAttachments(input: ClassifyInput): TaskCategory | undefined {
   const atts = input.attachments ?? [];
+  const prompt = ` ${input.prompt.toLowerCase()} `;
   for (const a of atts) {
     const name = (a.name ?? '').toLowerCase();
     const mime = (a.mimeType ?? '').toLowerCase();
-    if (mime.startsWith('video/') || /\.(mp4|mov|webm|mkv)$/.test(name)) return 'advanced-video';
+    if (mime.startsWith('video/') || /\.(mp4|mov|webm|mkv)$/.test(name)) {
+      // Attaching a video means editing/analysing it, never generating from
+      // scratch: analysis verb → perception, otherwise (edit verb or none) →
+      // video-edit. Text→video generation (advanced-video) has no attachment.
+      return PERCEPTION_VERB.test(prompt) ? 'perception' : 'video-edit';
+    }
     if (/\.(glb|gltf|obj|fbx|stl|blend)$/.test(name)) return '3d';
     if (mime.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/.test(name)) return '2d-art';
     if (/\.(ts|tsx|js|jsx|py|rs|go|java|c|cpp|rb|json|toml|yaml|yml)$/.test(name)) return 'coding';

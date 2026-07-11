@@ -43,12 +43,13 @@ export function isModelTier(v: unknown): v is ModelTier {
 /**
  * Map a concrete {@link TaskClass} → coarse tier. Pure, deterministic, tunable —
  * this switch is the SINGLE knob for the app's Auto router:
- *   simple-QA                                → quick
- *   basic-tools | other | file-ops | 2d-art  → balanced
+ *   simple-QA                                             → quick
+ *   basic-tools | other | file-ops | 2d-art | video-edit | perception → balanced
  *   coding | browser-use | 3d | motion-graphics | advanced-video → complex
  *
- * (2d-art / file-ops are LLM-orchestrated, not heavy reasoning → balanced;
- *  gen/agentic categories that plan multi-step work → complex.)
+ * (2d-art / file-ops / video-edit / perception are LLM-orchestrated typed-tool
+ *  calls, not heavy reasoning → balanced; gen/agentic categories that plan
+ *  multi-step work → complex.)
  */
 export function coarseTier(cls: TaskClass): CoarseTier {
   switch (cls) {
@@ -58,6 +59,8 @@ export function coarseTier(cls: TaskClass): CoarseTier {
     case 'other':
     case 'file-ops':
     case '2d-art':
+    case 'video-edit':
+    case 'perception':
       return 'balanced';
     case 'coding':
     case 'browser-use':

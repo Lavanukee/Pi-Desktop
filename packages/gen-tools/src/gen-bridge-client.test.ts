@@ -77,6 +77,33 @@ describe('GenBridgeClient', () => {
     client.dispose();
   });
 
+  it('round-trips generateVideo, carries the video params, and returns a poster frame', async () => {
+    const h = await startServer((req) => ({
+      result: {
+        jobId: 'v1',
+        outputs: [{ outputPath: '/o.mp4', modality: 'video', model: req.params?.model }],
+        posterFramePath: '/o.poster.png',
+      },
+    }));
+    const client = new GenBridgeClient({ socketPath: h.socketPath, token: 'secret' });
+    const result = await client.generateVideo({
+      prompt: 'a breaking wave',
+      model: 'wan2.1-t2v-1.3b',
+      seconds: 4,
+      fps: 24,
+      size: '768x512',
+    });
+    expect(result.jobId).toBe('v1');
+    expect(result.outputs[0]?.outputPath).toBe('/o.mp4');
+    expect(result.posterFramePath).toBe('/o.poster.png');
+    expect(h.received[0]).toMatchObject({
+      method: 'generateVideo',
+      token: 'secret',
+      params: { prompt: 'a breaking wave', model: 'wan2.1-t2v-1.3b', seconds: 4, fps: 24 },
+    });
+    client.dispose();
+  });
+
   it('rejects when the app returns an error', async () => {
     const h = await startServer(() => ({ ok: false, error: 'no uv' }));
     const client = new GenBridgeClient({ socketPath: h.socketPath, token: 't' });

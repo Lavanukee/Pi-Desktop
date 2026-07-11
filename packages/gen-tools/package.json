@@ -1,0 +1,29 @@
+{
+  "name": "@pi-desktop/gen-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "pi extension: a generate_image tool that generates on-device (Apple-Silicon MLX/mflux) by enqueuing jobs over a token-authed socket bridge to the app's JobQueue; progress streams to the canvas.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contract": "./src/gen-contract.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "@pi-desktop/shared": "workspace:*",
+    "@types/node": "^24.13.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "0.68.1",
+    "@pi-desktop/gen-service": "workspace:*",
+    "@sinclair/typebox": "^0.34.49"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@pi-desktop/gen-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Generation backend: remote-capable job protocol, modality catalog, uv-managed mflux/MLX worker, NDJSON-streaming client, and a memory-budget-aware JobQueue.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": "./src/protocol.ts",
+    "./catalog": "./src/catalog.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "@pi-desktop/shared": "workspace:*",
+    "@types/node": "^24.13.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

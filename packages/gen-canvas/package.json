@@ -1,0 +1,33 @@
+{
+  "name": "@pi-desktop/gen-canvas",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Generation image canvas surface: candidate grid + live progress + model-name footnote, registered additively on the canvas surface registry.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "@pi-desktop/shared": "workspace:*",
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "jsdom": "^29.1.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "@pi-desktop/canvas": "workspace:*",
+    "@pi-desktop/ui": "workspace:*"
+  }
+}

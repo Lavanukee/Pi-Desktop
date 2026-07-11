@@ -3,9 +3,12 @@
  * bottom edge of the input card and protruding below it. Three regions:
  *   LEFT   — the active-folder (project) button, relocated here from above the
  *            composer and slimmed (reuses the canvas ProjectPicker verbatim).
- *   CENTER — the active model tier (Fast/Balanced/Intelligent, from the harness
- *            `activeTier`); hover reveals "request categorized as <class>".
- *   RIGHT  — the effort SLIDER (blue fill-pill): Auto · <tier> by default, or an
+ *   CENTER — under Auto routing, the clickable "[Auto] · [<tier>]" control (both
+ *            halves open the shared tier picker); hover reveals "request
+ *            categorized as <class>". Hidden when a tier/model is pinned — the
+ *            footer chip names it then (round-14 #3).
+ *   RIGHT  — the "Effort" button; the effort SLIDER (blue→hot temperature pill)
+ *            opens in a popover (round-14 #2). Auto · <level> by default, or an
  *            explicit level once dragged (max only reachable by an explicit drag).
  *
  * Reads harness status (`useHarnessStatus`), the project store, and settings;
@@ -14,10 +17,17 @@
  * redefine it (state/model-selection + composer-bar-logic own that).
  */
 import { ProjectPicker } from '@pi-desktop/canvas';
-import { EffortSlider, Tooltip } from '@pi-desktop/ui';
+import {
+  EffortSlider,
+  IconGauge,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  Tooltip,
+} from '@pi-desktop/ui';
 import { autoEffortForTier } from '../state/model-selection';
 import { useProjectStore } from '../state/project-store';
-import { useEffortMode, useSettingsStore } from '../state/settings-store';
+import { useEffortMode, useModelSelection, useSettingsStore } from '../state/settings-store';
 import {
   classificationHover,
   EFFORT_STEP_COUNT,
@@ -26,6 +36,7 @@ import {
   tierLabel,
 } from './composer-bar-logic';
 import { useHarnessStatus } from './harness-status';
+import { TierPickerMenu } from './TierPickerMenu';
 
 /** LEFT: the relocated project (working-folder) chip, slimmed for the bar. */
 function ProjectRegion() {
@@ -47,34 +58,49 @@ function ProjectRegion() {
   );
 }
 
-/** CENTER: the active model tier + the classification hover. */
+/** CENTER: under Auto, the clickable "[Auto] · [<tier>]" control; both halves
+ * open the shared tier picker. Hidden when a tier/model is pinned (the footer
+ * chip names it). No decorative dot — the "·" is a plain text separator. */
 function TierRegion() {
   const status = useHarnessStatus();
   const activeTier = status?.activeTier ?? null;
-  const label = tierLabel(activeTier);
+  const isAuto = useModelSelection().mode === 'auto';
 
-  if (label === null) {
-    return (
-      <Tooltip side="top" label="Model tier is chosen automatically each turn">
-        <span className="pd-tier pd-tier--auto" data-testid="composer-tier">
-          <span className="pd-tier-dot" aria-hidden="true" />
-          Auto
-        </span>
-      </Tooltip>
-    );
-  }
-  const hover = classificationHover(status?.activeClass ?? null) ?? 'Active model tier';
+  // A pinned tier/model is named by the footer model chip (issue 4); the center
+  // only speaks for Auto routing, so render nothing otherwise.
+  if (!isAuto) return null;
+
+  const tier = tierLabel(activeTier);
+  const hover =
+    classificationHover(status?.activeClass ?? null) ??
+    'Model tier is chosen automatically each turn';
+
   return (
     <Tooltip side="top" label={hover}>
-      <span className="pd-tier" data-tier={activeTier} data-testid="composer-tier">
-        <span className="pd-tier-dot" data-tier={activeTier} aria-hidden="true" />
-        {label}
+      <span className="pd-tier pd-tier--auto" data-testid="composer-tier">
+        <TierPickerMenu side="top" align="start">
+          <button type="button" className="pd-tier-seg" data-testid="composer-tier-auto">
+            Auto
+          </button>
+        </TierPickerMenu>
+        {tier !== null ? (
+          <>
+            <span className="pd-tier-sep" aria-hidden="true">
+              ·
+            </span>
+            <TierPickerMenu side="top" align="start">
+              <button type="button" className="pd-tier-seg" data-testid="composer-tier-value">
+                {tier}
+              </button>
+            </TierPickerMenu>
+          </>
+        ) : null}
       </span>
     </Tooltip>
   );
 }
 
-/** RIGHT: the effort slider (Auto · tier / explicit level). */
+/** RIGHT: the "Effort" button that opens the effort slider in a popover. */
 function EffortRegion() {
   const status = useHarnessStatus();
   const activeTier = status?.activeTier ?? null;
@@ -97,17 +123,37 @@ function EffortRegion() {
   };
 
   return (
-    <EffortSlider
-      steps={EFFORT_STEP_COUNT}
-      value={view.index}
-      fill={view.fill}
-      auto={view.auto}
-      label={view.label}
-      valueText={view.valueText}
-      onLevelChange={onLevelChange}
-      onAuto={onAuto}
-      data-testid="composer-effort"
-    />
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="pd-effort-trigger"
+          data-testid="composer-effort"
+          aria-label="Effort"
+        >
+          <IconGauge size={14} />
+          <span>{view.label}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="pd-menu--instant pd-effort-popover"
+        side="top"
+        align="end"
+        sideOffset={8}
+      >
+        <EffortSlider
+          steps={EFFORT_STEP_COUNT}
+          value={view.index}
+          fill={view.fill}
+          auto={view.auto}
+          label={view.label}
+          valueText={view.valueText}
+          onLevelChange={onLevelChange}
+          onAuto={onAuto}
+          data-testid="composer-effort-slider"
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
 

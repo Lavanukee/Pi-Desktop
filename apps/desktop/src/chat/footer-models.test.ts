@@ -6,7 +6,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { LlmTierPick } from '../../electron/ipc-contract';
-import { buildTierRows } from './footer-models';
+import type { ModelSelection } from '../../electron/settings/settings-contract';
+import { buildTierRows, chipLabel } from './footer-models';
 
 function pick(modelId: string, displayName: string, over: Partial<LlmTierPick> = {}): LlmTierPick {
   return {
@@ -57,5 +58,47 @@ describe('buildTierRows (round-12)', () => {
     // Power mode still falls back to the tier label as the primary line.
     const power = buildTierRows(undefined, 'power');
     expect(power.map((r) => r.primary)).toEqual(['Fast', 'Balanced', 'Intelligent']);
+  });
+});
+
+/**
+ * Round-14 (#4): the model chip is mode-aware. POWER users always see the raw
+ * running model name; USER mode names the SELECTION — "Auto", a friendly tier
+ * label, or a pinned model's name — never the raw model id when a tier is chosen.
+ */
+describe('chipLabel (round-14)', () => {
+  const auto: ModelSelection = { mode: 'auto' };
+
+  it('POWER mode: always the raw running model name (regardless of selection)', () => {
+    expect(chipLabel('power', auto, 'balanced', 'gemma4 12b')).toBe('gemma4 12b');
+    expect(chipLabel('power', { mode: 'tier', tier: 'fast' }, 'fast', 'gemma4 e2b')).toBe(
+      'gemma4 e2b',
+    );
+  });
+
+  it('USER mode + Auto: "Auto" — never the routed model name', () => {
+    expect(chipLabel('user', auto, 'intelligent', 'qwen3.6 27b')).toBe('Auto');
+    expect(chipLabel('user', auto, null, null)).toBe('Auto');
+  });
+
+  it('USER mode + a pinned tier: the friendly TIER label, not the raw model id', () => {
+    expect(chipLabel('user', { mode: 'tier', tier: 'fast' }, null, 'gemma-4-e2b-it')).toBe('Fast');
+    expect(chipLabel('user', { mode: 'tier', tier: 'balanced' }, null, 'gemma-4-12b-it')).toBe(
+      'Balanced',
+    );
+    expect(chipLabel('user', { mode: 'tier', tier: 'intelligent' }, null, 'qwen')).toBe(
+      'Intelligent',
+    );
+  });
+
+  it('USER mode + a pinned specific model: its friendly name (falls back to raw)', () => {
+    expect(chipLabel('user', { mode: 'model', modelId: 'm1' }, null, 'Gemma 4 12B')).toBe(
+      'Gemma 4 12B',
+    );
+  });
+
+  it('returns null (→ caller supplies "Choose model") when there is nothing to name', () => {
+    expect(chipLabel('power', auto, null, null)).toBeNull();
+    expect(chipLabel('user', { mode: 'model', modelId: 'm1' }, null, null)).toBeNull();
   });
 });

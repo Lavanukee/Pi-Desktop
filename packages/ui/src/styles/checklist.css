@@ -135,14 +135,16 @@
   color: var(--pd-text-primary);
 }
 
-.pd-task-subagents-chevron {
+.pd-task-subagents-chevron,
+.pd-task-collapse-chevron {
   display: inline-flex;
   color: var(--pd-text-muted);
   transform: rotate(-90deg);
   transition: transform var(--pd-duration-base) var(--pd-easing-standard);
 }
 
-.pd-task-subagents-chevron[data-open] {
+.pd-task-subagents-chevron[data-open],
+.pd-task-collapse-chevron[data-open] {
   transform: rotate(0deg);
 }
 
@@ -157,8 +159,63 @@
   margin-top: 4px;
 }
 
+/* ---- whole-panel collapse-to-title (round-14 #6) ---- */
+
+/* The title row becomes a full-width toggle button when `collapsible`. Keeps
+ * the title's heading type so collapsing leaves an identical-looking header. */
+.pd-task-collapse-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pd-task-collapse-title {
+  font-size: var(--pd-font-size-heading);
+  line-height: var(--pd-leading-heading);
+  font-weight: var(--pd-font-weight-semibold);
+}
+
+.pd-task-collapse-count {
+  margin-left: auto;
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-footnote);
+  font-weight: var(--pd-font-weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Body tucks up by animating the grid track 1fr→0fr (no height measuring). The
+ * inner wrapper clips so the steps don't spill while the row collapses. */
+.pd-task-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-task-body[data-collapsed] {
+  grid-template-rows: 0fr;
+}
+
+.pd-task-body-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pd-task-marker--done {
     animation: none;
+  }
+
+  .pd-task-body {
+    transition: none;
   }
 }

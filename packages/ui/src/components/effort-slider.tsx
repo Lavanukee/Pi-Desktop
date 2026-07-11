@@ -1,5 +1,12 @@
 import { clsx } from 'clsx';
-import { type KeyboardEvent, type PointerEvent, type ReactNode, useCallback, useRef } from 'react';
+import {
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+  useCallback,
+  useRef,
+} from 'react';
 
 export interface EffortSliderProps {
   /** Number of discrete detents (e.g. 4 for low/medium/high/max). */
@@ -149,7 +156,10 @@ export function EffortSlider({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
       >
-        <div className="pd-effort-fill" style={{ width: pct }}>
+        <div
+          className="pd-effort-fill"
+          style={{ width: pct, ['--pd-effort-heat' as string]: clamp01(fill) } as CSSProperties}
+        >
           <span className="pd-effort-knob" aria-hidden="true" />
         </div>
       </div>

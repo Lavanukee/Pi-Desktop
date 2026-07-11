@@ -214,6 +214,23 @@ export function downloadPromptView(
   };
 }
 
+/**
+ * The tier's coarse response-speed word for the download Dialog's speedometer
+ * caption. Bigger/smarter models decode slower, so the capability tier maps
+ * inversely to felt speed: fast → "fast", balanced → "balanced", intelligent →
+ * "slow". Pure — driven off the authoritative `pendingDownload.tier`.
+ */
+export function tierSpeed(tier: ModelTier): 'fast' | 'balanced' | 'slow' {
+  switch (tier) {
+    case 'fast':
+      return 'fast';
+    case 'balanced':
+      return 'balanced';
+    default:
+      return 'slow';
+  }
+}
+
 // --- Impure orchestration (reads the live stores, drives the restart) -------
 
 /** The tier picks resolved for this machine (undefined before catalog load). */

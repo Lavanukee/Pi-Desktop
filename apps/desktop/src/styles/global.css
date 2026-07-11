@@ -230,13 +230,28 @@ body {
   transform: none;
 }
 
-/* Rail contents: a centered vertical stack of icon-only buttons. */
+/*
+ * Round-14 #7: the collapsed rail is LEFT-ANCHORED so a rail glyph sits at the
+ * SAME x as its expanded-row glyph — killing the collapse "grow + snap right,
+ * then slide left" jank. Expanded rows lead at 16px (8px .pd-sidebar-scroll pad
+ * + 8px .pd-sidebar-row pad) then an --pd-icon-size icon box; the rail buttons
+ * reproduce that lead (padding-left:16px + an inner .pd-rail-btn-icon box) so
+ * the glyph x is identical BY CONSTRUCTION in both flavors — never a hard-coded
+ * padding that only matches one. The rail width is 2×icon-center
+ * (32px + --pd-icon-size ⇒ 52px claude / 48px codex) so the icon still reads
+ * centered within the narrow rail.
+ */
+:root {
+  --pd-sidebar-rail: calc(32px + var(--pd-icon-size));
+}
+
+/* Rail contents: a left-anchored vertical stack of icon-only buttons. */
 .pd-rail {
   display: flex;
   flex: 1;
   min-height: 0;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 4px;
   padding: 4px 0 8px;
   overflow-y: auto;
@@ -244,9 +259,10 @@ body {
 .pd-rail-btn {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   width: 40px;
   height: 40px;
+  padding-left: 16px;
   border: 0;
   border-radius: var(--pd-radius-md, 8px);
   background: transparent;
@@ -258,7 +274,20 @@ body {
   background: var(--pd-bg-hover);
   color: var(--pd-text-primary);
 }
+/* Inner icon box mirroring .pd-sidebar-row-icon (packages/ui sidebar.css): an
+ * --pd-icon-size-wide centering box so the glyph centers on the same x as the
+ * expanded row's icon, in BOTH flavors. The rail glyph must be wrapped in
+ * <span class="pd-rail-btn-icon"> (equivalently, reuse .pd-sidebar-row-icon). */
+.pd-rail-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--pd-icon-size);
+  color: inherit;
+  flex: none;
+}
 .pd-rail-sep {
+  align-self: center;
   width: 24px;
   height: 1px;
   margin: 4px 0;
@@ -901,38 +930,51 @@ body {
   flex: 0 0 auto;
 }
 
-/* CENTER — the active model tier (Fast/Balanced/Intelligent), with a small
- * tier-colored dot; hover surfaces the underlying classification. */
+/* CENTER — under Auto routing, the two-part "[Auto] · [<tier>]" control. Both
+ * halves are clickable and open the shared tier picker; the "·" is a plain,
+ * non-interactive text separator. Round-14 #3 RETIRED the old decorative centre
+ * dot (.pd-tier-dot*) — TierRegion renders no dot now, and the whole control is
+ * hidden when a tier/model is pinned (the footer chip names it instead). */
 .pd-tier {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   font-size: var(--pd-font-size-caption);
   color: var(--pd-text-secondary);
   white-space: nowrap;
-  cursor: default;
+  cursor: pointer;
 }
 
 .pd-tier--auto {
   color: var(--pd-text-muted);
 }
 
-.pd-tier-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--pd-radius-full);
-  background: var(--pd-text-muted);
-  flex: none;
+/* The two clickable halves ([Auto] and [<tier>]) of the tier control. Button
+ * reset so they read as inline text on the ledge but hover/press like controls;
+ * both open the shared tier picker. */
+.pd-tier-seg {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: var(--pd-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 
-.pd-tier-dot[data-tier="fast"] {
-  background: var(--pd-status-success-fg);
+.pd-tier-seg:hover {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-primary);
 }
-.pd-tier-dot[data-tier="balanced"] {
-  background: var(--pd-status-info-fg);
-}
-.pd-tier-dot[data-tier="intelligent"] {
-  background: var(--pd-accent-primary);
+
+/* The "·" between the two halves — decorative text separator, never a hit
+ * target (replaces the retired colored .pd-tier-dot). */
+.pd-tier-sep {
+  color: var(--pd-text-muted);
+  pointer-events: none;
 }
 
 /* LEFT — the relocated project chip, slimmed to fit the thin bar: borderless +

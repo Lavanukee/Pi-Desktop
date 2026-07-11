@@ -1,72 +1,137 @@
 /**
- * Friendly auto-download card (round-12 W3). When the Auto router — or an
+ * Friendly auto-download prompt (round-14 rewrite). When the Auto router — or an
  * explicit footer tier pick — resolves to a capability tier whose model isn't on
- * disk, the router parks a `pendingDownload` and this small card floats just
- * above the composer footer:
+ * disk, the router parks a `pendingDownload` and this surfaces a CENTERED Dialog
+ * (scrim + zoom-in card + corner X) instead of the old dark pill that floated,
+ * chrome-less and jargon-heavy, above the model chip:
  *
- *   Download intelligent model
- *   qwen3.6 27b · 16 GB                      [ Download ]
+ *   ┌───────────────────────────────────────────── ✕ ┐
+ *   │  Qwen3.6 27B   [🛡 Verified] [✦ Recommended]     │
+ *   │  16 GB   Vision   MTP                             │
+ *   │  (speedometer) slow response speed               │
+ *   │  [         Download         ]                     │
+ *   └──────────────────────────────────────────────────┘
  *
- * No jargon, no push to the Model Manager — a regular user downloads (or
- * dismisses) right in the flow. On a confirmed download the router switches to
- * the new model automatically. Rendered inside {@link ComposerFooter} (anchored
- * to the model chip), so it stays in W3's scope.
+ * A regular user sees the model's identity, trust (verified/recommended),
+ * footprint (size), modalities and rough speed at a glance, then downloads (or
+ * dismisses) right in the flow — no push to the Model Manager. On a confirmed
+ * download the router switches to the new model automatically. Enriched purely
+ * from the already-loaded catalog (no IPC change). Mounted inside
+ * {@link ComposerFooter}; the Dialog self-centers by portaling to <body>.
  */
-import { Button, IconButton, IconClose, Spinner } from '@pi-desktop/ui';
+import { Button, Dialog, DialogContent, DialogTitle, IconSpeed, Spinner } from '@pi-desktop/ui';
+import { IconDownload } from '../settings/icons';
+import { ModelTag, SpecPill } from '../settings/model-tags';
 import { useLlmStore } from '../state/llm-store';
 import { useAutoDownloadPrompt, useModelSelectionStore } from '../state/model-selection-store';
-import { downloadPendingTier, downloadPromptView } from './auto-router';
+import { downloadPendingTier, formatTierBytes, tierSpeed } from './auto-router';
 
 export function AutoDownloadPrompt() {
   const pending = useAutoDownloadPrompt();
   const download = useLlmStore((s) => s.download);
-  const view = downloadPromptView(pending);
-  if (view === null) return null;
+  const catalog = useLlmStore((s) => s.catalog);
+  const recommendedModelId = useLlmStore((s) => s.recommendedModelId);
 
-  const downloading = download !== null && download.modelId === view.modelId;
+  // Closing the Dialog (corner X, Esc, or scrim click) dismisses the prompt.
+  const onOpenChange = (open: boolean) => {
+    if (!open) useModelSelectionStore.getState().dismissDownload();
+  };
+
+  if (pending === null) return null;
+  const { tier, pick } = pending;
+
+  // Cross-lookup the loaded catalog for the richer attributes the tier pick
+  // doesn't carry (verified / recommended / audio) — lighter than an IPC change.
+  const entry = catalog.find((m) => m.id === pick.modelId);
+  const recommended = entry?.recommended === true || recommendedModelId === pick.modelId;
+  const verified = entry?.verified === true || entry?.publisher?.reliable === true;
+  // `input` is `('text'|'image')[]` today; widen so an eventual 'audio' modality
+  // lights the Audio pill for free (forward-compat, no catalog change needed).
+  const modalities = (entry?.input ?? []) as readonly string[];
+  const size = formatTierBytes(pick.bytes);
+  const speed = tierSpeed(tier);
+
+  const downloading = download !== null && download.modelId === pick.modelId;
   const pct =
-    downloading && download?.fraction !== null && download?.fraction !== undefined
-      ? Math.round(download.fraction * 100)
-      : null;
+    downloading && download.fraction !== null ? Math.round(download.fraction * 100) : null;
 
   return (
-    <div
-      className="absolute bottom-full left-0 z-40 mb-2 w-72 rounded-xl border border-border-subtle bg-surface-raised p-3 shadow-popover"
-      data-testid="auto-download-prompt"
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <span className="text-body text-text-primary">{view.title}</span>
-          <span className="truncate text-footnote text-text-muted">{view.detail}</span>
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogContent showClose data-testid="auto-download-prompt">
+        <div className="flex flex-col gap-4 p-5">
+          {/* Identity + trust chips (kept clear of the corner X). */}
+          <div className="flex flex-col gap-2 pr-8">
+            <div className="flex flex-wrap items-center gap-2">
+              <DialogTitle>{pick.displayName}</DialogTitle>
+              {verified ? (
+                <ModelTag kind="reliable" data-testid="download-verified">
+                  Verified
+                </ModelTag>
+              ) : null}
+              {recommended ? (
+                <ModelTag kind="recommended" data-testid="download-recommended">
+                  Recommended
+                </ModelTag>
+              ) : null}
+            </div>
+
+            {/* Footprint + modality + speed-method chips. */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {size.length > 0 ? (
+                <ModelTag kind="size" data-testid="download-size">
+                  {size}
+                </ModelTag>
+              ) : null}
+              {pick.vision ? <ModelTag kind="vision">Vision</ModelTag> : null}
+              {modalities.includes('audio') ? <ModelTag kind="audio">Audio</ModelTag> : null}
+              {pick.spec !== undefined ? <SpecPill method={pick.spec} /> : null}
+            </div>
+          </div>
+
+          {/* Rough response speed — a speedometer + fast/balanced/slow word. */}
+          <div
+            className="flex items-center gap-1.5 text-footnote text-text-muted"
+            data-testid="download-speed"
+          >
+            <IconSpeed size={16} />
+            <span className="capitalize text-text-secondary">{speed}</span>
+            <span>response speed</span>
+          </div>
+
+          {/* Big primary download, with a secondary Cancel while in-flight. */}
+          <div className="flex flex-col gap-2">
+            <Button
+              variant="primary"
+              className="w-full gap-2"
+              disabled={downloading}
+              onClick={() => void downloadPendingTier()}
+              data-testid="auto-download-btn"
+            >
+              {downloading ? (
+                <>
+                  <Spinner size={14} />
+                  {pct !== null ? `Downloading… ${pct}%` : 'Downloading…'}
+                </>
+              ) : (
+                <>
+                  <IconDownload size={16} />
+                  Download
+                </>
+              )}
+            </Button>
+            {downloading ? (
+              <Button
+                variant="ghost"
+                className="w-full"
+                onClick={() => void useLlmStore.getState().cancelDownload()}
+                data-testid="auto-download-cancel"
+              >
+                Cancel
+              </Button>
+            ) : null}
+          </div>
         </div>
-        <IconButton
-          size="sm"
-          aria-label="Dismiss"
-          onClick={() => useModelSelectionStore.getState().dismissDownload()}
-          data-testid="auto-download-dismiss"
-        >
-          <IconClose size={14} />
-        </IconButton>
-      </div>
-      <div className="mt-2.5 flex justify-end">
-        <Button
-          variant="primary"
-          size="sm"
-          className="gap-1.5"
-          disabled={downloading}
-          onClick={() => void downloadPendingTier()}
-          data-testid="auto-download-btn"
-        >
-          {downloading ? (
-            <>
-              <Spinner size={12} />
-              {pct !== null ? `Downloading… ${pct}%` : 'Downloading…'}
-            </>
-          ) : (
-            'Download'
-          )}
-        </Button>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

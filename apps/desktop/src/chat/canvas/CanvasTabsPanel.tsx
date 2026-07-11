@@ -17,14 +17,14 @@
 import { type CanvasTab, CanvasTabs, type NewTabKind, useCanvasTabs } from '@pi-desktop/canvas';
 import { IconButton, IconClose } from '@pi-desktop/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CANVAS_MAX_WIDTH, CANVAS_MIN_WIDTH, useCanvasStore } from '../../state/canvas-store';
+import { useCanvasStore } from '../../state/canvas-store';
 import { usePiStore } from '../../state/pi-slice';
 import { artifactToPayload } from './artifacts';
 import { useBrowserAgent } from './browser-agent';
 import { useCanvasStateReporter } from './canvas-state-report';
 import { openProjectFileTree, useFileWriteCanvasRouting } from './file-tabs';
 import { useNativeSurfaces } from './native-surfaces';
-import { shouldCollapseOnResize } from './resize-collapse';
+import { createCanvasDragResize } from './resize-collapse';
 import { useSubagentCanvasRouting } from './subagent-routing';
 import { useArtifactCanvasRouting } from './tabs-routing';
 import { useBashTerminalCanvasRouting } from './terminal-routing';
@@ -90,6 +90,11 @@ export function CanvasTabsPanel() {
   // subject to the reduced-motion rules in global.css. Fullscreen sizes itself.
   const [renderWidth, setRenderWidth] = useState(0);
   const [dragging, setDragging] = useState(false);
+  // Round-14 (#8): the live per-frame width during a resize drag. Tracks the
+  // cursor both directions (data-dragging disables the transition) and may shrink
+  // below the minimum toward 0 for a provisional-collapse preview; null when idle
+  // so the `renderWidth` effect resumes ownership.
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
   useEffect(() => {
     setRenderWidth(open ? sideWidth : 0);
   }, [open, sideWidth]);
@@ -118,32 +123,33 @@ export function CanvasTabsPanel() {
     }
   }, [shown]);
 
-  const dragState = useRef<{ startX: number; startWidth: number } | null>(null);
+  const dragActive = useRef(false);
   const onHandleDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
-      dragState.current = { startX: e.clientX, startWidth: sideWidth };
+      dragActive.current = true;
       setDragging(true);
       const cleanup = () => {
-        dragState.current = null;
+        dragActive.current = false;
         setDragging(false);
+        setDragWidth(null);
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
       };
+      // Round-14 (#8): the gesture PREVIEWS on move (live `dragWidth`, persisting
+      // only above min) and COMMITS the close ONCE on release — the panel is no
+      // longer torn down mid-drag, so dragging back past the threshold un-collapses.
+      const drag = createCanvasDragResize(e.clientX, sideWidth, {
+        setSideWidth,
+        setDragWidth,
+        setCanvasOpen,
+        cleanup,
+      });
       const onMove = (ev: MouseEvent) => {
-        const st = dragState.current;
-        if (st === null) return;
-        const next = st.startWidth + (st.startX - ev.clientX);
-        // Dragged the handle well past the minimum (more than halfway below it)
-        // → treat as Collapse and close the panel (round-10 #14).
-        if (shouldCollapseOnResize(next)) {
-          cleanup();
-          setCanvasOpen(false);
-          return;
-        }
-        setSideWidth(Math.max(CANVAS_MIN_WIDTH, Math.min(CANVAS_MAX_WIDTH, next)));
+        if (!dragActive.current) return;
+        drag.move(ev.clientX);
       };
-      const onUp = () => cleanup();
+      const onUp = () => drag.up();
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
     },
@@ -228,12 +234,17 @@ export function CanvasTabsPanel() {
     );
   }
 
+  // While dragging, track the live preview width (both directions, below min
+  // toward 0); otherwise the animated `renderWidth` owns it. data-dragging
+  // disables the transition so the drag tracks the cursor 1:1.
+  const shownWidth = dragging && dragWidth !== null ? dragWidth : renderWidth;
+
   return (
     <aside
       className="pd-canvas-rail relative flex h-full shrink-0 flex-col overflow-hidden bg-bg-raised"
       data-dragging={dragging ? 'true' : undefined}
       data-open={open ? 'true' : 'false'}
-      style={{ width: renderWidth }}
+      style={{ width: shownWidth }}
       data-testid="canvas-tabs-panel"
     >
       {open ? (

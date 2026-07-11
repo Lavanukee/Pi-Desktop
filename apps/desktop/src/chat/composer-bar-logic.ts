@@ -69,8 +69,16 @@ export function effortSliderView(
     const level = activeTier !== null ? autoEffortForTier(activeTier) : effort;
     const index = Math.max(0, EFFORT_STEPS.indexOf(level));
     const fill = levelToSlider(level);
+    // The readout names the EFFORT LEVEL the tier resolves to (Low/Medium/High),
+    // not the tier itself — "Auto · Medium", not "Auto · balanced".
     return activeTier !== null
-      ? { auto: true, index, fill, label: `Auto · ${activeTier}`, valueText: `Auto, ${activeTier}` }
+      ? {
+          auto: true,
+          index,
+          fill,
+          label: `Auto · ${capitalize(level)}`,
+          valueText: `Auto, ${level}`,
+        }
       : { auto: true, index, fill, label: 'Auto', valueText: 'Auto' };
   }
   const index = Math.max(0, EFFORT_STEPS.indexOf(effort));

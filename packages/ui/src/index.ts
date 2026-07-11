@@ -178,6 +178,14 @@ export type { MessageRowProps, ThreadProps } from './components/message-row.tsx'
 export { MessageRow, Thread } from './components/message-row.tsx';
 export type { EffortOption, ModelOption, ModelPickerProps } from './components/model-picker.tsx';
 export { ModelPicker } from './components/model-picker.tsx';
+export type { PopoverContentProps } from './components/popover.tsx';
+export {
+  Popover,
+  PopoverAnchor,
+  PopoverClose,
+  PopoverContent,
+  PopoverTrigger,
+} from './components/popover.tsx';
 export type {
   QuestionAnswer,
   QuestionCardProps,

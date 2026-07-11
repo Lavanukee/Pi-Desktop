@@ -35,24 +35,29 @@ describe('classificationHover', () => {
 });
 
 describe('effortSliderView', () => {
-  it('auto + tier: reads "Auto · <tier>" and fills to the tier auto level', () => {
+  it('auto + tier: reads "Auto · <effort-level>" (NOT the tier name) and fills to the tier auto level', () => {
+    // fast → low effort → "Auto · Low"
     expect(effortSliderView('auto', 'medium', 'fast')).toMatchObject({
       auto: true,
       index: 0,
       fill: 0,
-      label: 'Auto · fast',
-      valueText: 'Auto, fast',
+      label: 'Auto · Low',
+      valueText: 'Auto, low',
     });
 
+    // balanced → medium effort → "Auto · Medium"
     const bal = effortSliderView('auto', 'low', 'balanced');
     expect(bal.auto).toBe(true);
-    expect(bal.label).toBe('Auto · balanced');
+    expect(bal.label).toBe('Auto · Medium');
+    expect(bal.valueText).toBe('Auto, medium');
     expect(bal.index).toBe(1); // medium
     expect(bal.fill).toBeCloseTo(1 / 3, 5);
 
+    // intelligent → high effort → "Auto · High" (the tick below max, never max)
     const smart = effortSliderView('auto', 'low', 'intelligent');
-    expect(smart.label).toBe('Auto · intelligent');
-    expect(smart.index).toBe(2); // high — the tick below max, never max
+    expect(smart.label).toBe('Auto · High');
+    expect(smart.valueText).toBe('Auto, high');
+    expect(smart.index).toBe(2);
     expect(smart.fill).toBeCloseTo(2 / 3, 5);
   });
 

@@ -15,6 +15,7 @@ import {
   SWITCH_DEBOUNCE_MS,
   tierForModelId,
   tierForPrompt,
+  tierSpeed,
 } from './auto-router';
 
 const FRESH: RouterMemory = { pendingDowngrade: null, lastSwitchAt: 0 };
@@ -201,5 +202,13 @@ describe('downloadPromptView + formatTierBytes', () => {
 
   it('is null when nothing is pending', () => {
     expect(downloadPromptView(null)).toBeNull();
+  });
+});
+
+describe('tierSpeed', () => {
+  it('maps each capability tier to its felt-speed word (smarter = slower)', () => {
+    expect(tierSpeed('fast')).toBe('fast');
+    expect(tierSpeed('balanced')).toBe('balanced');
+    expect(tierSpeed('intelligent')).toBe('slow');
   });
 });

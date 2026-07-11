@@ -4,9 +4,10 @@
  * + the canvas ProjectPicker + zustand hooks). Maps:
  *   - the harness `activeTier` → the CENTER tier label (via TIER_LABEL),
  *   - the harness `activeClass` → the hover copy "request categorized as …",
- *   - `effortMode` + `effort` + `activeTier` → the RIGHT effort readout
- *     ("Effort · <Level>": the auto level resolved from the tier, or the
- *     explicit level), mirroring the model chip's "Auto · <Tier>".
+ *   - `effortMode` + `effort` + `activeTier` → the RIGHT effort readout: "Effort ·
+ *     Auto" in auto mode (the word "Auto", mirroring the model chip), or "Effort ·
+ *     <Level>" when an explicit level is pinned. The tier still drives the slider
+ *     POSITION in auto so the knob rests where routing would land.
  *
  * The harness stays 4-level; Auto ↔ tier resolution lives entirely here + in
  * `state/model-selection` (imported, not redefined).
@@ -56,14 +57,14 @@ export function effortDisplay(level: EffortLevel): string {
 
 /** Everything the {@link EffortSlider} needs, derived from settings + the tier. */
 export interface EffortSliderView {
-  /** Auto mode: the readout follows the tier's auto level and a drag flips to a
-   * pinned level; either way the label reads "Effort · <Level>". */
+  /** Auto mode: the slider POSITION follows the tier's auto level and a drag flips
+   * to a pinned level; the label reads the word "Effort · Auto". */
   readonly auto: boolean;
   /** The explicit detent index (0..EFFORT_STEP_COUNT-1) for aria + keyboard. */
   readonly index: number;
   /** Fill fraction (0..1): auto → the tier's auto level; level → the level. */
   readonly fill: number;
-  /** Labeled two-part readout: "Effort · Balanced" / "Effort · High" / "Effort · Max". */
+  /** Labeled readout: "Effort · Auto" (auto) or "Effort · Balanced/High/Max" (level). */
   readonly label: string;
   /** Screen-reader value text. */
   readonly valueText: string;
@@ -72,11 +73,11 @@ export interface EffortSliderView {
 /**
  * Resolve the slider surface. In Auto the fill follows the active tier
  * (fast→min, balanced→mid, intelligent→the tick below max via
- * `autoEffortForTier`); with no tier yet it rests on the last explicit level.
- * In level mode it pins the explicit level (max is only reachable here, by an
- * explicit drag). The readout is always the labeled two-part "Effort · <Level>"
- * (the word "Effort" is kept next to the control), mirroring the model chip's
- * "Auto · <Tier>" — the mid/auto default reads "Effort · Balanced".
+ * `autoEffortForTier`); with no tier yet it rests on the last explicit level. The
+ * Auto readout is the literal "Effort · Auto" (mirroring the model chip's Auto),
+ * while the slider position still shows where routing would land. In level mode it
+ * pins the explicit level and reads "Effort · <Level>" (max is only reachable
+ * here, by an explicit drag).
  */
 export function effortSliderView(
   effortMode: EffortMode,
@@ -84,19 +85,20 @@ export function effortSliderView(
   activeTier: ModelTier | null,
 ): EffortSliderView {
   if (effortMode === 'auto') {
-    // The readout names the EFFORT LEVEL the tier resolves to (Low/Balanced/
-    // High), not the tier itself — "Effort · Balanced", not "Effort · balanced".
-    // Before the classifier runs (no tier) it rests on the explicit level.
+    // In Auto the readout says the literal word "Auto" ("Effort · Auto"), NOT the
+    // resolved level — Auto means "let routing pick the effort", mirroring the
+    // model chip's Auto. The tier still drives the slider POSITION (index/fill)
+    // via `autoEffortForTier` so the knob rests where routing would land; before
+    // the classifier runs (no tier) it rests on the last explicit level.
     const level = activeTier !== null ? autoEffortForTier(activeTier) : effort;
     const index = Math.max(0, EFFORT_STEPS.indexOf(level));
     const fill = levelToSlider(level);
-    const display = effortDisplay(level);
     return {
       auto: true,
       index,
       fill,
-      label: `Effort · ${display}`,
-      valueText: `Effort, ${display}`,
+      label: 'Effort · Auto',
+      valueText: 'Effort, Auto',
     };
   }
   const index = Math.max(0, EFFORT_STEPS.indexOf(effort));

@@ -45,6 +45,41 @@ const NEW_TAB_ITEMS: ReadonlyArray<{
   { kind: 'subagent', label: 'Subagents', icon: IconSubagent },
 ];
 
+/** One entry of {@link NEW_TAB_ITEMS}. */
+type NewTabItem = (typeof NEW_TAB_ITEMS)[number];
+
+/**
+ * ONE full-width interactive row for a new-tab action, shared by BOTH the `+`
+ * dropdown and the empty-state list so the two can never drift (they map over
+ * the same {@link NEW_TAB_ITEMS}). The ENTIRE row is a single button: icon +
+ * label on the left, the optional ⌘P/⌘T shortcut right-aligned INSIDE the same
+ * clickable element — the shortcut cell and the trailing whitespace are part of
+ * the hit target, so there is no dead zone on the right (round-14 canvas wave).
+ * `className` selects the context look; the dropdown passes `role="menuitem"`.
+ */
+function NewTabActionRow({
+  item,
+  className,
+  role,
+  onPick,
+}: {
+  item: NewTabItem;
+  className: string;
+  role?: 'menuitem';
+  onPick: (kind: NewTabKind) => void;
+}) {
+  const Icon = item.icon;
+  return (
+    <button type="button" role={role} className={className} onClick={() => onPick(item.kind)}>
+      <span className="pd-menu-icon" aria-hidden="true">
+        <Icon size={16} />
+      </span>
+      <span className="pd-canvas-action-label">{item.label}</span>
+      {item.hint ? <span className="pd-menu-hint">{item.hint}</span> : null}
+    </button>
+  );
+}
+
 /**
  * The app-supplied wiring for LIVE surfaces (browser/terminal native views,
  * media downloads, subagent selection), all keyed by `tabId` (+ `kind` for the
@@ -321,15 +356,29 @@ export function CanvasTabs({
               />
             )
           ) : (
+            // Empty canvas (no tabs): present the SAME 4 new-tab actions as the
+            // `+` menu directly, up-front, as a centered clickable list (Codex
+            // reference) — each opens that surface, no `+` click required. The
+            // `+` menu itself is kept for when tabs already exist (in the tab
+            // strip). Both map over the shared NEW_TAB_ITEMS so they never drift.
             <div className="pd-canvas-empty pd-canvas-empty--home">
               <span className="pd-canvas-empty-icon" aria-hidden="true">
                 <IconPanelRight size={40} />
               </span>
               <p className="pd-canvas-empty-title">Nothing on the canvas yet</p>
               <p className="pd-canvas-empty-sub">
-                Open a file tree, a browser, or a terminal to see it here.
+                Open a file tree, a browser, a terminal, or your subagents.
               </p>
-              <NewTabButton onPick={newTab} onOpenChange={onMenuOpenChange} />
+              <div className="pd-canvas-empty-actions">
+                {NEW_TAB_ITEMS.map((item) => (
+                  <NewTabActionRow
+                    key={item.kind}
+                    item={item}
+                    className="pd-canvas-empty-action"
+                    onPick={newTab}
+                  />
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -396,27 +445,18 @@ function NewTabButton({
           role="menu"
           style={pos ? { top: pos.top, left: pos.left } : undefined}
         >
-          {NEW_TAB_ITEMS.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.kind}
-                type="button"
-                role="menuitem"
-                className="pd-menu-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  onPick(item.kind);
-                }}
-              >
-                <span className="pd-menu-icon" aria-hidden="true">
-                  <Icon size={16} />
-                </span>
-                {item.label}
-                {item.hint ? <span className="pd-menu-hint">{item.hint}</span> : null}
-              </button>
-            );
-          })}
+          {NEW_TAB_ITEMS.map((item) => (
+            <NewTabActionRow
+              key={item.kind}
+              item={item}
+              role="menuitem"
+              className="pd-menu-item"
+              onPick={(kind) => {
+                setMenuOpen(false);
+                onPick(kind);
+              }}
+            />
+          ))}
         </div>
       ) : null}
     </div>

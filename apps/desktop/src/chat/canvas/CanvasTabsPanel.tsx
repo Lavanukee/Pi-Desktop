@@ -193,8 +193,9 @@ export function CanvasTabsPanel() {
   // Render nothing only once the closed rail has finished sliding out AND has no
   // tabs to preserve (`exiting` holds it through the exit transition above).
   // When the user opens it with no tabs (top-right toggle), the rail shows
-  // CanvasTabs' empty state (its `+` opens a browser tab); a routed-in surface
-  // fills it.
+  // CanvasTabs' empty state — the 4 new-tab options (Files / Browser / Terminal /
+  // Subagents) presented directly, each routed through `onNewTab`; a routed-in
+  // surface fills it.
   if (!shown && !exiting && !fullscreen) return null;
 
   // `onCollapse` closes THIS panel (the app slides it out). `onCopy` defaults to

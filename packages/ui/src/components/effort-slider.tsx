@@ -17,14 +17,15 @@ export interface EffortSliderProps {
    * an explicit level it is that level's position. Kept separate from `value`
    * so the app maps Auto ↔ tier without the component knowing about tiers. */
   fill: number;
-  /** Auto mode: the readout shows `label` on the Auto affordance and a drag
-   * flips to an explicit level. */
+  /** Whether Auto is active: lights the "Auto" toggle; a drag flips to a pinned
+   * level. The fill/knob position is always driven by `fill`, not this flag. */
   auto: boolean;
-  /** Active-mode readout text: "Auto · balanced" (auto) or "High" (level). */
+  /** The header readout shown accent-lit at the top of the panel:
+   * "Effort · Auto" (auto) or "Effort · High" (a pinned level). */
   label: string;
   /** Screen-reader value text (defaults to `label`). */
   valueText?: string;
-  /** Text for the Auto affordance when NOT active (default "Auto"). */
+  /** Text for the Auto toggle (default "Auto"). */
   autoLabel?: string;
   /** Fired with the detent index the user dragged/keyed to (flips to level). */
   onLevelChange: (index: number) => void;
@@ -49,14 +50,18 @@ export function pointerToIndex(fraction: number, steps: number): number {
 }
 
 /**
- * EffortSlider — the round-12 composer effort control (jedd #6): a chunky BLUE
- * fill-pill that fills left→right (least→most effort), a leftmost Auto
- * affordance, and a level readout. Purely presentational + controlled: the app
- * maps detents ↔ effort levels and Auto ↔ the active model tier, passing the
- * resolved `fill`/`label` in and taking `onLevelChange`/`onAuto` out.
+ * EffortSlider — the composer effort control (jedd #6), restyled round-16 to the
+ * Claude "thinking effort" look: a titled popover panel with the active readout
+ * accent-lit up top beside a "?" help affordance, a horizontal track carrying a
+ * dithered/textured heat fill (cool blue → hot near Max) and a clean white knob,
+ * flanked by "Faster" / "Smarter" end labels, with a subtle "Auto" toggle below.
+ *
+ * Purely presentational + controlled: the app maps detents ↔ effort levels and
+ * Auto ↔ the active model tier, passing the resolved `fill`/`label` in and taking
+ * `onLevelChange`/`onAuto` out — the value logic is unchanged by the restyle.
  *
  * Accessible: the track is a `role="slider"` driven by arrows/Home/End as well
- * as pointer drag; the blue fill/thumb transitions honor reduced-motion (CSS).
+ * as pointer drag; the fill/knob transitions honor reduced-motion (CSS).
  */
 export function EffortSlider({
   steps,
@@ -131,46 +136,69 @@ export function EffortSlider({
       data-auto={auto ? '' : undefined}
       data-testid={testId}
     >
-      <button
-        type="button"
-        className="pd-effort-auto"
-        data-active={auto ? '' : undefined}
-        aria-pressed={auto}
-        onClick={onAuto}
-        data-testid={testId !== undefined ? `${testId}-auto` : undefined}
-      >
-        {auto ? label : autoLabel}
-      </button>
-      <div
-        ref={trackRef}
-        className="pd-effort-track"
-        role="slider"
-        tabIndex={0}
-        aria-label="Effort level"
-        aria-valuemin={0}
-        aria-valuemax={max}
-        aria-valuenow={value}
-        aria-valuetext={valueText ?? label}
-        onKeyDown={onKeyDown}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-      >
-        <div
-          className="pd-effort-fill"
-          style={{ width: pct, ['--pd-effort-heat' as string]: clamp01(fill) } as CSSProperties}
-        >
-          <span className="pd-effort-knob" aria-hidden="true" />
-        </div>
-      </div>
-      {auto ? null : (
+      {/* Header: the active readout (accent-lit) + a "?" help affordance. */}
+      <div className="pd-effort-head">
         <span
-          className="pd-effort-value"
+          className="pd-effort-name"
           data-testid={testId !== undefined ? `${testId}-value` : undefined}
         >
           {label}
         </span>
-      )}
+        <button
+          type="button"
+          className="pd-effort-help"
+          aria-label="How effort works"
+          title="Higher effort spends more time reasoning before answering. Auto matches the effort to each request."
+        >
+          ?
+        </button>
+      </div>
+
+      {/* Scale: Faster ── track ── Smarter. */}
+      <div className="pd-effort-scale">
+        <span className="pd-effort-flank" aria-hidden="true">
+          Faster
+        </span>
+        <div
+          ref={trackRef}
+          className="pd-effort-track"
+          role="slider"
+          tabIndex={0}
+          aria-label="Effort level"
+          aria-valuemin={0}
+          aria-valuemax={max}
+          aria-valuenow={value}
+          aria-valuetext={valueText ?? label}
+          onKeyDown={onKeyDown}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+        >
+          <div
+            className="pd-effort-fill"
+            style={{ width: pct, ['--pd-effort-heat' as string]: clamp01(fill) } as CSSProperties}
+          >
+            <span className="pd-effort-knob" aria-hidden="true" />
+          </div>
+        </div>
+        <span className="pd-effort-flank" aria-hidden="true">
+          Smarter
+        </span>
+      </div>
+
+      {/* Footer: the Auto ↔ pinned-level toggle (lit while Auto is active). */}
+      <div className="pd-effort-foot">
+        <button
+          type="button"
+          className="pd-effort-auto"
+          data-active={auto ? '' : undefined}
+          aria-pressed={auto}
+          onClick={onAuto}
+          data-testid={testId !== undefined ? `${testId}-auto` : undefined}
+        >
+          {autoLabel}
+        </button>
+      </div>
     </div>
   );
 }

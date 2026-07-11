@@ -45,42 +45,41 @@ describe('effortDisplay', () => {
 });
 
 describe('effortSliderView', () => {
-  it('auto + tier: reads "Effort · <Level>" (NOT the tier name) and fills to the tier auto level', () => {
-    // fast → low effort → "Effort · Low"
+  it('auto: the label reads the literal "Effort · Auto" while the tier still drives the slider position', () => {
+    // fast → the knob rests at the low detent, but the readout says "Auto".
     expect(effortSliderView('auto', 'medium', 'fast')).toMatchObject({
       auto: true,
       index: 0,
       fill: 0,
-      label: 'Effort · Low',
-      valueText: 'Effort, Low',
+      label: 'Effort · Auto',
+      valueText: 'Effort, Auto',
     });
 
-    // balanced → medium effort → "Effort · Balanced" (the default; mirrors the
-    // model chip's "Auto · Balanced")
+    // balanced → the knob sits at the mid detent; the label stays "Effort · Auto".
     const bal = effortSliderView('auto', 'low', 'balanced');
     expect(bal.auto).toBe(true);
-    expect(bal.label).toBe('Effort · Balanced');
-    expect(bal.valueText).toBe('Effort, Balanced');
-    expect(bal.index).toBe(1); // medium
+    expect(bal.label).toBe('Effort · Auto');
+    expect(bal.valueText).toBe('Effort, Auto');
+    expect(bal.index).toBe(1); // medium — the routed position, not the readout
     expect(bal.fill).toBeCloseTo(1 / 3, 5);
 
-    // intelligent → high effort → "Effort · High" (the tick below max, never max)
+    // intelligent → the knob rests at the tick below max; still "Effort · Auto".
     const smart = effortSliderView('auto', 'low', 'intelligent');
-    expect(smart.label).toBe('Effort · High');
-    expect(smart.valueText).toBe('Effort, High');
+    expect(smart.label).toBe('Effort · Auto');
+    expect(smart.valueText).toBe('Effort, Auto');
     expect(smart.index).toBe(2);
     expect(smart.fill).toBeCloseTo(2 / 3, 5);
   });
 
-  it('auto + no tier yet: keeps the "Effort" readout, resting on the explicit level', () => {
+  it('auto + no tier yet: still reads "Effort · Auto", resting the knob on the explicit level', () => {
     expect(effortSliderView('auto', 'high', null)).toMatchObject({
       auto: true,
-      label: 'Effort · High',
-      valueText: 'Effort, High',
-      index: 2,
+      label: 'Effort · Auto',
+      valueText: 'Effort, Auto',
+      index: 2, // the knob rests on the last explicit level
     });
-    // The default explicit level (medium) reads "Effort · Balanced".
-    expect(effortSliderView('auto', 'medium', null).label).toBe('Effort · Balanced');
+    // Regardless of the resting level, the auto readout is the word "Auto".
+    expect(effortSliderView('auto', 'medium', null).label).toBe('Effort · Auto');
   });
 
   it('level mode: pins the explicit level (max reachable), ignoring the tier', () => {

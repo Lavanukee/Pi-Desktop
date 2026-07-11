@@ -71,7 +71,27 @@ describe('CanvasTabs', () => {
     expect(c.getState().tabs[3]?.kind).toBe('browser');
   });
 
-  it('shows a rich empty state (icon + prompt + the + control) when no tabs are open', async () => {
+  it('renders each + menu row as ONE full-width interactive element with the shortcut inside it', async () => {
+    const c = seededController();
+    const { container } = await render(<CanvasTabs controller={c} />);
+    await click(container.querySelector('.pd-canvas-newtab'));
+    const rows = [...container.querySelectorAll('.pd-canvas-popmenu .pd-menu-item')];
+    expect(rows).toHaveLength(4);
+    // Every row IS the button/menuitem — the whole row (not just the label) is
+    // the hit target, so there is no dead zone on the right.
+    for (const row of rows) {
+      expect(row.tagName).toBe('BUTTON');
+      expect(row.getAttribute('role')).toBe('menuitem');
+    }
+    // The ⌘P shortcut lives INSIDE the same clickable Files row (right-aligned),
+    // not in a separate non-clickable shortcut/whitespace zone.
+    const files = rows.find((r) => r.textContent?.includes('Files'));
+    const hint = files?.querySelector('.pd-menu-hint');
+    expect(hint?.textContent).toBe('⌘P');
+    expect(files?.contains(hint ?? null)).toBe(true);
+  });
+
+  it('shows the 4 new-tab options directly in the empty state (no + click needed)', async () => {
     const c = new CanvasController({ idFactory: () => 'e1' });
     const { container } = await render(<CanvasTabs controller={c} />);
     const home = container.querySelector('.pd-canvas-empty--home');
@@ -80,25 +100,56 @@ describe('CanvasTabs', () => {
     expect(container.querySelector('.pd-canvas-empty-title')?.textContent).toBe(
       'Nothing on the canvas yet',
     );
-    // The empty state still offers the `+` new-tab control.
-    expect(container.querySelector('.pd-canvas-newtab')).toBeTruthy();
     expect(container.querySelector('.pd-canvas-empty-sub')).toBeTruthy();
+    // The SAME 4 actions as the `+` menu are presented up-front (shared list),
+    // each a full-width row with its shortcut inside it.
+    const actions = [...container.querySelectorAll('.pd-canvas-empty-action')];
+    expect(actions.map((n) => n.textContent)).toEqual([
+      'Files⌘P',
+      'Browser⌘T',
+      'Terminal',
+      'Subagents',
+    ]);
+    // No `+` control is needed in the empty state (it stays for the tab strip).
+    expect(container.querySelector('.pd-canvas-empty .pd-canvas-newtab')).toBeNull();
   });
 
-  it('Files opens the full-canvas file tree surface, NOT a blank "untitled" file', async () => {
+  it('opens each surface from its empty-state option (Files → file tree, Terminal → terminal)', async () => {
     const c = new CanvasController({ idFactory: () => 'ft' });
-    // From the empty-state + menu, pick "Files".
     const { container } = await render(<CanvasTabs controller={c} />);
-    await click(container.querySelector('.pd-canvas-newtab'));
-    const files = [...container.querySelectorAll('.pd-menu-item')].find((n) =>
+    // "Files" opens the full-canvas file tree surface, NOT a blank "untitled" file.
+    const files = [...container.querySelectorAll('.pd-canvas-empty-action')].find((n) =>
       n.textContent?.includes('Files'),
     );
     await click(files ?? null);
-    // A filetree surface tab opened (the tree), not a `file` "Untitled" tab.
     expect(c.getState().tabs).toHaveLength(1);
     expect(c.getState().tabs[0]?.kind).toBe('filetree');
     expect(c.getState().tabs.some((t) => t.kind === 'file')).toBe(false);
     expect(container.querySelector('.pd-canvas-filetree .pd-file-tree')).toBeTruthy();
+  });
+
+  it('empty-state option creates a tab of that kind (Terminal)', async () => {
+    const c = new CanvasController({ idFactory: () => 't1' });
+    const { container } = await render(<CanvasTabs controller={c} />);
+    const terminal = [...container.querySelectorAll('.pd-canvas-empty-action')].find((n) =>
+      n.textContent?.includes('Terminal'),
+    );
+    await click(terminal ?? null);
+    expect(c.getState().tabs).toHaveLength(1);
+    expect(c.getState().tabs[0]?.kind).toBe('terminal');
+  });
+
+  it('empty-state option routes the chosen kind through onNewTab when wired', async () => {
+    const c = new CanvasController({ idFactory: () => 't1' });
+    const onNewTab = vi.fn();
+    const { container } = await render(<CanvasTabs controller={c} onNewTab={onNewTab} />);
+    const browser = [...container.querySelectorAll('.pd-canvas-empty-action')].find((n) =>
+      n.textContent?.includes('Browser'),
+    );
+    await click(browser ?? null);
+    expect(onNewTab).toHaveBeenCalledWith('browser');
+    // The handler owns creation → the canvas does not open a tab itself.
+    expect(c.getState().tabs).toHaveLength(0);
   });
 
   it('renders the file tree in a filetree surface and routes a file pick to onFileTreeSelect', async () => {

@@ -1,29 +1,174 @@
 /*
- * EffortSlider (round-12 #6, restyled round-14 #2) — the composer effort
- * control: a tactile fill-pill (least → most), a leftmost Auto affordance, and a
- * level readout. Presentational; the app maps detents ↔ effort levels and Auto ↔
- * the active model tier. Tokens only (styles-hygiene): the fill is a live
- * temperature gradient interpolating the shared focus-blue (`--pd-border-focus`,
- * cool/low) → danger-red (`--pd-status-danger-fg`, hot/Max) via the inline
- * `--pd-effort-heat` (0..1) the component sets from the fill fraction, so it
- * reads BLUE at rest and glows hot only as effort climbs. Round-14 also hosts
- * the slider in a popover, opened from the compact `.pd-effort-trigger` button.
+ * EffortSlider (round-12 #6 → restyled round-16) — the composer effort control,
+ * reworked to the Claude "thinking effort" look. It lives inside the popover the
+ * compact `.pd-effort-trigger` button opens: a titled panel with the active
+ * readout accent-lit up top beside a "?" help affordance, a horizontal track
+ * flanked by "Faster" / "Smarter" end labels, and a subtle "Auto" toggle below.
+ *
+ * The track fill keeps the round-14 heat: a live temperature gradient blue
+ * (cool/low) → red (hot/Max), interpolated by the inline `--pd-effort-heat`
+ * (0..1) the component sets from the fill fraction, but now under a SUBTLE
+ * DITHERED dot texture (a tiled radial-gradient) so it reads as a tactile,
+ * printed-looking fill rather than a flat bar. Tokens only (styles-hygiene);
+ * theme-aware (light + dark) + reduced-motion safe.
  */
 
 .pd-effort {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--pd-space-sm);
   font-size: var(--pd-font-size-caption);
   color: var(--pd-text-secondary);
 }
 
-/* Leftmost Auto affordance: a subtle reset in level mode; a blue-tinted active
- * pill (carrying the "Auto · <tier>" readout) in auto mode. */
+/* ── Header: the accent-lit readout + a quiet "?" help affordance ─────────── */
+.pd-effort-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--pd-space-sm);
+}
+
+/* The live readout ("Effort · Auto" / "Effort · High"), lit in the accent so the
+ * current effort reads at a glance — the panel's title. */
+.pd-effort-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pd-accent-primary);
+  font-size: var(--pd-font-size-body);
+  font-weight: var(--pd-font-weight-semibold);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* A small round "?" — muted at rest, accent-lit on hover/focus. */
+.pd-effort-help {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-bg-inset);
+  color: var(--pd-text-muted);
+  font: inherit;
+  font-size: var(--pd-font-size-footnote);
+  font-weight: var(--pd-font-weight-semibold);
+  line-height: 1;
+  cursor: help;
+  transition:
+    color var(--pd-duration-fast) var(--pd-easing-standard),
+    background var(--pd-duration-fast) var(--pd-easing-standard);
+}
+
+.pd-effort-help:hover {
+  background: var(--pd-status-info-bg);
+  color: var(--pd-status-info-fg);
+}
+
+.pd-effort-help:focus-visible {
+  outline: none;
+  color: var(--pd-status-info-fg);
+  box-shadow: 0 0 0 3px var(--pd-status-info-bg);
+}
+
+/* ── Scale row: Faster ── track ── Smarter ────────────────────────────────── */
+.pd-effort-scale {
+  display: flex;
+  align-items: center;
+  gap: var(--pd-space-sm);
+}
+
+/* The "Faster" / "Smarter" end labels flanking the track. */
+.pd-effort-flank {
+  flex: none;
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-footnote);
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* The track — a slim rounded rail the dithered heat fill grows along. */
+.pd-effort-track {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 108px;
+  height: 12px;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-bg-track);
+  box-shadow: inset 0 0 0 1px var(--pd-border-subtle);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.pd-effort-track:focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--pd-border-focus),
+    0 0 0 3px var(--pd-status-info-bg);
+}
+
+/* The temperature fill that grows left→right with effort: blue (cool/low) → red
+ * (hot/Max), interpolated by the inline `--pd-effort-heat` (0..1), under a tiled
+ * dithered dot texture (a repeating radial-gradient in a translucent light tint)
+ * so the fill reads as a printed/tactile surface, not a flat bar. A min-width
+ * keeps a rounded nub (and the knob) visible at the "least" end; a heat-scaled
+ * glow makes the pill feel like it's warming up as effort climbs. */
+.pd-effort-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 18px;
+  border-radius: var(--pd-radius-full);
+  background-color: color-mix(
+    in srgb,
+    var(--pd-status-danger-fg) calc(var(--pd-effort-heat, 0) * 100%),
+    var(--pd-border-focus)
+  );
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--pd-text-on-accent) 34%, transparent) 0.5px,
+    transparent 1.4px
+  );
+  background-size: 4px 4px;
+  box-shadow: 0 0 calc(2px + var(--pd-effort-heat, 0) * 8px)
+    color-mix(in srgb, var(--pd-status-danger-fg) calc(var(--pd-effort-heat, 0) * 70%), transparent);
+  transition:
+    width var(--pd-duration-base) var(--pd-easing-standard),
+    background-color var(--pd-duration-base) var(--pd-easing-standard),
+    box-shadow var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+/* The grab knob rides the fill's right edge (always visible via the fill nub): a
+ * clean rounded white disc with a soft shadow + hairline ring, straddling the
+ * slim track vertically so it reads as a tactile grip. */
+.pd-effort-knob {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  transform: translateY(-50%);
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-bg-raised);
+  box-shadow:
+    var(--pd-shadow-md),
+    0 0 0 1px var(--pd-border-default),
+    inset 0 1px 0 var(--pd-border-subtle);
+}
+
+/* ── Footer: the Auto ↔ pinned-level toggle ───────────────────────────────── */
+.pd-effort-foot {
+  display: flex;
+  align-items: center;
+}
+
+/* A subtle reset in level mode; an accent-tinted active pill while Auto is on. */
 .pd-effort-auto {
   flex: none;
   height: 22px;
-  padding: 0 8px;
+  padding: 0 10px;
   border: none;
   border-radius: var(--pd-radius-full);
   background: transparent;
@@ -52,77 +197,11 @@
   box-shadow: 0 0 0 3px var(--pd-status-info-bg);
 }
 
-/* The pill track — real thickness so the blue fill reads as a pill, not a line. */
-.pd-effort-track {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 96px;
-  max-width: 168px;
-  height: 22px;
-  border-radius: var(--pd-radius-full);
-  background: var(--pd-bg-track);
-  box-shadow: inset 0 0 0 1px var(--pd-border-subtle);
-  cursor: pointer;
-  touch-action: none;
-}
-
-.pd-effort-track:focus-visible {
-  outline: none;
-  box-shadow:
-    inset 0 0 0 1px var(--pd-border-focus),
-    0 0 0 3px var(--pd-status-info-bg);
-}
-
-/* The temperature fill that grows left→right with effort: blue (cool/low) →
- * red (hot/Max), interpolated by the inline `--pd-effort-heat` (0..1). A
- * min-width keeps a rounded nub (and the knob) visible at the "least" end; a
- * heat-scaled glow makes the pill feel like it's warming up as effort climbs. */
-.pd-effort-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  min-width: 22px;
-  border-radius: var(--pd-radius-full);
-  background: color-mix(
-    in srgb,
-    var(--pd-status-danger-fg) calc(var(--pd-effort-heat, 0) * 100%),
-    var(--pd-border-focus)
-  );
-  box-shadow: 0 0 calc(2px + var(--pd-effort-heat, 0) * 8px)
-    color-mix(in srgb, var(--pd-status-danger-fg) calc(var(--pd-effort-heat, 0) * 70%), transparent);
-  transition:
-    width var(--pd-duration-base) var(--pd-easing-standard),
-    background var(--pd-duration-base) var(--pd-easing-standard),
-    box-shadow var(--pd-duration-base) var(--pd-easing-standard);
-}
-
-/* The grab knob rides the fill's right edge (always visible via the fill nub):
- * thicker + rounder with an inner top highlight so it reads as a tactile grip. */
-.pd-effort-knob {
-  position: absolute;
-  top: 50%;
-  right: 2px;
-  width: 16px;
-  height: 16px;
-  transform: translateY(-50%);
-  border-radius: var(--pd-radius-full);
-  background: var(--pd-bg-raised);
-  box-shadow:
-    var(--pd-shadow-sm),
-    0 0 0 1px var(--pd-border-default),
-    inset 0 1px 0 var(--pd-border-subtle);
-}
-
-.pd-effort-value {
-  flex: none;
-  min-width: 3.25em;
-  color: var(--pd-text-secondary);
-  text-transform: capitalize;
-  white-space: nowrap;
-}
-
-/* Round-14 #2 — the effort control now opens from a compact "Effort" button; the
+/* ── Trigger + popover surface ────────────────────────────────────────────── */
+/* Round-14 #2 — the effort control opens from a compact "Effort" button; the
  * slider itself lives in a popover. A quiet ghost pill carrying a gauge glyph +
- * the live readout ("Auto · Medium" / "High"), lit on hover / while open. */
+ * the live readout ("Effort · Auto" / "Effort · High"), lit on hover / while
+ * open. */
 .pd-effort-trigger {
   display: inline-flex;
   align-items: center;
@@ -152,11 +231,11 @@
   color: var(--pd-text-muted);
 }
 
-/* The popover surface that hosts the slider (a `.pd-menu`): give it room for the
- * pill + a touch of padding so the control isn't cramped against the edges. */
+/* The popover surface that hosts the panel (a `.pd-menu`): give it room for the
+ * titled layout + a touch of padding so the control isn't cramped. */
 .pd-menu.pd-effort-popover {
-  min-width: 240px;
-  padding: 10px 12px;
+  min-width: 248px;
+  padding: var(--pd-space-md);
 }
 
 @media (prefers-reduced-motion: reduce) {

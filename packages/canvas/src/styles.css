@@ -244,6 +244,54 @@
   font-size: var(--pd-font-size-caption);
 }
 
+/* Empty-state action list: with no tabs open, the 4 new-tab options are
+ * presented up-front as a centered, full-width clickable list — each opens that
+ * surface (no `+` needed). Shares NEW_TAB_ITEMS + the .pd-menu-icon/.pd-menu-hint
+ * row parts with the `+` menu so the two never drift. */
+.pd-canvas-empty-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pd-space-xs);
+  width: 100%;
+  max-width: 17rem;
+  text-align: left;
+}
+
+.pd-canvas-empty-action {
+  display: flex;
+  align-items: center;
+  gap: var(--pd-space-sm);
+  width: 100%;
+  padding: var(--pd-space-sm) var(--pd-space-md);
+  border: 1px solid var(--pd-border-subtle);
+  border-radius: var(--pd-radius-md);
+  background: none;
+  color: var(--pd-text-primary);
+  font: inherit;
+  font-size: var(--pd-font-size-body);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--pd-duration-fast) var(--pd-easing-standard),
+    border-color var(--pd-duration-fast) var(--pd-easing-standard);
+}
+
+.pd-canvas-empty-action:hover {
+  background: var(--pd-bg-hover);
+  border-color: var(--pd-border-default);
+}
+
+/* Shared label cell for both new-tab surfaces (the `+` menu row + the empty-state
+ * row): takes the row's free space so the shortcut hint sits flush right and the
+ * WHOLE row — label, shortcut and trailing whitespace — is one hit target. */
+.pd-canvas-action-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Per-tab operation bar (SECOND bar under the tab strip) ───────────── */
 
 .pd-canvas-opbar {
@@ -368,7 +416,18 @@
   position: fixed;
   right: auto;
   left: auto;
+  /* Stable width (matches the NewTabButton position clamp) so every row is a
+   * full-width target with the ⌘P/⌘T shortcut flush to the right edge — the
+   * shortcut cell + trailing whitespace are inside the clickable row, no dead
+   * zone (round-14 canvas wave). */
+  width: 200px;
   animation: none;
+}
+
+/* Each `+` menu row fills the popmenu width so the WHOLE row is the single
+ * interactive/hover-darkened target, not just the label. */
+.pd-canvas-popmenu .pd-menu-item {
+  width: 100%;
 }
 
 @media (prefers-reduced-motion: reduce) {

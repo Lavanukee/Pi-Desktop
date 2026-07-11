@@ -65,13 +65,24 @@ export function buildTierRows(
 }
 
 /**
- * The footer model-chip label, mode-aware (round-14 #4). POWER users always see
- * the raw running model name; USER mode reads the SELECTION so the chip names
- * the mode ("Auto"), a pinned tier ("Balanced"), or a pinned model's friendly
- * name — never the raw model id when a tier is chosen. Returns `null` when there
- * is nothing to name yet (no running model / catalog not loaded) so the caller
- * supplies its "Choose model" / "Pick a model" fallback. Pure + node-testable
- * (importing the footer component pulls in `window`-touching modules).
+ * The footer model-chip label, now driven by the SELECTION MODE (round-16) rather
+ * than the experience mode — the chip names *what the user chose*, identically in
+ * user and power mode:
+ *
+ *   - `auto`  → "Auto · <routed tier>" ("Auto · Balanced"), or plain "Auto" until
+ *     the classifier resolves a tier this session — in BOTH modes. (This is the
+ *     fix: power+auto previously leaked the raw running model name; now Auto
+ *     always speaks for routing.)
+ *   - `tier`  → the friendly TIER label alone ("Balanced"/"Fast"/"Intelligent"),
+ *     never "Auto", never the raw model id — user mode pinning a capability tier.
+ *   - `model` → the pinned model's friendly name — power mode pinning a specific
+ *     model.
+ *
+ * Returns `null` when there is nothing to name yet (no running model / catalog not
+ * loaded) so the caller supplies its "Choose model" / "Pick a model" fallback.
+ * `userMode` is retained in the signature (call-site + contract stability) though
+ * the label no longer branches on it. Pure + node-testable (importing the footer
+ * component pulls in `window`-touching modules).
  */
 export function chipLabel(
   userMode: UserMode,
@@ -79,14 +90,12 @@ export function chipLabel(
   activeTier: ModelTier | null,
   modelName: string | null,
 ): string | null {
-  // Power mode: always the concrete running model name (null → caller fallback).
-  if (userMode === 'power') return modelName;
-  // User mode: name the SELECTION, not the resolved model. Under Auto the chip
-  // now names the routed tier too ("Auto · Balanced"), falling back to plain
-  // "Auto" before the classifier has resolved a tier this session.
+  // Auto names the routed TIER in both user and power mode ("Auto · Balanced"),
+  // resting on plain "Auto" before the classifier has resolved a tier.
   if (selection.mode === 'auto')
     return activeTier !== null ? `Auto · ${TIER_LABEL[activeTier]}` : 'Auto';
+  // A pinned capability tier → the friendly tier label alone.
   if (selection.mode === 'tier') return TIER_LABEL[selection.tier];
-  // A pinned specific model → its friendly name (falls back to the raw name).
+  // A pinned specific model → its friendly name (null → caller fallback).
   return modelName;
 }

@@ -77,6 +77,12 @@ async function pickNewTab(page, label) {
   await page.click(`${panelSel} .pd-canvas-popmenu button:has-text("${label}")`);
 }
 
+// Round-14 canvas wave: an EMPTY canvas presents the 4 new-tab options directly
+// (no `+` needed) — pick one straight from the empty state.
+async function pickEmptyStateAction(page, label) {
+  await page.click(`${panelSel} .pd-canvas-empty-action:has-text("${label}")`);
+}
+
 try {
   const page = await app.firstWindow();
   await page.waitForFunction(() => typeof window.__pi_canvas === 'function', { timeout: 8000 });
@@ -150,10 +156,16 @@ try {
   await page.click('[data-testid="expand-sidebar"]');
   await page.waitForSelector('[data-testid="sidebar-search"]', { timeout: 8000 });
 
-  // ── B. CANVAS `+` MENU opens file / browser / terminal ─────────────────────
+  // ── B. CANVAS empty-state options + `+` MENU open file / browser / terminal ──
   await openCanvas(page);
   await page.waitForSelector(`${panelSel} .pd-canvas-empty`, { timeout: 8000 });
-  await pickNewTab(page, 'Terminal');
+  // Round-14: the EMPTY canvas shows the 4 options up-front (no `+`); assert they
+  // render, then create the FIRST tab directly from the empty-state list.
+  assert(
+    (await page.locator(`${panelSel} .pd-canvas-empty-action`).count()) === 4,
+    'empty canvas should present the 4 new-tab options directly',
+  );
+  await pickEmptyStateAction(page, 'Terminal');
   await page.waitForFunction(
     () =>
       window

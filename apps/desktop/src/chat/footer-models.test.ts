@@ -62,18 +62,25 @@ describe('buildTierRows (round-12)', () => {
 });
 
 /**
- * Round-14 (#4) / round-15: the model chip is mode-aware. POWER users always see
- * the raw running model name; USER mode names the SELECTION — "Auto · <routed
- * tier>" (plain "Auto" before the classifier runs), a friendly tier label, or a
+ * Round-14 (#4) → round-16: the model chip names the SELECTION MODE, identically
+ * in user and power mode. `auto` → "Auto · <routed tier>" (plain "Auto" before the
+ * classifier runs) in BOTH modes; `tier` → a friendly tier label; `model` → a
  * pinned model's name — never the raw model id when a tier is chosen.
  */
-describe('chipLabel (round-14)', () => {
+describe('chipLabel (round-14 / round-16)', () => {
   const auto: ModelSelection = { mode: 'auto' };
 
-  it('POWER mode: always the raw running model name (regardless of selection)', () => {
-    expect(chipLabel('power', auto, 'balanced', 'gemma4 12b')).toBe('gemma4 12b');
-    expect(chipLabel('power', { mode: 'tier', tier: 'fast' }, 'fast', 'gemma4 e2b')).toBe(
-      'gemma4 e2b',
+  it('POWER mode + Auto: "Auto · <tier>" too — no longer the raw running model name', () => {
+    // The round-16 fix: power+auto must speak for routing ("Auto · Balanced"),
+    // not leak the concrete model name.
+    expect(chipLabel('power', auto, 'balanced', 'gemma4 12b')).toBe('Auto · Balanced');
+    expect(chipLabel('power', auto, 'fast', 'gemma4 e2b')).toBe('Auto · Fast');
+    expect(chipLabel('power', auto, null, 'gemma4 12b')).toBe('Auto');
+  });
+
+  it('POWER mode + a pinned model: the friendly model name (mode === "model")', () => {
+    expect(chipLabel('power', { mode: 'model', modelId: 'm1' }, 'balanced', 'gemma4 12b')).toBe(
+      'gemma4 12b',
     );
   });
 
@@ -104,8 +111,10 @@ describe('chipLabel (round-14)', () => {
     );
   });
 
-  it('returns null (→ caller supplies "Choose model") when there is nothing to name', () => {
-    expect(chipLabel('power', auto, null, null)).toBeNull();
+  it('returns null (→ caller supplies "Choose model") only when a pinned model has no name yet', () => {
+    // Auto always names at least "Auto", so the null fallback is reachable only via
+    // a pinned `model` selection whose name has not resolved — in either mode.
+    expect(chipLabel('power', { mode: 'model', modelId: 'm1' }, null, null)).toBeNull();
     expect(chipLabel('user', { mode: 'model', modelId: 'm1' }, null, null)).toBeNull();
   });
 });

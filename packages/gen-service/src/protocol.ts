@@ -19,8 +19,20 @@
  */
 export type Modality = 'image' | 'audio' | 'video' | '3d';
 
-/** The concrete backend that fulfils a job (phase 1 = mflux/MLX for image). */
-export type Backend = 'mflux' | 'mlx-audio' | 'triposr' | 'trellis' | 'hyperframes';
+/**
+ * The concrete backend that fulfils a job.
+ *
+ * Two shapes live behind this union (see round-13 synthesis §2):
+ *   - process-per-job **uv worker** backends — `mflux` (image), `mlx-audio`
+ *     (TTS), `triposr` / `trellis` (3D), each driven by the bundled `worker.py`
+ *     over NDJSON (see {@link ../client});
+ *   - the persistent-server **`comfyui`** backend — a long-lived aiohttp server
+ *     on `127.0.0.1` that the ComfyUI adapter POSTs workflow JSON to and whose
+ *     ws messages it translates into the SAME {@link GenEvent} union (video /
+ *     music / advanced-image graphs);
+ *   - `hyperframes` — the Node+ffmpeg motion-graphics path.
+ */
+export type Backend = 'mflux' | 'mlx-audio' | 'triposr' | 'trellis' | 'hyperframes' | 'comfyui';
 
 /**
  * Backend-resolved image parameters. The app resolves a catalog entry
@@ -54,8 +66,53 @@ export interface ImageJobSpec {
 }
 
 /**
- * One generation job. `spec` is a discriminated union keyed by `modality`; phase
- * 1 only defines the `image` arm, but the shape is ready for audio/video/3d.
+ * ComfyUI catalog wiring — analogous to {@link ../catalog!MfluxBackendConfig},
+ * but for the persistent-server `comfyui` backend. A catalog entry names the
+ * parameterized workflow-JSON `workflowTemplate` and a `paramMap` that binds each
+ * standard catalog param name (`prompt` / `width` / `steps` / `seed` / …) to the
+ * node-input path it splices into inside that template (e.g. `prompt` →
+ * `"6.inputs.text"`). The app resolves an entry + user params into a
+ * {@link ComfyJobSpec}; the ComfyUI adapter (a separate module) owns loading the
+ * template and POSTing it. Forward-dated template ids / node paths are labelled
+ * `[fwd]` in the catalog notes and finalised against the real graphs at build.
+ */
+export interface ComfyBackendConfig {
+  readonly kind: 'comfyui';
+  /** Id of the parameterized workflow-JSON template in the Phase-A registry. */
+  readonly workflowTemplate: string;
+  /** catalog param name → node-input path (e.g. `prompt` → `"6.inputs.text"`). */
+  readonly paramMap: Record<string, string>;
+}
+
+/**
+ * Backend-resolved ComfyUI parameters — the `comfyui`-backend analogue of
+ * {@link ImageJobSpec}. The app resolves a catalog entry's
+ * {@link ComfyBackendConfig} + user params into which workflow template to load
+ * and the concrete input VALUES to splice into its nodes. The adapter maps each
+ * `inputs` key → a node input via the entry's paramMap, POSTs the graph to
+ * `/prompt`, and streams progress back as {@link GenEvent}s. Kept catalog-free
+ * (like {@link ImageJobSpec}) so a remote ComfyUI needs no TS catalog.
+ */
+export interface ComfyJobSpec {
+  readonly prompt: string;
+  /** Catalog id — stamped as the output FOOTNOTE (e.g. `ltx-2`). */
+  readonly modelId: string;
+  /** Workflow-JSON template id to load (from the Phase-A template registry). */
+  readonly workflowTemplate: string;
+  /**
+   * Resolved input VALUES keyed by catalog param name (prompt / width / steps /
+   * length / seconds / seed / …). The adapter binds each key to a node input via
+   * the entry's paramMap; values are the concrete scalars for this job.
+   */
+  readonly inputs: Record<string, string | number | boolean>;
+  /** One seed per candidate; length drives how many outputs the job produces. */
+  readonly seeds: readonly number[];
+}
+
+/**
+ * One generation job. The modality-specific spec is a set of optional arms keyed
+ * off `backend` — the `image` arm drives the uv/mflux worker; the `comfy` arm
+ * drives the persistent ComfyUI adapter. `GenEvent` is shared across both.
  */
 export interface GenJob {
   readonly id: string;
@@ -63,8 +120,10 @@ export interface GenJob {
   readonly backend: Backend;
   /** Absolute directory the worker writes final + preview artifacts into. */
   readonly outputDir: string;
-  /** Modality-specific spec. Image in phase 1. */
+  /** Image spec — the uv/mflux worker path (backend `mflux`). */
   readonly image?: ImageJobSpec;
+  /** ComfyUI spec — video / music / advanced-image graphs (backend `comfyui`). */
+  readonly comfy?: ComfyJobSpec;
 }
 
 /** A finished artifact a job produced. */

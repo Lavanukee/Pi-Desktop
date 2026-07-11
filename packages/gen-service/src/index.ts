@@ -27,6 +27,23 @@ export type {
 } from './client.js';
 export { defaultGenSpawn, GenAbortError, GenServiceClient } from './client.js';
 export type {
+  ComfyClientDeps,
+  ComfyRunOptions,
+  ComfyWebSocket,
+  ComfyWsFactory,
+} from './comfy-client.js';
+export { ComfyClient, defaultComfyWsFactory } from './comfy-client.js';
+export type {
+  ComfyLaunchConfig,
+  ComfySupervisorHandle,
+  CreateComfySupervisorOptions,
+} from './comfy-supervisor.js';
+export { buildComfyArgs, createComfySupervisor } from './comfy-supervisor.js';
+export type { ComfyGraph, ComfyNode, WorkflowTemplate } from './comfy-workflow.js';
+export { fillWorkflow, getWorkflowTemplate, WORKFLOW_TEMPLATES } from './comfy-workflow.js';
+export type { GenRunnerLike, MakeGenRunnerDeps } from './gen-runner.js';
+export { makeGenRunner } from './gen-runner.js';
+export type {
   EnqueueOptions,
   JobHandle,
   JobQueueEvent,
@@ -38,6 +55,8 @@ export type {
 export { JobQueue } from './job-queue.js';
 export type {
   Backend,
+  ComfyBackendConfig,
+  ComfyJobSpec,
   GenEvent,
   GenJob,
   GenOutput,
@@ -48,9 +67,11 @@ export type {
 export { isGenEvent, NdjsonParser, parseGenEventLine } from './protocol.js';
 export type { WorkerUvArgsOptions } from './worker-command.js';
 export {
+  baseWorkerWith,
   buildWorkerUvArgs,
   DEFAULT_PYTHON_VERSION,
   GEN_WORKER_PATH_ENV,
   MFLUX_PIN,
+  MLX_AUDIO_PIN,
   resolveWorkerScript,
 } from './worker-command.js';

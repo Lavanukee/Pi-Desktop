@@ -23,6 +23,8 @@
     "@pi-desktop/browser-use": "workspace:*",
     "@pi-desktop/canvas": "workspace:*",
     "@pi-desktop/engine": "workspace:*",
+    "@pi-desktop/gen-service": "workspace:*",
+    "@pi-desktop/gen-tools": "workspace:*",
     "@pi-desktop/harness": "workspace:*",
     "@pi-desktop/importers": "workspace:*",
     "@pi-desktop/inference": "workspace:*",

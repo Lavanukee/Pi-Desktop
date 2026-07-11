@@ -15,6 +15,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
+  "dependencies": {
+    "@pi-desktop/inference": "workspace:*"
+  },
   "devDependencies": {
     "@biomejs/biome": "^2.5.2",
     "@pi-desktop/shared": "workspace:*",

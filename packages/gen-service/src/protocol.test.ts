@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { type GenEvent, isGenEvent, NdjsonParser, parseGenEventLine } from './protocol.ts';
+import {
+  type Backend,
+  type ComfyBackendConfig,
+  type ComfyJobSpec,
+  type GenEvent,
+  type GenJob,
+  isGenEvent,
+  NdjsonParser,
+  parseGenEventLine,
+} from './protocol.ts';
 
 describe('parseGenEventLine', () => {
   it('parses a progress event', () => {
@@ -45,6 +54,63 @@ describe('isGenEvent', () => {
     expect(isGenEvent('start')).toBe(false);
     expect(isGenEvent({ event: 'nope' })).toBe(false);
     expect(isGenEvent({})).toBe(false);
+  });
+});
+
+describe('Backend union + ComfyUI job shape', () => {
+  it('admits comfyui alongside the uv-worker backends', () => {
+    const backends: Backend[] = [
+      'mflux',
+      'mlx-audio',
+      'triposr',
+      'trellis',
+      'hyperframes',
+      'comfyui',
+    ];
+    // The comfyui persistent-server backend is a first-class member of the union.
+    expect(backends).toContain('comfyui');
+  });
+
+  it('resolves a comfyui job through the `comfy` arm (image arm left empty)', () => {
+    const spec: ComfyJobSpec = {
+      prompt: 'a neon city at night, cinematic',
+      modelId: 'ltx-2',
+      workflowTemplate: 'ltx-2-distilled-gguf',
+      inputs: { prompt: 'a neon city at night', width: 768, height: 512, length: 97, steps: 8 },
+      seeds: [1, 2],
+    };
+    const job: GenJob = {
+      id: 'v1',
+      modality: 'video',
+      backend: 'comfyui',
+      outputDir: '/out',
+      comfy: spec,
+    };
+    expect(job.comfy?.workflowTemplate).toBe('ltx-2-distilled-gguf');
+    expect(job.comfy?.seeds).toEqual([1, 2]);
+    expect(job.comfy?.inputs.width).toBe(768);
+    // The image arm is untouched by the comfy arm.
+    expect(job.image).toBeUndefined();
+  });
+
+  it('ComfyBackendConfig binds catalog params to node-input paths', () => {
+    const cfg: ComfyBackendConfig = {
+      kind: 'comfyui',
+      workflowTemplate: 'ace-step-music',
+      paramMap: { prompt: '14.inputs.tags', seconds: '17.inputs.seconds', seed: '3.inputs.seed' },
+    };
+    expect(cfg.kind).toBe('comfyui');
+    expect(cfg.paramMap.prompt).toBe('14.inputs.tags');
+  });
+
+  it('leaves the GenEvent union unchanged (no comfy event kinds)', () => {
+    // GenEvent is shared across both backends — the comfy adapter translates ws
+    // messages INTO these same kinds, so the recognised set must not have grown.
+    for (const kind of ['comfy', 'prompt', 'executing', 'ws']) {
+      expect(isGenEvent({ event: kind })).toBe(false);
+    }
+    const kinds = ['start', 'download', 'progress', 'candidate', 'done', 'error', 'log'];
+    for (const kind of kinds) expect(isGenEvent({ event: kind })).toBe(true);
   });
 });
 

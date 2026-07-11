@@ -81,10 +81,22 @@ try {
   await page.keyboard.press('Enter');
 
   // ── #8 STATUS CLUSTER + REPAIR ───────────────────────────────────────────────
-  // The active class moved from the footer chip to the composer-bar tier display
-  // (tier shown; class in its hover). Verify the tier display renders + the
-  // harness status carries "coding" (read from the store — robust vs a tooltip).
-  await page.locator('[data-testid="composer-tier"]').waitFor({ timeout: 10000 });
+  // (round-15: the center composer-bar tier control was removed.) Wait for the
+  // harness to publish its status, then assert it carries the "coding" active
+  // class (read from the store — robust vs a tooltip).
+  await page.waitForFunction(
+    () => {
+      const raw = window.__pi_store().getState().extensionStatus.harness;
+      if (raw === undefined || raw.length === 0) return false;
+      try {
+        return /coding/i.test(JSON.parse(raw).activeClass ?? '');
+      } catch {
+        return false;
+      }
+    },
+    undefined,
+    { timeout: 10000 },
+  );
   const clsRaw = await page.evaluate(
     () => window.__pi_store().getState().extensionStatus.harness ?? '{}',
   );

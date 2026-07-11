@@ -21,7 +21,7 @@ import {
   TIER_LABEL,
 } from '../../../../packages/harness/src/classify/tier.ts';
 import type { LlmTierPick } from '../../electron/ipc-contract';
-import type { UserMode } from '../../electron/settings/settings-contract';
+import type { ModelSelection, UserMode } from '../../electron/settings/settings-contract';
 
 /** One tier row in the footer dropdown. */
 export interface TierMenuRow {
@@ -62,4 +62,31 @@ export function buildTierRows(
       bytes: pick?.bytes ?? 0,
     };
   });
+}
+
+/**
+ * The footer model-chip label, mode-aware (round-14 #4). POWER users always see
+ * the raw running model name; USER mode reads the SELECTION so the chip names
+ * the mode ("Auto"), a pinned tier ("Balanced"), or a pinned model's friendly
+ * name — never the raw model id when a tier is chosen. Returns `null` when there
+ * is nothing to name yet (no running model / catalog not loaded) so the caller
+ * supplies its "Choose model" / "Pick a model" fallback. Pure + node-testable
+ * (importing the footer component pulls in `window`-touching modules).
+ */
+export function chipLabel(
+  userMode: UserMode,
+  selection: ModelSelection,
+  activeTier: ModelTier | null,
+  modelName: string | null,
+): string | null {
+  // Power mode: always the concrete running model name (null → caller fallback).
+  if (userMode === 'power') return modelName;
+  // User mode: name the SELECTION, not the resolved model. Under Auto the chip
+  // now names the routed tier too ("Auto · Balanced"), falling back to plain
+  // "Auto" before the classifier has resolved a tier this session.
+  if (selection.mode === 'auto')
+    return activeTier !== null ? `Auto · ${TIER_LABEL[activeTier]}` : 'Auto';
+  if (selection.mode === 'tier') return TIER_LABEL[selection.tier];
+  // A pinned specific model → its friendly name (falls back to the raw name).
+  return modelName;
 }

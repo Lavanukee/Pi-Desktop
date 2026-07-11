@@ -31,6 +31,15 @@ export interface TaskChecklistProps extends Omit<HTMLAttributes<HTMLDivElement>,
   title?: ReactNode;
   /** Optional collapsible subsection of nested/subagent steps. */
   subagents?: TaskChecklistSubagents;
+  /**
+   * When set, the whole panel collapses to just its title header (mirrors the
+   * subagents subsection): the title row becomes a toggle button with a rotating
+   * chevron + a right-aligned {done}/{total} count, and the body (steps +
+   * subagents) tucks up. Leaves the non-collapsible render byte-identical.
+   */
+  collapsible?: boolean;
+  /** Start collapsed (uncontrolled) — used for long plans that would crowd. */
+  defaultCollapsed?: boolean;
 }
 
 function TaskMarker({ state }: { state: TaskState }) {
@@ -106,9 +115,43 @@ function TaskSubagents({
 }
 
 export const TaskChecklist = forwardRef<HTMLDivElement, TaskChecklistProps>(function TaskChecklist(
-  { items, title, subagents, className, ...rest },
+  { items, title, subagents, collapsible, defaultCollapsed, className, ...rest },
   ref,
 ) {
+  const [collapsed, setCollapsed] = useState(defaultCollapsed ?? false);
+
+  // Collapsible: the title row is a full-width toggle button and the body tucks
+  // up (grid-rows 1fr→0fr, checklist.css). Mirrors TaskSubagents' pattern.
+  if (collapsible === true) {
+    const done = items.filter((item) => item.state === 'done').length;
+    return (
+      <div ref={ref} className={clsx('pd-task-panel', className)} {...rest}>
+        <button
+          type="button"
+          className="pd-task-collapse-toggle pd-focusable"
+          aria-expanded={!collapsed}
+          data-testid="task-collapse-toggle"
+          onClick={() => setCollapsed((prev) => !prev)}
+        >
+          <span className="pd-task-collapse-chevron" data-open={!collapsed || undefined}>
+            <IconChevronDown size={14} />
+          </span>
+          <span className="pd-task-collapse-title">{title}</span>
+          <span className="pd-task-collapse-count">
+            {done}/{items.length}
+          </span>
+        </button>
+        <div className="pd-task-body" data-collapsed={collapsed || undefined}>
+          <div className="pd-task-body-inner">
+            <TaskList items={items} />
+            {subagents !== undefined ? <TaskSubagents {...subagents} /> : null}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Non-collapsible: byte-identical to the original render.
   return (
     <div ref={ref} className={clsx('pd-task-panel', className)} {...rest}>
       {title !== undefined ? <div className="pd-task-title">{title}</div> : null}

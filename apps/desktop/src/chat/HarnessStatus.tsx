@@ -25,6 +25,9 @@ import {
   useHarnessTaskTimer,
 } from './harness-status';
 
+/** A plan longer than this starts collapsed so it doesn't crowd the thread. */
+const LONG_PLAN_THRESHOLD = 6;
+
 /** Map a plan item's status (+ roadmap flag) to a TaskChecklist state. */
 function toTaskState(item: PlanItem): TaskState {
   if (item.roadmap === true && item.status !== 'done') return 'roadmap';
@@ -109,6 +112,10 @@ export function HarnessChecklistPanel() {
         className="border border-border-subtle bg-surface-raised"
         title={status?.planTitle ?? 'Plan'}
         items={items}
+        // Round-14 #6: the pinned panel collapses to just its title header so a
+        // long plan can tuck up out of the way. Long plans start collapsed.
+        collapsible
+        defaultCollapsed={items.length > LONG_PLAN_THRESHOLD}
       />
     </div>
   );

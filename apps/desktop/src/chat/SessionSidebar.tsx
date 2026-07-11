@@ -87,7 +87,11 @@ function SidebarProfileMenu({
         title="Account, settings and theme"
         data-testid="profile-button"
       >
-        <span className="pd-sidebar-avatar">P</span>
+        {/* Same --pd-icon-size centering box as the rail icons so the avatar
+            sits on the identical x through the collapse (round-14 #7). */}
+        <span className="pd-rail-btn-icon">
+          <span className="pd-sidebar-avatar">P</span>
+        </span>
       </button>
     ) : (
       <button
@@ -184,7 +188,10 @@ function RailButton({
       data-testid={testid}
       onClick={onClick}
     >
-      {icon}
+      {/* Round-14 #7: the glyph rides in the same --pd-icon-size centering box as
+          an expanded row's icon (.pd-sidebar-row-icon), so its x is identical by
+          construction in both flavors — no collapse "snap". */}
+      <span className="pd-rail-btn-icon">{icon}</span>
     </button>
   );
 }
@@ -317,34 +324,34 @@ export function SessionSidebar({
             label="Expand sidebar"
             testid="expand-sidebar"
             onClick={onExpand}
-            icon={<IconSidebar size={18} />}
+            icon={<IconSidebar size={16} />}
           />
-          <RailButton label="Search chats" onClick={onExpand} icon={<IconSearch size={18} />} />
+          <RailButton label="Search chats" onClick={onExpand} icon={<IconSearch size={16} />} />
           <div className="pd-rail-sep" aria-hidden="true" />
           <RailButton
             label="New chat"
             testid="new-chat"
             onClick={() => void onNewChat()}
-            icon={<IconPencil size={18} />}
+            icon={<IconPencil size={16} />}
           />
-          <RailButton label="Chats" onClick={onExpand} icon={<IconChat size={18} />} />
+          <RailButton label="Chats" onClick={onExpand} icon={<IconChat size={16} />} />
           <RailButton
             label="Projects"
             testid="nav-projects"
             onClick={() => onOpenStub('projects')}
-            icon={<IconFolderPlus size={18} />}
+            icon={<IconFolderPlus size={16} />}
           />
           <RailButton
             label="Model management"
             testid="nav-model-management"
             onClick={() => onOpenSettings('models')}
-            icon={<IconCpu size={18} />}
+            icon={<IconCpu size={16} />}
           />
           <RailButton
             label="Connectors"
             testid="nav-connectors"
             onClick={onOpenConnectors}
-            icon={<IconConnector size={18} />}
+            icon={<IconConnector size={16} />}
           />
           <div className="pd-rail-spacer" />
           {/* One profile button → the shared Settings / theme / User-Power dropup. */}

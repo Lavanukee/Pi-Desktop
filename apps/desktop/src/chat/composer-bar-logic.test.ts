@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   classificationHover,
+  effortDisplay,
   effortSliderView,
   levelForIndex,
   tierLabel,
@@ -34,35 +35,52 @@ describe('classificationHover', () => {
   });
 });
 
+describe('effortDisplay', () => {
+  it('maps the effort scale to display names, with the mid/auto default → "Balanced"', () => {
+    expect(effortDisplay('low')).toBe('Low');
+    expect(effortDisplay('medium')).toBe('Balanced');
+    expect(effortDisplay('high')).toBe('High');
+    expect(effortDisplay('max')).toBe('Max');
+  });
+});
+
 describe('effortSliderView', () => {
-  it('auto + tier: reads "Auto · <tier>" and fills to the tier auto level', () => {
+  it('auto + tier: reads "Effort · <Level>" (NOT the tier name) and fills to the tier auto level', () => {
+    // fast → low effort → "Effort · Low"
     expect(effortSliderView('auto', 'medium', 'fast')).toMatchObject({
       auto: true,
       index: 0,
       fill: 0,
-      label: 'Auto · fast',
-      valueText: 'Auto, fast',
+      label: 'Effort · Low',
+      valueText: 'Effort, Low',
     });
 
+    // balanced → medium effort → "Effort · Balanced" (the default; mirrors the
+    // model chip's "Auto · Balanced")
     const bal = effortSliderView('auto', 'low', 'balanced');
     expect(bal.auto).toBe(true);
-    expect(bal.label).toBe('Auto · balanced');
+    expect(bal.label).toBe('Effort · Balanced');
+    expect(bal.valueText).toBe('Effort, Balanced');
     expect(bal.index).toBe(1); // medium
     expect(bal.fill).toBeCloseTo(1 / 3, 5);
 
+    // intelligent → high effort → "Effort · High" (the tick below max, never max)
     const smart = effortSliderView('auto', 'low', 'intelligent');
-    expect(smart.label).toBe('Auto · intelligent');
-    expect(smart.index).toBe(2); // high — the tick below max, never max
+    expect(smart.label).toBe('Effort · High');
+    expect(smart.valueText).toBe('Effort, High');
+    expect(smart.index).toBe(2);
     expect(smart.fill).toBeCloseTo(2 / 3, 5);
   });
 
-  it('auto + no tier yet: plain "Auto", resting on the explicit level', () => {
+  it('auto + no tier yet: keeps the "Effort" readout, resting on the explicit level', () => {
     expect(effortSliderView('auto', 'high', null)).toMatchObject({
       auto: true,
-      label: 'Auto',
-      valueText: 'Auto',
+      label: 'Effort · High',
+      valueText: 'Effort, High',
       index: 2,
     });
+    // The default explicit level (medium) reads "Effort · Balanced".
+    expect(effortSliderView('auto', 'medium', null).label).toBe('Effort · Balanced');
   });
 
   it('level mode: pins the explicit level (max reachable), ignoring the tier', () => {
@@ -70,13 +88,13 @@ describe('effortSliderView', () => {
       auto: false,
       index: 3,
       fill: 1,
-      label: 'Max',
+      label: 'Effort · Max',
     });
     expect(effortSliderView('level', 'low', 'intelligent')).toMatchObject({
       auto: false,
       index: 0,
       fill: 0,
-      label: 'Low',
+      label: 'Effort · Low',
     });
   });
 });

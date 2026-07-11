@@ -1,12 +1,17 @@
 /**
  * ComposerBar (round-12 W2, jedd #6) — the thin "sticking-out" bar fused to the
- * bottom edge of the input card and protruding below it. Three regions:
+ * bottom edge of the input card and protruding below it. Two regions pushed to
+ * opposite ends by an empty flex spacer in the middle:
  *   LEFT   — the active-folder (project) button, relocated here from above the
  *            composer and slimmed (reuses the canvas ProjectPicker verbatim).
- *   CENTER — the active model tier (Fast/Balanced/Intelligent, from the harness
- *            `activeTier`); hover reveals "request categorized as <class>".
- *   RIGHT  — the effort SLIDER (blue fill-pill): Auto · <tier> by default, or an
- *            explicit level once dragged (max only reachable by an explicit drag).
+ *   CENTER — an empty flex spacer (round-15): the routed tier now lives entirely
+ *            on the footer model chip ("Auto · <tier>"), so the bar no longer
+ *            renders a center tier control.
+ *   RIGHT  — the "Effort" button; the effort SLIDER (blue→hot temperature pill)
+ *            opens in a popover (round-14 #2). The button reads the labeled
+ *            "Effort · <Level>" ("Effort · Balanced" by default, mirroring the
+ *            model chip's "Auto · Balanced"); a drag pins an explicit level (max
+ *            only reachable by an explicit drag).
  *
  * Reads harness status (`useHarnessStatus`), the project store, and settings;
  * writes effort through the existing settings-store `update` (which persists +
@@ -14,17 +19,11 @@
  * redefine it (state/model-selection + composer-bar-logic own that).
  */
 import { ProjectPicker } from '@pi-desktop/canvas';
-import { EffortSlider, Tooltip } from '@pi-desktop/ui';
+import { EffortSlider, IconGauge, Popover, PopoverContent, PopoverTrigger } from '@pi-desktop/ui';
 import { autoEffortForTier } from '../state/model-selection';
 import { useProjectStore } from '../state/project-store';
 import { useEffortMode, useSettingsStore } from '../state/settings-store';
-import {
-  classificationHover,
-  EFFORT_STEP_COUNT,
-  effortSliderView,
-  levelForIndex,
-  tierLabel,
-} from './composer-bar-logic';
+import { EFFORT_STEP_COUNT, effortSliderView, levelForIndex } from './composer-bar-logic';
 import { useHarnessStatus } from './harness-status';
 
 /** LEFT: the relocated project (working-folder) chip, slimmed for the bar. */
@@ -47,34 +46,7 @@ function ProjectRegion() {
   );
 }
 
-/** CENTER: the active model tier + the classification hover. */
-function TierRegion() {
-  const status = useHarnessStatus();
-  const activeTier = status?.activeTier ?? null;
-  const label = tierLabel(activeTier);
-
-  if (label === null) {
-    return (
-      <Tooltip side="top" label="Model tier is chosen automatically each turn">
-        <span className="pd-tier pd-tier--auto" data-testid="composer-tier">
-          <span className="pd-tier-dot" aria-hidden="true" />
-          Auto
-        </span>
-      </Tooltip>
-    );
-  }
-  const hover = classificationHover(status?.activeClass ?? null) ?? 'Active model tier';
-  return (
-    <Tooltip side="top" label={hover}>
-      <span className="pd-tier" data-tier={activeTier} data-testid="composer-tier">
-        <span className="pd-tier-dot" data-tier={activeTier} aria-hidden="true" />
-        {label}
-      </span>
-    </Tooltip>
-  );
-}
-
-/** RIGHT: the effort slider (Auto · tier / explicit level). */
+/** RIGHT: the "Effort" button that opens the effort slider in a popover. */
 function EffortRegion() {
   const status = useHarnessStatus();
   const activeTier = status?.activeTier ?? null;
@@ -97,17 +69,37 @@ function EffortRegion() {
   };
 
   return (
-    <EffortSlider
-      steps={EFFORT_STEP_COUNT}
-      value={view.index}
-      fill={view.fill}
-      auto={view.auto}
-      label={view.label}
-      valueText={view.valueText}
-      onLevelChange={onLevelChange}
-      onAuto={onAuto}
-      data-testid="composer-effort"
-    />
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="pd-effort-trigger"
+          data-testid="composer-effort"
+          aria-label="Effort"
+        >
+          <IconGauge size={14} />
+          <span>{view.label}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="pd-menu--instant pd-effort-popover"
+        side="top"
+        align="end"
+        sideOffset={8}
+      >
+        <EffortSlider
+          steps={EFFORT_STEP_COUNT}
+          value={view.index}
+          fill={view.fill}
+          auto={view.auto}
+          label={view.label}
+          valueText={view.valueText}
+          onLevelChange={onLevelChange}
+          onAuto={onAuto}
+          data-testid="composer-effort-slider"
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -117,9 +109,9 @@ export function ComposerBar() {
       <div className="pd-composer-bar-left">
         <ProjectRegion />
       </div>
-      <div className="pd-composer-bar-center">
-        <TierRegion />
-      </div>
+      {/* Empty flex spacer (round-15) — pushes the project chip left and the
+          effort button right. The routed tier now lives on the footer chip. */}
+      <div className="pd-composer-bar-center" />
       <div className="pd-composer-bar-right">
         <EffortRegion />
       </div>

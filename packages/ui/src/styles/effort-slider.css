@@ -1,10 +1,13 @@
 /*
- * EffortSlider (round-12 #6) — the composer effort control: a chunky BLUE
- * fill-pill (least → most), a leftmost Auto affordance, and a level readout.
- * Presentational; the app maps detents ↔ effort levels and Auto ↔ the active
- * model tier. Tokens only (styles-hygiene): the fill is the shared focus-blue
- * (`--pd-border-focus`) so it reads BLUE in every flavor/mode — deliberately
- * distinct from the terracotta `--pd-accent-*`.
+ * EffortSlider (round-12 #6, restyled round-14 #2) — the composer effort
+ * control: a tactile fill-pill (least → most), a leftmost Auto affordance, and a
+ * level readout. Presentational; the app maps detents ↔ effort levels and Auto ↔
+ * the active model tier. Tokens only (styles-hygiene): the fill is a live
+ * temperature gradient interpolating the shared focus-blue (`--pd-border-focus`,
+ * cool/low) → danger-red (`--pd-status-danger-fg`, hot/Max) via the inline
+ * `--pd-effort-heat` (0..1) the component sets from the fill fraction, so it
+ * reads BLUE at rest and glows hot only as effort climbs. Round-14 also hosts
+ * the slider in a popover, opened from the compact `.pd-effort-trigger` button.
  */
 
 .pd-effort {
@@ -70,30 +73,43 @@
     0 0 0 3px var(--pd-status-info-bg);
 }
 
-/* The BLUE fill that grows left→right with effort. A min-width keeps a rounded
- * nub (and the knob) visible at the "least" end. */
+/* The temperature fill that grows left→right with effort: blue (cool/low) →
+ * red (hot/Max), interpolated by the inline `--pd-effort-heat` (0..1). A
+ * min-width keeps a rounded nub (and the knob) visible at the "least" end; a
+ * heat-scaled glow makes the pill feel like it's warming up as effort climbs. */
 .pd-effort-fill {
   position: absolute;
   inset: 0 auto 0 0;
   min-width: 22px;
   border-radius: var(--pd-radius-full);
-  background: var(--pd-border-focus);
-  transition: width var(--pd-duration-base) var(--pd-easing-standard);
+  background: color-mix(
+    in srgb,
+    var(--pd-status-danger-fg) calc(var(--pd-effort-heat, 0) * 100%),
+    var(--pd-border-focus)
+  );
+  box-shadow: 0 0 calc(2px + var(--pd-effort-heat, 0) * 8px)
+    color-mix(in srgb, var(--pd-status-danger-fg) calc(var(--pd-effort-heat, 0) * 70%), transparent);
+  transition:
+    width var(--pd-duration-base) var(--pd-easing-standard),
+    background var(--pd-duration-base) var(--pd-easing-standard),
+    box-shadow var(--pd-duration-base) var(--pd-easing-standard);
 }
 
-/* The grab knob rides the fill's right edge (always visible via the fill nub). */
+/* The grab knob rides the fill's right edge (always visible via the fill nub):
+ * thicker + rounder with an inner top highlight so it reads as a tactile grip. */
 .pd-effort-knob {
   position: absolute;
   top: 50%;
-  right: 3px;
-  width: 14px;
-  height: 14px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
   transform: translateY(-50%);
   border-radius: var(--pd-radius-full);
   background: var(--pd-bg-raised);
   box-shadow:
     var(--pd-shadow-sm),
-    0 0 0 1px var(--pd-border-default);
+    0 0 0 1px var(--pd-border-default),
+    inset 0 1px 0 var(--pd-border-subtle);
 }
 
 .pd-effort-value {
@@ -102,6 +118,45 @@
   color: var(--pd-text-secondary);
   text-transform: capitalize;
   white-space: nowrap;
+}
+
+/* Round-14 #2 — the effort control now opens from a compact "Effort" button; the
+ * slider itself lives in a popover. A quiet ghost pill carrying a gauge glyph +
+ * the live readout ("Auto · Medium" / "High"), lit on hover / while open. */
+.pd-effort-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--pd-radius-full);
+  background: transparent;
+  color: var(--pd-text-secondary);
+  font: inherit;
+  font-size: var(--pd-font-size-caption);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--pd-duration-fast) var(--pd-easing-standard),
+    background var(--pd-duration-fast) var(--pd-easing-standard);
+}
+
+.pd-effort-trigger:hover,
+.pd-effort-trigger[data-state="open"] {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-primary);
+}
+
+.pd-effort-trigger .pd-icon {
+  color: var(--pd-text-muted);
+}
+
+/* The popover surface that hosts the slider (a `.pd-menu`): give it room for the
+ * pill + a touch of padding so the control isn't cramped against the edges. */
+.pd-menu.pd-effort-popover {
+  min-width: 240px;
+  padding: 10px 12px;
 }
 
 @media (prefers-reduced-motion: reduce) {

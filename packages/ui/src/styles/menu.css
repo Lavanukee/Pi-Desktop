@@ -31,7 +31,7 @@
   box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-popover);
   color: var(--pd-text-primary);
   font-family: var(--pd-font-sans);
-  font-size: var(--pd-font-size-body);
+  font-size: calc(var(--pd-font-size-body) * var(--pd-menu-scale, 1));
   line-height: var(--pd-leading-body);
   /*
    * THEME 6 (round-3 redo): the panel REVEALS in the direction it opens instead
@@ -153,9 +153,9 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: calc(var(--pd-row-height) - 2px);
-  padding: 4px 10px;
+  gap: calc(8px * var(--pd-menu-scale, 1));
+  min-height: calc((var(--pd-row-height) - 2px) * var(--pd-menu-scale, 1));
+  padding: calc(4px * var(--pd-menu-scale, 1)) calc(10px * var(--pd-menu-scale, 1));
   border-radius: var(--pd-radius-menu-item);
   color: var(--pd-text-primary);
   opacity: var(--pd-menu-item-resting-opacity);
@@ -204,7 +204,7 @@
 /* Descriptive wide rows (codex access picker / claude checkbox rows). */
 .pd-menu-item--descriptive {
   align-items: flex-start;
-  padding-block: 8px;
+  padding-block: calc(8px * var(--pd-menu-scale, 1));
 }
 
 .pd-menu-item-body {
@@ -220,7 +220,7 @@
 }
 
 .pd-menu-item-description {
-  font-size: var(--pd-font-size-caption);
+  font-size: calc(var(--pd-font-size-caption) * var(--pd-menu-scale, 1));
   line-height: var(--pd-leading-caption);
   color: var(--pd-text-muted);
   white-space: normal;
@@ -231,7 +231,7 @@
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 16px;
+  width: calc(16px * var(--pd-menu-scale, 1));
   color: var(--pd-text-muted);
 }
 
@@ -240,16 +240,16 @@
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 16px;
+  width: calc(16px * var(--pd-menu-scale, 1));
   margin-left: auto;
 }
 
 /* Trailing shortcut hint: bare muted glyphs in menu rows (both flavors). */
 .pd-menu-hint {
   margin-left: auto;
-  padding-left: 16px;
+  padding-left: calc(16px * var(--pd-menu-scale, 1));
   color: var(--pd-text-muted);
-  font-size: var(--pd-font-size-caption);
+  font-size: calc(var(--pd-font-size-caption) * var(--pd-menu-scale, 1));
 }
 
 .pd-menu-check + .pd-menu-hint {
@@ -257,8 +257,9 @@
 }
 
 .pd-menu-label {
-  padding: 6px 10px 2px;
-  font-size: var(--pd-font-size-caption);
+  padding: calc(6px * var(--pd-menu-scale, 1)) calc(10px * var(--pd-menu-scale, 1))
+    calc(2px * var(--pd-menu-scale, 1));
+  font-size: calc(var(--pd-font-size-caption) * var(--pd-menu-scale, 1));
   line-height: var(--pd-leading-caption);
   color: var(--pd-text-muted);
 }
@@ -283,4 +284,24 @@
   display: inline-flex;
   margin-left: 4px;
   color: var(--pd-text-muted);
+}
+
+/*
+ * Element-size scale (round-15): the menu-scale wraps the row METRICS above, but
+ * each glyph is an inline <svg> whose box those calc()s don't reach. .pd-icon's
+ * CSS width/height override the SVG presentation attributes, so these rules are
+ * what actually enlarge the glyphs in step with the (already-scaled) rows. The
+ * leading/check/hint glyphs render at 16px; the tier-row title glyphs (IconSpeed
+ * / IconGauge / IconSparkles size={14}) render at 14px. Fallback ,1 = no-op.
+ */
+.pd-menu-icon .pd-icon {
+  width: calc(16px * var(--pd-menu-scale, 1));
+  height: calc(16px * var(--pd-menu-scale, 1));
+}
+
+.pd-menu-check .pd-icon,
+.pd-menu-hint .pd-icon,
+.pd-menu-item-title .pd-icon {
+  width: calc(14px * var(--pd-menu-scale, 1));
+  height: calc(14px * var(--pd-menu-scale, 1));
 }

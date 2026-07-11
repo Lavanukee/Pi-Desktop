@@ -17,7 +17,7 @@
   background: var(--pd-bg-sidebar);
   color: var(--pd-text-primary);
   font-family: var(--pd-font-sans);
-  font-size: var(--pd-font-size-body);
+  font-size: calc(var(--pd-font-size-body) * var(--pd-sidebar-scale, 1));
   user-select: none;
   /* Slide in/out (both flavors); reduced-motion collapses the duration. */
   transition:
@@ -75,10 +75,10 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  height: 25px;
+  height: calc(25px * var(--pd-sidebar-scale, 1));
   padding: 0 8px;
   color: var(--pd-text-muted);
-  font-size: var(--pd-font-size-caption);
+  font-size: calc(var(--pd-font-size-caption) * var(--pd-sidebar-scale, 1));
   line-height: var(--pd-leading-caption);
 }
 
@@ -99,11 +99,11 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8px * var(--pd-sidebar-scale, 1));
   width: 100%;
-  height: var(--pd-row-height);
+  height: calc(var(--pd-row-height) * var(--pd-sidebar-scale, 1));
   margin: 0;
-  padding: 0 8px;
+  padding: 0 calc(8px * var(--pd-sidebar-scale, 1));
   border: none;
   border-radius: var(--pd-radius-row);
   background: transparent;
@@ -139,7 +139,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--pd-icon-size);
+  width: calc(var(--pd-icon-size) * var(--pd-sidebar-scale, 1));
   color: inherit;
   flex: none;
 }
@@ -156,7 +156,7 @@
  * the shared mechanism behind claude "…" and codex Pin/Archive. */
 .pd-sidebar-row-meta {
   color: var(--pd-text-muted);
-  font-size: var(--pd-font-size-caption);
+  font-size: calc(var(--pd-font-size-caption) * var(--pd-sidebar-scale, 1));
   flex: none;
 }
 
@@ -182,8 +182,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 48px;
-  padding: 0 12px;
+  height: calc(48px * var(--pd-sidebar-scale, 1));
+  padding: 0 calc(12px * var(--pd-sidebar-scale, 1));
   flex: none;
 }
 
@@ -191,12 +191,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: calc(28px * var(--pd-sidebar-scale, 1));
+  height: calc(28px * var(--pd-sidebar-scale, 1));
   border-radius: var(--pd-radius-full);
   background: var(--pd-bg-active);
   color: var(--pd-text-primary);
-  font-size: var(--pd-font-size-caption);
+  font-size: calc(var(--pd-font-size-caption) * var(--pd-sidebar-scale, 1));
   font-weight: var(--pd-font-weight-semibold);
   flex: none;
   overflow: hidden;
@@ -284,4 +284,17 @@
   overflow: hidden;
   border-radius: var(--pd-radius-lg);
   box-shadow: var(--pd-shadow-hairline), var(--pd-shadow-md);
+}
+
+/*
+ * Element-size scale (round-15): the sidebar-scale wraps the row/rail METRICS
+ * above, but each glyph is an inline <svg width=16 height=16> whose box those
+ * calc()s don't reach. .pd-icon's CSS width/height override the SVG presentation
+ * attributes, so this rule is what actually enlarges the glyph in step with its
+ * (already-scaled) icon box. Fallback ,1 keeps the default a byte-identical 16px.
+ */
+.pd-sidebar-row-icon .pd-icon,
+.pd-rail-btn-icon .pd-icon {
+  width: calc(16px * var(--pd-sidebar-scale, 1));
+  height: calc(16px * var(--pd-sidebar-scale, 1));
 }

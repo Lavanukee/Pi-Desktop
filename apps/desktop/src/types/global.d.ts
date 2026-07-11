@@ -3,6 +3,7 @@ import type { PiDesktopBridge } from '../../electron/ipc-contract';
 import type { useGenStore } from '../state/gen-store';
 import type { useHfStore } from '../state/hf-store';
 import type { useLlmStore } from '../state/llm-store';
+import type { useModelSelectionStore } from '../state/model-selection-store';
 import type { usePiStore } from '../state/pi-slice';
 import type { useProjectStore } from '../state/project-store';
 import type { useSettingsStore } from '../state/settings-store';
@@ -28,6 +29,10 @@ declare global {
     /** E2E hook: accessor for the inference/llm store (drive download +
      * status). Present only when loaded with ?piE2E=1 (see state/llm-store.ts). */
     __llm_store?: () => typeof useLlmStore;
+    /** E2E hook: accessor for the transient model-selection/router store (park a
+     * `pendingDownload` to drive the auto-download Dialog). Present only with
+     * ?piE2E=1 (see state/model-selection-store.ts). */
+    __model_selection_store?: () => typeof useModelSelectionStore;
     /** E2E hook: accessor for the Browse-HF store (inject search results / files
      * without live network). Present only with ?piE2E=1 (see state/hf-store.ts). */
     __hf_store?: () => typeof useHfStore;

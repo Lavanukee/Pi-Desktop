@@ -38,6 +38,8 @@ const DEFAULTS: DesktopSettings = {
   capabilities: { image: false, video: false, audio: false, threeD: false },
   customInstructions: '',
   iconStroke: ICON_STROKE_DEFAULT,
+  sidebarScale: 1.0,
+  menuScale: 1.0,
   favoriteModels: [],
   modelEffortDefaults: {},
   hfToken: '',
@@ -66,6 +68,16 @@ function applyTheme(settings: DesktopSettings): void {
  * root wins over the theme token, thinning/thickening every `.pd-icon` glyph. */
 function applyIconStroke(value: number): void {
   document.documentElement.style.setProperty('--pd-icon-stroke', String(value));
+}
+
+/** Drive the element-size scales: inline `--pd-sidebar-scale` / `--pd-menu-scale`
+ * on the document root inherit down and multiply the tokenized `calc()` metrics
+ * (sidebar rows + rail; the shared `.pd-menu` option rows). Default 1.0 = no-op.
+ * A blanket set is idempotent, so no per-field guard is needed at the call site. */
+function applyUiScales(s: DesktopSettings): void {
+  const root = document.documentElement.style;
+  root.setProperty('--pd-sidebar-scale', String(s.sidebarScale));
+  root.setProperty('--pd-menu-scale', String(s.menuScale));
 }
 
 interface SettingsStoreState {
@@ -103,11 +115,13 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
     set({ settings: optimistic });
     if (patch.theme !== undefined) applyTheme(optimistic);
     if (patch.iconStroke !== undefined) applyIconStroke(optimistic.iconStroke);
+    applyUiScales(optimistic);
 
     const settings = await window.piDesktop.invoke('settings:set', { patch });
     set({ settings });
     applyTheme(settings);
     applyIconStroke(settings.iconStroke);
+    applyUiScales(settings);
 
     // Harness picks up permission/effort only via its slash commands — fire the
     // ones that actually changed (best-effort; a no-pi session just no-ops).
@@ -282,6 +296,10 @@ export function connectSettings(): void {
       // matches the token at its default), so it is safe to apply at boot even
       // under E2E — this is what makes a persisted thickness survive a reload.
       applyIconStroke(settings.iconStroke);
+      // Element-size scales are unitless multipliers on tokenized calc()s
+      // (default 1.0 = no-op), orthogonal to the theme probes for the same
+      // reason — apply at boot so persisted scales survive a reload.
+      applyUiScales(settings);
     });
 
   if (typeof window.matchMedia === 'function') {

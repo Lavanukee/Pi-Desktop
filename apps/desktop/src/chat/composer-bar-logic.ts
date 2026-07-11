@@ -4,8 +4,9 @@
  * + the canvas ProjectPicker + zustand hooks). Maps:
  *   - the harness `activeTier` → the CENTER tier label (via TIER_LABEL),
  *   - the harness `activeClass` → the hover copy "request categorized as …",
- *   - `effortMode` + `effort` + `activeTier` → the RIGHT effort-slider view
- *     ("Auto · <tier>" fill from the tier, or an explicit level).
+ *   - `effortMode` + `effort` + `activeTier` → the RIGHT effort readout
+ *     ("Effort · <Level>": the auto level resolved from the tier, or the
+ *     explicit level), mirroring the model chip's "Auto · <Tier>".
  *
  * The harness stays 4-level; Auto ↔ tier resolution lives entirely here + in
  * `state/model-selection` (imported, not redefined).
@@ -35,19 +36,34 @@ export function classificationHover(activeClass: string | null | undefined): str
   return cls === null ? null : `request categorized as ${cls}`;
 }
 
-function capitalize(word: string): string {
-  return word.length === 0 ? word : word.charAt(0).toUpperCase() + word.slice(1);
+/**
+ * Display names for the 4-level effort scale. The mid detent (the auto-resolved
+ * default for the balanced tier) reads "Balanced" so the effort readout
+ * ("Effort · Balanced") mirrors the model chip's "Auto · Balanced". The
+ * underlying effort values/logic stay low/medium/high/max — this is display only.
+ */
+const EFFORT_DISPLAY: Record<EffortLevel, string> = {
+  low: 'Low',
+  medium: 'Balanced',
+  high: 'High',
+  max: 'Max',
+};
+
+/** The user-facing display name for an effort level (e.g. `medium` → "Balanced"). */
+export function effortDisplay(level: EffortLevel): string {
+  return EFFORT_DISPLAY[level];
 }
 
 /** Everything the {@link EffortSlider} needs, derived from settings + the tier. */
 export interface EffortSliderView {
-  /** Auto mode: the readout is "Auto · <tier>" and a drag flips to a level. */
+  /** Auto mode: the readout follows the tier's auto level and a drag flips to a
+   * pinned level; either way the label reads "Effort · <Level>". */
   readonly auto: boolean;
   /** The explicit detent index (0..EFFORT_STEP_COUNT-1) for aria + keyboard. */
   readonly index: number;
   /** Fill fraction (0..1): auto → the tier's auto level; level → the level. */
   readonly fill: number;
-  /** Active-mode readout: "Auto · balanced" / "Auto" (no tier yet) / "High". */
+  /** Labeled two-part readout: "Effort · Balanced" / "Effort · High" / "Effort · Max". */
   readonly label: string;
   /** Screen-reader value text. */
   readonly valueText: string;
@@ -56,9 +72,11 @@ export interface EffortSliderView {
 /**
  * Resolve the slider surface. In Auto the fill follows the active tier
  * (fast→min, balanced→mid, intelligent→the tick below max via
- * `autoEffortForTier`); with no tier yet it rests on the last explicit level
- * and reads plain "Auto". In level mode it pins the explicit level (max is only
- * reachable here, by an explicit drag).
+ * `autoEffortForTier`); with no tier yet it rests on the last explicit level.
+ * In level mode it pins the explicit level (max is only reachable here, by an
+ * explicit drag). The readout is always the labeled two-part "Effort · <Level>"
+ * (the word "Effort" is kept next to the control), mirroring the model chip's
+ * "Auto · <Tier>" — the mid/auto default reads "Effort · Balanced".
  */
 export function effortSliderView(
   effortMode: EffortMode,
@@ -66,17 +84,25 @@ export function effortSliderView(
   activeTier: ModelTier | null,
 ): EffortSliderView {
   if (effortMode === 'auto') {
+    // The readout names the EFFORT LEVEL the tier resolves to (Low/Balanced/
+    // High), not the tier itself — "Effort · Balanced", not "Effort · balanced".
+    // Before the classifier runs (no tier) it rests on the explicit level.
     const level = activeTier !== null ? autoEffortForTier(activeTier) : effort;
     const index = Math.max(0, EFFORT_STEPS.indexOf(level));
     const fill = levelToSlider(level);
-    return activeTier !== null
-      ? { auto: true, index, fill, label: `Auto · ${activeTier}`, valueText: `Auto, ${activeTier}` }
-      : { auto: true, index, fill, label: 'Auto', valueText: 'Auto' };
+    const display = effortDisplay(level);
+    return {
+      auto: true,
+      index,
+      fill,
+      label: `Effort · ${display}`,
+      valueText: `Effort, ${display}`,
+    };
   }
   const index = Math.max(0, EFFORT_STEPS.indexOf(effort));
   const fill = levelToSlider(effort);
-  const label = capitalize(effort);
-  return { auto: false, index, fill, label, valueText: `${label} effort` };
+  const display = effortDisplay(effort);
+  return { auto: false, index, fill, label: `Effort · ${display}`, valueText: `${display} effort` };
 }
 
 /** Map a detent index the slider emits back to its effort level. */

@@ -10,43 +10,25 @@ import {
   Button,
   ContextGauge,
   ContextGaugeTooltip,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
   IconButton,
-  IconCheck,
   IconChevronDown,
-  IconChevronRight,
-  IconGauge,
   IconInfo,
-  IconSparkles,
-  IconSpeed,
   ProgressBar,
   Spinner,
   Tooltip,
 } from '@pi-desktop/ui';
-import type { ReactNode } from 'react';
 // Harness SOURCE import (not the barrel) — keeps the renderer bundle clean; see
 // auto-router.ts. tier.ts is pure + browser-safe.
-import { type ModelTier, TIER_LABEL } from '../../../../packages/harness/src/classify/tier.ts';
+import { TIER_LABEL } from '../../../../packages/harness/src/classify/tier.ts';
 import { useLlmStore } from '../state/llm-store';
-import { selectionTier } from '../state/model-selection';
 import { useModelSwitching } from '../state/model-selection-store';
 import { usePiStore } from '../state/pi-slice';
 import { useModelSelection, useUserMode } from '../state/settings-store';
 import { AutoDownloadPrompt } from './AutoDownloadPrompt';
-import { selectAuto, selectTier } from './auto-router';
-import { buildTierRows } from './footer-models';
+import { chipLabel } from './footer-models';
 import { HarnessStatusCluster } from './HarnessStatus';
-
-/** Leading glyph per capability tier (fast=speed, balanced=gauge, smart=spark). */
-const TIER_ICON: Record<ModelTier, ReactNode> = {
-  fast: <IconSpeed size={14} />,
-  balanced: <IconGauge size={14} />,
-  intelligent: <IconSparkles size={14} />,
-};
+import { useHarnessStatus } from './harness-status';
+import { TierPickerMenu } from './TierPickerMenu';
 
 /** 73000 → "73,000"; small numbers pass through. */
 function fmtInt(n: number): string {
@@ -127,23 +109,26 @@ export function ComposerFooter({
   const messages = usePiStore((s) => s.messages);
   const status = useLlmStore((s) => s.status);
   const download = useLlmStore((s) => s.download);
-  const refreshCatalog = useLlmStore((s) => s.refreshCatalog);
-  const recommendation = useLlmStore((s) => s.recommendation);
-  // Round-12 (W3): the footer dropdown is mode-aware — Auto + the three
-  // capability tiers, with the real model name grey-secondary (user) or primary
-  // (power). tierModels resolves each tier → the concrete model for this Mac.
+  // Round-12 (W3): the model chip + its picker are mode-aware. The picker itself
+  // (Auto + the three capability tiers) is the shared TierPickerMenu; here we
+  // only decide the CHIP LABEL from the mode + selection.
   const userMode = useUserMode();
   const selection = useModelSelection();
   const switching = useModelSwitching();
-  const tierModels = recommendation?.tierModels;
-  const tierRows = buildTierRows(tierModels, userMode);
-  const activeTier = selectionTier(selection);
-  const isAuto = selection.mode === 'auto';
+  // The live routed tier from the harness — feeds the "Auto · <tier>" chip and
+  // re-renders it as the harness republishes activeTier each turn.
+  const activeTier = useHarnessStatus()?.activeTier ?? null;
 
+  // Round-14 (#4): mode-aware chip label — power shows the raw model name; user
+  // mode names the selection ("Auto" / a tier label / a pinned model), never the
+  // raw model id under a tier. Falls back to a "pick a model" affordance.
   const label =
-    agentModel?.name ??
-    status.model?.displayName ??
-    (piModels.length > 0 ? 'Choose model' : 'Pick a model');
+    chipLabel(
+      userMode,
+      selection,
+      activeTier,
+      agentModel?.name ?? status.model?.displayName ?? null,
+    ) ?? (piModels.length > 0 ? 'Choose model' : 'Pick a model');
 
   // Context gauge: latest turn's total tokens over the launched window.
   let gauge: number | null = null;
@@ -172,82 +157,19 @@ export function ComposerFooter({
           model chip when Auto resolves to an un-downloaded tier. */}
       <span className="relative flex items-center">
         <AutoDownloadPrompt />
-        <DropdownMenu
-          onOpenChange={(open) => {
-            // Refresh the catalog so tierModels + downloaded flags are current.
-            if (open) void refreshCatalog();
-          }}
+        {/* The shared tier picker (Auto + the three capability tiers, + a power-mode
+            "More models" deep-link). The chip is its trigger. */}
+        <TierPickerMenu
+          align="start"
+          side="top"
+          onOpenManager={onOpenModels}
+          menuTestId="footer-model-menu"
         >
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" className="gap-1" data-testid="footer-model-chip">
-              {isAuto ? <IconSparkles size={14} /> : null}
-              <span className="max-w-[180px] truncate">{label}</span>
-              <IconChevronDown size={16} />
-            </Button>
-          </DropdownMenuTrigger>
-          {/* Round-12 (W3): mode-aware model picker. Both modes list Auto (top,
-              default) + the three capability tiers; USER mode leads each tier with
-              its friendly label (real model name grey underneath), POWER mode leads
-              with the real model name (tier label grey) and keeps a "More models"
-              path to the full manager. Opens instantly (no animation, #11). */}
-          <DropdownMenuContent
-            className="pd-menu--instant"
-            align="start"
-            side="top"
-            data-testid="footer-model-menu"
-          >
-            <DropdownMenuItem
-              data-testid="footer-auto"
-              description="Picks the best model for each task"
-              hint={isAuto ? <IconCheck size={14} /> : undefined}
-              onSelect={() => void selectAuto()}
-            >
-              <span className="flex items-center gap-1.5">
-                <IconSparkles size={14} />
-                Auto
-              </span>
-            </DropdownMenuItem>
-
-            <DropdownMenuSeparator />
-
-            {tierRows.map((row) => (
-              <DropdownMenuItem
-                key={row.tier}
-                data-testid="footer-tier"
-                description={
-                  row.secondary === null
-                    ? undefined
-                    : row.downloaded
-                      ? row.secondary
-                      : `${row.secondary} · download`
-                }
-                hint={activeTier === row.tier ? <IconCheck size={14} /> : undefined}
-                onSelect={(e) => {
-                  e.preventDefault();
-                  void selectTier(row.tier);
-                }}
-              >
-                <span className="flex items-center gap-1.5">
-                  {TIER_ICON[row.tier]}
-                  {row.primary}
-                </span>
-              </DropdownMenuItem>
-            ))}
-
-            {userMode === 'power' && onOpenModels !== undefined ? (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  data-testid="footer-open-manager"
-                  hint={<IconChevronRight size={14} />}
-                  onSelect={() => onOpenModels()}
-                >
-                  More models
-                </DropdownMenuItem>
-              </>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
+          <Button variant="ghost" size="sm" className="gap-1" data-testid="footer-model-chip">
+            <span className="max-w-[180px] truncate">{label}</span>
+            <IconChevronDown size={16} />
+          </Button>
+        </TierPickerMenu>
       </span>
 
       {/* Honest about the (seconds-long) restart when Auto/a tier pick switches

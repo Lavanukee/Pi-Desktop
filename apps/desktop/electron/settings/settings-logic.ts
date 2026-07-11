@@ -23,6 +23,9 @@ import {
   type PermissionMode,
   type ThemeFlavor,
   type ThemeModePref,
+  UI_SCALE_DEFAULT,
+  UI_SCALE_MAX,
+  UI_SCALE_MIN,
   USER_MODES,
 } from './settings-contract';
 
@@ -64,6 +67,8 @@ export const DEFAULT_SETTINGS: DesktopSettings = {
   capabilities: { image: false, video: false, audio: false, threeD: false },
   customInstructions: '',
   iconStroke: ICON_STROKE_DEFAULT,
+  sidebarScale: UI_SCALE_DEFAULT,
+  menuScale: UI_SCALE_DEFAULT,
   favoriteModels: [],
   modelEffortDefaults: {},
   hfToken: '',
@@ -147,6 +152,8 @@ export function clampSettings(raw: unknown): DesktopSettings {
     },
     customInstructions: str(o.customInstructions, d.customInstructions),
     iconStroke: num(o.iconStroke, d.iconStroke, ICON_STROKE_MIN, ICON_STROKE_MAX),
+    sidebarScale: num(o.sidebarScale, d.sidebarScale, UI_SCALE_MIN, UI_SCALE_MAX),
+    menuScale: num(o.menuScale, d.menuScale, UI_SCALE_MIN, UI_SCALE_MAX),
     favoriteModels: strArray(o.favoriteModels),
     modelEffortDefaults: effortMap(o.modelEffortDefaults),
     hfToken: str(o.hfToken, d.hfToken),

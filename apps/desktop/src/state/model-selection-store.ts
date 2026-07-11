@@ -80,3 +80,13 @@ export function useModelSwitching(): SwitchingState | null {
 export function useAutoDownloadPrompt(): PendingDownload | null {
   return useModelSelectionStore((s) => s.pendingDownload);
 }
+
+// E2E hook (round-14 auto-download Dialog probe): expose the store accessor on
+// window under the same ?piE2E=1 opt-in as __pi_store / __llm_store (main.ts
+// appends it when PI_E2E=1 — see window-policy.ts). Lets a probe park a
+// `pendingDownload` and drive the centered AutoDownloadPrompt Dialog without a
+// live router run. Same-context code can reach the store anyway; gating just
+// keeps production from shipping a stable tamper handle to the router memory.
+if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('piE2E')) {
+  window.__model_selection_store = () => useModelSelectionStore;
+}

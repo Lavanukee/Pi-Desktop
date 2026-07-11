@@ -23,6 +23,7 @@
     "vitest": "^4.1.10"
   },
   "dependencies": {
-    "@sinclair/typebox": "^0.34.49"
+    "@sinclair/typebox": "^0.34.49",
+    "simple-icons": "^16.25.0"
   }
 }

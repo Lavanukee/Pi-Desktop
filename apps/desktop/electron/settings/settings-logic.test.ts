@@ -50,6 +50,22 @@ describe('clampSettings', () => {
     expect(clampSettings({ enginePreference: 'mlx' }).enginePreference).toBe('mlx');
   });
 
+  it('defaults sidebarScale/menuScale to 1.0 and clamps out-of-range values', () => {
+    expect(DEFAULT_SETTINGS.sidebarScale).toBe(1.0);
+    expect(DEFAULT_SETTINGS.menuScale).toBe(1.0);
+    expect(clampSettings({}).sidebarScale).toBe(1.0);
+    expect(clampSettings({}).menuScale).toBe(1.0);
+    // Below the floor clamps up to 0.8; above the ceiling clamps down to 1.5.
+    expect(clampSettings({ sidebarScale: 0.5 }).sidebarScale).toBe(0.8);
+    expect(clampSettings({ sidebarScale: 3 }).sidebarScale).toBe(1.5);
+    expect(clampSettings({ menuScale: 0.5 }).menuScale).toBe(0.8);
+    expect(clampSettings({ menuScale: 3 }).menuScale).toBe(1.5);
+    // A valid in-range value is kept; junk falls back to the default.
+    expect(clampSettings({ sidebarScale: 1.25 }).sidebarScale).toBe(1.25);
+    expect(clampSettings({ menuScale: 'big' }).menuScale).toBe(1.0);
+    expect(clampSettings({ sidebarScale: Number.NaN }).sidebarScale).toBe(1.0);
+  });
+
   it('defaults modelSelection to auto and effortMode to auto', () => {
     expect(DEFAULT_SETTINGS.modelSelection).toEqual({ mode: 'auto' });
     expect(DEFAULT_SETTINGS.effortMode).toBe('auto');

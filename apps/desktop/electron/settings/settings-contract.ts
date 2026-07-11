@@ -111,6 +111,12 @@ export interface DesktopSettings {
   /** Global SVG icon stroke width; applied to `--pd-icon-stroke` on <html>.
    * Defaults to the token value (1.25). */
   iconStroke: number;
+  /** Element-size scale for the sidebar (rows, icons, text, rail); applied to
+   * `--pd-sidebar-scale` on <html>. Default 1.0 (no-op). */
+  sidebarScale: number;
+  /** Element-size scale for the shared dropdown-menu option rows (model dropup +
+   * "+" menu); applied to `--pd-menu-scale` on <html>. Default 1.0 (no-op). */
+  menuScale: number;
   /** Starred model ids (curated or discovered-HF), surfaced in a Favorites
    * section of the Model Manager. */
   favoriteModels: string[];
@@ -138,6 +144,8 @@ export interface DesktopSettingsPatch {
   capabilities?: Partial<GenerationCapabilities>;
   customInstructions?: string;
   iconStroke?: number;
+  sidebarScale?: number;
+  menuScale?: number;
   /** Full replacement list (renderer read-modify-writes the whole array). */
   favoriteModels?: string[];
   /** Full replacement map (renderer read-modify-writes the whole record). */
@@ -149,6 +157,12 @@ export interface DesktopSettingsPatch {
 export const ICON_STROKE_MIN = 1;
 export const ICON_STROKE_MAX = 2.5;
 export const ICON_STROKE_DEFAULT = 1.25;
+
+/** Element-size scale bounds — shared by the sidebar + menu scale sliders.
+ * Both default to 1.0 so an untouched install is byte-identical to today. */
+export const UI_SCALE_MIN = 0.8; // FEEL — owner may retune
+export const UI_SCALE_MAX = 1.5; // FEEL
+export const UI_SCALE_DEFAULT = 1.0;
 
 export type SettingsInvokeMap = {
   /** Current settings, seeded from onboarding.json + the mcp registry on first read. */

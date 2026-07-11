@@ -1,15 +1,16 @@
 /**
- * Round-14 COMPOSER E2E (issues 2/3/4): launches the built app against mock-pi
- * and drives the real composer bar + footer chip. Asserts the objectively
- * TESTABLE halves of the wave:
+ * Round-14/15 COMPOSER E2E: launches the built app against mock-pi and drives the
+ * real composer bar + footer chip. Asserts the objectively TESTABLE halves of the
+ * wave:
  *
  *   #2  the effort SLIDER is no longer inline — an "Effort" button
  *       (data-testid=composer-effort) opens it inside a popover.
- *   #3  the stray centre dot is gone (.pd-tier-dot never renders); under Auto the
- *       tier control is a clickable "[Auto] · [<tier>]" whose segments open the
- *       shared tier picker; the whole control HIDES when a tier/model is pinned.
- *   #4  the footer model chip shows the mode/tier LABEL ("Balanced"), not the
- *       raw running model id, once a tier is pinned.
+ *   round-15 the center TierRegion is gone: the bar renders folder-LEFT +
+ *       effort-RIGHT only, with an empty flex spacer between them, so the
+ *       composer-tier* testids never mount and the stray .pd-tier-dot is gone.
+ *   round-15 the footer model chip names the routed tier under Auto
+ *       ("Auto · <tier>", live from the harness activeTier) and the friendly tier
+ *       LABEL ("Balanced") when a tier is pinned — never the raw running model id.
  *
  * The gradient / motion FEEL is owner-validated (not asserted). Run `pnpm build`
  * first.
@@ -53,7 +54,7 @@ try {
   });
   await page.waitForSelector('[data-testid="composer-input"]', { timeout: 8000 });
 
-  // Make sure we start from Auto (the default) so the tier control is present.
+  // Make sure we start from Auto (the default) so the chip speaks for routing.
   await page.evaluate(() =>
     window
       .__settings_store()
@@ -61,15 +62,59 @@ try {
       .update({ modelSelection: { mode: 'auto' } }),
   );
 
-  // ── #3: no stray centre dot, tier control present under Auto ───────────────
+  // ── round-15: the center tier control is gone entirely ─────────────────────
   assert(
     (await page.locator('.pd-tier-dot').count()) === 0,
     'the retired decorative .pd-tier-dot must not render anywhere',
   );
-  await page.locator('[data-testid="composer-tier"]').waitFor({ timeout: 8000 });
   assert(
-    (await page.locator('[data-testid="composer-tier-auto"]').count()) === 1,
-    'the Auto segment should render inside the tier control',
+    (await page.locator('[data-testid="composer-tier"]').count()) === 0,
+    'the center TierRegion must be removed — [data-testid="composer-tier"] must not render',
+  );
+  assert(
+    (await page.locator('[data-testid="composer-tier-auto"]').count()) === 0,
+    'the removed Auto segment (composer-tier-auto) must not render',
+  );
+  // The bar still mounts, with the project chip left and the effort button right
+  // pushed apart by the empty center spacer.
+  assert(
+    (await page.locator('[data-testid="composer-bar"] .pd-composer-bar-center').count()) === 1,
+    'the empty center flex spacer must remain (it pushes folder-left / effort-right apart)',
+  );
+
+  // ── round-15: the footer chip names the routed tier live from the harness ──
+  // No harness status yet ⇒ the chip reads plain "Auto".
+  await page.waitForFunction(
+    () => {
+      const chip = document.querySelector('[data-testid="footer-model-chip"]');
+      return (chip?.textContent ?? '').trim() === 'Auto';
+    },
+    undefined,
+    { timeout: 8000 },
+  );
+  // Publish a harness status carrying an active tier; the chip must re-render to
+  // "Auto · <tier>" live (proves ComposerFooter threads useHarnessStatus().activeTier
+  // into chipLabel).
+  await page.evaluate(() =>
+    window.__pi_store().setState((s) => ({
+      extensionStatus: {
+        ...s.extensionStatus,
+        harness: JSON.stringify({ activeTier: 'balanced' }),
+      },
+    })),
+  );
+  await page.waitForFunction(
+    () =>
+      (document.querySelector('[data-testid="footer-model-chip"]')?.textContent ?? '')
+        .trim()
+        .startsWith('Auto · '),
+    undefined,
+    { timeout: 8000 },
+  );
+  const autoChip = (await page.locator('[data-testid="footer-model-chip"]').innerText()).trim();
+  assert(
+    autoChip === 'Auto · Balanced',
+    `under Auto the chip should show "Auto · Balanced" (routed tier), got ${JSON.stringify(autoChip)}`,
   );
 
   // ── #2: the "Effort" button opens the slider in a popover ──────────────────
@@ -89,50 +134,54 @@ try {
   await page.keyboard.press('Escape');
   await slider.waitFor({ state: 'detached', timeout: 8000 });
 
-  // ── #3: a tier segment opens the shared tier picker (Auto + the tier rows) ──
-  await page.click('[data-testid="composer-tier-auto"]');
-  await page.locator('[data-testid="footer-auto"]').first().waitFor({ timeout: 8000 });
-  await page.locator('[data-testid="footer-tier"]').first().waitFor({ timeout: 8000 });
-
-  // ── #3 + #4: pin a tier → the bar tier control (and its open menu) unmount,
-  // and the chip names the tier instead of the raw model id.
+  // ── round-15: pin a tier → the chip names the tier LABEL, not "Auto · …" and
+  // not the raw model id. The center control stays absent throughout.
   await page.evaluate(() =>
     window
       .__settings_store()
       .getState()
       .update({ modelSelection: { mode: 'tier', tier: 'balanced' } }),
   );
-  await page.locator('[data-testid="composer-tier"]').waitFor({ state: 'detached', timeout: 8000 });
-  await page
-    .locator('[data-testid="footer-auto"]')
-    .first()
-    .waitFor({ state: 'detached', timeout: 8000 });
   await page.waitForFunction(
     () => {
-      const chip = document.querySelector('[data-testid="footer-model-chip"]');
-      return (chip?.textContent ?? '').includes('Balanced');
+      const t = (
+        document.querySelector('[data-testid="footer-model-chip"]')?.textContent ?? ''
+      ).trim();
+      return t === 'Balanced';
     },
     undefined,
     { timeout: 8000 },
   );
   const chipText = (await page.locator('[data-testid="footer-model-chip"]').innerText()).trim();
   assert(
-    /Balanced/.test(chipText),
-    `the chip should show the tier label "Balanced", got ${JSON.stringify(chipText)}`,
+    chipText === 'Balanced',
+    `the pinned-tier chip should show exactly "Balanced" (not "Auto · …" / the raw model name), got ${JSON.stringify(chipText)}`,
+  );
+  assert(
+    (await page.locator('[data-testid="composer-tier"]').count()) === 0,
+    'the center tier control must stay absent when a tier is pinned',
   );
 
-  // Restore Auto so the shared state is clean; the tier control returns.
+  // Restore Auto so the shared state is clean; the chip returns to "Auto · Balanced".
   await page.evaluate(() =>
     window
       .__settings_store()
       .getState()
       .update({ modelSelection: { mode: 'auto' } }),
   );
-  await page.locator('[data-testid="composer-tier"]').waitFor({ timeout: 8000 });
+  await page.waitForFunction(
+    () =>
+      (document.querySelector('[data-testid="footer-model-chip"]')?.textContent ?? '')
+        .trim()
+        .startsWith('Auto'),
+    undefined,
+    { timeout: 8000 },
+  );
 
   console.log(
-    'round14-composer-probe OK — no .pd-tier-dot; Effort button reveals the slider popover; ' +
-      'tier segments open the shared picker; pinning a tier hides the bar control + the chip shows "Balanced" (not the raw model name)',
+    'round14-composer-probe OK — no .pd-tier-dot / composer-tier; empty center spacer; ' +
+      'Effort button reveals the slider popover; the footer chip shows "Auto · Balanced" live ' +
+      'from the harness activeTier and "Balanced" (not the raw model name) when a tier is pinned',
   );
 } finally {
   await app.close();

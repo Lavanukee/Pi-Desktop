@@ -13,7 +13,6 @@ import {
   IconButton,
   IconChevronDown,
   IconInfo,
-  IconSparkles,
   ProgressBar,
   Spinner,
   Tooltip,
@@ -22,13 +21,13 @@ import {
 // auto-router.ts. tier.ts is pure + browser-safe.
 import { TIER_LABEL } from '../../../../packages/harness/src/classify/tier.ts';
 import { useLlmStore } from '../state/llm-store';
-import { selectionTier } from '../state/model-selection';
 import { useModelSwitching } from '../state/model-selection-store';
 import { usePiStore } from '../state/pi-slice';
 import { useModelSelection, useUserMode } from '../state/settings-store';
 import { AutoDownloadPrompt } from './AutoDownloadPrompt';
 import { chipLabel } from './footer-models';
 import { HarnessStatusCluster } from './HarnessStatus';
+import { useHarnessStatus } from './harness-status';
 import { TierPickerMenu } from './TierPickerMenu';
 
 /** 73000 → "73,000"; small numbers pass through. */
@@ -116,8 +115,9 @@ export function ComposerFooter({
   const userMode = useUserMode();
   const selection = useModelSelection();
   const switching = useModelSwitching();
-  const activeTier = selectionTier(selection);
-  const isAuto = selection.mode === 'auto';
+  // The live routed tier from the harness — feeds the "Auto · <tier>" chip and
+  // re-renders it as the harness republishes activeTier each turn.
+  const activeTier = useHarnessStatus()?.activeTier ?? null;
 
   // Round-14 (#4): mode-aware chip label — power shows the raw model name; user
   // mode names the selection ("Auto" / a tier label / a pinned model), never the
@@ -166,7 +166,6 @@ export function ComposerFooter({
           menuTestId="footer-model-menu"
         >
           <Button variant="ghost" size="sm" className="gap-1" data-testid="footer-model-chip">
-            {isAuto ? <IconSparkles size={14} /> : null}
             <span className="max-w-[180px] truncate">{label}</span>
             <IconChevronDown size={16} />
           </Button>

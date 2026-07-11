@@ -24,6 +24,8 @@ const base: DesktopSettings = {
   capabilities: { image: false, video: false, audio: false, threeD: false },
   customInstructions: '',
   iconStroke: 1.25,
+  sidebarScale: 1.0,
+  menuScale: 1.0,
   favoriteModels: [],
   modelEffortDefaults: {},
   hfToken: '',

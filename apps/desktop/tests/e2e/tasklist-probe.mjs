@@ -71,9 +71,22 @@ try {
   }
 
   // The always-visible status cluster surfaces the active class + running timer.
-  // Active class moved to the composer-bar tier display (class in its hover);
-  // verify the tier display renders + the harness status carries "coding".
-  await page.locator('[data-testid="composer-tier"]').waitFor({ timeout: 8000 });
+  // (round-15: the center composer-bar tier control was removed; the harness
+  // status is read straight from the store.) Wait for the harness to publish,
+  // then verify the status carries "coding".
+  await page.waitForFunction(
+    () => {
+      const raw = window.__pi_store().getState().extensionStatus.harness;
+      if (raw === undefined || raw.length === 0) return false;
+      try {
+        return /coding/i.test(JSON.parse(raw).activeClass ?? '');
+      } catch {
+        return false;
+      }
+    },
+    undefined,
+    { timeout: 8000 },
+  );
   const clsStatus = await harnessStatus(page);
   assert(
     clsStatus !== null && /coding/i.test(clsStatus.activeClass ?? ''),

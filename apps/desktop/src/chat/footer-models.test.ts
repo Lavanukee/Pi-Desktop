@@ -62,9 +62,10 @@ describe('buildTierRows (round-12)', () => {
 });
 
 /**
- * Round-14 (#4): the model chip is mode-aware. POWER users always see the raw
- * running model name; USER mode names the SELECTION — "Auto", a friendly tier
- * label, or a pinned model's name — never the raw model id when a tier is chosen.
+ * Round-14 (#4) / round-15: the model chip is mode-aware. POWER users always see
+ * the raw running model name; USER mode names the SELECTION — "Auto · <routed
+ * tier>" (plain "Auto" before the classifier runs), a friendly tier label, or a
+ * pinned model's name — never the raw model id when a tier is chosen.
  */
 describe('chipLabel (round-14)', () => {
   const auto: ModelSelection = { mode: 'auto' };
@@ -76,9 +77,15 @@ describe('chipLabel (round-14)', () => {
     );
   });
 
-  it('USER mode + Auto: "Auto" — never the routed model name', () => {
-    expect(chipLabel('user', auto, 'intelligent', 'qwen3.6 27b')).toBe('Auto');
+  it('USER mode + Auto: "Auto · <tier>" (the routed tier) — never the routed model name', () => {
+    expect(chipLabel('user', auto, 'intelligent', 'qwen3.6 27b')).toBe('Auto · Intelligent');
+    expect(chipLabel('user', auto, 'fast', 'gemma4 e2b')).toBe('Auto · Fast');
+    expect(chipLabel('user', auto, 'balanced', 'gemma4 12b')).toBe('Auto · Balanced');
+  });
+
+  it('USER mode + Auto before the classifier has run: plain "Auto" (no tier yet)', () => {
     expect(chipLabel('user', auto, null, null)).toBe('Auto');
+    expect(chipLabel('user', auto, null, 'qwen3.6 27b')).toBe('Auto');
   });
 
   it('USER mode + a pinned tier: the friendly TIER label, not the raw model id', () => {

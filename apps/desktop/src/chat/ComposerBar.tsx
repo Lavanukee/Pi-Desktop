@@ -1,12 +1,12 @@
 /**
  * ComposerBar (round-12 W2, jedd #6) — the thin "sticking-out" bar fused to the
- * bottom edge of the input card and protruding below it. Three regions:
+ * bottom edge of the input card and protruding below it. Two regions pushed to
+ * opposite ends by an empty flex spacer in the middle:
  *   LEFT   — the active-folder (project) button, relocated here from above the
  *            composer and slimmed (reuses the canvas ProjectPicker verbatim).
- *   CENTER — under Auto routing, the clickable "[Auto] · [<tier>]" control (both
- *            halves open the shared tier picker); hover reveals "request
- *            categorized as <class>". Hidden when a tier/model is pinned — the
- *            footer chip names it then (round-14 #3).
+ *   CENTER — an empty flex spacer (round-15): the routed tier now lives entirely
+ *            on the footer model chip ("Auto · <tier>"), so the bar no longer
+ *            renders a center tier control.
  *   RIGHT  — the "Effort" button; the effort SLIDER (blue→hot temperature pill)
  *            opens in a popover (round-14 #2). Auto · <level> by default, or an
  *            explicit level once dragged (max only reachable by an explicit drag).
@@ -17,26 +17,12 @@
  * redefine it (state/model-selection + composer-bar-logic own that).
  */
 import { ProjectPicker } from '@pi-desktop/canvas';
-import {
-  EffortSlider,
-  IconGauge,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-  Tooltip,
-} from '@pi-desktop/ui';
+import { EffortSlider, IconGauge, Popover, PopoverContent, PopoverTrigger } from '@pi-desktop/ui';
 import { autoEffortForTier } from '../state/model-selection';
 import { useProjectStore } from '../state/project-store';
-import { useEffortMode, useModelSelection, useSettingsStore } from '../state/settings-store';
-import {
-  classificationHover,
-  EFFORT_STEP_COUNT,
-  effortSliderView,
-  levelForIndex,
-  tierLabel,
-} from './composer-bar-logic';
+import { useEffortMode, useSettingsStore } from '../state/settings-store';
+import { EFFORT_STEP_COUNT, effortSliderView, levelForIndex } from './composer-bar-logic';
 import { useHarnessStatus } from './harness-status';
-import { TierPickerMenu } from './TierPickerMenu';
 
 /** LEFT: the relocated project (working-folder) chip, slimmed for the bar. */
 function ProjectRegion() {
@@ -55,48 +41,6 @@ function ProjectRegion() {
       onClear={() => void clearProject()}
       placeholder="No project"
     />
-  );
-}
-
-/** CENTER: under Auto, the clickable "[Auto] · [<tier>]" control; both halves
- * open the shared tier picker. Hidden when a tier/model is pinned (the footer
- * chip names it). No decorative dot — the "·" is a plain text separator. */
-function TierRegion() {
-  const status = useHarnessStatus();
-  const activeTier = status?.activeTier ?? null;
-  const isAuto = useModelSelection().mode === 'auto';
-
-  // A pinned tier/model is named by the footer model chip (issue 4); the center
-  // only speaks for Auto routing, so render nothing otherwise.
-  if (!isAuto) return null;
-
-  const tier = tierLabel(activeTier);
-  const hover =
-    classificationHover(status?.activeClass ?? null) ??
-    'Model tier is chosen automatically each turn';
-
-  return (
-    <Tooltip side="top" label={hover}>
-      <span className="pd-tier pd-tier--auto" data-testid="composer-tier">
-        <TierPickerMenu side="top" align="start">
-          <button type="button" className="pd-tier-seg" data-testid="composer-tier-auto">
-            Auto
-          </button>
-        </TierPickerMenu>
-        {tier !== null ? (
-          <>
-            <span className="pd-tier-sep" aria-hidden="true">
-              ·
-            </span>
-            <TierPickerMenu side="top" align="start">
-              <button type="button" className="pd-tier-seg" data-testid="composer-tier-value">
-                {tier}
-              </button>
-            </TierPickerMenu>
-          </>
-        ) : null}
-      </span>
-    </Tooltip>
   );
 }
 
@@ -163,9 +107,9 @@ export function ComposerBar() {
       <div className="pd-composer-bar-left">
         <ProjectRegion />
       </div>
-      <div className="pd-composer-bar-center">
-        <TierRegion />
-      </div>
+      {/* Empty flex spacer (round-15) — pushes the project chip left and the
+          effort button right. The routed tier now lives on the footer chip. */}
+      <div className="pd-composer-bar-center" />
       <div className="pd-composer-bar-right">
         <EffortRegion />
       </div>

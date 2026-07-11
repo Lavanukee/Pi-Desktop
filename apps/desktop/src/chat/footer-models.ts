@@ -76,14 +76,16 @@ export function buildTierRows(
 export function chipLabel(
   userMode: UserMode,
   selection: ModelSelection,
-  // biome-ignore lint/correctness/noUnusedFunctionParameters: reserved for the optional "Auto · <tier>" chip variant — kept plain "Auto" for now, since issue-3's bar already shows the routed tier.
   activeTier: ModelTier | null,
   modelName: string | null,
 ): string | null {
   // Power mode: always the concrete running model name (null → caller fallback).
   if (userMode === 'power') return modelName;
-  // User mode: name the SELECTION, not the resolved model.
-  if (selection.mode === 'auto') return 'Auto';
+  // User mode: name the SELECTION, not the resolved model. Under Auto the chip
+  // now names the routed tier too ("Auto · Balanced"), falling back to plain
+  // "Auto" before the classifier has resolved a tier this session.
+  if (selection.mode === 'auto')
+    return activeTier !== null ? `Auto · ${TIER_LABEL[activeTier]}` : 'Auto';
   if (selection.mode === 'tier') return TIER_LABEL[selection.tier];
   // A pinned specific model → its friendly name (falls back to the raw name).
   return modelName;

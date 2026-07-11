@@ -242,7 +242,7 @@ body {
  * centered within the narrow rail.
  */
 :root {
-  --pd-sidebar-rail: calc(32px + var(--pd-icon-size));
+  --pd-sidebar-rail: calc((32px + var(--pd-icon-size)) * var(--pd-sidebar-scale, 1));
 }
 
 /* Rail contents: a left-anchored vertical stack of icon-only buttons. */
@@ -260,9 +260,9 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
-  width: 40px;
-  height: 40px;
-  padding-left: 16px;
+  width: calc(40px * var(--pd-sidebar-scale, 1));
+  height: calc(40px * var(--pd-sidebar-scale, 1));
+  padding-left: calc(16px * var(--pd-sidebar-scale, 1));
   border: 0;
   border-radius: var(--pd-radius-md, 8px);
   background: transparent;
@@ -282,7 +282,7 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--pd-icon-size);
+  width: calc(var(--pd-icon-size) * var(--pd-sidebar-scale, 1));
   color: inherit;
   flex: none;
 }

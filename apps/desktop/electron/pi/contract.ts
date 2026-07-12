@@ -23,9 +23,12 @@ export interface PiCommandAck {
 }
 
 export type PiInvokeMap = {
-  /** Spawn (or reuse) the window's pi child and await first-event readiness. */
+  /** Spawn (or reuse) the window's pi child and await first-event readiness.
+   * `conversationId` (Wave D) roots a projectless conversation at its own
+   * `~/.pi/desktop/sandbox/<conversationId>/` sandbox when no `cwd`/`sessionPath`
+   * is given (see electron/sandbox.ts); an explicit `cwd` still wins. */
   'pi:start': {
-    request: { cwd?: string; sessionPath?: string };
+    request: { cwd?: string; sessionPath?: string; conversationId?: string };
     response: { pid: number; alreadyRunning: boolean };
   };
   'pi:prompt': {
@@ -97,7 +100,7 @@ export type PiInvokeMap = {
   /** Force a fresh pi child even when the current one is alive-but-wedged
    * (dispose → whenExited → respawn); pi:start short-circuits on a live bridge. */
   'pi:restart': {
-    request: { cwd?: string; sessionPath?: string } | undefined;
+    request: { cwd?: string; sessionPath?: string; conversationId?: string } | undefined;
     response: { success: boolean; pid?: number; error?: string };
   };
 };

@@ -74,6 +74,21 @@ try {
     { timeout: 4000 },
   );
 
+  // 0. The collapsed rail HUGS its icon cluster — it ends well above the window
+  //    foot instead of running the full height (canvas/sidebar wave). The panel
+  //    (.pd-sidebar[data-open="false"]) is now content-height, not 100%.
+  const { railH, winH } = await page.evaluate(() => {
+    const el = document.querySelector('.pd-sidebar[data-open="false"]');
+    return { railH: el ? el.getBoundingClientRect().height : 0, winH: window.innerHeight };
+  });
+  assert(railH > 0, 'collapsed rail panel (.pd-sidebar[data-open="false"]) not found');
+  assert(
+    railH < winH - 120,
+    `collapsed rail should be SHORTER than the window (hug its content), got ${Math.round(
+      railH,
+    )}px of a ${winH}px window`,
+  );
+
   // 1. Every rail button wraps its glyph in the .pd-rail-btn-icon centering box.
   const { total, wrapped } = await page.evaluate(() => {
     const btns = Array.from(document.querySelectorAll('.pd-rail-btn'));

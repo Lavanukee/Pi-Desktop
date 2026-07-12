@@ -223,12 +223,26 @@ body {
   opacity: 1;
   pointer-events: auto;
   width: var(--pd-sidebar-rail, 64px);
+  /* Collapsed, the rail hugs its icon cluster and TOP-anchors instead of running
+   * the full window height — it ends just below its nav stack, clear of the
+   * reopen/expand control, not as a full-height bar. `max-height` lets a short
+   * window still scroll the stack (.pd-rail shrinks). */
+  height: auto;
+  max-height: 100%;
   transition:
     width var(--pd-duration-slow) var(--pd-easing-standard),
     transform var(--pd-duration-slow) var(--pd-easing-standard);
 }
 :root[data-flavor="claude"] .pd-sidebar[data-open="false"] {
   transform: none;
+  /* The ui-package base rule `:root[data-flavor="claude"] .pd-sidebar` sets
+   * height: calc(100% - 16px) at a higher specificity than the flavor-less
+   * `.pd-sidebar[data-open="false"]` above, so height:auto must be re-asserted
+   * HERE (this selector out-specifies the base) or the collapsed claude rail
+   * runs full-height instead of hugging its content. */
+  height: auto;
+  /* claude floats the card with an 8px margin (16px total) — cap to that. */
+  max-height: calc(100% - 16px);
 }
 
 /*
@@ -249,7 +263,10 @@ body {
 /* Rail contents: a left-anchored vertical stack of icon-only buttons. */
 .pd-rail {
   display: flex;
-  flex: 1;
+  /* Size to the icon cluster (the collapsed sidebar is now content-height, so a
+   * flex-grow basis of 0 would collapse the rail to nothing) but still allow
+   * shrink + scroll if a short window caps the sidebar's max-height. */
+  flex: 0 1 auto;
   min-height: 0;
   flex-direction: column;
   align-items: flex-start;
@@ -293,9 +310,6 @@ body {
   height: 1px;
   margin: 4px 0;
   background: var(--pd-border-subtle, var(--pd-sidebar-border));
-}
-.pd-rail-spacer {
-  flex: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -508,6 +522,18 @@ body {
 }
 .pd-chat-title:hover {
   background: var(--pd-bg-hover);
+}
+/*
+ * When the sidebar is COLLAPSED to the ~52px rail, the top bar begins right after
+ * it — so the conversation title would crowd under the macOS traffic lights that
+ * overhang past that narrow rail. Inset the top bar's LEFT section (the title) so
+ * it starts clear of the lights + the rail's expand control. The rail-width term
+ * cancels the top bar's own start, landing the title at a stable ~88px window-x
+ * in both flavors; a negative result (very large scale) simply clamps to 0.
+ * Expanded, the wide sidebar already clears the lights, so no inset applies.
+ */
+.pd-topbar--sidebar-collapsed .pd-topbar-section:first-child {
+  padding-left: calc(80px - var(--pd-sidebar-rail));
 }
 .pd-chat-title-name {
   overflow: hidden;
@@ -938,6 +964,8 @@ body {
 .pd-composer-bar-right {
   display: flex;
   align-items: center;
+  /* Space the context-fullness ring from the Effort button (round-A #5). */
+  gap: 10px;
   flex: 0 0 auto;
 }
 

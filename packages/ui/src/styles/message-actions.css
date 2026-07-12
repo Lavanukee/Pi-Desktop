@@ -7,13 +7,57 @@
 .pd-msg-action-bar {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
 }
 
 /* Context chip: token count next to the gauge glyph; flows (no CTA min-width). */
 .pd-msg-context {
   gap: 4px;
   font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Wave B #1: scale the whole bar ~1.5× — larger touch targets + glyphs. The
+ * icon buttons and the token/speed chips ride --pd-control-sm; bump both to 1.5×
+ * so the row reads at a comfortable size (icons carry the matching pixel size
+ * from the component, BAR_ICON = 21). These bar-scoped rules sort AFTER the base
+ * .pd-msg-context above so specificity climbs in source order.
+ */
+.pd-msg-action-bar .pd-icon-btn.pd-btn--sm {
+  width: calc(var(--pd-control-sm) * 1.5);
+  height: calc(var(--pd-control-sm) * 1.5);
+}
+
+.pd-msg-action-bar .pd-msg-context {
+  height: calc(var(--pd-control-sm) * 1.5);
+  padding: 0 10px;
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+}
+
+/*
+ * Wave B #2: response speed as an in-bar item (replaces the pinned "~38 tok/s"
+ * footnote). A non-interactive readout sized to match the scaled bar; muted,
+ * tabular, sitting next to the token-count chip.
+ */
+.pd-msg-speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: calc(var(--pd-control-sm) * 1.5);
+  padding: 0 8px;
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.pd-msg-speed-icon {
+  display: inline-flex;
+  color: var(--pd-text-muted);
 }
 
 /* Assistant-message footnotes (response speed, model name). */

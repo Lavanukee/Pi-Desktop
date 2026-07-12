@@ -1,15 +1,17 @@
 /**
  * Composer footer cluster: current-model chip (with a menu that switches pi
- * models and downloads/starts local ones), live TPS from the inference
- * supervisor, and a context-fullness gauge. When nothing is set up it shows a
- * tasteful "pick a model" affordance that kicks off a download (full model
+ * models and downloads/starts local ones), the harness status cluster, and a
+ * turn-stats info popover (non-power users only). When nothing is set up it shows
+ * a tasteful "pick a model" affordance that kicks off a download (full model
  * manager is W10).
+ *
+ * Round-A: the live tok/s readout moved off the input bar to the per-message
+ * action bar (#2); the context-fullness ring moved to the sticking-out ComposerBar
+ * (#5); the info popover is hidden in power mode (#1).
  */
 import type { ChatMsg, Model, Usage } from '@pi-desktop/engine';
 import {
   Button,
-  ContextGauge,
-  ContextGaugeTooltip,
   IconButton,
   IconChevronDown,
   IconInfo,
@@ -27,7 +29,6 @@ import { useModelSelection, useUserMode } from '../state/settings-store';
 import { AutoDownloadPrompt } from './AutoDownloadPrompt';
 import { chipLabel } from './footer-models';
 import { HarnessStatusCluster } from './HarnessStatus';
-import { useHarnessStatus } from './harness-status';
 import { TierPickerMenu } from './TierPickerMenu';
 
 /** 73000 → "73,000"; small numbers pass through. */
@@ -115,34 +116,20 @@ export function ComposerFooter({
   const userMode = useUserMode();
   const selection = useModelSelection();
   const switching = useModelSwitching();
-  // The live routed tier from the harness — feeds the "Auto · <tier>" chip and
-  // re-renders it as the harness republishes activeTier each turn.
-  const activeTier = useHarnessStatus()?.activeTier ?? null;
 
-  // Round-14 (#4): mode-aware chip label — power shows the raw model name; user
-  // mode names the selection ("Auto" / a tier label / a pinned model), never the
-  // raw model id under a tier. Falls back to a "pick a model" affordance.
+  // Round-A (#3): the chip names the model ACTUALLY RESIDENT in the inference
+  // server right now — "Auto · <loaded model>" under Auto (never the tier). Prefer
+  // the local supervisor's loaded model (status.model), falling back to pi's active
+  // provider model name. Falls back to a "pick a model" affordance when nothing is
+  // named yet.
+  const loadedModelName = status.model?.displayName ?? agentModel?.name ?? null;
   const label =
-    chipLabel(
-      userMode,
-      selection,
-      activeTier,
-      agentModel?.name ?? status.model?.displayName ?? null,
-    ) ?? (piModels.length > 0 ? 'Choose model' : 'Pick a model');
+    chipLabel(userMode, selection, loadedModelName) ??
+    (piModels.length > 0 ? 'Choose model' : 'Pick a model');
 
-  // Context gauge: latest turn's total tokens over the launched window.
-  let gauge: number | null = null;
-  let usedTokens: number | null = null;
+  // Context window used by the info popover's input/output percentages (the
+  // context-fullness ring itself moved to the sticking-out ComposerBar, round-A #5).
   const contextWindow = status.model?.contextWindow ?? 0;
-  for (let i = messages.length - 1; i >= 0 && gauge === null; i--) {
-    const m = messages[i];
-    if (m?.kind === 'assistant' && m.usage !== undefined && contextWindow > 0) {
-      usedTokens = m.usage.totalTokens;
-      gauge = Math.min(1, usedTokens / contextWindow);
-    }
-  }
-
-  const tps = status.metrics?.avgTps ?? status.metrics?.lastTps;
 
   // Current/last-turn stats for the info popover (round-5 #25).
   const stats = deriveTurnStats(messages);
@@ -190,68 +177,56 @@ export function ComposerFooter({
         </div>
       ) : null}
 
-      {tps !== undefined ? (
-        <span className="text-footnote text-text-muted" data-testid="tps">
-          {tps.toFixed(1)} tok/s
-        </span>
-      ) : null}
-
       {/* Harness surfacing (round-9 W3): active class + live task timer + repair
-          activity, so all four status elements live in one always-visible cluster. */}
+          activity, so all four status elements live in one always-visible cluster.
+          The live tok/s readout moved OFF the input bar (round-A #2) — it now lives
+          on the per-message action bar. */}
       <HarnessStatusCluster />
 
       {/* Info popover: current/last-turn stats. Tokens are real (engine usage);
           the tool-call count is exact; elapsed is derived from message
-          timestamps (labelled estimated). Hover to reveal (round-5 #25). */}
-      <Tooltip
-        side="top"
-        align="end"
-        delayDuration={100}
-        className="pd-context-tooltip"
-        label={
-          <span
-            className="flex min-w-[220px] flex-col gap-1.5 text-footnote"
-            data-testid="turn-stats"
-          >
-            <span className="font-medium text-text-primary">Last turn</span>
-            {modelName !== null ? <StatRow label="Model" value={modelName} /> : null}
-            {usage !== undefined ? (
-              <>
-                <StatRow
-                  label="Input ↓"
-                  value={`${fmtInt(usage.input)}${inputPct !== null ? ` · ${inputPct}` : ''}`}
-                />
-                <StatRow
-                  label="Output ↑"
-                  value={`${fmtInt(usage.output)}${outputPct !== null ? ` · ${outputPct}` : ''}`}
-                />
-                <StatRow label="Total" value={fmtInt(usage.totalTokens)} />
-              </>
-            ) : (
-              <StatRow label="Tokens" value="—" />
-            )}
-            <StatRow label="Tool calls" value={String(stats.toolCalls)} />
-            {stats.elapsedMs !== undefined ? (
-              <StatRow label="Elapsed*" value={fmtElapsed(stats.elapsedMs)} />
-            ) : null}
-            <span className="text-text-muted">* estimated from message timestamps</span>
-          </span>
-        }
-      >
-        <IconButton size="sm" aria-label="Turn stats" data-testid="footer-info">
-          <IconInfo size={16} />
-        </IconButton>
-      </Tooltip>
-
-      {gauge !== null && usedTokens !== null ? (
-        <ContextGaugeTooltip
-          percent={Math.round(gauge * 100)}
-          usedTokens={usedTokens}
-          totalTokens={contextWindow}
-          note="Pi automatically compacts its context as it fills up."
+          timestamps (labelled estimated). Hover to reveal (round-5 #25). HIDDEN
+          for power users (round-A #1) — they read the raw numbers elsewhere. */}
+      {userMode !== 'power' ? (
+        <Tooltip
+          side="top"
+          align="end"
+          delayDuration={100}
+          className="pd-context-tooltip"
+          label={
+            <span
+              className="flex min-w-[220px] flex-col gap-1.5 text-footnote"
+              data-testid="turn-stats"
+            >
+              <span className="font-medium text-text-primary">Last turn</span>
+              {modelName !== null ? <StatRow label="Model" value={modelName} /> : null}
+              {usage !== undefined ? (
+                <>
+                  <StatRow
+                    label="Input ↓"
+                    value={`${fmtInt(usage.input)}${inputPct !== null ? ` · ${inputPct}` : ''}`}
+                  />
+                  <StatRow
+                    label="Output ↑"
+                    value={`${fmtInt(usage.output)}${outputPct !== null ? ` · ${outputPct}` : ''}`}
+                  />
+                  <StatRow label="Total" value={fmtInt(usage.totalTokens)} />
+                </>
+              ) : (
+                <StatRow label="Tokens" value="—" />
+              )}
+              <StatRow label="Tool calls" value={String(stats.toolCalls)} />
+              {stats.elapsedMs !== undefined ? (
+                <StatRow label="Elapsed*" value={fmtElapsed(stats.elapsedMs)} />
+              ) : null}
+              <span className="text-text-muted">* estimated from message timestamps</span>
+            </span>
+          }
         >
-          <ContextGauge value={gauge} tone={gauge > 0.85 ? 'warn' : 'muted'} />
-        </ContextGaugeTooltip>
+          <IconButton size="sm" aria-label="Turn stats" data-testid="footer-info">
+            <IconInfo size={16} />
+          </IconButton>
+        </Tooltip>
       ) : null}
     </>
   );

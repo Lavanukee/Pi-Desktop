@@ -66,11 +66,58 @@ export function connectPi(): () => void {
   return disconnect;
 }
 
+/**
+ * Stable id for THIS conversation surface (Wave D). When no project/working
+ * folder is selected, main roots the pi child at this conversation's own
+ * `~/.pi/desktop/sandbox/<id>/` sandbox (see electron/sandbox.ts + pi-main) so
+ * a bare "make me a file" lands in a dedicated folder rather than the user's
+ * HOME. Persisted in sessionStorage so a window reload keeps the same sandbox;
+ * a new window is a new conversation and mints a fresh id. (Note: a projectless
+ * "New chat" reuses the same sandbox — pi's cwd is fixed at spawn and
+ * new_session deliberately never respawns.)
+ */
+const CONVERSATION_ID_KEY = 'pi-desktop:conversationId';
+let conversationIdCache: string | null = null;
+
+function mintConversationId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch {
+    /* fall through to the non-crypto fallback */
+  }
+  return `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function conversationId(): string {
+  if (conversationIdCache !== null) return conversationIdCache;
+  let store: Storage | null = null;
+  try {
+    store = typeof sessionStorage !== 'undefined' ? sessionStorage : null;
+  } catch {
+    store = null; // storage can throw under strict privacy settings
+  }
+  const existing = store?.getItem(CONVERSATION_ID_KEY) ?? null;
+  const id = existing ?? mintConversationId();
+  if (existing === null) {
+    try {
+      store?.setItem(CONVERSATION_ID_KEY, id);
+    } catch {
+      /* unavailable — the in-memory cache still keeps it stable this session */
+    }
+  }
+  conversationIdCache = id;
+  return id;
+}
+
 export async function startPi(opts: { cwd?: string; sessionPath?: string } = {}) {
   // A fresh session (no explicit sessionPath) should adopt the saved custom
   // instructions on its first prompt.
   if (opts.sessionPath === undefined) armSessionInstructions();
-  return window.piDesktop.invoke('pi:start', opts);
+  // Always carry the conversation id so main can root a projectless session at
+  // its dedicated sandbox; an explicit `cwd` in `opts` still wins downstream.
+  return window.piDesktop.invoke('pi:start', { conversationId: conversationId(), ...opts });
 }
 
 /** Force a fresh pi child (dispose → whenExited → respawn) — the recovery path
@@ -90,7 +137,13 @@ export async function restartPi(
   // a real crash), where no fresh exit event fires to consume it.
   usePiStore.setState({ intentionalRestart: true });
   try {
-    return await window.piDesktop.invoke('pi:restart', opts);
+    // Same conversation id as the initial spawn: a projectless respawn (project
+    // cleared, model switch with no session to resume) lands back in this
+    // conversation's sandbox rather than HOME.
+    return await window.piDesktop.invoke('pi:restart', {
+      conversationId: conversationId(),
+      ...(opts ?? {}),
+    });
   } finally {
     usePiStore.setState({ intentionalRestart: false });
   }

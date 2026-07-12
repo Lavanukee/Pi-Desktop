@@ -91,6 +91,41 @@ export function tierForModelId(
   return null;
 }
 
+// --- Pure startup-preload pick (a model is ALWAYS loaded) ------------------
+
+/** Inputs to {@link pickPreloadModel} (mirrors the live llm-store fields). */
+export interface PreloadInputs {
+  /** The 3 tier picks resolved for this machine (undefined before catalog load). */
+  tierModels: Record<ModelTier, LlmTierPick> | undefined;
+  /** Model ids currently on disk (the supervisor's downloaded set). */
+  downloadedModelIds: readonly string[];
+  /** Whether an inference server is already up. */
+  serverRunning: boolean;
+  /** The model id currently resident, or null when none is up. */
+  currentModelId: string | null;
+}
+
+/**
+ * Pure: pick the FASTEST already-downloaded model to preload at startup so a
+ * model is always resident with the lowest possible TTFT. Walks the tiers fast →
+ * balanced → intelligent and returns the first whose model is on disk (fast is
+ * the fastest, so the first downloaded one is the fastest available). Returns
+ * null — nothing to preload — when a model is already resident, the catalog
+ * hasn't loaded, or nothing is downloaded yet.
+ */
+export function pickPreloadModel(inp: PreloadInputs): { modelId: string; quant: string } | null {
+  // Already resident → nothing to preload.
+  if (inp.serverRunning && inp.currentModelId !== null) return null;
+  if (inp.tierModels === undefined) return null;
+  for (const tier of MODEL_TIERS) {
+    const pick = inp.tierModels[tier];
+    if (inp.downloadedModelIds.includes(pick.modelId)) {
+      return { modelId: pick.modelId, quant: pick.quant };
+    }
+  }
+  return null;
+}
+
 // --- Pure routing decision -------------------------------------------------
 
 /** The router's cross-turn memory (mirrors model-selection-store's fields). */
@@ -338,6 +373,48 @@ export async function maybeRouteAuto(
     }
   } catch {
     // Routing must never take a send down with it.
+  }
+}
+
+// --- Startup auto-preload (a model is ALWAYS loaded) -----------------------
+
+/**
+ * Startup auto-preload (round-A #4): keep a model ALWAYS loaded. On app startup /
+ * first chat, immediately bring the FASTEST already-downloaded model online so
+ * quick requests have the lowest possible TTFT — no waiting on a large model to
+ * load. The Auto router then keeps using this fast model for the fast tier and
+ * only hard-restarts to a bigger model when the classifier routes up (existing
+ * hysteresis/debounce), so the footer chip's "Auto · <loaded model>" reflects
+ * whatever is currently resident.
+ *
+ * No-op unless the selection is Auto (a pinned tier/model owns its own load), when
+ * a model is already resident, or when nothing is downloaded yet. Refreshes the
+ * catalog + status first so the tier picks + downloaded set are current.
+ * Best-effort — never throws (a failed preload just means the first send loads a
+ * model on demand).
+ */
+export async function preloadFastestModel(): Promise<void> {
+  try {
+    // E2E (mock-pi) runs against the REAL inference supervisor + the machine's
+    // real model cache; a probe must never auto-launch a real llama-server at
+    // boot. Same `?piE2E=1` opt-in the store hooks / native-surfaces guard use.
+    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('piE2E'))
+      return;
+    if (useSettingsStore.getState().settings.modelSelection.mode !== 'auto') return;
+    const llm = useLlmStore.getState();
+    // Make the tier picks + downloaded set + running-server state current.
+    await Promise.all([llm.refreshCatalog(), llm.refreshStatus()]);
+    const fresh = useLlmStore.getState();
+    const target = pickPreloadModel({
+      tierModels: fresh.recommendation?.tierModels,
+      downloadedModelIds: fresh.status.downloadedModelIds,
+      serverRunning: fresh.status.serverRunning,
+      currentModelId: fresh.status.model?.id ?? null,
+    });
+    if (target === null) return;
+    await activateLocalModel(target.modelId, target.quant);
+  } catch {
+    // Preload is best-effort; the first send will load a model on demand.
   }
 }
 

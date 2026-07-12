@@ -11,6 +11,7 @@ import {
   decideRoute,
   downloadPromptView,
   formatTierBytes,
+  pickPreloadModel,
   type RouterMemory,
   SWITCH_DEBOUNCE_MS,
   tierForModelId,
@@ -225,5 +226,65 @@ describe('tierSpeed', () => {
     expect(tierSpeed('fast')).toBe('fast');
     expect(tierSpeed('balanced')).toBe('balanced');
     expect(tierSpeed('intelligent')).toBe('slow');
+  });
+});
+
+describe('pickPreloadModel (startup — a model is ALWAYS loaded)', () => {
+  const tierModels = {
+    fast: pick('gemma-4-e2b-it'),
+    balanced: pick('gemma-4-12b-it'),
+    intelligent: pick('qwen3.6-27b-mtp'),
+  };
+
+  it('preloads the FASTEST downloaded model (the fast tier wins when it is on disk)', () => {
+    expect(
+      pickPreloadModel({
+        tierModels,
+        downloadedModelIds: ['gemma-4-e2b-it', 'gemma-4-12b-it'],
+        serverRunning: false,
+        currentModelId: null,
+      }),
+    ).toEqual({ modelId: 'gemma-4-e2b-it', quant: 'Q4_K_M' });
+  });
+
+  it('falls through to the next-fastest downloaded tier when fast is not on disk', () => {
+    expect(
+      pickPreloadModel({
+        tierModels,
+        downloadedModelIds: ['gemma-4-12b-it', 'qwen3.6-27b-mtp'],
+        serverRunning: false,
+        currentModelId: null,
+      }),
+    ).toEqual({ modelId: 'gemma-4-12b-it', quant: 'Q4_K_M' });
+  });
+
+  it('is null when a model is already resident (never preempts a running server)', () => {
+    expect(
+      pickPreloadModel({
+        tierModels,
+        downloadedModelIds: ['gemma-4-e2b-it'],
+        serverRunning: true,
+        currentModelId: 'gemma-4-e2b-it',
+      }),
+    ).toBeNull();
+  });
+
+  it('is null before the catalog loads, or when nothing is downloaded yet', () => {
+    expect(
+      pickPreloadModel({
+        tierModels: undefined,
+        downloadedModelIds: [],
+        serverRunning: false,
+        currentModelId: null,
+      }),
+    ).toBeNull();
+    expect(
+      pickPreloadModel({
+        tierModels,
+        downloadedModelIds: [],
+        serverRunning: false,
+        currentModelId: null,
+      }),
+    ).toBeNull();
   });
 });

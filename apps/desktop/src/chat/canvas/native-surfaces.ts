@@ -97,6 +97,10 @@ interface TerminalEntry {
   mirror: boolean;
   /** Last mirror text written (skip re-render when unchanged). */
   lastMirrorText: string;
+  /** Last fitted grid size — a scroll/focus/blur re-fires the slot's rect
+   * callback without a real resize, so we skip the pty:resize when unchanged. */
+  lastCols: number;
+  lastRows: number;
 }
 
 function rectToBounds(rect: DOMRect): BrowserBounds {
@@ -341,6 +345,8 @@ class NativeSurfaces {
       onDataDispose: onData ? () => onData.dispose() : null,
       mirror,
       lastMirrorText: '',
+      lastCols: 0,
+      lastRows: 0,
     };
     this.#terminals.set(tabId, entry);
     return entry;
@@ -406,6 +412,12 @@ class NativeSurfaces {
     } catch {
       return; // container not measurable yet
     }
+    // Skip when the measured grid is unchanged: a scroll / focus / blur re-fires
+    // the slot's onRectChange (→ this) without any real resize, and re-issuing
+    // pty:resize on every such event churns the terminal for no reason.
+    if (entry.term.cols === entry.lastCols && entry.term.rows === entry.lastRows) return;
+    entry.lastCols = entry.term.cols;
+    entry.lastRows = entry.term.rows;
     void window.piDesktop.invoke('pty:resize', {
       tabId,
       cols: entry.term.cols,

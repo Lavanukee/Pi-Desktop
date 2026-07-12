@@ -122,3 +122,75 @@
   stroke-linecap: round;
   transition: stroke-dashoffset var(--pd-duration-base) var(--pd-easing-standard);
 }
+
+/*
+ * Streaming "working" indicator (jedd Wave B #3). Spinner + an animated-tint
+ * status label + elapsed counter.
+ *
+ * THE FIX: the label stays fully legible while the tint animates. Unlike the old
+ * text-clip shimmer (color:transparent painted by a low-alpha gradient, which
+ * erased glyphs as the dim band swept), the glyphs here are always painted at a
+ * solid readable FLOOR color — a second, position-pinned background layer — and a
+ * brighter highlight band sweeps across on top. Both layers are clipped to the
+ * text, so only the tint moves; letters never disappear. Reduced motion drops
+ * the sweep to a static solid label.
+ */
+.pd-working {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-footnote);
+  font-variant-numeric: tabular-nums;
+}
+
+.pd-working-label {
+  color: transparent;
+  /* Layer 1 (top): the moving highlight band. Layer 2 (bottom): the solid,
+   * always-painted legible floor — this is what keeps every glyph readable. */
+  background-image:
+    linear-gradient(90deg, transparent 20%, var(--pd-text-primary) 50%, transparent 80%),
+    linear-gradient(var(--pd-text-secondary), var(--pd-text-secondary));
+  background-size:
+    200% 100%,
+    100% 100%;
+  background-position:
+    -100% 0,
+    0 0;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: pd-working-sweep var(--pd-shimmer-duration) var(--pd-shimmer-easing) infinite;
+}
+
+.pd-working-elapsed {
+  color: var(--pd-text-muted);
+}
+
+/* Only the highlight layer sweeps; the floor layer stays pinned at 0 0 so the
+ * label is fully legible for the whole cycle. */
+@keyframes pd-working-sweep {
+  0% {
+    background-position:
+      -100% 0,
+      0 0;
+  }
+  100% {
+    background-position:
+      250% 0,
+      0 0;
+  }
+}
+
+/* Reduced motion: no sweep — collapse to the solid legible floor (the label
+ * still reads, it just stops animating). */
+@media (prefers-reduced-motion: reduce) {
+  .pd-working-label {
+    animation: none;
+    background-image: linear-gradient(var(--pd-text-secondary), var(--pd-text-secondary));
+    background-size: 100% 100%;
+    background-position: 0 0;
+  }
+}

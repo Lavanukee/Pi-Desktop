@@ -75,20 +75,26 @@
   padding: var(--pd-space-xs);
 }
 
+/* Chrome-style connected tab strip (FEEL): the strip is the darker "frame"
+ * (bg-inset); the ACTIVE tab shares the toolbar/content bg (bg-raised) below and
+ * MERGES into it — the flat divider is gone (the op-bar carries its own bottom
+ * border), and the tabs bottom-align so the active one sits flush on the seam. */
 .pd-canvas-tabbar {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: var(--pd-space-sm);
   height: 40px;
   padding: 0 var(--pd-space-xs);
-  border-bottom: 1px solid var(--pd-border-subtle);
+  background: var(--pd-bg-inset);
   flex: 0 0 auto;
 }
 
 .pd-canvas-tablist {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 2px;
+  /* room for the first active tab's left flare (it extends one radius outward) */
+  padding-left: var(--pd-radius-md);
   flex: 1 1 auto;
   min-width: 0;
   overflow-x: auto;
@@ -112,12 +118,15 @@
 }
 
 .pd-canvas-tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 2px;
   max-width: 200px;
-  padding: 2px 2px 2px 4px;
-  border-radius: var(--pd-radius-md);
+  height: 32px;
+  padding: 0 2px 0 4px;
+  /* rounded TOP corners only — the bottom edge rests on the toolbar seam */
+  border-radius: var(--pd-radius-md) var(--pd-radius-md) 0 0;
   color: var(--pd-text-secondary);
   transition: background var(--pd-duration-fast) var(--pd-easing-standard);
 }
@@ -126,9 +135,41 @@
   background: var(--pd-bg-hover);
 }
 
+/* The active tab takes the toolbar/content colour and MERGES into the bar below
+ * through two concave bottom flares (::before/::after) — the Chrome "tab curves
+ * out into the toolbar" joint. The carved quarter-circle exposes the inset
+ * frame; the filled remainder bridges the tab side down onto the content seam. */
 .pd-canvas-tab[data-active] {
-  background: var(--pd-bg-selected);
+  background: var(--pd-bg-raised);
   color: var(--pd-text-primary);
+}
+
+.pd-canvas-tab[data-active]::before,
+.pd-canvas-tab[data-active]::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: var(--pd-radius-md);
+  height: var(--pd-radius-md);
+  pointer-events: none;
+}
+
+.pd-canvas-tab[data-active]::before {
+  left: calc(-1 * var(--pd-radius-md));
+  background: radial-gradient(
+    circle at top right,
+    transparent var(--pd-radius-md),
+    var(--pd-bg-raised) calc(var(--pd-radius-md) + 0.5px)
+  );
+}
+
+.pd-canvas-tab[data-active]::after {
+  right: calc(-1 * var(--pd-radius-md));
+  background: radial-gradient(
+    circle at top left,
+    transparent var(--pd-radius-md),
+    var(--pd-bg-raised) calc(var(--pd-radius-md) + 0.5px)
+  );
 }
 
 .pd-canvas-tab-main {
@@ -283,13 +324,17 @@
 
 /* Shared label cell for both new-tab surfaces (the `+` menu row + the empty-state
  * row): takes the row's free space so the shortcut hint sits flush right and the
- * WHOLE row — label, shortcut and trailing whitespace — is one hit target. */
+ * WHOLE row — label, shortcut and trailing whitespace — is one hit target.
+ * `text-align:left` pins the label immediately after its icon — the `+` dropdown
+ * rows are <button>s (default text-align:center), which was centering the label
+ * text inside its flex:1 cell instead of flush-left after the glyph. */
 .pd-canvas-action-label {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: left;
 }
 
 /* ── Per-tab operation bar (SECOND bar under the tab strip) ───────────── */
@@ -895,6 +940,15 @@
   line-height: var(--pd-leading-code);
   color: var(--pd-text-primary);
   white-space: pre-wrap;
+}
+
+/* A mounted live xterm owns its OWN scrollback (`.xterm-viewport`), so the slot
+ * must not be a second scroll container. Otherwise focusing/blurring xterm's
+ * hidden helper textarea lets the browser scroll (or toggle a scrollbar on) this
+ * outer box — a visible jump/relayout when the terminal input is deselected.
+ * The static-scrollback demo path (no `.xterm` child) keeps `overflow:auto`. */
+.pd-terminal-scroll:has(.xterm) {
+  overflow: hidden;
 }
 
 /* ── Media preview surface ───────────────────────────────────────────── */

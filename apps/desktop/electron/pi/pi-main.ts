@@ -14,6 +14,7 @@ import { app, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electro
 import { resolveBundledPackageAsset } from '../app-paths';
 import { getInferenceUtility } from '../inference/llm-main';
 import type { AppEventMap } from '../ipc-contract';
+import { resolveSessionCwd } from '../sandbox';
 import { isTrustedIpcEvent } from '../trusted-senders';
 import { createPiSessions, type PiSessionHandlers } from './pi-sessions';
 import { installPiQuitHold } from './quit-hold';
@@ -107,7 +108,12 @@ const sessions = createPiSessions<WebContents>({
   createBridge: (req, onEvent, opts) =>
     new PiBridge(
       {
-        cwd: req.cwd,
+        // No project/working-folder + no session to resume → root this
+        // conversation at its dedicated `~/.pi/desktop/sandbox/<id>/` sandbox
+        // (created on demand) rather than letting pi fall back to HOME. An
+        // explicit project cwd still wins; resuming a session defers to its
+        // recorded cwd. See electron/sandbox.ts.
+        cwd: resolveSessionCwd(req),
         sessionPath: req.sessionPath,
         env: buildPiEnv(),
         // Extensions are skipped on a post-crash retry (a broken/WIP extension

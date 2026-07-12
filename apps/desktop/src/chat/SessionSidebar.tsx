@@ -353,8 +353,9 @@ export function SessionSidebar({
             onClick={onOpenConnectors}
             icon={<IconConnector size={16} />}
           />
-          <div className="pd-rail-spacer" />
-          {/* One profile button → the shared Settings / theme / User-Power dropup. */}
+          {/* The rail now hugs its content (shorter than the window), so the
+              profile button sits directly after the nav cluster — no bottom
+              spacer pushing it to the window foot. */}
           <SidebarProfileMenu variant="rail" onOpenSettings={onOpenSettings} />
         </div>
       </Sidebar>

@@ -8,7 +8,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { writeFileFenced } from './fs-handlers';
+import { allowedWriteRoots, writeFileFenced } from './fs-handlers';
+import { sandboxBaseDir } from './sandbox';
 
 let root: string;
 let outside: string;
@@ -84,5 +85,41 @@ describe('writeFileFenced — symlink escape (SB-1)', () => {
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/size limit/i);
     expect(fs.existsSync(path.join(root, 'big.txt'))).toBe(false);
+  });
+});
+
+describe('writeFileFenced — per-conversation sandbox (Wave D)', () => {
+  it('allows a canvas-editor save inside a conversation sandbox and still fences escapes', () => {
+    const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pd-sbx-')));
+    const sandboxBase = path.join(base, '.pi', 'desktop', 'sandbox');
+    fs.mkdirSync(sandboxBase, { recursive: true });
+    const outside = path.join(base, 'outside');
+    fs.mkdirSync(outside, { recursive: true });
+    try {
+      // A file the model would write in its projectless sandbox — including a
+      // not-yet-existing conversation subdir — is allowed under the base root.
+      const dest = path.join(sandboxBase, 'conv-abc', 'note.md');
+      const ok = writeFileFenced(dest, 'hi from the sandbox', [sandboxBase]);
+      expect(ok.ok).toBe(true);
+      expect(fs.readFileSync(dest, 'utf8')).toBe('hi from the sandbox');
+
+      // The realpath/O_NOFOLLOW fence still holds: a symlink planted in the
+      // sandbox that points outside it cannot be written through.
+      const secret = path.join(outside, 'secret');
+      fs.writeFileSync(secret, 'ORIGINAL', 'utf8');
+      const evil = path.join(sandboxBase, 'evil');
+      fs.symlinkSync(secret, evil);
+      const escapeRes = writeFileFenced(evil, 'PWNED', [sandboxBase]);
+      expect(escapeRes.ok).toBe(false);
+      expect(fs.readFileSync(secret, 'utf8')).toBe('ORIGINAL');
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('includes the sandbox base among the default allowed write roots', () => {
+    // So a canvas save into a projectless conversation sandbox passes the fence
+    // even before pi has recorded a session at that cwd (sessionCwdRoots).
+    expect(allowedWriteRoots()).toContain(sandboxBaseDir());
   });
 });

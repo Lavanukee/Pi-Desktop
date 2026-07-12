@@ -62,59 +62,44 @@ describe('buildTierRows (round-12)', () => {
 });
 
 /**
- * Round-14 (#4) → round-16: the model chip names the SELECTION MODE, identically
- * in user and power mode. `auto` → "Auto · <routed tier>" (plain "Auto" before the
- * classifier runs) in BOTH modes; `tier` → a friendly tier label; `model` → a
- * pinned model's name — never the raw model id when a tier is chosen.
+ * Round-A (#3): the model chip names the SELECTION MODE, identically in user and
+ * power mode. `auto` → "Auto · <loaded model>" — the name of the model ACTUALLY
+ * RESIDENT right now (never the routed tier), resting on plain "Auto" before any
+ * model is resident; `tier` → a friendly tier label; `model` → the pinned model's
+ * name — never the raw model id when a tier is chosen.
  */
-describe('chipLabel (round-14 / round-16)', () => {
+describe('chipLabel (round-A #3)', () => {
   const auto: ModelSelection = { mode: 'auto' };
 
-  it('POWER mode + Auto: "Auto · <tier>" too — no longer the raw running model name', () => {
-    // The round-16 fix: power+auto must speak for routing ("Auto · Balanced"),
-    // not leak the concrete model name.
-    expect(chipLabel('power', auto, 'balanced', 'gemma4 12b')).toBe('Auto · Balanced');
-    expect(chipLabel('power', auto, 'fast', 'gemma4 e2b')).toBe('Auto · Fast');
-    expect(chipLabel('power', auto, null, 'gemma4 12b')).toBe('Auto');
+  it('Auto names the ACTUALLY-LOADED model (not the tier) — in BOTH modes', () => {
+    expect(chipLabel('power', auto, 'gemma4 e2b')).toBe('Auto · gemma4 e2b');
+    expect(chipLabel('power', auto, 'gemma4 12b')).toBe('Auto · gemma4 12b');
+    expect(chipLabel('user', auto, 'qwen3.6 27b')).toBe('Auto · qwen3.6 27b');
+    expect(chipLabel('user', auto, 'gemma4 e2b')).toBe('Auto · gemma4 e2b');
   });
 
-  it('POWER mode + a pinned model: the friendly model name (mode === "model")', () => {
-    expect(chipLabel('power', { mode: 'model', modelId: 'm1' }, 'balanced', 'gemma4 12b')).toBe(
-      'gemma4 12b',
-    );
+  it('Auto before any model is resident: plain "Auto" (in both modes)', () => {
+    expect(chipLabel('user', auto, null)).toBe('Auto');
+    expect(chipLabel('power', auto, null)).toBe('Auto');
   });
 
-  it('USER mode + Auto: "Auto · <tier>" (the routed tier) — never the routed model name', () => {
-    expect(chipLabel('user', auto, 'intelligent', 'qwen3.6 27b')).toBe('Auto · Intelligent');
-    expect(chipLabel('user', auto, 'fast', 'gemma4 e2b')).toBe('Auto · Fast');
-    expect(chipLabel('user', auto, 'balanced', 'gemma4 12b')).toBe('Auto · Balanced');
-  });
-
-  it('USER mode + Auto before the classifier has run: plain "Auto" (no tier yet)', () => {
-    expect(chipLabel('user', auto, null, null)).toBe('Auto');
-    expect(chipLabel('user', auto, null, 'qwen3.6 27b')).toBe('Auto');
-  });
-
-  it('USER mode + a pinned tier: the friendly TIER label, not the raw model id', () => {
-    expect(chipLabel('user', { mode: 'tier', tier: 'fast' }, null, 'gemma-4-e2b-it')).toBe('Fast');
-    expect(chipLabel('user', { mode: 'tier', tier: 'balanced' }, null, 'gemma-4-12b-it')).toBe(
+  it('a pinned capability tier: the friendly TIER label, not the raw model id', () => {
+    expect(chipLabel('user', { mode: 'tier', tier: 'fast' }, 'gemma-4-e2b-it')).toBe('Fast');
+    expect(chipLabel('user', { mode: 'tier', tier: 'balanced' }, 'gemma-4-12b-it')).toBe(
       'Balanced',
     );
-    expect(chipLabel('user', { mode: 'tier', tier: 'intelligent' }, null, 'qwen')).toBe(
-      'Intelligent',
-    );
+    expect(chipLabel('user', { mode: 'tier', tier: 'intelligent' }, 'qwen')).toBe('Intelligent');
   });
 
-  it('USER mode + a pinned specific model: its friendly name (falls back to raw)', () => {
-    expect(chipLabel('user', { mode: 'model', modelId: 'm1' }, null, 'Gemma 4 12B')).toBe(
-      'Gemma 4 12B',
-    );
+  it('a pinned specific model: its friendly (loaded) name, in both modes', () => {
+    expect(chipLabel('power', { mode: 'model', modelId: 'm1' }, 'gemma4 12b')).toBe('gemma4 12b');
+    expect(chipLabel('user', { mode: 'model', modelId: 'm1' }, 'Gemma 4 12B')).toBe('Gemma 4 12B');
   });
 
   it('returns null (→ caller supplies "Choose model") only when a pinned model has no name yet', () => {
     // Auto always names at least "Auto", so the null fallback is reachable only via
     // a pinned `model` selection whose name has not resolved — in either mode.
-    expect(chipLabel('power', { mode: 'model', modelId: 'm1' }, null, null)).toBeNull();
-    expect(chipLabel('user', { mode: 'model', modelId: 'm1' }, null, null)).toBeNull();
+    expect(chipLabel('power', { mode: 'model', modelId: 'm1' }, null)).toBeNull();
+    expect(chipLabel('user', { mode: 'model', modelId: 'm1' }, null)).toBeNull();
   });
 });

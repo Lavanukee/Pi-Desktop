@@ -141,7 +141,15 @@ export function CanvasTabsPanel() {
       // longer torn down mid-drag, so dragging back past the threshold un-collapses.
       const drag = createCanvasDragResize(e.clientX, sideWidth, {
         setSideWidth,
-        setDragWidth,
+        // Mirror the live preview into `renderWidth` so that when the drag ends
+        // the animated width picks up from the RELEASE position instead of a
+        // stale open width. Without this, a drag-close first snaps the rail back
+        // to its (still-open) width for a frame before sliding shut — the panel
+        // now animates smoothly from where the cursor left it down to 0.
+        setDragWidth: (w) => {
+          setDragWidth(w);
+          if (w !== null) setRenderWidth(w);
+        },
         setCanvasOpen,
         cleanup,
       });

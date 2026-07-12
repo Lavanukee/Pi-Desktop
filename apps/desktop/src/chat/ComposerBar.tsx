@@ -7,11 +7,12 @@
  *   CENTER — an empty flex spacer (round-15): the routed tier now lives entirely
  *            on the footer model chip ("Auto · <tier>"), so the bar no longer
  *            renders a center tier control.
- *   RIGHT  — the "Effort" button; the effort SLIDER (blue→hot temperature pill)
- *            opens in a popover (round-14 #2). The button reads the labeled
- *            "Effort · <Level>" ("Effort · Balanced" by default, mirroring the
- *            model chip's "Auto · Balanced"); a drag pins an explicit level (max
- *            only reachable by an explicit drag).
+ *   RIGHT  — the context-fullness ring (round-A #5, moved here from the input-bar
+ *            footer so it sits just LEFT of Effort) followed by the "Effort"
+ *            button; the effort SLIDER (blue→hot temperature pill) opens in a
+ *            popover (round-14 #2). The button reads the labeled "Effort · <Level>"
+ *            ("Effort · Balanced" by default, mirroring the model chip); a drag
+ *            pins an explicit level (max only reachable by an explicit drag).
  *
  * Reads harness status (`useHarnessStatus`), the project store, and settings;
  * writes effort through the existing settings-store `update` (which persists +
@@ -19,11 +20,26 @@
  * redefine it (state/model-selection + composer-bar-logic own that).
  */
 import { ProjectPicker } from '@pi-desktop/canvas';
-import { EffortSlider, IconGauge, Popover, PopoverContent, PopoverTrigger } from '@pi-desktop/ui';
+import {
+  ContextGauge,
+  ContextGaugeTooltip,
+  EffortSlider,
+  IconGauge,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@pi-desktop/ui';
+import { useLlmStore } from '../state/llm-store';
 import { autoEffortForTier } from '../state/model-selection';
+import { usePiStore } from '../state/pi-slice';
 import { useProjectStore } from '../state/project-store';
 import { useEffortMode, useSettingsStore } from '../state/settings-store';
-import { EFFORT_STEP_COUNT, effortSliderView, levelForIndex } from './composer-bar-logic';
+import {
+  deriveContextGauge,
+  EFFORT_STEP_COUNT,
+  effortSliderView,
+  levelForIndex,
+} from './composer-bar-logic';
 import { useHarnessStatus } from './harness-status';
 
 /** LEFT: the relocated project (working-folder) chip, slimmed for the bar. */
@@ -43,6 +59,28 @@ function ProjectRegion() {
       onClear={() => void clearProject()}
       placeholder="No project"
     />
+  );
+}
+
+/**
+ * RIGHT, left of Effort: the context-fullness ring (round-A #5). Relocated off the
+ * input-bar footer to sit just LEFT of the Effort control. Reads the latest turn's
+ * usage (pi store) over the launched model's context window (llm store).
+ */
+function ContextRegion() {
+  const messages = usePiStore((s) => s.messages);
+  const contextWindow = useLlmStore((s) => s.status.model?.contextWindow ?? 0);
+  const gauge = deriveContextGauge(messages, contextWindow);
+  if (gauge === null) return null;
+  return (
+    <ContextGaugeTooltip
+      percent={Math.round(gauge.value * 100)}
+      usedTokens={gauge.usedTokens}
+      totalTokens={contextWindow}
+      note="Pi automatically compacts its context as it fills up."
+    >
+      <ContextGauge value={gauge.value} tone={gauge.value > 0.85 ? 'warn' : 'muted'} />
+    </ContextGaugeTooltip>
   );
 }
 
@@ -112,7 +150,9 @@ export function ComposerBar() {
       {/* Empty flex spacer (round-15) — pushes the project chip left and the
           effort button right. The routed tier now lives on the footer chip. */}
       <div className="pd-composer-bar-center" />
+      {/* Context-fullness ring sits to the LEFT of Effort (round-A #5). */}
       <div className="pd-composer-bar-right">
+        <ContextRegion />
         <EffortRegion />
       </div>
     </div>

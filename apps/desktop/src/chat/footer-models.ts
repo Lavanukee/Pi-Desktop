@@ -65,14 +65,15 @@ export function buildTierRows(
 }
 
 /**
- * The footer model-chip label, now driven by the SELECTION MODE (round-16) rather
- * than the experience mode — the chip names *what the user chose*, identically in
- * user and power mode:
+ * The footer model-chip label, driven by the SELECTION MODE — the chip names
+ * *what the user chose*, identically in user and power mode:
  *
- *   - `auto`  → "Auto · <routed tier>" ("Auto · Balanced"), or plain "Auto" until
- *     the classifier resolves a tier this session — in BOTH modes. (This is the
- *     fix: power+auto previously leaked the raw running model name; now Auto
- *     always speaks for routing.)
+ *   - `auto`  → "Auto · <loaded model>" (round-A #3): the name of the model that
+ *     is ACTUALLY RESIDENT in the inference server right now (e.g. "Auto · gemma4
+ *     e2b"), NOT the routed tier — Auto always keeps the fastest model preloaded
+ *     and only hard-restarts up when the classifier routes to a bigger tier, so
+ *     the chip reflects whatever is currently loaded. Rests on plain "Auto" until
+ *     a model is resident. In BOTH modes.
  *   - `tier`  → the friendly TIER label alone ("Balanced"/"Fast"/"Intelligent"),
  *     never "Auto", never the raw model id — user mode pinning a capability tier.
  *   - `model` → the pinned model's friendly name — power mode pinning a specific
@@ -87,15 +88,14 @@ export function buildTierRows(
 export function chipLabel(
   userMode: UserMode,
   selection: ModelSelection,
-  activeTier: ModelTier | null,
-  modelName: string | null,
+  loadedModelName: string | null,
 ): string | null {
-  // Auto names the routed TIER in both user and power mode ("Auto · Balanced"),
-  // resting on plain "Auto" before the classifier has resolved a tier.
+  // Auto names the ACTUALLY-LOADED model in both user and power mode
+  // ("Auto · gemma4 e2b"), resting on plain "Auto" before a model is resident.
   if (selection.mode === 'auto')
-    return activeTier !== null ? `Auto · ${TIER_LABEL[activeTier]}` : 'Auto';
+    return loadedModelName !== null ? `Auto · ${loadedModelName}` : 'Auto';
   // A pinned capability tier → the friendly tier label alone.
   if (selection.mode === 'tier') return TIER_LABEL[selection.tier];
   // A pinned specific model → its friendly name (null → caller fallback).
-  return modelName;
+  return loadedModelName;
 }

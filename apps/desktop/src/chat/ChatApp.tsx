@@ -19,6 +19,7 @@ import { usePiStore } from '../state/pi-slice';
 import { useProjectStore } from '../state/project-store';
 import { applySavedHarnessConfig } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
+import { preloadFastestModel } from './auto-router';
 import { ChatComposer } from './ChatComposer';
 import { ChatThread } from './ChatThread';
 import { ChatTitle } from './ChatTitle';
@@ -104,7 +105,10 @@ export function ChatApp({
 
   // Load the persisted project (working folder) first, then spawn the window's
   // pi session rooted at it (so the initial session adopts the active project's
-  // cwd, round-8 #15), then push any saved harness config (permission/effort).
+  // cwd, round-8 #15), then push any saved harness config (permission/effort),
+  // then preload the FASTEST downloaded model so a model is ALWAYS resident with
+  // the lowest TTFT (round-A #4; a no-op unless Auto + something downloaded + no
+  // server yet). Preload runs last so it respawns pi onto the just-started session.
   useEffect(() => {
     void useProjectStore
       .getState()
@@ -113,7 +117,8 @@ export function ChatApp({
         const cwd = useProjectStore.getState().activePath ?? undefined;
         return startPi(cwd !== undefined ? { cwd } : {});
       })
-      .then(() => applySavedHarnessConfig());
+      .then(() => applySavedHarnessConfig())
+      .then(() => preloadFastestModel());
   }, []);
 
   // Tiny-window adaptation (adversarial finding): a narrow window lets the fixed
@@ -173,8 +178,13 @@ export function ChatApp({
         <MainSurface className="flex min-w-0 flex-1 flex-col">
           <TopBar
             // The rail always hosts the traffic lights now, so the top bar never
-            // needs to inset for them.
+            // needs to inset for them — EXCEPT when the sidebar is COLLAPSED to the
+            // narrow rail: the macOS traffic lights overhang past that ~52px rail
+            // into the top bar, so the class below insets the title clear of the
+            // lights (+ the rail's expand control). Expanded, the wide sidebar
+            // already clears them.
             trafficLightInset={false}
+            className={sidebarOpen ? undefined : 'pd-topbar--sidebar-collapsed'}
             left={
               // The chat title sits just RIGHT of the sidebar/rail (#13). The
               // rail carries its own expand toggle, so no top-bar sidebar button.

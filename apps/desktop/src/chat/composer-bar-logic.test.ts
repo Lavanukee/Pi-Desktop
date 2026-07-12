@@ -1,6 +1,8 @@
+import type { ChatMsg } from '@pi-desktop/engine';
 import { describe, expect, it } from 'vitest';
 import {
   classificationHover,
+  deriveContextGauge,
   effortDisplay,
   effortSliderView,
   levelForIndex,
@@ -106,5 +108,51 @@ describe('levelForIndex', () => {
     expect(levelForIndex(3)).toBe('max');
     expect(levelForIndex(-1)).toBe('low');
     expect(levelForIndex(9)).toBe('max');
+  });
+});
+
+/**
+ * The context-fullness ring (round-A #5) moved to the composer bar (left of
+ * Effort). `deriveContextGauge` computes its value from the most recent assistant
+ * turn's total tokens over the launched context window — tested here (node env).
+ */
+describe('deriveContextGauge', () => {
+  const zeroCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
+  const user = (id: string): ChatMsg => ({ kind: 'user', id, text: 'hi', timestamp: 0 });
+  const assistant = (id: string, totalTokens?: number): ChatMsg => ({
+    kind: 'assistant',
+    id,
+    blocks: [],
+    timestamp: 0,
+    ...(totalTokens !== undefined
+      ? {
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens,
+            cost: zeroCost,
+          },
+        }
+      : {}),
+  });
+
+  it('uses the MOST RECENT assistant turn that carries usage', () => {
+    const messages = [assistant('a1', 1000), user('u2'), assistant('a2', 4000)];
+    expect(deriveContextGauge(messages, 8000)).toEqual({ value: 0.5, usedTokens: 4000 });
+  });
+
+  it('clamps the fullness fraction to 1 when usage exceeds the window', () => {
+    expect(deriveContextGauge([assistant('a', 9000)], 8000)).toEqual({
+      value: 1,
+      usedTokens: 9000,
+    });
+  });
+
+  it('is null with no measured turn, and null when the context window is unknown (0)', () => {
+    expect(deriveContextGauge([user('u'), assistant('a')], 8000)).toBeNull();
+    expect(deriveContextGauge([assistant('a', 4000)], 0)).toBeNull();
+    expect(deriveContextGauge([], 8000)).toBeNull();
   });
 });

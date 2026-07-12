@@ -1,6 +1,7 @@
 import { clsx } from 'clsx';
 import type { HTMLAttributes, SVGProps } from 'react';
 import { forwardRef } from 'react';
+import { Spinner } from './spinner.tsx';
 
 export interface ProgressBarProps extends HTMLAttributes<HTMLDivElement> {
   /** 0..max; omit (or null) for the indeterminate sweep. */
@@ -95,3 +96,42 @@ export const ContextGauge = forwardRef<SVGSVGElement, ContextGaugeProps>(functio
     </svg>
   );
 });
+
+export interface WorkingIndicatorProps extends HTMLAttributes<HTMLDivElement> {
+  /**
+   * The animated status word/phrase ("Working", "Thinking", "Retrying (1/3)…").
+   * Kept as a plain string so the tinted label can paint it legibly.
+   */
+  label: string;
+  /** Elapsed seconds; renders the trailing "· 20s" counter when provided. */
+  elapsedSeconds?: number;
+  /** Spinner diameter in px (defaults to 12 — the footnote-scale caret loader). */
+  spinnerSize?: number;
+}
+
+/**
+ * Streaming "π working · 20s" indicator: the branded caret loader (Spinner), an
+ * animated-tint status label, and an elapsed counter.
+ *
+ * jedd Wave B #3 — the label KEEPS its legibility while the tint animates. The
+ * old streaming label rode the text-clip shimmer (color:transparent +
+ * background-clip:text over a low-alpha base), which erased the glyphs as the
+ * dim band swept through. Here the glyphs are painted at a solid, readable FLOOR
+ * color and a brighter highlight band sweeps ACROSS them (a second,
+ * position-pinned background layer holds the floor for the whole cycle), so the
+ * tint still moves but letters never vanish. Reduced motion drops the sweep to a
+ * static solid label (see .pd-working-label in indicators.css).
+ */
+export const WorkingIndicator = forwardRef<HTMLDivElement, WorkingIndicatorProps>(
+  function WorkingIndicator({ label, elapsedSeconds, spinnerSize = 12, className, ...rest }, ref) {
+    return (
+      <div ref={ref} className={clsx('pd-working', className)} {...rest}>
+        <Spinner size={spinnerSize} />
+        <span className="pd-working-label">{label}</span>
+        {elapsedSeconds !== undefined ? (
+          <span className="pd-working-elapsed">· {elapsedSeconds}s</span>
+        ) : null}
+      </div>
+    );
+  },
+);

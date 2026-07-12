@@ -43,9 +43,24 @@ export interface MessageActionsProps extends HTMLAttributes<HTMLDivElement> {
   /** Token count consumed by this message; renders the Context chip when set. */
   tokenCount?: number;
   onContext?: () => void;
+  /**
+   * Response throughput (tok/s) for this message; renders the speed readout as a
+   * bar item (jedd Wave B #2 — speed moved off the pinned footnote INTO the bar).
+   */
+  tokensPerSecond?: number;
+  /** Prefix the speed value with "~" (default true). */
+  approxSpeed?: boolean;
   /** Extra rows for the "…" overflow menu (DropdownMenuItem elements). */
   overflow?: ReactNode;
 }
+
+/**
+ * The under-message action bar is scaled up ~1.5× (jedd Wave B #1: bigger touch
+ * targets + glyphs). The button/chip geometry rides message-actions.css; icons
+ * carry the matching 1.5× pixel size (14 → 21) so the SVG attrs stay in step
+ * with the enlarged controls even before CSS loads.
+ */
+const BAR_ICON = 21;
 
 export const MessageActions = forwardRef<HTMLDivElement, MessageActionsProps>(
   function MessageActions(
@@ -58,6 +73,8 @@ export const MessageActions = forwardRef<HTMLDivElement, MessageActionsProps>(
       onShare,
       tokenCount,
       onContext,
+      tokensPerSecond,
+      approxSpeed = true,
       overflow,
       className,
       ...rest
@@ -81,7 +98,7 @@ export const MessageActions = forwardRef<HTMLDivElement, MessageActionsProps>(
                 copy();
               }}
             >
-              {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+              {copied ? <IconCheck size={BAR_ICON} /> : <IconCopy size={BAR_ICON} />}
             </IconButton>
           </Tooltip>
         ) : null}
@@ -93,7 +110,7 @@ export const MessageActions = forwardRef<HTMLDivElement, MessageActionsProps>(
               aria-label="Good response"
               onClick={onThumbsUp}
             >
-              <IconThumbUp size={14} />
+              <IconThumbUp size={BAR_ICON} />
             </IconButton>
           </Tooltip>
         ) : null}
@@ -105,29 +122,40 @@ export const MessageActions = forwardRef<HTMLDivElement, MessageActionsProps>(
               aria-label="Bad response"
               onClick={onThumbsDown}
             >
-              <IconThumbDown size={14} />
+              <IconThumbDown size={BAR_ICON} />
             </IconButton>
           </Tooltip>
         ) : null}
         {onRetry !== undefined ? (
           <Tooltip label="Retry">
             <IconButton size="sm" variant="ghostMuted" aria-label="Retry" onClick={onRetry}>
-              <IconRefresh size={14} />
+              <IconRefresh size={BAR_ICON} />
             </IconButton>
           </Tooltip>
         ) : null}
         {onEdit !== undefined ? (
           <Tooltip label="Edit">
             <IconButton size="sm" variant="ghostMuted" aria-label="Edit message" onClick={onEdit}>
-              <IconPencil size={14} />
+              <IconPencil size={BAR_ICON} />
             </IconButton>
           </Tooltip>
         ) : null}
         {onShare !== undefined ? (
           <Tooltip label="Share">
             <IconButton size="sm" variant="ghostMuted" aria-label="Share" onClick={onShare}>
-              <IconShare size={14} />
+              <IconShare size={BAR_ICON} />
             </IconButton>
+          </Tooltip>
+        ) : null}
+        {tokensPerSecond !== undefined ? (
+          <Tooltip label="Response speed">
+            <span className="pd-msg-speed" data-testid="msg-speed">
+              <span className="pd-msg-speed-icon">
+                <IconSpeed size={BAR_ICON} />
+              </span>
+              {approxSpeed ? '~' : ''}
+              {Math.round(tokensPerSecond)} tok/s
+            </span>
           </Tooltip>
         ) : null}
         {tokenCount !== undefined ? (
@@ -139,7 +167,7 @@ export const MessageActions = forwardRef<HTMLDivElement, MessageActionsProps>(
               onClick={onContext}
               disabled={onContext === undefined}
             >
-              <IconGauge size={14} />
+              <IconGauge size={BAR_ICON} />
               {formatCount(tokenCount)}
             </Button>
           </Tooltip>
@@ -148,7 +176,7 @@ export const MessageActions = forwardRef<HTMLDivElement, MessageActionsProps>(
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <IconButton size="sm" variant="ghostMuted" aria-label="More actions">
-                <IconMore size={14} />
+                <IconMore size={BAR_ICON} />
               </IconButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">{overflow}</DropdownMenuContent>

@@ -11,9 +11,11 @@
  *   round-15 the center TierRegion is gone: the bar renders folder-LEFT +
  *       effort-RIGHT only, with an empty flex spacer between them, so the
  *       composer-tier* testids never mount and the stray .pd-tier-dot is gone.
- *   round-15 the footer model chip names the routed tier under Auto
- *       ("Auto · <tier>", live from the harness activeTier) and the friendly tier
- *       LABEL ("Balanced") when a tier is pinned — never the raw running model id.
+ *   round-A the footer model chip names the ACTUALLY-LOADED model under Auto
+ *       ("Auto · <loaded model>", from the resident inference model / pi's active
+ *       model — NEVER the routed tier), and the friendly tier LABEL ("Balanced")
+ *       when a tier is pinned. The live tok/s readout is gone from the input bar
+ *       (#2), and the turn-stats info button is hidden for power users (#1).
  *
  * The gradient / motion FEEL is owner-validated (not asserted). Run `pnpm build`
  * first.
@@ -88,8 +90,8 @@ try {
     'the empty center flex spacer must remain (it pushes folder-left / effort-right apart)',
   );
 
-  // ── round-15: the footer chip names the routed tier live from the harness ──
-  // No harness status yet ⇒ the chip reads plain "Auto".
+  // ── round-A #3: the footer chip names the ACTUALLY-LOADED model under Auto ──
+  // No model resident yet ⇒ the chip reads plain "Auto".
   await page.waitForFunction(
     () => {
       const chip = document.querySelector('[data-testid="footer-model-chip"]');
@@ -98,9 +100,32 @@ try {
     undefined,
     { timeout: 8000 },
   );
-  // Publish a harness status carrying an active tier; the chip must re-render to
-  // "Auto · <tier>" live (proves ComposerFooter threads useHarnessStatus().activeTier
-  // into chipLabel).
+  // Make a model "resident": in this mock env the local supervisor has nothing
+  // downloaded (status.model stays null), so the chip falls back to pi's active
+  // model name. Set it and the Auto chip must re-render to "Auto · <loaded model>"
+  // (proves chipLabel names the LOADED model, not a tier).
+  await page.evaluate(() =>
+    window.__pi_store().setState((s) => ({
+      agent: {
+        ...s.agent,
+        model: { id: 'gemma-4-e2b-it', name: 'gemma4 e2b', provider: 'llamacpp' },
+      },
+    })),
+  );
+  await page.waitForFunction(
+    () =>
+      (document.querySelector('[data-testid="footer-model-chip"]')?.textContent ?? '').trim() ===
+      'Auto · gemma4 e2b',
+    undefined,
+    { timeout: 8000 },
+  );
+  const autoChip = (await page.locator('[data-testid="footer-model-chip"]').innerText()).trim();
+  assert(
+    autoChip === 'Auto · gemma4 e2b',
+    `under Auto the chip should name the LOADED model ("Auto · gemma4 e2b"), not the tier, got ${JSON.stringify(autoChip)}`,
+  );
+  // Publish a harness active tier too (it drives the effort slider POSITION below).
+  // It must NOT change the chip — Auto names the loaded model, never the tier.
   await page.evaluate(() =>
     window.__pi_store().setState((s) => ({
       extensionStatus: {
@@ -109,18 +134,10 @@ try {
       },
     })),
   );
-  await page.waitForFunction(
-    () =>
-      (document.querySelector('[data-testid="footer-model-chip"]')?.textContent ?? '')
-        .trim()
-        .startsWith('Auto · '),
-    undefined,
-    { timeout: 8000 },
-  );
-  const autoChip = (await page.locator('[data-testid="footer-model-chip"]').innerText()).trim();
+  const stillLoaded = (await page.locator('[data-testid="footer-model-chip"]').innerText()).trim();
   assert(
-    autoChip === 'Auto · Balanced',
-    `under Auto the chip should show "Auto · Balanced" (routed tier), got ${JSON.stringify(autoChip)}`,
+    stillLoaded === 'Auto · gemma4 e2b',
+    `publishing a routed tier must not change the Auto chip off the loaded model, got ${JSON.stringify(stillLoaded)}`,
   );
 
   // ── #2: the "Effort" button opens the slider in a popover ──────────────────
@@ -155,6 +172,38 @@ try {
   await page.keyboard.press('Escape');
   await slider.waitFor({ state: 'detached', timeout: 8000 });
 
+  // ── round-A #2: the live tok/s readout is gone from the input bar ──────────
+  assert(
+    (await page.locator('[data-testid="tps"]').count()) === 0,
+    'the tok/s readout must be removed from the input bar (it moved to the message action bar)',
+  );
+  assert(
+    !(await page.locator('.pd-composer-footer').innerText()).includes('tok/s'),
+    'no "tok/s" text may remain anywhere in the composer footer',
+  );
+
+  // ── round-A #1: the turn-stats info button is hidden for POWER users ───────
+  // Visible in the default (user) mode…
+  await page.waitForFunction(
+    () => document.querySelectorAll('[data-testid="footer-info"]').length === 1,
+    undefined,
+    { timeout: 8000 },
+  );
+  // …hidden once the experience mode is power…
+  await page.evaluate(() => window.__settings_store().getState().update({ userMode: 'power' }));
+  await page.waitForFunction(
+    () => document.querySelectorAll('[data-testid="footer-info"]').length === 0,
+    undefined,
+    { timeout: 8000 },
+  );
+  // …and back once it returns to user (restore the shared mode).
+  await page.evaluate(() => window.__settings_store().getState().update({ userMode: 'user' }));
+  await page.waitForFunction(
+    () => document.querySelectorAll('[data-testid="footer-info"]').length === 1,
+    undefined,
+    { timeout: 8000 },
+  );
+
   // ── round-15: pin a tier → the chip names the tier LABEL, not "Auto · …" and
   // not the raw model id. The center control stays absent throughout.
   await page.evaluate(() =>
@@ -183,7 +232,8 @@ try {
     'the center tier control must stay absent when a tier is pinned',
   );
 
-  // Restore Auto so the shared state is clean; the chip returns to "Auto · Balanced".
+  // Restore Auto so the shared state is clean; the chip returns to naming the
+  // loaded model ("Auto · gemma4 e2b").
   await page.evaluate(() =>
     window
       .__settings_store()
@@ -202,8 +252,9 @@ try {
   console.log(
     'round14-composer-probe OK — no .pd-tier-dot / composer-tier; empty center spacer; ' +
       'the Effort button reads "Effort · Auto" and reveals the slider popover; the footer ' +
-      'chip shows "Auto · Balanced" live from the harness activeTier and "Balanced" (not the raw ' +
-      'model name) when a tier is pinned',
+      'chip shows "Auto · gemma4 e2b" (the LOADED model, not the tier) under Auto and "Balanced" ' +
+      'when a tier is pinned; the tok/s readout is gone from the input bar; and the turn-stats ' +
+      'info button is hidden for power users',
   );
 } finally {
   await app.close();

@@ -13,6 +13,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { FsInvokeMap, FsTreeNode, SessionSummary } from './ipc-contract';
+import { sandboxBaseDir } from './sandbox';
 
 const HOME = os.homedir();
 const AGENT_DIR = path.join(HOME, '.pi', 'agent');
@@ -354,8 +355,17 @@ function allowedWriteRoots(): string[] {
   for (const p of projectRoots()) roots.add(normalizeRoot(p));
   for (const p of sessionCwdRoots()) roots.add(normalizeRoot(p));
   roots.add(normalizeRoot(AGENT_DIR));
+  // Per-conversation sandbox base (Wave D): pi is spawned rooted at
+  // `~/.pi/desktop/sandbox/<conversationId>/` when no project is selected, so
+  // the canvas live-editor must be able to save there too — even before pi has
+  // recorded a session for that cwd (which is when it would show up via
+  // sessionCwdRoots). Allowing the base covers every conversation's sandbox;
+  // the realpath/O_NOFOLLOW checks below still fence out any symlink escape.
+  roots.add(normalizeRoot(sandboxBaseDir()));
   return [...roots];
 }
+
+export { allowedWriteRoots };
 
 /** True when `target` is `root` itself or nested under it. */
 function isUnderRoot(root: string, target: string): boolean {

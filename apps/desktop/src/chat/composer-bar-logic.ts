@@ -17,6 +17,7 @@
 // @mistralai/@opentelemetry into the renderer bundle and breaks `vite build`
 // (matches auto-router.ts's source-import fix). Types from the barrel are fine
 // (erased at build).
+import type { ChatMsg } from '@pi-desktop/engine';
 import { type ModelTier, TIER_LABEL } from '../../../../packages/harness/src/classify/tier.ts';
 import type { EffortLevel, EffortMode } from '../../electron/settings/settings-contract';
 import { autoEffortForTier, EFFORT_STEPS, levelToSlider } from '../state/model-selection';
@@ -111,4 +112,34 @@ export function effortSliderView(
 export function levelForIndex(index: number): EffortLevel {
   const clamped = Math.min(EFFORT_STEPS.length - 1, Math.max(0, index));
   return EFFORT_STEPS[clamped] as EffortLevel;
+}
+
+/** The context-fullness ring's derived value (round-A #5 — the ring moved from the
+ * input-bar footer to the LEFT of Effort on this bar). */
+export interface ContextGaugeView {
+  /** Fullness fraction 0..1 (used tokens / launched context window). */
+  readonly value: number;
+  /** Tokens used in the most recent measured turn (for the tooltip copy). */
+  readonly usedTokens: number;
+}
+
+/**
+ * Derive the context-fullness ring from the most recent assistant turn's total
+ * tokens over the launched model's context window. Returns null when no turn has
+ * usage yet or the window is unknown (0) — the ring simply doesn't render. Pure +
+ * node-testable; ComposerBar renders the result to the left of the Effort button.
+ */
+export function deriveContextGauge(
+  messages: readonly ChatMsg[],
+  contextWindow: number,
+): ContextGaugeView | null {
+  if (contextWindow <= 0) return null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m?.kind === 'assistant' && m.usage !== undefined) {
+      const usedTokens = m.usage.totalTokens;
+      return { value: Math.min(1, usedTokens / contextWindow), usedTokens };
+    }
+  }
+  return null;
 }

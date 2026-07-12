@@ -10,8 +10,8 @@ import {
   MessageRow,
   ModelFootnote,
   Prose,
-  ResponseSpeed,
   Thread,
+  WorkingIndicator,
 } from '../index.ts';
 import { Story as Frame, Row } from './helpers.tsx';
 
@@ -41,6 +41,7 @@ export const MessagesReworked: Story = () => (
             onThumbsDown={noop}
             onRetry={noop}
             onShare={noop}
+            tokensPerSecond={180}
             tokenCount={1240}
             onContext={noop}
             overflow={
@@ -60,8 +61,9 @@ export const MessagesReworked: Story = () => (
             about 16.4GB, leaving headroom for a <code>32k</code> context window.
           </p>
         </Prose>
+        {/* Wave B #2: speed now rides the action bar above (tok/s); only the
+            model-name footnote remains pinned under the message. */}
         <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
-          <ResponseSpeed tokensPerSecond={180} />
           <ModelFootnote model="Qwen3.6 27B · Q4_K_M" />
         </div>
       </MessageRow>
@@ -146,13 +148,14 @@ export const Branches: Story = () => {
 
 export const ActionBarStates: Story = () => (
   <Frame>
-    <Row label="assistant action bar (all controls)">
+    <Row label="assistant action bar (all controls; speed rides the bar, Wave B)">
       <MessageActions
         onCopy={noop}
         onThumbsUp={noop}
         onThumbsDown={noop}
         onRetry={noop}
         onShare={noop}
+        tokensPerSecond={180}
         tokenCount={1240}
         onContext={noop}
         overflow={<DropdownMenuItem>Copy markdown</DropdownMenuItem>}
@@ -161,10 +164,30 @@ export const ActionBarStates: Story = () => (
     <Row label="user action bar (copy / edit / context)">
       <MessageActions onCopy={noop} onEdit={noop} tokenCount={42} />
     </Row>
-    <Row label="footnotes">
-      <ResponseSpeed tokensPerSecond={180} />
+    <Row label="footnotes (model name stays pinned; speed moved to the bar)">
       <ModelFootnote model="Qwen3.6 27B" />
       <MessageFootnote>Generated locally · 3.2s</MessageFootnote>
+    </Row>
+  </Frame>
+);
+
+/**
+ * Streaming "working" indicator (Wave B #3). The status label KEEPS its
+ * legibility while its tint sweeps — the glyphs are painted at a solid readable
+ * floor and only a brighter highlight band animates across, so letters never
+ * vanish (the old text-clip shimmer erased them). Reduced motion → static label.
+ */
+export const Working: Story = () => (
+  <Frame>
+    <Row label='streaming ("Working · 20s")'>
+      <WorkingIndicator label="Working" elapsedSeconds={20} />
+    </Row>
+    <Row label="thinking / retrying variants">
+      <WorkingIndicator label="Thinking" elapsedSeconds={4} />
+      <WorkingIndicator label="Retrying (2/3)…" elapsedSeconds={12} />
+    </Row>
+    <Row label="no elapsed counter">
+      <WorkingIndicator label="Working" />
     </Row>
   </Frame>
 );

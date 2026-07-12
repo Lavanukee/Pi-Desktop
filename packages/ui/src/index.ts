@@ -154,8 +154,12 @@ export {
   IconStrokeControl,
 } from './components/icon-stroke-control.tsx';
 export * from './components/icons.tsx';
-export type { ContextGaugeProps, ProgressBarProps } from './components/indicators.tsx';
-export { ContextGauge, ProgressBar } from './components/indicators.tsx';
+export type {
+  ContextGaugeProps,
+  ProgressBarProps,
+  WorkingIndicatorProps,
+} from './components/indicators.tsx';
+export { ContextGauge, ProgressBar, WorkingIndicator } from './components/indicators.tsx';
 export type {
   CollapsibleSearchProps,
   InputProps,

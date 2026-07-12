@@ -4,8 +4,9 @@
  * models each agentic iteration as its own message) are merged into ONE
  * response unit so their tool/thinking runs collapse into a single Activity
  * CHAIN (THEME 3). User bubbles, assistant text (markdown), standalone
- * thoughts, inline generated images (round-5 #7), a response-speed footnote (the
- * raw model-id footnote was removed, #11), a live turn indicator while
+ * thoughts, inline generated images (round-5 #7), the response speed shown as a
+ * message-action-bar item (Wave B #2 — the pinned tok/s footnote was removed;
+ * the raw model-id footnote earlier, #11), a live WorkingIndicator while
  * streaming, inline artifact widgets (THEME 2), and auto-scroll.
  */
 import type {
@@ -23,11 +24,9 @@ import {
   IconTerminal,
   MessageActions,
   MessageRow,
-  ResponseSpeed,
   ScrollArea,
-  ShimmerText,
-  Spinner,
   Thread,
+  WorkingIndicator,
 } from '@pi-desktop/ui';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useLlmStore } from '../state/llm-store';
@@ -227,11 +226,6 @@ function AssistantGroup({
       })}
       {errorMessage !== undefined ? (
         <div className="text-footnote text-status-danger-fg">{errorMessage}</div>
-      ) : null}
-      {!streaming && tps !== undefined ? (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <ResponseSpeed tokensPerSecond={tps} />
-        </div>
       ) : null}
     </div>
   );
@@ -460,6 +454,7 @@ export function ChatThread() {
                         onCopy={() => copyText(groupPlainText(group))}
                         onRetry={() => retryFrom(first.id)}
                         tokenCount={totalTokens}
+                        tokensPerSecond={streaming ? undefined : tps}
                       />
                     }
                   >
@@ -504,17 +499,17 @@ export function ChatThread() {
             })}
 
             {agent.isStreaming ? (
-              <div className="flex items-center gap-2 py-2 text-footnote text-text-muted">
-                <Spinner size={12} />
-                <ShimmerText active>
-                  {agent.retry !== null
+              <WorkingIndicator
+                className="py-2"
+                label={
+                  agent.retry !== null
                     ? `Retrying (${agent.retry.attempt}/${agent.retry.maxAttempts})…`
                     : flavor === 'claude'
                       ? 'Working'
-                      : 'Thinking'}
-                </ShimmerText>
-                <span>· {elapsed}s</span>
-              </div>
+                      : 'Thinking'
+                }
+                elapsedSeconds={elapsed}
+              />
             ) : null}
           </Thread>
         </div>

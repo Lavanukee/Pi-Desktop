@@ -1,32 +1,36 @@
 /**
- * The connectors screen's **Skills** tab (fills the seam W2 left as
- * `connectors-skills-empty`). Lists the bundled skill catalog with a
+ * The connectors screen's **Skills** tab. Lists the bundled skill catalog with a
  * description, a source/license badge, and an install/enable toggle that copies
  * the skill into `~/.pi/agent/skills/<id>` (or removes it) via the skills store.
  * The pi engine auto-discovers an installed skill on the next session.
  *
- * Owns only this tab — the Plugins tab is untouched.
+ * A row now OPENS a {@link SkillDetail} (reads the SKILL.md body) — mirroring the
+ * connector selection — so a skill's playbook is finally readable, not just
+ * toggleable. Owns only this tab; the Plugins tab is untouched.
  */
 import { Badge, SearchInput, Spinner, Switch } from '@pi-desktop/ui';
 import { useEffect, useMemo, useState } from 'react';
 import type { SkillListItem } from '../../electron/skills/skills-contract';
 import { useSkillsStore } from '../state/skills-store';
+import { SkillDetail } from './SkillDetail';
 
 function SkillRow({
   skill,
   busy,
+  onOpen,
   onToggle,
 }: {
   skill: SkillListItem;
   busy: boolean;
+  onOpen: () => void;
   onToggle: (next: boolean) => void;
 }) {
   return (
     <div
-      className="flex items-center gap-3 rounded-xl border border-border-default px-4 py-3"
+      className="flex items-center gap-3 rounded-xl border border-border-default px-4 py-3 hover:bg-bg-hover"
       data-testid={`skill-card-${skill.id}`}
     >
-      <span className="min-w-0 flex-1">
+      <button type="button" className="min-w-0 flex-1 text-left" onClick={onOpen}>
         <span className="flex flex-wrap items-center gap-1.5">
           <span className="truncate text-body text-text-primary">{skill.name}</span>
           <Badge tone={skill.license === 'Apache-2.0' ? 'info' : 'default'}>{skill.license}</Badge>
@@ -36,7 +40,7 @@ function SkillRow({
           {skill.recommended ? <Badge tone="success">Recommended</Badge> : null}
         </span>
         <span className="mt-0.5 block text-footnote text-text-muted">{skill.description}</span>
-      </span>
+      </button>
       <span className="flex shrink-0 items-center gap-2">
         {busy ? <Spinner size={16} /> : null}
         <Switch
@@ -60,6 +64,7 @@ export function SkillsTab() {
   const toggle = useSkillsStore((s) => s.toggle);
 
   const [query, setQuery] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     void load();
@@ -79,12 +84,27 @@ export function SkillsTab() {
     [skills, q],
   );
   const installedCount = skills.filter((s) => s.installed).length;
+  const selected = useMemo(
+    () => skills.find((s) => s.id === selectedId) ?? null,
+    [skills, selectedId],
+  );
 
   if (!loaded) {
     return (
       <div className="flex justify-center py-16" data-testid="connectors-skills">
         <Spinner size={18} />
       </div>
+    );
+  }
+
+  if (selected !== null) {
+    return (
+      <SkillDetail
+        skill={selected}
+        busy={busyId === selected.id}
+        onBack={() => setSelectedId(null)}
+        onToggle={(next) => void toggle(selected.id, next)}
+      />
     );
   }
 
@@ -119,6 +139,7 @@ export function SkillsTab() {
               key={skill.id}
               skill={skill}
               busy={busyId === skill.id}
+              onOpen={() => setSelectedId(skill.id)}
               onToggle={(next) => void toggle(skill.id, next)}
             />
           ))

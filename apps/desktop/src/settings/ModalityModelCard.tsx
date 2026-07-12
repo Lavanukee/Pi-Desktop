@@ -7,10 +7,16 @@
  * lock for `commercialUse:false` rows, size / license, and a unified-memory-fit
  * badge (reusing the LLM store's detected hardware + the shared RAM verdict).
  */
-import { Badge } from '@pi-desktop/ui';
+import { Badge, IconSpeed } from '@pi-desktop/ui';
 import type { ModalityCatalogEntry } from '../../electron/gen/gen-ipc-contract';
 import { useLlmStore } from '../state/llm-store';
-import { categoryOf, formatApproxSize, modalityRequiresGate } from './modality-catalog-logic';
+import {
+  categoryOf,
+  formatApproxSize,
+  MODALITY_SPEED_LABEL,
+  modalityRequiresGate,
+  modalitySpeed,
+} from './modality-catalog-logic';
 import { ramVerdict } from './model-manager-logic';
 import { ModalityPill, ModelTag } from './model-tags';
 
@@ -27,6 +33,7 @@ export function ModalityModelCard({
   const gated = modalityRequiresGate(entry);
   const minMem = entry.minUnifiedMemoryGB ?? 0;
   const ram = ramVerdict(minMem, hardware?.totalRamGB ?? 0);
+  const speed = modalitySpeed(entry);
 
   return (
     <div
@@ -44,6 +51,16 @@ export function ModalityModelCard({
               </ModelTag>
             ) : null}
             <ModalityPill category={category} data-testid={`modality-badge-${entry.id}`} />
+            {/* Little speed card: speedometer + a fast/balanced/slow word derived
+                from the model's weight/heaviness (mirrors the LLM tierSpeed). */}
+            <ModelTag
+              kind="neutral"
+              icon={<IconSpeed size={12} />}
+              title="Rough generation speed on this Mac"
+              data-testid={`modality-speed-${entry.id}`}
+            >
+              {MODALITY_SPEED_LABEL[speed]}
+            </ModelTag>
             {gated ? (
               <ModelTag kind="gated" data-testid={`gated-badge-${entry.id}`}>
                 Gated

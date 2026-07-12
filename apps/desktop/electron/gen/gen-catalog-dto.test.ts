@@ -1,6 +1,11 @@
 import { getModel, MODALITY_CATALOG } from '@pi-desktop/gen-service';
 import { describe, expect, it } from 'vitest';
-import { toModalityCatalogEntry } from './gen-catalog-dto';
+import {
+  surfaceModalityCatalog,
+  surfacesAsModel,
+  TOOL_ONLY_BACKENDS,
+  toModalityCatalogEntry,
+} from './gen-catalog-dto';
 
 describe('toModalityCatalogEntry', () => {
   it('flattens a recommended, commercial-clean image row', () => {
@@ -57,5 +62,41 @@ describe('toModalityCatalogEntry', () => {
       const recommended = dtos.filter((d) => d.modality === modality && d.recommended);
       expect(recommended.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('surfacesAsModel / surfaceModalityCatalog (tools are not models)', () => {
+  it('treats hyperframes as a tool, not a browsable model', () => {
+    expect(TOOL_ONLY_BACKENDS.has('hyperframes')).toBe(true);
+    const hf = getModel('hyperframes');
+    expect(hf).toBeDefined();
+    if (hf === undefined) return;
+    expect(surfacesAsModel(hf)).toBe(false);
+  });
+
+  it('surfaces every non-tool catalog row', () => {
+    for (const m of MODALITY_CATALOG) {
+      expect(surfacesAsModel(m)).toBe(!TOOL_ONLY_BACKENDS.has(m.backend));
+    }
+  });
+
+  it('excludes hyperframes (and every tool backend) from the surfaced browser catalog', () => {
+    const surfaced = surfaceModalityCatalog(MODALITY_CATALOG);
+    expect(surfaced.some((e) => e.id === 'hyperframes')).toBe(false);
+    expect(surfaced.every((e) => !TOOL_ONLY_BACKENDS.has(e.backend))).toBe(true);
+  });
+
+  it('drops exactly the tool rows — the rest map 1:1', () => {
+    const surfaced = surfaceModalityCatalog(MODALITY_CATALOG);
+    const toolRows = MODALITY_CATALOG.filter((m) => TOOL_ONLY_BACKENDS.has(m.backend));
+    expect(toolRows.length).toBeGreaterThan(0); // guards the test stays meaningful
+    expect(surfaced).toHaveLength(MODALITY_CATALOG.length - toolRows.length);
+  });
+
+  it('still keeps other video models in the surfaced catalog (only the tool is gone)', () => {
+    const surfaced = surfaceModalityCatalog(MODALITY_CATALOG);
+    const video = surfaced.filter((e) => e.modality === 'video');
+    expect(video.length).toBeGreaterThan(0);
+    expect(video.some((e) => e.id === 'hyperframes')).toBe(false);
   });
 });

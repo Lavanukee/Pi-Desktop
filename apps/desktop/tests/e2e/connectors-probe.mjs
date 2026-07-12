@@ -1,11 +1,14 @@
 /**
  * Connectors E2E: lands in chat (mock pi) under an isolated HOME, opens the
- * Codex-style connectors gallery from the sidebar, and asserts the whole flow:
- *   - "Recommended for you" renders from a MOCKED /Applications scan (a fixture
- *     dir with Blender.app → Blender pinned),
- *   - installing a plain connector (memory) persists to mcp-connectors.json,
- *   - the detail page renders and its MCP-servers toggle disables/persists,
- *   - a secret connector (slack) opens the Connect permission popup, and
+ * Codex-style SECTIONED connectors gallery from the sidebar, and asserts the
+ * whole flow:
+ *   - the "Recommended for you" SECTION renders from a MOCKED /Applications scan
+ *     (a fixture dir with Blender.app → Blender in the recommended section),
+ *   - adding a plain connector (memory) via the "+" persists to
+ *     mcp-connectors.json,
+ *   - opening the card renders the real detail page and its MCP-server toggle
+ *     disables/persists,
+ *   - adding a secret connector (slack) opens the Connect permission popup, and
  *     "Continue" installs it disabled,
  *   - switching the MCP mode to Bash CLI persists to settings.json + the registry.
  * Run `pnpm build` first.
@@ -77,21 +80,22 @@ try {
   await page.click('[data-testid="nav-connectors"]');
   await page.waitForSelector('[data-testid="connectors-screen"]', { timeout: 8000 });
 
-  // Recommended for you: Blender pinned from the mocked scan.
-  await page.waitForSelector('[data-testid="connectors-recommended-item-blender"]', {
-    timeout: 8000,
-  });
+  // Recommended for you: Blender in the recommended SECTION from the mocked scan.
+  await page.waitForSelector(
+    '[data-testid="connectors-section-recommended"] [data-testid="connector-card-blender"]',
+    { timeout: 8000 },
+  );
 
   // Round-10 Wave D: real brand marks render as self-contained inline SVG for
-  // well-known connectors — github/figma in the Featured list, blender in the
-  // Recommended row — each an actual <svg><path> (not the emoji fallback).
+  // well-known connectors — github/figma in the Official section, blender in the
+  // Recommended section — each an actual <svg><path> (not the emoji fallback).
   // Round-11 Wave A1: those marks now render in their BRAND COLOR — the svg's
   // fill is a brand hex (figma #F24E1E, blender #E87D0D directly; github #181717
   // via the --pd-connector-ink fallback), never the old monochrome currentColor.
   for (const scope of [
     '[data-testid="connector-card-github"]',
     '[data-testid="connector-card-figma"]',
-    '[data-testid="connectors-recommended-item-blender"]',
+    '[data-testid="connector-card-blender"]',
   ]) {
     const svg = `${scope} [data-testid="connector-icon-svg"] svg`;
     await page.waitForSelector(svg, { timeout: 8000 });
@@ -112,20 +116,20 @@ try {
     'trademark disclaimer present under the gallery',
   );
 
-  // Install a plain (no-secret) connector → persists enabled to the registry.
-  await page.click('[data-testid="connector-install-memory"]');
+  // Add a plain (no-secret) connector via the "+" → persists enabled.
+  await page.click('[data-testid="connector-add-memory"]');
   await waitFor(() => serverById('memory')?.enabled === true, 'memory installed + enabled');
 
-  // Open its detail page, toggle MCP servers OFF → persists disabled.
-  await page.click('[data-testid="connectors-installed-memory"]');
+  // Open its detail page (click the card), toggle MCP server OFF → persists disabled.
+  await page.click('[data-testid="connector-card-memory"]');
   await page.waitForSelector('[data-testid="connector-detail"]', { timeout: 8000 });
   await page.click('[data-testid="connector-detail-mcp-toggle"]');
   await waitFor(() => serverById('memory')?.enabled === false, 'memory disabled persists');
 
-  // Back to the gallery, install a secret connector → Connect permission popup.
-  await page.click('[data-testid="connector-detail-breadcrumb"] >> text=Connectors');
-  await page.waitForSelector('[data-testid="connectors-featured"]', { timeout: 8000 });
-  await page.click('[data-testid="connector-install-slack"]');
+  // Back to the gallery, add a secret connector → Connect permission popup.
+  await page.click('[data-testid="connector-detail-breadcrumb"]');
+  await page.waitForSelector('[data-testid="connector-add-slack"]', { timeout: 8000 });
+  await page.click('[data-testid="connector-add-slack"]');
   await page.waitForSelector('[data-testid="connect-permission-dialog"]', { timeout: 8000 });
   await page.click('[data-testid="connect-continue"]');
   await waitFor(

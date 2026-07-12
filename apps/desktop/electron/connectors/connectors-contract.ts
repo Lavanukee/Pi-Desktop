@@ -48,6 +48,18 @@ export type ConnectorsInvokeMap = {
     request: { id: string; enabled: boolean };
     response: { registry: McpRegistryConfig };
   };
+  /**
+   * Live tool discovery for the detail view (Tier 2): spawn the installed server
+   * once via the mcp-lite ConnectorHost, list its tools (names + one-line
+   * descriptions — never schemas), then tear it down. Only ever called for an
+   * installed + enabled MCP connector; `error` is set (tools empty) when the id
+   * is unknown / builtin / not installed, or the handshake fails, so the view
+   * can fall back to the static Tier-1 config.
+   */
+  'connectors:tools': {
+    request: { id: string };
+    response: { tools: Array<{ name: string; description: string }>; error?: string };
+  };
 };
 
 export const CONNECTORS_INVOKE_CHANNELS = [
@@ -57,4 +69,5 @@ export const CONNECTORS_INVOKE_CHANNELS = [
   'connectors:upsert',
   'connectors:remove',
   'connectors:set-enabled',
+  'connectors:tools',
 ] as const satisfies readonly (keyof ConnectorsInvokeMap)[];

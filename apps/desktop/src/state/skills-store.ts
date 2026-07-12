@@ -20,6 +20,8 @@ interface SkillsStoreState {
   remove: (id: string) => Promise<void>;
   /** Install when off, remove when on (the Skills-tab enable toggle). */
   toggle: (id: string, next: boolean) => Promise<void>;
+  /** Read a bundled skill's SKILL.md body for the skill detail view. */
+  readSkill: (id: string) => Promise<{ body: string; error?: string }>;
 }
 
 export const useSkillsStore = create<SkillsStoreState>((set, get) => ({
@@ -55,5 +57,9 @@ export const useSkillsStore = create<SkillsStoreState>((set, get) => ({
 
   toggle: async (id, next) => {
     await (next ? get().install(id) : get().remove(id));
+  },
+
+  readSkill: async (id) => {
+    return window.piDesktop.invoke('skills:read', { id });
   },
 }));

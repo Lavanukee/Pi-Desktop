@@ -11,10 +11,12 @@
  */
 import * as os from 'node:os';
 import {
+  ConnectorHost,
   connectorNeedsConfig,
   type DetectAppsEnv,
   defaultRegistryPath,
   detectedSuggestions,
+  isBuiltinConnector,
   KNOWN_CONNECTORS,
   KNOWN_CONNECTORS_BY_ID,
   loadRegistry,
@@ -22,6 +24,7 @@ import {
   type McpServerConfig,
   nodeDetectAppsEnv,
   nodeRegistryIO,
+  oneLineDescription,
   recommendedConnectors,
   removeServer,
   saveRegistry,
@@ -70,6 +73,12 @@ const handlers: IpcHandlers<ConnectorsInvokeMap> = {
     if (connector === undefined) {
       return { registry: read(), error: `Unknown connector "${req.id}"` };
     }
+    // Builtins (HyperFrames, Video editing) are always on — never a server in
+    // the registry. Installing one is a no-op so the gallery's "Preinstalled"
+    // affordance can't accidentally seed a phantom empty-command server.
+    if (isBuiltinConnector(req.id)) {
+      return { registry: read(), error: `"${req.id}" is preinstalled` };
+    }
     // Never preload-enable anything needing secrets/auth or a <placeholder> arg;
     // it lands disabled until the user configures it.
     const enabled = !connectorNeedsConfig(connector);
@@ -81,11 +90,44 @@ const handlers: IpcHandlers<ConnectorsInvokeMap> = {
 
   'connectors:upsert': (req) => ({ registry: write(upsertServer(read(), req.server)) }),
 
-  'connectors:remove': (req) => ({ registry: write(removeServer(read(), req.id)) }),
+  'connectors:remove': (req) => {
+    // Builtins can't be removed — guard so a stray remove is inert.
+    if (isBuiltinConnector(req.id)) return { registry: read() };
+    return { registry: write(removeServer(read(), req.id)) };
+  },
 
-  'connectors:set-enabled': (req) => ({
-    registry: write(setServerEnabled(read(), req.id, req.enabled)),
-  }),
+  'connectors:set-enabled': (req) => {
+    // Builtins are always on; toggling them is a no-op.
+    if (isBuiltinConnector(req.id)) return { registry: read() };
+    return { registry: write(setServerEnabled(read(), req.id, req.enabled)) };
+  },
+
+  'connectors:tools': async (req) => {
+    // Live tool discovery (Tier 2). Only for an installed + enabled MCP server —
+    // never a builtin (no server) or an uninstalled card (don't spawn something
+    // the user hasn't added). Failures degrade to the static Tier-1 config.
+    if (isBuiltinConnector(req.id)) {
+      return { tools: [], error: `"${req.id}" is a built-in (no live server)` };
+    }
+    const server = read().servers.find((s) => s.id === req.id);
+    if (server === undefined) return { tools: [], error: `"${req.id}" is not installed` };
+    if (server.enabled === false) return { tools: [], error: `"${req.id}" is disabled` };
+
+    const host = new ConnectorHost({ connectTimeoutMs: 15_000 });
+    try {
+      const result = await host.connect(server);
+      if (!result.ok) return { tools: [], error: result.error ?? 'failed to connect' };
+      const tools = host
+        .getServerTools(req.id)
+        .map((t) => ({ name: t.name, description: oneLineDescription(t.description) }));
+      return { tools };
+    } catch (error) {
+      log.warn('connectors:tools failed', { id: req.id, error: String(error) });
+      return { tools: [], error: String(error instanceof Error ? error.message : error) };
+    } finally {
+      host.disposeAll();
+    }
+  },
 };
 
 export function registerConnectorsIpc(

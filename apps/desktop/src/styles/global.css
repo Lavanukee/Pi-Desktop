@@ -111,9 +111,10 @@ body {
 }
 
 /* Connector brand marks (packages/mcp-lite connector-icons): each fills in its
- * brand color. Near-black brands (GitHub, Notion, Unity, Slack, SQLite, Sentry)
- * fill with var(--pd-connector-ink, <brand hex>) — the hex on light, but flipped
- * to the box's ink here on dark so they don't vanish against a dark surface. */
+ * brand color. Near-black brands (GitHub, Notion, SQLite, Sentry) fill with
+ * var(--pd-connector-ink, <brand hex>) — the hex on light, but flipped to the
+ * box's ink here on dark so they don't vanish against a dark surface. (Unity and
+ * Slack ship no brand mark; they take the neutral currentColor path instead.) */
 :root[data-mode="dark"] .pd-connector-icon {
   --pd-connector-ink: currentColor;
 }

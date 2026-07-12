@@ -24,6 +24,7 @@ export {
   registerCliTool,
   renderHelp,
 } from './bash-cli';
+export { BUILTIN_CONNECTOR_IDS, BUILTIN_CONNECTORS } from './builtin-connectors';
 export {
   type CatalogServerEntry,
   type CatalogToolEntry,
@@ -51,6 +52,7 @@ export {
   type DetectAppsEnv,
   detectApps,
   detectedSuggestions,
+  isBuiltinConnector,
   KNOWN_CONNECTORS,
   KNOWN_CONNECTORS_BY_ID,
   type KnownConnector,

@@ -1125,13 +1125,15 @@
 }
 
 /*
- * Codex-style resize grip (round-11 #4a) — the chat↔canvas divider. A thin
- * divider LINE (::before) runs the full height at the panel's left edge, with a
- * small rounded PILL (::after) centred on it. The hit area is a comfortable
- * ~10px strip (wider than the visible 1px line) with a col-resize cursor. On
- * HOVER — and while dragging (`data-dragging`) — the line and pill highlight to
- * the accent colour. The rail owns the slide/overflow; this element only draws
- * and grabs the divider.
+ * Resize grip (round-11 #4a, refined round-16) — the chat↔canvas divider. A thin
+ * divider LINE (::before) runs the full height at the panel's left edge; a small
+ * vertical DOTS grip (::after) sits CENTRED in the grab strip. The 3-dot cluster
+ * reads unambiguously as a drag handle — deliberately NOT the tall rounded pill
+ * it used to be (which read as a scrollbar). The hit area is a comfortable ~10px
+ * strip (wider than the visible line) with a col-resize cursor. On HOVER — and
+ * while dragging (`data-dragging`) — the line + dots step up to a SUBTLE NEUTRAL
+ * tone (no strong blue accent, low-key). The rail owns the slide/overflow; this
+ * element only draws and grabs the divider.
  */
 .pd-canvas-rail-handle {
   position: absolute;
@@ -1154,29 +1156,29 @@
   transition: background var(--pd-duration-fast) var(--pd-easing-standard);
 }
 
-/* the grabber pill, vertically centred, hugging the divider line */
+/* the grabber: a compact 3-dot cluster, centred both ways in the grab strip.
+   `color` drives the dot fill (currentColor) so hover is a single-token swap. */
 .pd-canvas-rail-handle::after {
   content: "";
   position: absolute;
   top: 50%;
-  left: 1px;
-  transform: translateY(-50%);
-  width: 4px;
-  height: 32px;
-  border-radius: var(--pd-radius-full);
-  background: var(--pd-border-strong);
-  transition:
-    background var(--pd-duration-fast) var(--pd-easing-standard),
-    height var(--pd-duration-fast) var(--pd-easing-standard);
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 18px;
+  color: var(--pd-border-strong);
+  background-image: radial-gradient(circle at center, currentColor 0.9px, transparent 1.3px);
+  background-size: 2px 6px;
+  background-repeat: repeat-y;
+  transition: color var(--pd-duration-fast) var(--pd-easing-standard);
 }
 
 .pd-canvas-rail-handle:hover::before,
 .pd-canvas-rail-handle[data-dragging="true"]::before {
-  background: var(--pd-accent-primary);
+  background: var(--pd-border-strong);
 }
 
 .pd-canvas-rail-handle:hover::after,
 .pd-canvas-rail-handle[data-dragging="true"]::after {
-  background: var(--pd-accent-primary);
-  height: 44px;
+  color: var(--pd-text-muted);
 }

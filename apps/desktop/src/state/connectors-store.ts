@@ -36,6 +36,14 @@ interface ConnectorsStoreState {
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
   /** Insert or replace an arbitrary server config. */
   upsert: (server: McpServerConfig) => Promise<void>;
+  /** Live tool discovery for the detail view (installed + enabled MCP only). */
+  fetchTools: (id: string) => Promise<{ tools: ConnectorTool[]; error?: string }>;
+}
+
+/** A tool as shown in the detail view (name + one-line description, no schema). */
+export interface ConnectorTool {
+  name: string;
+  description: string;
 }
 
 const EMPTY_REGISTRY: McpRegistryConfig = { version: 1, mode: 'lite', servers: [] };
@@ -105,6 +113,12 @@ export const useConnectorsStore = create<ConnectorsStoreState>((set) => ({
     } finally {
       set({ busyId: null });
     }
+  },
+
+  fetchTools: async (id) => {
+    // Read-only probe — no busy/registry mutation. The detail view owns the
+    // loading spinner and falls back to the static config on `error`.
+    return window.piDesktop.invoke('connectors:tools', { id });
   },
 }));
 

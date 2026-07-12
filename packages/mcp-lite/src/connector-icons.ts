@@ -169,6 +169,15 @@ const NEUTRAL_ICON_SVGS: Record<string, string> = {
   unity: neutralSvg(
     '<path d="M12 3.5 20 8v8l-8 4.5L4 16V8z"/><path d="M4 8l8 4.5L20 8"/><path d="M12 12.5V20.5"/>',
   ),
+  // ── First-party builtins ("By us") ──────────────────────────────────────────
+  // Film strip / frames (motion-graphics render).
+  hyperframes: neutralSvg(
+    '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M7.75 5.5v13M16.25 5.5v13"/><path d="M3.5 9.5h4.25M3.5 14.5h4.25M16.25 9.5h4.25M16.25 14.5h4.25"/>',
+  ),
+  // Scissors (a typed ffmpeg cut/edit façade).
+  'video-editing': neutralSvg(
+    '<circle cx="6" cy="6.5" r="2.15"/><circle cx="6" cy="17.5" r="2.15"/><path d="M7.9 7.7 19.5 16.5M7.9 16.3 19.5 7.5M12 12l4-2.9"/>',
+  ),
 };
 
 /**

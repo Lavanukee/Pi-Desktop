@@ -6,7 +6,9 @@ import {
   entriesForCategory,
   formatApproxSize,
   MODALITY_CATEGORIES,
+  MODALITY_SPEED_LABEL,
   modalityRequiresGate,
+  modalitySpeed,
 } from './modality-catalog-logic';
 
 function entry(over: Partial<ModalityCatalogEntry>): ModalityCatalogEntry {
@@ -78,6 +80,35 @@ describe('formatApproxSize', () => {
   it('renders sizes with a tilde', () => {
     expect(formatApproxSize(3.5)).toBe('~3.5 GB');
     expect(formatApproxSize(24)).toBe('~24 GB');
+  });
+});
+
+describe('modalitySpeed', () => {
+  it('marks GPU-heavy diffusion/video backends slow regardless of size', () => {
+    expect(modalitySpeed(entry({ heavy: true, approxSizeGB: 8 }))).toBe('slow');
+    // heavy wins even for a tiny footprint.
+    expect(modalitySpeed(entry({ heavy: true, approxSizeGB: 1 }))).toBe('slow');
+  });
+
+  it('calls tiny light models fast', () => {
+    expect(modalitySpeed(entry({ heavy: false, approxSizeGB: 0.3 }))).toBe('fast');
+    expect(modalitySpeed(entry({ heavy: false, approxSizeGB: 4 }))).toBe('fast');
+  });
+
+  it('calls mid-footprint light models balanced', () => {
+    expect(modalitySpeed(entry({ heavy: false, approxSizeGB: 4.3 }))).toBe('balanced');
+    expect(modalitySpeed(entry({ heavy: false, approxSizeGB: 9 }))).toBe('balanced');
+  });
+
+  it('calls genuinely large light models slow', () => {
+    expect(modalitySpeed(entry({ heavy: false, approxSizeGB: 12 }))).toBe('slow');
+    expect(modalitySpeed(entry({ heavy: false, approxSizeGB: 20 }))).toBe('slow');
+  });
+
+  it('has a capitalised label for every speed word', () => {
+    expect(MODALITY_SPEED_LABEL.fast).toBe('Fast');
+    expect(MODALITY_SPEED_LABEL.balanced).toBe('Balanced');
+    expect(MODALITY_SPEED_LABEL.slow).toBe('Slow');
   });
 });
 

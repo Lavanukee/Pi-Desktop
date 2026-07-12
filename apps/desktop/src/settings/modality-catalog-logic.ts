@@ -95,3 +95,31 @@ export function formatApproxSize(gb: number): string {
   if (gb <= 0) return 'No weights';
   return gb >= 10 ? `~${Math.round(gb)} GB` : `~${gb} GB`;
 }
+
+/** The coarse speed word for a model card's speedometer pill. Mirrors the LLM
+ * side's `tierSpeed` ('fast' | 'balanced' | 'slow'). */
+export type ModalitySpeed = 'fast' | 'balanced' | 'slow';
+
+/**
+ * A generation model's rough speed, derived from the catalog's `heavy` flag +
+ * on-disk footprint — the modality analogue of the round-14 `tierSpeed` (which
+ * maps an LLM's capability tier to a felt-speed word). GPU-heavy diffusion /
+ * video backends decode slowest (`heavy` → slow) regardless of size; among the
+ * light backends the footprint is the proxy — tiny models are fast, multi-GB
+ * ones balanced, and anything genuinely large slow. Pure so the card can't drift.
+ */
+export function modalitySpeed(
+  entry: Pick<ModalityCatalogEntry, 'heavy' | 'approxSizeGB'>,
+): ModalitySpeed {
+  if (entry.heavy) return 'slow';
+  if (entry.approxSizeGB <= 4) return 'fast';
+  if (entry.approxSizeGB >= 12) return 'slow';
+  return 'balanced';
+}
+
+/** Capitalised label per speed word, for the card pill. */
+export const MODALITY_SPEED_LABEL: Record<ModalitySpeed, string> = {
+  fast: 'Fast',
+  balanced: 'Balanced',
+  slow: 'Slow',
+};

@@ -29,10 +29,21 @@ export type SkillsInvokeMap = {
     request: { id: string };
     response: { skills: SkillListItem[]; error?: string };
   };
+  /**
+   * Read a bundled skill's `SKILL.md` body for the skill detail view. The id is
+   * fenced (isSafeSkillId + registry membership) exactly like install/remove, so
+   * the read can never traverse out of the bundled skills dir. `error` is set
+   * (empty body) when the id is unknown / unavailable.
+   */
+  'skills:read': {
+    request: { id: string };
+    response: { body: string; error?: string };
+  };
 };
 
 export const SKILLS_INVOKE_CHANNELS = [
   'skills:list',
   'skills:install',
   'skills:remove',
+  'skills:read',
 ] as const satisfies readonly (keyof SkillsInvokeMap)[];

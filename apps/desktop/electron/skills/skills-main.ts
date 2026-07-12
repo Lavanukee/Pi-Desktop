@@ -89,10 +89,22 @@ function remove(id: string): { skills: SkillListItem[]; error?: string } {
   }
 }
 
+/** Read a bundled skill's SKILL.md body (fenced like install/remove). */
+function read(id: string): { body: string; error?: string } {
+  const src = bundledSource(id);
+  if (src === null) return { body: '', error: `unknown or unavailable skill: ${id}` };
+  try {
+    return { body: fs.readFileSync(path.join(src, 'SKILL.md'), 'utf8') };
+  } catch (error) {
+    return { body: '', error: String(error instanceof Error ? error.message : error) };
+  }
+}
+
 const handlers: IpcHandlers<SkillsInvokeMap> = {
   'skills:list': () => ({ skills: list() }),
   'skills:install': (req) => install(req.id),
   'skills:remove': (req) => remove(req.id),
+  'skills:read': (req) => read(req.id),
 };
 
 export function registerSkillsIpc(

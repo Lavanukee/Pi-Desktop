@@ -58,7 +58,7 @@ import {
 } from '@pi-desktop/gen-tools/contract';
 import { createLogger, registerIpcHandlers } from '@pi-desktop/shared';
 import { type IpcMain, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
-import { toModalityCatalogEntry } from './gen-catalog-dto';
+import { surfaceModalityCatalog } from './gen-catalog-dto';
 import type { GenCatalogInvokeMap, GenEventMap, GenSurfacePayload } from './gen-ipc-contract';
 import {
   buildVideoJob,
@@ -443,7 +443,9 @@ export function registerGenCatalogIpc(
   registerIpcHandlers<GenCatalogInvokeMap>(
     ipc,
     {
-      'gen:modality-catalog': () => ({ models: MODALITY_CATALOG.map(toModalityCatalogEntry) }),
+      // Tool-only rows (e.g. hyperframes) are filtered here — the model browser
+      // enumerates MODELS, not the agent's generation tools.
+      'gen:modality-catalog': () => ({ models: surfaceModalityCatalog(MODALITY_CATALOG) }),
     },
     { allowSender },
   );

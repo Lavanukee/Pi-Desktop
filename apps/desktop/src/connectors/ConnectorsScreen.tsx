@@ -1,36 +1,33 @@
 /**
- * The Codex-style connectors gallery (visual refs img73–75). A full-window
- * surface (like Settings) with:
- *   - Plugins / Skills tabs (Plugins built fully; Skills left as a clean seam
- *     for the parallel W6 skills work — a minimal "no skills yet" placeholder),
- *   - a "Create ▾" menu (stubs), a search field,
- *   - an Installed icon row, a Public / Personal scope toggle,
- *   - "Recommended for you" (from the /Applications scan — Blender-installed ⇒
- *     Blender pinned top), and a "Featured" list with Install + "…" overflow,
- *   - a per-connector detail page and a Connect-app permission popup.
+ * The Codex-style connectors gallery — a full-window surface (like Settings)
+ * with a Back-to-chat affordance, Plugins / Skills tabs, a "Create ▾" menu, and
+ * a search field.
+ *
+ * The Plugins tab is a 2-column SECTIONED grid — By us / Recommended for you /
+ * Official / Popular (see connector-sections.ts) — where each card carries a
+ * "+" add button (or a Preinstalled / Installed state). Selecting a card opens a
+ * real detail view (its tools + config), not a dead description. "Recommended
+ * for you" is driven by the /Applications scan (Blender-installed ⇒ Blender
+ * pinned). Search filters within every section.
  *
  * Install / enable / disable / remove round-trip through the connectors:* IPC
  * (which persists ~/.pi/desktop/mcp-connectors.json — the mcp-lite extension
  * re-reads it on the next pi session). The MCP mode control reuses the settings
  * store so lite / native / bash-cli stays single-sourced.
  */
-import type { ConnectorSuggestion, KnownConnector, McpMode } from '@pi-desktop/mcp-lite';
+import type { KnownConnector, McpMode } from '@pi-desktop/mcp-lite';
 import {
-  Badge,
   Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
-  IconButton,
   IconChevronDown,
-  IconMore,
+  IconChevronLeft,
   IconPlus,
   ScrollArea,
   SearchInput,
   SegmentedControl,
-  Spinner,
   Tabs,
   TabsList,
   TabsTrigger,
@@ -38,9 +35,11 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { installedServer, isEnabled, useConnectorsStore } from '../state/connectors-store';
 import { useSettingsStore } from '../state/settings-store';
+import { ConnectorCard } from './ConnectorCard';
 import { ConnectorDetail } from './ConnectorDetail';
-import { ConnectorIcon } from './ConnectorIcon';
+import { ConnectorSection } from './ConnectorSection';
 import { ConnectPermissionDialog } from './ConnectPermissionDialog';
+import { buildConnectorSections } from './connector-sections';
 import { SkillsTab } from './SkillsTab';
 
 /** Renderer-safe mirror of mcp-lite's connectorNeedsConfig (kept local so the
@@ -58,124 +57,6 @@ const MODE_OPTIONS: Array<{ value: McpMode; label: string }> = [
 
 const CREATE_ITEMS = ['Create plugin', 'Add marketplace', 'Record a skill', 'Request a plugin'];
 
-/** One featured connector list row: icon, name/description, Install + overflow. */
-function ConnectorRow({
-  connector,
-  installedEnabled,
-  isInstalled,
-  busy,
-  onOpen,
-  onConnect,
-  onRemove,
-}: {
-  connector: KnownConnector;
-  installedEnabled: boolean;
-  isInstalled: boolean;
-  busy: boolean;
-  onOpen: () => void;
-  onConnect: () => void;
-  onRemove: () => void;
-}) {
-  return (
-    <div
-      className="flex items-center gap-3 rounded-xl border border-border-default px-4 py-3 hover:bg-bg-hover"
-      data-testid={`connector-card-${connector.id}`}
-    >
-      <button
-        type="button"
-        className="flex min-w-0 flex-1 items-center gap-3 text-left"
-        onClick={onOpen}
-      >
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-bg-inset text-heading text-text-primary">
-          <ConnectorIcon connector={connector} size={22} />
-        </span>
-        <span className="min-w-0">
-          <span className="flex items-center gap-1.5">
-            <span className="truncate text-body text-text-primary">{connector.name}</span>
-            {connector.official ? <Badge tone="info">Official</Badge> : null}
-          </span>
-          <span className="block truncate text-footnote text-text-muted">
-            {connector.description}
-          </span>
-        </span>
-      </button>
-      <div className="flex shrink-0 items-center gap-1">
-        {busy ? (
-          <Spinner size={16} />
-        ) : isInstalled ? (
-          <Badge tone={installedEnabled ? 'success' : 'default'}>
-            {installedEnabled ? 'Installed' : 'Disabled'}
-          </Badge>
-        ) : (
-          <Button
-            variant="secondary"
-            size="sm"
-            data-testid={`connector-install-${connector.id}`}
-            onClick={onConnect}
-          >
-            Install
-          </Button>
-        )}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <IconButton aria-label="More" data-testid={`connector-overflow-${connector.id}`}>
-              <IconMore size={16} />
-            </IconButton>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={onOpen}>View details</DropdownMenuItem>
-            {isInstalled ? (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={onRemove}>Remove</DropdownMenuItem>
-              </>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </div>
-  );
-}
-
-/** A compact "Recommended for you" card. */
-function RecommendedCard({
-  suggestion,
-  busy,
-  isInstalled,
-  onOpen,
-  onConnect,
-}: {
-  suggestion: ConnectorSuggestion;
-  busy: boolean;
-  isInstalled: boolean;
-  onOpen: () => void;
-  onConnect: () => void;
-}) {
-  return (
-    <div
-      className="flex w-[220px] shrink-0 flex-col gap-2 rounded-xl border border-border-default p-4"
-      data-testid={`connectors-recommended-item-${suggestion.id}`}
-    >
-      <button type="button" className="flex items-center gap-2 text-left" onClick={onOpen}>
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-bg-inset text-body text-text-primary">
-          <ConnectorIcon connector={suggestion} size={20} />
-        </span>
-        <span className="min-w-0 truncate text-body text-text-primary">{suggestion.name}</span>
-      </button>
-      <p className="line-clamp-2 min-h-8 text-footnote text-text-muted">{suggestion.reason}</p>
-      {busy ? (
-        <Spinner size={16} />
-      ) : isInstalled ? (
-        <Badge tone="success">Installed</Badge>
-      ) : (
-        <Button variant="secondary" size="sm" onClick={onConnect}>
-          Install
-        </Button>
-      )}
-    </div>
-  );
-}
-
 export function ConnectorsScreen({ onClose }: { onClose: () => void }) {
   const registry = useConnectorsStore((s) => s.registry);
   const catalog = useConnectorsStore((s) => s.catalog);
@@ -191,7 +72,6 @@ export function ConnectorsScreen({ onClose }: { onClose: () => void }) {
 
   const [tab, setTab] = useState<'plugins' | 'skills'>('plugins');
   const [query, setQuery] = useState('');
-  const [scope, setScope] = useState<'public' | 'personal'>('public');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pendingConnect, setPendingConnect] = useState<KnownConnector | null>(null);
 
@@ -215,25 +95,16 @@ export function ConnectorsScreen({ onClose }: { onClose: () => void }) {
     void install(connector.id);
   };
 
-  const q = query.trim().toLowerCase();
-  const matches = (c: KnownConnector) =>
-    q.length === 0 ||
-    c.name.toLowerCase().includes(q) ||
-    c.description.toLowerCase().includes(q) ||
-    c.category.includes(q);
-
   const installedIds = new Set(registry.servers.map((s) => s.id));
-  const recommendedIds = new Set(recommended.map((r) => r.id));
-
-  // Featured: the catalog (public) minus what's already pinned in Recommended,
-  // or just the installed connectors (personal). Both honor the search query.
-  const featuredBase =
-    scope === 'personal'
-      ? catalog.filter((c) => installedIds.has(c.id))
-      : catalog.filter((c) => !recommendedIds.has(c.id));
-  const featured = featuredBase.filter(matches);
-
-  const installedConnectors = catalog.filter((c) => installedIds.has(c.id));
+  const sections = useMemo(
+    () =>
+      buildConnectorSections(
+        catalog,
+        recommended.map((r) => r.id),
+        query,
+      ),
+    [catalog, recommended, query],
+  );
 
   return (
     <div
@@ -245,10 +116,11 @@ export function ConnectorsScreen({ onClose }: { onClose: () => void }) {
         <button
           type="button"
           data-testid="connectors-back"
-          className="[-webkit-app-region:no-drag] text-footnote text-text-link"
+          className="inline-flex items-center gap-1 rounded-lg py-1 pr-2 pl-1 text-footnote text-text-secondary [-webkit-app-region:no-drag] hover:bg-bg-hover"
           onClick={onClose}
         >
-          ← Back to chat
+          <IconChevronLeft size={14} />
+          Back to chat
         </button>
       </div>
 
@@ -269,7 +141,7 @@ export function ConnectorsScreen({ onClose }: { onClose: () => void }) {
         </ScrollArea>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
-          {/* Header: tabs + Create menu, then search. */}
+          {/* Header: title + Create menu, tabs, then search. */}
           <div className="mx-auto w-full max-w-[880px] px-8 pt-1">
             <div className="mb-1 flex items-center justify-between gap-3">
               <h1 className="text-title text-text-primary">Connectors</h1>
@@ -318,109 +190,46 @@ export function ConnectorsScreen({ onClose }: { onClose: () => void }) {
                 <SkillsTab />
               ) : (
                 <div className="flex flex-col gap-6">
-                  {/* MCP mode + scope controls. */}
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-footnote text-text-muted">How connectors run</span>
-                      <SegmentedControl
-                        aria-label="MCP mode"
-                        data-testid="connectors-mcp-mode"
-                        value={mode}
-                        onValueChange={(v) => void updateSettings({ mcpMode: v as McpMode })}
-                        options={MODE_OPTIONS}
-                      />
-                    </div>
+                  {/* MCP mode control. */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-footnote text-text-muted">How connectors run</span>
                     <SegmentedControl
-                      aria-label="Connector scope"
-                      data-testid="connectors-scope-toggle"
-                      value={scope}
-                      onValueChange={(v) => setScope(v as 'public' | 'personal')}
-                      options={[
-                        { value: 'public', label: 'Public' },
-                        { value: 'personal', label: 'Personal' },
-                      ]}
+                      aria-label="MCP mode"
+                      data-testid="connectors-mcp-mode"
+                      value={mode}
+                      onValueChange={(v) => void updateSettings({ mcpMode: v as McpMode })}
+                      options={MODE_OPTIONS}
                     />
                   </div>
 
-                  {/* Installed icon row. */}
-                  <section>
-                    <h2 className="mb-2 text-footnote text-text-muted">Installed</h2>
-                    <div className="flex flex-wrap gap-2" data-testid="connectors-installed-row">
-                      {installedConnectors.length === 0 ? (
-                        <p className="text-footnote text-text-muted">
-                          No connectors installed yet.
-                        </p>
-                      ) : (
-                        installedConnectors.map((c) => (
-                          <button
-                            key={c.id}
-                            type="button"
-                            title={c.name}
-                            data-testid={`connectors-installed-${c.id}`}
-                            aria-label={c.name}
-                            onClick={() => setSelectedId(c.id)}
-                            className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-bg-inset text-heading text-text-primary hover:bg-bg-hover"
-                          >
-                            <ConnectorIcon connector={c} size={22} />
-                            {!isEnabled(registry, c.id) ? (
-                              <span className="absolute right-0.5 bottom-0.5 h-2 w-2 rounded-full bg-text-muted" />
-                            ) : null}
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  </section>
-
-                  {/* Recommended for you (public scope only). */}
-                  {scope === 'public' && recommended.length > 0 ? (
-                    <section data-testid="connectors-recommended">
-                      <h2 className="mb-2 text-body text-text-primary">Recommended for you</h2>
-                      <div className="flex gap-3 overflow-x-auto pb-1">
-                        {recommended.map((s) => (
-                          <RecommendedCard
-                            key={s.id}
-                            suggestion={s}
-                            busy={busyId === s.id}
-                            isInstalled={installedIds.has(s.id)}
-                            onOpen={() => setSelectedId(s.id)}
-                            onConnect={() => {
-                              const c = catalog.find((x) => x.id === s.id);
-                              if (c !== undefined) connect(c);
-                            }}
-                          />
-                        ))}
-                      </div>
-                    </section>
-                  ) : null}
-
-                  {/* Featured list. */}
-                  <section data-testid="connectors-featured">
-                    <h2 className="mb-2 text-body text-text-primary">
-                      {scope === 'personal' ? 'Your connectors' : 'Featured'}
-                    </h2>
-                    <div className="flex flex-col gap-2">
-                      {featured.length === 0 ? (
-                        <p className="text-footnote text-text-muted">
-                          {scope === 'personal'
-                            ? 'Install a connector to see it here.'
-                            : 'No connectors match your search.'}
-                        </p>
-                      ) : (
-                        featured.map((c) => (
-                          <ConnectorRow
+                  {/* Sectioned 2-column grid. */}
+                  {sections.length === 0 ? (
+                    <p className="text-footnote text-text-muted" data-testid="connectors-empty">
+                      No connectors match your search.
+                    </p>
+                  ) : (
+                    sections.map((section) => (
+                      <ConnectorSection
+                        key={section.id}
+                        id={section.id}
+                        title={section.title}
+                        count={section.items.length}
+                      >
+                        {section.items.map((c) => (
+                          <ConnectorCard
                             key={c.id}
                             connector={c}
                             isInstalled={installedIds.has(c.id)}
                             installedEnabled={isEnabled(registry, c.id)}
                             busy={busyId === c.id}
                             onOpen={() => setSelectedId(c.id)}
-                            onConnect={() => connect(c)}
+                            onAdd={() => connect(c)}
                             onRemove={() => void remove(c.id)}
                           />
-                        ))
-                      )}
-                    </div>
-                  </section>
+                        ))}
+                      </ConnectorSection>
+                    ))
+                  )}
 
                   {/* Trademark disclaimer: the gallery renders third-party brand
                       marks for identification only. */}

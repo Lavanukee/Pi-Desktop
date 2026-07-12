@@ -16,6 +16,7 @@
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { BUILTIN_CONNECTORS } from './builtin-connectors';
 import { CONNECTOR_ICON_SVGS } from './connector-icons';
 import type { McpMode, McpServerConfig } from './registry';
 
@@ -66,6 +67,26 @@ export interface KnownConnector {
   requiresEnv?: string[];
   /** Ready-to-add config template; command/args/env may still need user edits. */
   template: Omit<McpServerConfig, 'enabled'> & { mode?: McpMode };
+  /**
+   * `'mcp'` (a stdio MCP server — the default) or `'builtin'` (a bundled pi tool
+   * that is always on and never spawns a server). Absent ⇒ `'mcp'`. A builtin is
+   * not necessarily authored by us — see {@link firstParty}.
+   */
+  kind?: 'mcp' | 'builtin';
+  /**
+   * Authored by us (Pi Desktop) — drives the gallery's "By us" section. Distinct
+   * from both {@link official} (the vendor's own server, e.g. GitHub's) and
+   * {@link kind} `'builtin'` (bundled/preinstalled): HeyGen's HyperFrames is a
+   * builtin + official but NOT first-party, so it shows under "Official".
+   */
+  firstParty?: boolean;
+  /** Curated "Popular" flag. Absence ⇒ the connector falls through to Popular. */
+  popular?: boolean;
+  /**
+   * Static tool list for the detail view — always shown for builtins, and a
+   * fallback for MCP cards before/without a live `connectors:tools` fetch.
+   */
+  tools?: ReadonlyArray<{ name: string; description: string }>;
 }
 
 /** A known connector annotated with whether it was detected on this machine. */
@@ -699,11 +720,14 @@ const CATALOG_BASE: KnownConnector[] = [
  * mark ({@link CONNECTOR_ICON_SVGS}) — a real brand glyph where one is published,
  * a neutral category glyph otherwise. The emoji `icon` stays as a last-resort
  * fallback for any card without an SVG.
+ *
+ * The built-in connectors ({@link BUILTIN_CONNECTORS} — HyperFrames, Video
+ * editing) are prepended so they land first in the gallery and cross the
+ * connectors IPC in `catalog`.
  */
-export const KNOWN_CONNECTORS: KnownConnector[] = CATALOG_BASE.map((c) => ({
-  ...c,
-  iconSvg: CONNECTOR_ICON_SVGS[c.id] ?? c.iconSvg,
-}));
+export const KNOWN_CONNECTORS: KnownConnector[] = [...BUILTIN_CONNECTORS, ...CATALOG_BASE].map(
+  (c) => ({ ...c, iconSvg: CONNECTOR_ICON_SVGS[c.id] ?? c.iconSvg }),
+);
 
 /** Lookup a known connector by id. */
 export const KNOWN_CONNECTORS_BY_ID: Record<string, KnownConnector> = Object.fromEntries(
@@ -716,6 +740,15 @@ export function connectorNeedsConfig(connector: KnownConnector): boolean {
   if (connector.requiresEnv && connector.requiresEnv.length > 0) return true;
   const args = connector.template.args ?? [];
   return args.some((a) => /<[^>]+>/.test(a));
+}
+
+/**
+ * True when a connector is a bundled builtin (always on — never installed,
+ * removed, or spawned as a server). The connectors IPC no-ops install/remove/
+ * enable for these, and the gallery renders "Preinstalled" instead of "+".
+ */
+export function isBuiltinConnector(id: string): boolean {
+  return KNOWN_CONNECTORS_BY_ID[id]?.kind === 'builtin';
 }
 
 /** A mapping from an installed macOS app to the connector(s) it implies. */

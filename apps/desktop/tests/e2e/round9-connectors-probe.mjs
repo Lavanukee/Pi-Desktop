@@ -68,9 +68,50 @@ try {
   await page.click('[data-testid="nav-connectors"]');
   await page.waitForSelector('[data-testid="connectors-screen"]', { timeout: 8000 });
 
+  // ── SECTIONED GALLERY: By us / Official + preinstalled builtins ──────────────
+  // Our own tool (Video editing) is "By us"; HeyGen's HyperFrames is a bundled
+  // third-party tool → "Official / Verified", never "By us". Both are builtins
+  // that render a static "Preinstalled" badge (no "+").
+  await page.waitForSelector('[data-testid="connectors-section-by-us"]', { timeout: 8000 });
+  await page.waitForSelector(
+    '[data-testid="connectors-section-by-us"] [data-testid="connector-card-video-editing"]',
+    { timeout: 8000 },
+  );
+  await page.waitForSelector(
+    '[data-testid="connectors-section-official"] [data-testid="connector-card-hyperframes"]',
+    { timeout: 8000 },
+  );
+  assert(
+    (await page
+      .locator(
+        '[data-testid="connectors-section-by-us"] [data-testid="connector-card-hyperframes"]',
+      )
+      .count()) === 0,
+    'HyperFrames (HeyGen\'s tool) must NOT appear under "By us"',
+  );
+  await page.waitForSelector('[data-testid="connector-preinstalled-video-editing"]', {
+    timeout: 8000,
+  });
+  await page.waitForSelector('[data-testid="connector-preinstalled-hyperframes"]', {
+    timeout: 8000,
+  });
+
+  // ── BUILTIN INSTALL IS A REJECTED NO-OP (never seeds a phantom server) ───────
+  const builtinInstall = await page.evaluate(() =>
+    window.piDesktop.invoke('connectors:install', { id: 'hyperframes' }),
+  );
+  assert(
+    typeof builtinInstall.error === 'string',
+    'installing a builtin should return an error (no-op)',
+  );
+  assert(
+    !builtinInstall.registry.servers.some((s) => s.id === 'hyperframes'),
+    'a builtin must never be seeded into the connector registry',
+  );
+
   // ── #10 BASH-CLI MODE reaches settings + the connector registry + the store ──
-  // Install a plain connector so the registry file exists, then flip the mode.
-  await page.click('[data-testid="connector-install-memory"]');
+  // Add a plain connector (the "+") so the registry file exists, then flip mode.
+  await page.click('[data-testid="connector-add-memory"]');
   await waitFor(() => readJson(mcpPath).servers.some((s) => s.id === 'memory'), 'memory installed');
   await page.click('[data-testid="connectors-mcp-mode"] >> text=Bash CLI');
   await waitFor(
@@ -104,7 +145,7 @@ try {
   await waitFor(() => !existsSync(skillFile), 'skill removed from the skills dir on toggle-off');
 
   console.log(
-    'round9-connectors-probe OK — Bash CLI mode persisted to settings.json + rewrote the connector registry (mcp-connectors.json) + reflected in the renderer settings store; the Skills tab installed a bundled skill (copied SKILL.md into the isolated skills dir) and removed it on toggle-off',
+    'round9-connectors-probe OK — sectioned gallery (Video editing under By us, HyperFrames under Official, both Preinstalled); builtin install is a rejected no-op; the "+" added memory; Bash CLI mode persisted to settings.json + rewrote the connector registry (mcp-connectors.json) + reflected in the renderer settings store; the Skills tab installed a bundled skill (copied SKILL.md into the isolated skills dir) and removed it on toggle-off',
   );
 } finally {
   await app.close();

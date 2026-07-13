@@ -157,10 +157,29 @@ button.pd-chain-step-row:hover {
 }
 
 .pd-chain-step-label {
+  flex: none;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The primary arg surfaced next to the verb ("Read a file: <path>"). Takes the
+ * remaining row width and ellipsizes; the reveal + title carry the full value. */
+.pd-chain-step-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-mono);
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+}
+
+button.pd-chain-step-row:hover .pd-chain-step-detail {
+  color: var(--pd-text-secondary);
 }
 
 /* ±stat beside the step label (round-5 #12): slightly smaller than the label,
@@ -191,49 +210,36 @@ button.pd-chain-step-row:hover {
   color: var(--pd-text-muted);
 }
 
-/* ---- pill affordance (bash/edit/read/file: click to reveal content) ---- */
+/* ---- disclosure affordance (bash/edit/read/file: click the row to reveal) ---- */
 
-/* Sits directly BELOW the step line, indented past the icon+connector. The pill
- * hugs its parent label line (round-5 #5: the old 4px gap read as detached);
- * the 8px inter-step gap between different steps is untouched. */
-.pd-chain-step-pillbox {
-  margin: 0 0 0 30px;
-}
-
-.pd-chain-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin: 0;
-  padding: 2px 6px 2px 8px;
-  border: none;
-  border-radius: var(--pd-radius-sm);
-  background: var(--pd-bg-inset);
-  box-shadow: var(--pd-shadow-hairline);
-  color: var(--pd-text-secondary);
-  font-family: var(--pd-font-sans);
-  font-size: var(--pd-font-size-caption);
-  line-height: var(--pd-leading-caption);
-  cursor: pointer;
-  transition:
-    background-color var(--pd-duration-base) var(--pd-easing-standard),
-    color var(--pd-duration-base) var(--pd-easing-standard);
-}
-
-.pd-chain-pill:hover {
-  background: var(--pd-bg-hover);
-  color: var(--pd-text-primary);
-}
-
-.pd-chain-pill-chevron {
+/* Trailing chevron on a disclosable row; rotates down when the reveal is open.
+ * Pinned right so it never crowds the inline arg (which absorbs the row width). */
+.pd-chain-step-chevron {
   display: inline-flex;
   flex: none;
+  margin-left: auto;
   color: var(--pd-text-muted);
   transition: rotate var(--pd-duration-base) var(--pd-easing-standard);
 }
 
-.pd-chain-pill-chevron[data-expanded="true"] {
+.pd-chain-step-chevron[data-expanded="true"] {
   rotate: 90deg;
+}
+
+button.pd-chain-step-row:hover .pd-chain-step-chevron {
+  color: var(--pd-text-secondary);
+}
+
+/* Full primary arg at the head of a preview reveal (read/file/skill/browser-read)
+ * — the collapsed row only had room for the basename. Wraps so a long path/url
+ * is fully visible once expanded. */
+.pd-chain-arg {
+  margin-bottom: 6px;
+  color: var(--pd-text-secondary);
+  font-family: var(--pd-font-mono);
+  font-size: var(--pd-font-size-code);
+  line-height: var(--pd-leading-code);
+  word-break: break-all;
 }
 
 /* final "Done" row: bold, neutral check. */
@@ -261,9 +267,10 @@ button.pd-chain-step-row:hover {
   overflow: auto;
 }
 
-/* Pill-gated content lives inside the reveal; the pillbox already indents it. */
+/* Disclosure content lives inside the reveal, indented past the icon+connector
+ * (the row itself is now the toggle, so the content carries its own indent). */
 .pd-chain-step-content {
-  margin: 6px 0 2px;
+  margin: 4px 0 2px 30px;
   max-height: 340px;
   overflow: auto;
 }

@@ -29,6 +29,14 @@ interface ProjectState {
    * silently presenting a deleted folder as the working directory.
    */
   projectMissing: boolean;
+  /**
+   * True whenever the conversation is rooted at the per-conversation SANDBOX
+   * rather than a real project — no project selected OR the selected one's folder
+   * is gone (main computes it from the resolved cwd). The composer folder chip
+   * reads this to show "Sandbox"/"No project" (blind-test round-2 #2); distinct
+   * from `projectMissing`, which is specifically the "selected but dead" warn.
+   */
+  usingSandbox: boolean;
   loaded: boolean;
   /** Load the persisted list + active id (no working-folder side effect). */
   load: () => Promise<void>;
@@ -62,6 +70,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   activeId: null,
   activePath: null,
   projectMissing: false,
+  usingSandbox: true,
   loaded: false,
 
   load: async () => {
@@ -70,12 +79,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       set({ loaded: true });
       return;
     }
+    // Main may have STALE-CLEARED a dead active project (round-2 #3) → activeId
+    // can now be null even if it was persisted; mirror whatever main returns.
     const active = res.projects.find((p) => p.id === res.activeId) ?? null;
     set({
       projects: res.projects,
       activeId: res.activeId,
       activePath: active?.path ?? null,
       projectMissing: res.activeMissing,
+      usingSandbox: res.usingSandbox,
       loaded: true,
     });
   },
@@ -89,6 +101,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       activeId: res.project.id,
       activePath: res.project.path,
       projectMissing: res.activeMissing,
+      usingSandbox: res.usingSandbox,
     });
     await applyWorkingFolder(res.project.path);
   },
@@ -102,6 +115,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       activeId: res.project.id,
       activePath: res.project.path,
       projectMissing: res.activeMissing,
+      usingSandbox: res.usingSandbox,
     });
     if (changed) await applyWorkingFolder(res.project.path);
   },
@@ -110,8 +124,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const res = await window.piDesktop.invoke('project:new', undefined).catch(() => null);
     if (res === null) return;
     if (res.project === null) {
-      // Cancelled the folder picker — still refresh the list + missing flag.
-      set({ projects: res.projects, projectMissing: res.activeMissing });
+      // Cancelled the folder picker — still refresh the list + flags.
+      set({
+        projects: res.projects,
+        projectMissing: res.activeMissing,
+        usingSandbox: res.usingSandbox,
+      });
       return;
     }
     const changed = res.project.path !== get().activePath;
@@ -120,6 +138,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       activeId: res.project.id,
       activePath: res.project.path,
       projectMissing: res.activeMissing,
+      usingSandbox: res.usingSandbox,
     });
     if (changed) await applyWorkingFolder(res.project.path);
   },
@@ -133,6 +152,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       activePath: null,
       // No active project → never "missing" (the chip shows the sandbox default).
       projectMissing: false,
+      usingSandbox: true,
     });
     if (wasActive) await applyWorkingFolder(null);
   },

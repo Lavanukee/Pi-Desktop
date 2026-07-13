@@ -1,13 +1,15 @@
 /**
  * Composer footer cluster: current-model chip (with a menu that switches pi
- * models and downloads/starts local ones), the harness status cluster, and a
+ * models and downloads/starts local ones), the model-download progress bar, and a
  * turn-stats info popover (non-power users only). When nothing is set up it shows
  * a tasteful "pick a model" affordance that kicks off a download (full model
  * manager is W10).
  *
  * Round-A: the live tok/s readout moved off the input bar to the per-message
  * action bar (#2); the context-fullness ring moved to the sticking-out ComposerBar
- * (#5); the info popover is hidden in power mode (#1).
+ * (#5); the info popover is hidden in power mode (#1). Blind-test #1: ALL run
+ * status (the harness stage/timer/repair cluster, the "switching…" pill) left the
+ * footer for the ONE thread indicator, so the input bar shows no run state.
  */
 import type { ChatMsg, Model, Usage } from '@pi-desktop/engine';
 import {
@@ -16,19 +18,13 @@ import {
   IconChevronDown,
   IconInfo,
   ProgressBar,
-  Spinner,
   Tooltip,
 } from '@pi-desktop/ui';
-// Harness SOURCE import (not the barrel) — keeps the renderer bundle clean; see
-// auto-router.ts. tier.ts is pure + browser-safe.
-import { TIER_LABEL } from '../../../../packages/harness/src/classify/tier.ts';
 import { useLlmStore } from '../state/llm-store';
-import { useModelSwitching } from '../state/model-selection-store';
 import { usePiStore } from '../state/pi-slice';
 import { useModelSelection, useUserMode } from '../state/settings-store';
 import { AutoDownloadPrompt } from './AutoDownloadPrompt';
 import { chipLabel } from './footer-models';
-import { HarnessStatusCluster } from './HarnessStatus';
 import { TierPickerMenu } from './TierPickerMenu';
 
 /** 73000 → "73,000"; small numbers pass through. */
@@ -115,7 +111,6 @@ export function ComposerFooter({
   // only decide the CHIP LABEL from the mode + selection.
   const userMode = useUserMode();
   const selection = useModelSelection();
-  const switching = useModelSwitching();
 
   // Round-A (#3): the chip names the model ACTUALLY RESIDENT in the inference
   // server right now — "Auto · <loaded model>" under Auto (never the tier). Prefer
@@ -159,29 +154,15 @@ export function ComposerFooter({
         </TierPickerMenu>
       </span>
 
-      {/* Honest about the (seconds-long) restart when Auto/a tier pick switches
-          the running model — a live, always-visible "switching…" pill. */}
-      {switching !== null ? (
-        <span
-          className="flex items-center gap-1 text-footnote text-text-muted"
-          data-testid="footer-switching"
-        >
-          <Spinner size={12} />
-          Switching to {TIER_LABEL[switching.toTier]}…
-        </span>
-      ) : null}
-
+      {/* Model DOWNLOAD progress stays (it's not run status): a multi-GB pull
+          needs a visible bar. All RUN status — the "switching…" pill, the harness
+          stage/timer/repair cluster — moved OUT of the footer into the ONE thread
+          indicator (jedd blind-test #1), so the input bar never shows run state. */}
       {download !== null ? (
         <div className="flex w-28 items-center gap-1">
           <ProgressBar value={download.fraction} />
         </div>
       ) : null}
-
-      {/* Harness surfacing (round-9 W3): active class + live task timer + repair
-          activity, so all four status elements live in one always-visible cluster.
-          The live tok/s readout moved OFF the input bar (round-A #2) — it now lives
-          on the per-message action bar. */}
-      <HarnessStatusCluster />
 
       {/* Info popover: current/last-turn stats. Tokens are real (engine usage);
           the tool-call count is exact; elapsed is derived from message

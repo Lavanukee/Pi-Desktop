@@ -5,20 +5,51 @@
  * ease-in-out sweep vs codex steps(48, end)) and --pd-shimmer-duration.
  */
 
+/*
+ * jedd blind-test #2 — the glyphs must NEVER vanish. The old single-gradient
+ * shimmer (color:transparent painted by ONE base→highlight→base gradient at
+ * background-size:200% with no-repeat) left the text UNPAINTED — hence invisible —
+ * at the sweep's extremes, because the swept gradient no longer covered every
+ * glyph. The fix is the same solid-floor recipe the working indicator uses: a
+ * SECOND, position-pinned layer paints the whole label at a solid readable FLOOR
+ * (--pd-shimmer-base) for the entire cycle, while only a brighter highlight band
+ * sweeps ACROSS on top. Both layers are clipped to the text, so the tint still
+ * moves but no character ever drops out. Reduced motion / hover collapse to a
+ * static solid label below.
+ */
 .pd-shimmer {
   display: inline-block;
   color: transparent;
-  background-image: linear-gradient(
-    90deg,
-    var(--pd-shimmer-base) 0%,
-    var(--pd-shimmer-highlight) 50%,
-    var(--pd-shimmer-base) 100%
-  );
-  background-size: 200% 100%;
+  /* Layer 1 (top): the moving highlight band. Layer 2 (bottom): the solid,
+   * always-painted legible floor — this is what keeps every glyph readable. */
+  background-image:
+    linear-gradient(90deg, transparent 20%, var(--pd-shimmer-highlight) 50%, transparent 80%),
+    linear-gradient(var(--pd-shimmer-base), var(--pd-shimmer-base));
+  background-size:
+    200% 100%,
+    100% 100%;
+  background-position:
+    -100% 0,
+    0 0;
   background-repeat: no-repeat;
   -webkit-background-clip: text;
   background-clip: text;
-  animation: pd-shimmer-bg var(--pd-shimmer-duration) var(--pd-shimmer-easing) infinite;
+  animation: pd-shimmer-floor-sweep var(--pd-shimmer-duration) var(--pd-shimmer-easing) infinite;
+}
+
+/* Only the highlight layer sweeps; the floor layer stays pinned at 0 0 so every
+ * glyph is painted for the whole cycle (never a text-clip that erases letters). */
+@keyframes pd-shimmer-floor-sweep {
+  0% {
+    background-position:
+      -100% 0,
+      0 0;
+  }
+  100% {
+    background-position:
+      250% 0,
+      0 0;
+  }
 }
 
 /* Codex hover-un-shimmer nicety, flavor-neutral per spec ADAPTATION. */

@@ -4,6 +4,9 @@ import {
   createLoopDetector,
   DEFAULT_LOOP_ABORT_AFTER,
   DEFAULT_LOOP_STEER_AFTER,
+  DEFAULT_WANDER_ABORT_AFTER,
+  DEFAULT_WANDER_STEER_AFTER,
+  isExplorationTool,
   type LoopDetectorConfig,
   loopDetectorConfig,
   toolCallSignature,
@@ -121,6 +124,129 @@ describe('hard step cap', () => {
     d.onToolCall('t', { x: 1 }); // step 3 (== cap): identical streak=3 → steer
     const capped = d.onToolCall('t', { x: 1 }); // step 4 (> cap) → cap abort wins
     expect(capped).toMatchObject({ kind: 'abort', cause: 'cap' });
+  });
+});
+
+describe('unproductive-wandering cap (productivity heuristic)', () => {
+  // A generous hard cap so the wander thresholds — not the step cap — do the work.
+  const WCFG: LoopDetectorConfig = {
+    steerAfter: 3,
+    abortAfter: 5,
+    maxSteps: 50,
+    wanderSteerAfter: 4,
+    wanderAbortAfter: 7,
+  };
+
+  it('classifies read-only exploration vs concrete-action tools', () => {
+    for (const t of [
+      'read',
+      'read_file',
+      'ls',
+      'list',
+      'find',
+      'glob',
+      'grep',
+      'tool_search',
+      'update_plan',
+    ]) {
+      expect(isExplorationTool(t)).toBe(true);
+    }
+    // Writes, edits, shell, connectors, gen, asking the user — all real actions.
+    for (const t of [
+      'write',
+      'edit',
+      'bash',
+      'python_run',
+      'calendar_list_events',
+      'send_mail',
+      'ask_user',
+      'web_search',
+      'image_generate',
+      'spawn_subagent',
+    ]) {
+      expect(isExplorationTool(t)).toBe(false);
+    }
+  });
+
+  it('steers once after N DIFFERENT read-only calls, then aborts — the case the signature streak misses', () => {
+    const d = createLoopDetector(WCFG);
+    // Ten DIFFERENT files → ten distinct signatures, so the identical-call streak
+    // NEVER trips (stays at 1). Only the productivity cap can catch this wander.
+    const readFile = (n: number) => d.onToolCall('read', { path: `/f${n}.txt` });
+    expect(readFile(1).kind).toBe('none'); // 1
+    expect(readFile(2).kind).toBe('none'); // 2
+    expect(readFile(3).kind).toBe('none'); // 3
+    const fourth = readFile(4); // 4 → wander steer
+    expect(fourth.kind).toBe('steer');
+    if (fourth.kind === 'steer') {
+      expect(fourth.cause).toBe('wander');
+      expect(fourth.message.length).toBeGreaterThan(0);
+    }
+    // Proof the identical-call streak stayed inert (all paths differ).
+    expect(d.snapshot().identicalStreak).toBe(1);
+    expect(d.snapshot().unproductiveStreak).toBe(4);
+    expect(readFile(5).kind).toBe('none'); // 5 — already steered, no repeat steer
+    expect(readFile(6).kind).toBe('none'); // 6
+    const seventh = readFile(7); // 7 → wander abort
+    expect(seventh.kind).toBe('abort');
+    if (seventh.kind === 'abort') expect(seventh.cause).toBe('wander');
+  });
+
+  it('a concrete action resets the unproductive streak', () => {
+    const d = createLoopDetector(WCFG);
+    d.onToolCall('read', { path: '/a' });
+    d.onToolCall('ls', { path: '/' });
+    d.onToolCall('grep', { q: 'x' });
+    expect(d.snapshot().unproductiveStreak).toBe(3);
+    d.onToolCall('write', { path: '/out.md', content: 'hi' }); // progress → reset
+    expect(d.snapshot().unproductiveStreak).toBe(0);
+    // Exploration climbs again from scratch — no leaked streak causing an early trip.
+    expect(d.onToolCall('read', { path: '/b' }).kind).toBe('none');
+    expect(d.onToolCall('read', { path: '/c' }).kind).toBe('none');
+    expect(d.onToolCall('read', { path: '/d' }).kind).toBe('none');
+    expect(d.onToolCall('read', { path: '/e' }).kind).toBe('steer'); // 4th since reset
+  });
+
+  it('interleaving a real action every other call never trips (productive work)', () => {
+    const d = createLoopDetector(WCFG);
+    for (let i = 0; i < 12; i++) {
+      expect(d.onToolCall('read', { path: `/r${i}` }).kind).toBe('none');
+      expect(d.onToolCall('edit', { path: `/e${i}` }).kind).toBe('none');
+    }
+    expect(d.snapshot().unproductiveStreak).toBe(0);
+    expect(d.snapshot().steered).toBe(false);
+  });
+
+  it('shares the single per-turn steer budget with the identical-call cause, yet still aborts on wander', () => {
+    // identical trips the ONE steer first; the wander cause can no longer steer,
+    // but it must still be able to ABORT once its own threshold is crossed.
+    const d = createLoopDetector({
+      steerAfter: 3,
+      abortAfter: 99, // identical won't abort — only its steer fires
+      maxSteps: 50,
+      wanderSteerAfter: 4,
+      wanderAbortAfter: 7,
+    });
+    d.onToolCall('read', { path: '/same' });
+    d.onToolCall('read', { path: '/same' });
+    expect(d.onToolCall('read', { path: '/same' }).kind).toBe('steer'); // identical steer (budget spent)
+    d.onToolCall('read', { path: '/a' }); // wander=4 → would steer, but budget spent → none
+    d.onToolCall('read', { path: '/b' }); // 5
+    d.onToolCall('read', { path: '/c' }); // 6
+    expect(d.onToolCall('read', { path: '/d' })).toMatchObject({ kind: 'abort', cause: 'wander' }); // 7
+  });
+
+  it('falls back to the default wander thresholds when the config omits them', () => {
+    const d = createLoopDetector({ steerAfter: 3, abortAfter: 5, maxSteps: 100 });
+    for (let i = 0; i < DEFAULT_WANDER_STEER_AFTER - 1; i++) {
+      expect(d.onToolCall('read', { path: `/f${i}` }).kind).toBe('none');
+    }
+    expect(d.onToolCall('read', { path: '/final' }).kind).toBe('steer');
+    // Climb the rest of the way to the default abort threshold.
+    for (let i = DEFAULT_WANDER_STEER_AFTER; i < DEFAULT_WANDER_ABORT_AFTER - 1; i++) {
+      expect(d.onToolCall('read', { path: `/g${i}` }).kind).toBe('none');
+    }
+    expect(d.onToolCall('read', { path: '/last' }).kind).toBe('abort');
   });
 });
 

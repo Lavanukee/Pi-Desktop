@@ -70,10 +70,12 @@ try {
     await checklist.locator(`text=${step}`).first().waitFor({ timeout: 8000 });
   }
 
-  // The always-visible status cluster surfaces the active class + running timer.
-  // (round-15: the center composer-bar tier control was removed; the harness
-  // status is read straight from the store.) Wait for the harness to publish,
-  // then verify the status carries "coding".
+  // The harness surfaces the active class + running timer. (round-15: the center
+  // composer-bar tier control was removed; round-2 blind-test #1: the standalone
+  // always-visible timer/stage cluster was consolidated into the ONE thread
+  // status indicator, so the timer is read from the published status, not a
+  // separate harness-timer element.) Wait for the harness to publish, then verify
+  // the status carries "coding".
   await page.waitForFunction(
     () => {
       const raw = window.__pi_store().getState().extensionStatus.harness;
@@ -92,7 +94,25 @@ try {
     clsStatus !== null && /coding/i.test(clsStatus.activeClass ?? ''),
     `expected active class "coding", got ${JSON.stringify(clsStatus?.activeClass)}`,
   );
-  await page.locator('[data-testid="harness-timer"]').waitFor({ timeout: 8000 });
+  // The running timer still flows through the harness status (runningTaskMs) and
+  // the dedicated harness-task channel — now folded into the single thread
+  // indicator rather than a standalone harness-timer element.
+  await page.waitForFunction(
+    () => {
+      const st = window.__pi_store().getState().extensionStatus;
+      const raw = st.harness;
+      if (raw === undefined || raw.length === 0) return false;
+      try {
+        return (
+          typeof JSON.parse(raw).runningTaskMs === 'number' || (st['harness-task'] ?? '').length > 0
+        );
+      } catch {
+        return false;
+      }
+    },
+    undefined,
+    { timeout: 8000 },
+  );
 
   // The fixture blocks on ask_user mid-plan → the plan is not yet all done, and
   // at least one item has advanced to in_progress/done. This is the live update.

@@ -39,6 +39,21 @@ export interface EffortKnobs {
    */
   readonly maxTurnSteps: number;
   /**
+   * Unproductive-wandering STEER threshold: consecutive read-only/exploration
+   * tool calls (read/ls/grep/tool_search/update_plan …) with NO concrete action
+   * in between, after which the loop detector injects ONE "you've explored
+   * enough — take the action now" nudge. Scales with effort so a "max" run may
+   * gather more context before being nudged than a "low" one. See loop-detector.
+   */
+  readonly wanderSteerAfter: number;
+  /**
+   * Unproductive-wandering ABORT threshold: consecutive exploration calls with
+   * no concrete action after which the detector aborts the turn (the model kept
+   * reading/searching past the nudge without ever acting). Must be > the steer
+   * threshold and, like it, scales with effort.
+   */
+  readonly wanderAbortAfter: number;
+  /**
    * Whether the effort-gated REAL verify runs: after the model signals it is done
    * on a coding/file-ops turn, run the project's own checks (test/typecheck/lint)
    * in the working dir and feed failures back as a fix steer. On at high/max.
@@ -67,6 +82,8 @@ const KNOBS: Record<EffortLevel, EffortKnobs> = {
     reviewPasses: 0,
     adversarialChecks: false,
     maxTurnSteps: 24,
+    wanderSteerAfter: 5,
+    wanderAbortAfter: 8,
     realVerify: false,
     verifyFixAttempts: 0,
     imageRefinePasses: 1,
@@ -78,6 +95,8 @@ const KNOBS: Record<EffortLevel, EffortKnobs> = {
     reviewPasses: 1,
     adversarialChecks: false,
     maxTurnSteps: 40,
+    wanderSteerAfter: 6,
+    wanderAbortAfter: 10,
     realVerify: false,
     verifyFixAttempts: 0,
     imageRefinePasses: 2,
@@ -89,6 +108,8 @@ const KNOBS: Record<EffortLevel, EffortKnobs> = {
     reviewPasses: 2,
     adversarialChecks: true,
     maxTurnSteps: 60,
+    wanderSteerAfter: 8,
+    wanderAbortAfter: 14,
     realVerify: true,
     verifyFixAttempts: 1,
     imageRefinePasses: 3,
@@ -100,6 +121,8 @@ const KNOBS: Record<EffortLevel, EffortKnobs> = {
     reviewPasses: 3,
     adversarialChecks: true,
     maxTurnSteps: 100,
+    wanderSteerAfter: 10,
+    wanderAbortAfter: 18,
     realVerify: true,
     verifyFixAttempts: 2,
     imageRefinePasses: 4,

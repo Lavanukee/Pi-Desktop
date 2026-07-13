@@ -34,6 +34,22 @@ describe('WorkingIndicator (Wave B #3)', () => {
     expect(html).not.toContain('pd-working-elapsed');
   });
 
+  it('renders a folded stage detail as a static "· Word" beside the label', () => {
+    const html = renderToStaticMarkup(
+      <WorkingIndicator label="Working" detail="Reviewing" elapsedSeconds={8} />,
+    );
+    // Real painted glyphs for both the primary word and the muted detail.
+    expect(html).toContain('>Working<');
+    expect(html).toContain('pd-working-detail');
+    expect(html).toContain('· Reviewing');
+    expect(html).toContain('· 8s');
+  });
+
+  it('omits the detail element when no stage detail is given', () => {
+    const html = renderToStaticMarkup(<WorkingIndicator label="Thinking" />);
+    expect(html).not.toContain('pd-working-detail');
+  });
+
   it('keeps the retry phrase legible in the label', () => {
     const html = renderToStaticMarkup(
       <WorkingIndicator label="Retrying (2/3)…" elapsedSeconds={12} />,

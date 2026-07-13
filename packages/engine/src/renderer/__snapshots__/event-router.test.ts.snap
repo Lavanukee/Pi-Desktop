@@ -299,6 +299,20 @@ exports[`event router — full fixture replays (mutation sequence snapshots) > e
     ""content":"hi"}",
   ],
   [
+    "finalizeToolCall",
+    "a-1",
+    "call_legacy_1",
+    {
+      "arguments": {
+        "content": "hi",
+        "path": "/tmp/demo/out.txt",
+      },
+      "id": "call_legacy_1",
+      "name": "write",
+      "type": "toolCall",
+    },
+  ],
+  [
     "artifactCandidate",
     {
       "kind": "file",
@@ -712,6 +726,19 @@ exports[`event router — full fixture replays (mutation sequence snapshots) > i
       "path": "/tmp/reused.txt",
       "toolCallId": "tc-3",
       "toolName": "read",
+    },
+  ],
+  [
+    "finalizeToolCall",
+    "a-2",
+    "call_0",
+    {
+      "arguments": {
+        "command": "pwd",
+      },
+      "id": "call_0",
+      "name": "bash",
+      "type": "toolCall",
     },
   ],
   [

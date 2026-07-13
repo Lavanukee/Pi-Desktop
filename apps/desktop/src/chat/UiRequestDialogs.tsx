@@ -60,13 +60,16 @@ export function UiRequestDialogs() {
     );
   }
 
-  // Everything else → QuestionCard inside the modal shell.
+  // Everything else → the QuestionCard as a COMPACT INLINE card (blind-test
+  // #26/#27), anchored just above the composer. NOT a full-screen modal: no
+  // backdrop, and pointer-events pass through the wrapper so the conversation
+  // stays live while the ask sits inline. Skip (the card's cancel) dismisses it.
   const card = renderQuestionCard(request, cancel);
 
   return (
-    <Dialog open onOpenChange={onOpenChange}>
-      <DialogContent>{card}</DialogContent>
-    </Dialog>
+    <div className="pointer-events-none fixed inset-x-0 bottom-40 z-40 flex justify-center px-4">
+      <div className="pointer-events-auto w-full max-w-[30rem]">{card}</div>
+    </div>
   );
 }
 
@@ -117,7 +120,14 @@ function renderQuestionCard(request: UiRequest, onCancel: () => void) {
         mode="choice"
         options={options}
         onSubmit={(answer: QuestionAnswer) => {
-          const value = answer.mode === 'choice' ? (answer.values[0] ?? '') : '';
+          // A picked option → its value; a free "reply directly" / "something
+          // else" → the typed text.
+          const value =
+            answer.mode === 'choice'
+              ? (answer.values[0] ?? '')
+              : answer.mode === 'free'
+                ? answer.text
+                : '';
           void respondUi(request.id, { value });
         }}
         onCancel={onCancel}

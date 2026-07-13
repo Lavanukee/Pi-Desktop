@@ -171,9 +171,14 @@ export const usePiStore = create<PiSliceState>((set) => ({
       uiRequests: [],
       bridgeExited: null,
       branches: {},
+      // Reset the top-bar title on every new/switched session so the PREVIOUS
+      // conversation's title can't linger (blind-test round-2 re-test). The real
+      // title then loads downstream — the harness republishes a switched
+      // session's stored title, and a new chat gets its classify+title on the
+      // first turn (ChatApp falls back to "New chat" while null).
+      windowTitle: null,
       // A new/switched session is eligible for harness auto-titling again — the
-      // previous session's user-rename lock must not carry over. (windowTitle is
-      // set from the loaded session / republished harness title downstream.)
+      // previous session's user-rename lock must not carry over.
       titleLocked: false,
       // A new/switched session must not inherit the previous session's live
       // harness panels (checklist / subagents), which are published under the

@@ -251,6 +251,15 @@ describe('pi-slice — fork branch registry', () => {
     // …but unrelated extension status survives.
     expect(es.someOther).toBe('keep-me');
   });
+
+  it('setMessagesExternal resets the top-bar title so a new/switched chat drops the previous title (round-2 re-test)', () => {
+    usePiStore.setState({ windowTitle: 'Previous conversation', titleLocked: true });
+    usePiStore.getState().setMessagesExternal([userMsg('u1', 'brand new session')]);
+    // Title cleared (ChatApp then shows "New chat" / loads the real one downstream)…
+    expect(usePiStore.getState().windowTitle).toBeNull();
+    // …and the user-rename lock is released so the new session can auto-title.
+    expect(usePiStore.getState().titleLocked).toBe(false);
+  });
 });
 
 describe('pi-slice — toolCallId reuse across runs (index-as-id providers)', () => {

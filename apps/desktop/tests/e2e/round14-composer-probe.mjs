@@ -140,6 +140,104 @@ try {
     `publishing a routed tier must not change the Auto chip off the loaded model, got ${JSON.stringify(stillLoaded)}`,
   );
 
+  // ── blind-test #1: ONE live status indicator, in the THREAD only ───────────
+  // Publish a harness lifecycle stage; the composer footer must show NO run
+  // status — the stage/timer/repair cluster and the "switching…" pill are gone.
+  await page.evaluate(() =>
+    window.__pi_store().setState((s) => ({
+      extensionStatus: {
+        ...s.extensionStatus,
+        harness: JSON.stringify({ activeTier: 'balanced', stage: 'reviewing' }),
+      },
+    })),
+  );
+  for (const id of ['harness-status', 'harness-stage', 'harness-timer', 'footer-switching']) {
+    assert(
+      (await page.locator(`[data-testid="${id}"]`).count()) === 0,
+      `the footer must not render run-status testid "${id}" (it moved into the thread)`,
+    );
+  }
+  const footerText = await page.locator('.pd-composer-footer').innerText();
+  for (const word of ['Classifying', 'Reviewing', 'Switching to', 'Done…', 'Working…']) {
+    assert(
+      !footerText.includes(word),
+      `no run-status word ("${word}") may remain in the composer footer, got ${JSON.stringify(footerText)}`,
+    );
+  }
+  // Not streaming ⇒ the ONE thread indicator is absent.
+  assert(
+    (await page.locator('[data-testid="thread-status"]').count()) === 0,
+    'the thread status indicator only shows while streaming/switching',
+  );
+  // Begin a turn ⇒ EXACTLY ONE live indicator appears in the thread, reading
+  // "Working · Reviewing" (the acting stage folded in), never in the footer. Seed
+  // a user message too so the thread (which is gated on a non-empty transcript)
+  // actually mounts.
+  await page.evaluate(() =>
+    window.__pi_store().setState((s) => ({
+      agent: { ...s.agent, isStreaming: true, agentStartedAt: Date.now() },
+      messages: [
+        { kind: 'user', id: 'probe-status-msg', text: 'status probe', timestamp: Date.now() },
+      ],
+    })),
+  );
+  const threadStatus = page.locator('[data-testid="thread-status"]');
+  await threadStatus.waitFor({ timeout: 8000 });
+  assert(
+    (await page.locator('[data-testid="thread-status"]').count()) === 1,
+    'there must be exactly ONE live status indicator in the thread',
+  );
+  const streamingStatus = (await threadStatus.innerText()).trim();
+  assert(
+    streamingStatus.includes('Working') && streamingStatus.includes('Reviewing'),
+    `the thread indicator should read "Working · Reviewing" for the reviewing stage, got ${JSON.stringify(streamingStatus)}`,
+  );
+  // ── #5: classification is surfaced ONLY in Auto — pin a tier + publish a
+  // classify stage and the indicator must NOT say "Classifying".
+  await page.evaluate(() => {
+    window
+      .__settings_store()
+      .getState()
+      .update({ modelSelection: { mode: 'tier', tier: 'balanced' } });
+    window.__pi_store().setState((s) => ({
+      extensionStatus: {
+        ...s.extensionStatus,
+        harness: JSON.stringify({ activeTier: 'balanced', stage: 'classifying' }),
+      },
+    }));
+  });
+  await page.waitForFunction(
+    () => {
+      const t = (document.querySelector('[data-testid="thread-status"]')?.textContent ?? '').trim();
+      return t.length > 0 && !t.includes('Classifying');
+    },
+    undefined,
+    { timeout: 8000 },
+  );
+  const pinnedStatus = (await threadStatus.innerText()).trim();
+  assert(
+    !pinnedStatus.includes('Classifying'),
+    `a pinned tier must never show "Classifying" (jedd #5), got ${JSON.stringify(pinnedStatus)}`,
+  );
+  // Restore the baseline the rest of the probe expects (Auto, not streaming,
+  // clean harness, empty transcript) and confirm the ONE indicator unmounts when
+  // idle.
+  await page.evaluate(() => {
+    window.__pi_store().setState((s) => ({
+      agent: { ...s.agent, isStreaming: false, agentStartedAt: null },
+      messages: [],
+      extensionStatus: {
+        ...s.extensionStatus,
+        harness: JSON.stringify({ activeTier: 'balanced' }),
+      },
+    }));
+    window
+      .__settings_store()
+      .getState()
+      .update({ modelSelection: { mode: 'auto' } });
+  });
+  await threadStatus.waitFor({ state: 'detached', timeout: 8000 });
+
   // ── #2: the "Effort" button opens the slider in a popover ──────────────────
   const effortBtn = page.locator('[data-testid="composer-effort"]');
   await effortBtn.waitFor({ timeout: 8000 });
@@ -254,8 +352,10 @@ try {
     'round14-composer-probe OK — no .pd-tier-dot / composer-tier; empty center spacer; ' +
       'the Effort button reads "Effort · Adaptive" and reveals the slider popover; the footer ' +
       'chip shows "Auto · gemma4 e2b" (the LOADED model, not the tier) under Auto and "Balanced" ' +
-      'when a tier is pinned; the tok/s readout is gone from the input bar; and the turn-stats ' +
-      'info button is hidden for power users',
+      'when a tier is pinned; the tok/s readout is gone from the input bar; the turn-stats ' +
+      'info button is hidden for power users; and (blind-test #1/#5) run status lives in exactly ' +
+      'ONE thread indicator ("Working · Reviewing"), the composer footer shows no run status, and ' +
+      'a pinned tier never shows "Classifying"',
   );
 } finally {
   await app.close();

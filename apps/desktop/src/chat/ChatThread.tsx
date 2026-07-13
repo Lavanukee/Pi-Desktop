@@ -6,8 +6,9 @@
  * CHAIN (THEME 3). User bubbles, assistant text (markdown), standalone
  * thoughts, inline generated images (round-5 #7), the response speed shown as a
  * message-action-bar item (Wave B #2 — the pinned tok/s footnote was removed;
- * the raw model-id footnote earlier, #11), a live WorkingIndicator while
- * streaming, inline artifact widgets (THEME 2), and auto-scroll.
+ * the raw model-id footnote earlier, #11), the ONE consolidated live status
+ * indicator ({@link ThreadStatusIndicator}, jedd blind-test #1) while streaming,
+ * inline artifact widgets (THEME 2), and auto-scroll.
  */
 import type {
   AssistantMsg,
@@ -26,16 +27,14 @@ import {
   MessageRow,
   ScrollArea,
   Thread,
-  WorkingIndicator,
 } from '@pi-desktop/ui';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useLlmStore } from '../state/llm-store';
 import { forkAndReprompt, sendPrompt, switchBranch } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
-import { useThemeStore } from '../store/theme';
 import { generatedImageSrc, segmentGroup } from './activity-mapping';
 import { InlineArtifact } from './canvas/InlineArtifacts';
-import { HarnessChecklistPanel } from './HarnessStatus';
+import { HarnessChecklistPanel, ThreadStatusIndicator } from './HarnessStatus';
 import { Markdown } from './markdown';
 import { ThreadActivityChain } from './ThreadActivity';
 import { ThreadImage } from './ThreadImage';
@@ -80,16 +79,6 @@ function toRenderItems(messages: ChatMsg[], claimed: Set<string>): RenderItem[] 
   }
   flush();
   return items;
-}
-
-function useElapsed(startedAt: number | null): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (startedAt === null) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [startedAt]);
-  return startedAt === null ? 0 : Math.max(0, Math.floor((now - startedAt) / 1000));
 }
 
 const clampN = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -236,12 +225,9 @@ function AssistantGroup({
 export function ChatThread() {
   const messages = usePiStore((s) => s.messages);
   const runningToolCalls = usePiStore((s) => s.runningToolCalls);
-  const agent = usePiStore((s) => s.agent);
   const historyTruncated = usePiStore((s) => s.historyTruncated);
   const branches = usePiStore((s) => s.branches);
-  const flavor = useThemeStore((s) => s.flavor);
   const tps = useLlmStore((s) => s.status.metrics?.avgTps ?? s.status.metrics?.lastTps);
-  const elapsed = useElapsed(agent.isStreaming ? agent.agentStartedAt : null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -500,19 +486,11 @@ export function ChatThread() {
               );
             })}
 
-            {agent.isStreaming ? (
-              <WorkingIndicator
-                className="py-2"
-                label={
-                  agent.retry !== null
-                    ? `Retrying (${agent.retry.attempt}/${agent.retry.maxAttempts})…`
-                    : flavor === 'claude'
-                      ? 'Working'
-                      : 'Thinking'
-                }
-                elapsedSeconds={elapsed}
-              />
-            ) : null}
+            {/* The ONE live status indicator (jedd blind-test #1): a single
+                thread-rendered element that reads "Thinking" while the model
+                reasons and "Working" while it acts, with the harness stage folded
+                in subtly. No duplicate label, no footer status, no stray spinner. */}
+            <ThreadStatusIndicator />
           </Thread>
         </div>
       </ScrollArea>

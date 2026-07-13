@@ -421,6 +421,42 @@ describe('loop detector — live wiring through tool_call / tool_execution_end',
     expect(rig.steerMessages).toHaveLength(2);
     expect(rig.abort).not.toHaveBeenCalled();
   });
+
+  it('steers then aborts on unproductive wandering — many DIFFERENT reads, no progress (fix #8)', async () => {
+    const rig = makeRig({ effort: 'medium' }); // wander steer 6 / abort 10
+    await startSession(rig);
+    await startTurn(rig);
+    // Read a DIFFERENT file each call: ten distinct signatures, so the identical
+    // streak stays inert — only the productivity cap can break this.
+    const read = (n: number) =>
+      rig.fire('tool_call', {
+        type: 'tool_call' as const,
+        toolName: 'read',
+        toolCallId: `tc${n}`,
+        input: { path: `/f${n}.txt` },
+      });
+
+    for (let i = 1; i <= 5; i++) await read(i);
+    expect(rig.steerMessages).toHaveLength(0);
+    await read(6); // 6th exploration call → steer
+    expect(rig.steerMessages).toHaveLength(1);
+    expect(loopEntries(rig)).toContainEqual({
+      action: 'steer',
+      cause: 'wander',
+      reason: expect.any(String),
+    });
+    expect(rig.abort).not.toHaveBeenCalled();
+
+    for (let i = 7; i <= 9; i++) await read(i);
+    expect(rig.abort).not.toHaveBeenCalled();
+    await read(10); // 10th → abort the turn
+    expect(rig.abort).toHaveBeenCalledOnce();
+    expect(loopEntries(rig)).toContainEqual({
+      action: 'abort',
+      cause: 'wander',
+      reason: expect.any(String),
+    });
+  });
 });
 
 // --- Fix #4: effort-gated REAL verify + bounded fix loop -------------------

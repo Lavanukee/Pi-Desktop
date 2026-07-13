@@ -8,6 +8,8 @@ import {
   BrowserWindow,
   type BrowserWindowConstructorOptions,
   ipcMain,
+  Menu,
+  type MenuItemConstructorOptions,
   type NativeImage,
   nativeImage,
   type WebPreferences,
@@ -223,6 +225,69 @@ function openCanvasPopoutWindow(): { webContents: BrowserWindow['webContents']; 
   return { webContents: win.webContents, created: true };
 }
 
+/**
+ * Application menu. The ONE customization over the platform defaults is the Close
+ * accelerator (blind-test round-2 #5): ⌘W is remapped to a renderer "close the
+ * active canvas tab / current chat" action instead of closing the WINDOW, and
+ * ⌘⇧W (plus the red traffic-light) closes the window. Standard role-based
+ * submenus (edit/view/window) are kept so copy/paste/select-all/minimize/zoom
+ * keep their usual shortcuts.
+ *
+ * ROOT CAUSE of the reported "⌘W quits the app": with NO application menu set,
+ * Electron installs its default menu whose Window → Close item carries ⌘W and
+ * closes the focused window; on the single-window app that reads as quitting.
+ */
+function installAppMenu(): void {
+  const isMac = process.platform === 'darwin';
+  const sendCloseTab = (win: BrowserWindow | undefined): void => {
+    const target = win ?? mainWindow ?? undefined;
+    if (target !== undefined && target !== null && !target.isDestroyed()) {
+      events.send(target.webContents, 'app:accelerator', { action: 'close-tab' });
+    }
+  };
+  const closeWindowItem: MenuItemConstructorOptions = {
+    label: 'Close Window',
+    accelerator: 'CmdOrCtrl+Shift+W',
+    role: 'close',
+  };
+  const template: MenuItemConstructorOptions[] = [
+    ...(isMac ? [{ role: 'appMenu' } as MenuItemConstructorOptions] : []),
+    ...(isMac
+      ? []
+      : [
+          {
+            label: 'File',
+            submenu: [closeWindowItem, { type: 'separator' }, { role: 'quit' }],
+          } as MenuItemConstructorOptions,
+        ]),
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { type: 'separator' },
+        {
+          // ⌘W → close the active canvas tab / current chat in the renderer,
+          // never the window (see AppEventMap 'app:accelerator').
+          label: 'Close Tab',
+          accelerator: 'CmdOrCtrl+W',
+          click: (_item, win) => sendCloseTab(win instanceof BrowserWindow ? win : undefined),
+        },
+        closeWindowItem,
+        ...(isMac
+          ? [
+              { type: 'separator' } as MenuItemConstructorOptions,
+              { role: 'front' } as MenuItemConstructorOptions,
+            ]
+          : []),
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 function registerAppIpc(): void {
   // ipcMain.handle always passes an IpcMainInvokeEvent (registration-side
   // guarantee), which satisfies the structural ValidatableIpcEvent slice.
@@ -338,6 +403,8 @@ if (!hasSingleInstanceLock) {
     }
     registerCanvasProtocol(HARNESS_DIR);
     registerCanvasIpc(openCanvasPopoutWindow);
+    // ⌘W closes the active tab, not the window (blind-test round-2 #5).
+    installAppMenu();
     mainWindow = createMainWindow();
     log.info('main window created', {
       dev: !app.isPackaged && Boolean(process.env.VITE_DEV_SERVER_URL),

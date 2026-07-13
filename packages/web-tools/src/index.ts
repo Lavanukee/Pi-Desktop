@@ -115,6 +115,8 @@ interface WebSearchDetails {
   readonly backend: string;
   readonly count: number;
   readonly note?: string;
+  /** Structured rows, so a UI can render them without re-parsing the text body. */
+  readonly results: Array<{ title: string; url: string; snippet: string }>;
 }
 
 interface WebFetchDetails {
@@ -180,6 +182,7 @@ export function registerWebTools(pi: ExtensionAPI, options: WebToolsOptions = {}
         backend: outcome.backend,
         count: outcome.results.length,
         note: outcome.note,
+        results: outcome.results.map((r) => ({ title: r.title, url: r.url, snippet: r.snippet })),
       });
     },
   });

@@ -258,6 +258,124 @@ describe('mapToolStep', () => {
   });
 });
 
+describe('mapToolStep — web_search result parsing', () => {
+  // The exact text body the built-in web_search tool emits (index.ts): a header,
+  // an optional "(note: …)" line, then "[n] title / url / snippet" blocks. The
+  // engine forwards only this TEXT (not the structured details), so the mapper
+  // must parse it — a JSON-only parse yielded [] → every search read "0 results".
+  const toolText = [
+    '2 result(s) via duckduckgo',
+    '',
+    '[1] Example Domain',
+    '    https://www.example.com/',
+    '    This domain is for use in illustrative examples in documents.',
+    '',
+    '[2] example.com - Wikipedia',
+    '    https://en.wikipedia.org/wiki/Example.com',
+    '    The domain names are reserved by the IANA.',
+  ].join('\n');
+
+  it('parses the tool text body into title/url/domain/snippet rows', () => {
+    const step = mapToolStep(
+      call('c1', 'web_search', { query: 'example domain' }),
+      result('c1', toolText),
+      false,
+    ).data;
+    expect(step.kind).toBe('search');
+    if (step.kind !== 'search') return;
+    expect(step.results).toHaveLength(2);
+    expect(step.results?.[0]).toEqual({
+      title: 'Example Domain',
+      url: 'https://www.example.com/',
+      domain: 'example.com',
+      snippet: 'This domain is for use in illustrative examples in documents.',
+    });
+    expect(step.results?.[1]?.url).toBe('https://en.wikipedia.org/wiki/Example.com');
+    expect(step.results?.[1]?.domain).toBe('en.wikipedia.org');
+  });
+
+  it('still handles JSON array / { results } shapes (MCP / API search tools)', () => {
+    const json = JSON.stringify({
+      results: [{ title: 'T', link: 'https://t.example/x', description: 'a  desc' }],
+    });
+    const step = mapToolStep(
+      call('c1', 'brave_search', { query: 'q' }),
+      result('c1', json),
+      false,
+    ).data;
+    if (step.kind !== 'search') throw new Error('expected search');
+    expect(step.results?.[0]).toMatchObject({
+      title: 'T',
+      url: 'https://t.example/x',
+      domain: 't.example',
+      snippet: 'a  desc',
+    });
+  });
+
+  it('yields an empty result set + the backend note for a no-results body', () => {
+    const step = mapToolStep(
+      call('c1', 'web_search', { query: 'zxqw' }),
+      result(
+        'c1',
+        'No results (via duckduckgo).\n(note: duckduckgo failed (it may be rate-limiting requests))',
+      ),
+      false,
+    ).data;
+    if (step.kind !== 'search') throw new Error('expected search');
+    expect(step.results).toEqual([]);
+    expect(step.note).toContain('rate-limiting');
+  });
+
+  it('never throws and returns [] on an absent result', () => {
+    const step = mapToolStep(call('c1', 'web_search', { query: 'q' }), undefined, true).data;
+    if (step.kind !== 'search') throw new Error('expected search');
+    expect(step.results).toEqual([]);
+  });
+});
+
+describe('mapToolStep — primary arg surfaced as `detail` (round-2 #2)', () => {
+  it('carries the command for bash', () => {
+    expect(
+      mapToolStep(call('c1', 'bash', { command: 'ls -la' }), undefined, false).data.detail,
+    ).toBe('ls -la');
+  });
+
+  it('carries the full path for read / edit', () => {
+    expect(
+      mapToolStep(call('c1', 'read_file', { path: '/repo/src/app.ts' }), undefined, false).data
+        .detail,
+    ).toBe('/repo/src/app.ts');
+    expect(
+      mapToolStep(
+        call('c1', 'edit', { path: '/repo/a.txt', oldText: 'a', newText: 'b' }),
+        undefined,
+        false,
+      ).data.detail,
+    ).toBe('/repo/a.txt');
+  });
+
+  it('carries the full path for a skill read', () => {
+    expect(
+      mapToolStep(
+        call('c1', 'read', { path: '/Users/jedd/.pi/agent/skills/code-review/SKILL.md' }),
+        undefined,
+        false,
+      ).data.detail,
+    ).toBe('/Users/jedd/.pi/agent/skills/code-review/SKILL.md');
+  });
+
+  it('carries the query for search and the url for a browser action', () => {
+    expect(
+      mapToolStep(call('c1', 'web_search', { query: 'weather tokyo' }), undefined, false).data
+        .detail,
+    ).toBe('weather tokyo');
+    expect(
+      mapToolStep(call('c1', 'browser_navigate', { url: 'https://neal.fun' }), undefined, false)
+        .data.detail,
+    ).toBe('https://neal.fun');
+  });
+});
+
 describe('mapThinkingStep', () => {
   it('maps a thought to a thinking step with past/present labels', () => {
     expect(mapThinkingStep(think('hmm'), false).data).toMatchObject({

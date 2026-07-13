@@ -1,36 +1,31 @@
 /**
- * Always-visible harness surfacing (round-9 W3):
+ * Harness surfacing:
  *
- *  - {@link HarnessStatusCluster} — the active task-class, the live running timer,
- *    and a subtle repair-activity indicator. Rendered in the composer footer next
- *    to the model chip / TPS / context ring so all four status elements live in
- *    ONE always-visible cluster (the timer was previously siloed in ChatThread,
- *    visible only mid-stream).
+ *  - {@link ThreadStatusIndicator} — the ONE live status indicator (jedd
+ *    blind-test #1). Rendered in the thread only, it reads "Thinking" while the
+ *    model reasons and "Working" while it acts, with the harness lifecycle stage
+ *    (classifying/reviewing/verifying/…) folded in subtly as a muted detail word.
+ *    It replaces the old trio — the duplicate thread working-label, the composer
+ *    footer HarnessStatusCluster, and the "switching…" pill — with a single
+ *    element, so there is exactly one place that shows run status.
  *  - {@link HarnessChecklistPanel} — the live task checklist the model maintains
  *    via the `update_plan` tool, pinned above the thread so the user watches items
  *    flip pending → in_progress → done with the TaskChecklist animation.
  */
 import {
-  IconCheck,
-  IconClock,
-  IconDiff,
-  IconEye,
-  IconPencil,
-  IconRefresh,
-  IconSparkles,
   TaskChecklist,
   type TaskChecklistItem,
   type TaskState,
-  Tooltip,
+  WorkingIndicator,
 } from '@pi-desktop/ui';
-import {
-  type HarnessStage,
-  type PlanItem,
-  repairTotal,
-  stageDisplay,
-  useHarnessStatus,
-  useHarnessTaskTimer,
-} from './harness-status';
+import { useEffect, useState } from 'react';
+// Harness SOURCE import (not the barrel) — keeps the renderer bundle clean; see
+// auto-router.ts. tier.ts is pure + browser-safe.
+import { TIER_LABEL } from '../../../../packages/harness/src/classify/tier.ts';
+import { useModelSwitching } from '../state/model-selection-store';
+import { usePiStore } from '../state/pi-slice';
+import { useModelSelection } from '../state/settings-store';
+import { type PlanItem, threadStatusView, useHarnessStatus } from './harness-status';
 
 /** A plan longer than this starts collapsed so it doesn't crowd the thread. */
 const LONG_PLAN_THRESHOLD = 6;
@@ -43,114 +38,52 @@ function toTaskState(item: PlanItem): TaskState {
   return 'pending';
 }
 
-/** The subtle glyph for each lifecycle stage (12px, inherits the label tone). */
-function StageIcon({ stage }: { stage: HarnessStage }) {
-  switch (stage) {
-    case 'classifying':
-      return <IconSparkles size={12} />;
-    case 'working':
-      return <IconPencil size={12} />;
-    case 'repairing':
-      return <IconRefresh size={12} />;
-    case 'reviewing':
-      return <IconEye size={12} />;
-    case 'revising':
-      return <IconDiff size={12} />;
-    case 'verifying':
-      return <IconCheck size={12} />;
-    case 'done':
-      return <IconCheck size={12} />;
-    default:
-      return null;
-  }
+/** Live elapsed seconds since `startedAt` (ticks each second; 0 when idle). */
+function useElapsed(startedAt: number | null): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (startedAt === null) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [startedAt]);
+  return startedAt === null ? 0 : Math.max(0, Math.floor((now - startedAt) / 1000));
 }
 
 /**
- * The live lifecycle-stage label near the harness status: a subtle icon + verb
- * ("Classifying… / Working… / Repairing… / Reviewing… / Revising… / Verifying… /
- * Done") driven straight off the harness's published {@link HarnessStage}, so the
- * owner can always read what phase the turn is in — building, touching up, final
- * sweep, testing, done. In-flight stages read muted with a trailing ellipsis;
- * `done` settles to a calm success tint. Renders nothing when idle/absent (we
- * only ever surface a stage the harness actually publishes). Theme-aware via the
- * `--pd-*` token classes; understated by design.
+ * The ONE live status indicator (jedd blind-test #1). Renders a single
+ * {@link WorkingIndicator} in the thread that reads "Thinking" while the model
+ * reasons and "Working" while it acts, with the harness lifecycle stage folded in
+ * subtly (classify only in Auto — #5). Also borrows the same indicator for the
+ * pre-stream model switch so the swap isn't silent. Renders nothing when idle.
  */
-export function HarnessStageIndicator({ stage }: { stage: HarnessStage | null | undefined }) {
-  const display = stageDisplay(stage);
-  if (display === null || stage === null || stage === undefined) return null;
-  const tone = display.live ? 'text-text-muted' : 'text-status-success-fg';
-  return (
-    <span
-      className={`flex items-center gap-1 text-footnote ${tone}`}
-      data-testid="harness-stage"
-      data-stage={stage}
-    >
-      <StageIcon stage={stage} />
-      <span>{display.live ? `${display.label}…` : display.label}</span>
-    </span>
-  );
-}
-
-/**
- * The consolidated harness status cluster for the composer footer: the live
- * lifecycle-stage label + running timer + repair-activity count. Renders nothing
- * until the harness publishes its status. (Round-12 W3: the active task-class /
- * tier chip moved to the composer bar, so it no longer duplicates here — the
- * footer keeps the stage, the timer, and the repair indicator alongside the model
- * chip.)
- */
-export function HarnessStatusCluster() {
+export function ThreadStatusIndicator() {
+  const isStreaming = usePiStore((s) => s.agent.isStreaming);
+  const retry = usePiStore((s) => s.agent.retry);
+  const agentStartedAt = usePiStore((s) => s.agent.agentStartedAt);
+  const toolRunning = usePiStore((s) => s.runningToolCalls.length > 0);
   const status = useHarnessStatus();
-  const timer = useHarnessTaskTimer();
-  const repairs = repairTotal(status);
+  const selection = useModelSelection();
+  const switching = useModelSwitching();
+  const elapsed = useElapsed(isStreaming ? agentStartedAt : null);
 
-  if (status === null) return null;
-  const stage = stageDisplay(status.stage);
-  const hasAny = stage !== null || timer !== null || repairs > 0;
-  if (!hasAny) return null;
-
-  const repairTools = Object.entries(status.repairFailures ?? {})
-    .filter(([, n]) => n > 0)
-    .map(([name, n]) => `${name}: ${n}`);
+  const view = threadStatusView({
+    isStreaming,
+    retry,
+    toolRunning,
+    stage: status?.stage ?? null,
+    isAuto: selection.mode === 'auto',
+    switchingToTier: switching !== null ? TIER_LABEL[switching.toTier] : null,
+  });
+  if (view === null) return null;
 
   return (
-    <span className="flex items-center gap-2" data-testid="harness-status">
-      <HarnessStageIndicator stage={status.stage} />
-
-      {timer !== null ? (
-        <span
-          className="flex items-center gap-1 text-footnote text-text-muted tabular-nums"
-          data-testid="harness-timer"
-        >
-          <IconClock size={12} />
-          {timer.replace(/^⏱\s*/, '')}
-        </span>
-      ) : null}
-
-      {repairs > 0 ? (
-        <Tooltip
-          side="top"
-          label={
-            <span className="flex flex-col gap-0.5 text-footnote">
-              <span className="font-medium text-text-primary">Auto-repair fired</span>
-              {repairTools.map((t) => (
-                <span key={t} className="text-text-muted">
-                  {t}
-                </span>
-              ))}
-            </span>
-          }
-        >
-          <span
-            className="flex items-center gap-1 text-footnote text-text-muted"
-            data-testid="harness-repairs"
-          >
-            <IconRefresh size={12} />
-            {repairs}
-          </span>
-        </Tooltip>
-      ) : null}
-    </span>
+    <WorkingIndicator
+      className="py-2"
+      data-testid="thread-status"
+      label={view.label}
+      detail={view.detail}
+      elapsedSeconds={view.showElapsed ? elapsed : undefined}
+    />
   );
 }
 

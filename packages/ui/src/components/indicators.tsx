@@ -103,6 +103,13 @@ export interface WorkingIndicatorProps extends HTMLAttributes<HTMLDivElement> {
    * Kept as a plain string so the tinted label can paint it legibly.
    */
   label: string;
+  /**
+   * A subtle, STATIC secondary phase word folded in beside the label
+   * ("Classifying" / "Reviewing" / "Verifying" …). Rendered muted and un-animated
+   * — it enriches the single live indicator with the harness lifecycle stage
+   * without a second competing status element (jedd blind-test #1). Omit for none.
+   */
+  detail?: string;
   /** Elapsed seconds; renders the trailing "· 20s" counter when provided. */
   elapsedSeconds?: number;
   /** Spinner diameter in px (defaults to 12 — the footnote-scale caret loader). */
@@ -123,11 +130,17 @@ export interface WorkingIndicatorProps extends HTMLAttributes<HTMLDivElement> {
  * static solid label (see .pd-working-label in indicators.css).
  */
 export const WorkingIndicator = forwardRef<HTMLDivElement, WorkingIndicatorProps>(
-  function WorkingIndicator({ label, elapsedSeconds, spinnerSize = 12, className, ...rest }, ref) {
+  function WorkingIndicator(
+    { label, detail, elapsedSeconds, spinnerSize = 12, className, ...rest },
+    ref,
+  ) {
     return (
       <div ref={ref} className={clsx('pd-working', className)} {...rest}>
         <Spinner size={spinnerSize} />
         <span className="pd-working-label">{label}</span>
+        {detail !== undefined && detail.length > 0 ? (
+          <span className="pd-working-detail">· {detail}</span>
+        ) : null}
         {elapsedSeconds !== undefined ? (
           <span className="pd-working-elapsed">· {elapsedSeconds}s</span>
         ) : null}

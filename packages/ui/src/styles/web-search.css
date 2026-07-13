@@ -45,7 +45,7 @@
 .pd-websearch-list {
   display: flex;
   flex-direction: column;
-  max-height: calc(var(--pd-websearch-visible, 4) * 40px);
+  max-height: calc(var(--pd-websearch-visible, 4) * 68px);
   overflow-y: auto;
   border-radius: var(--pd-radius-md);
   background: var(--pd-bg-overlay);
@@ -54,12 +54,11 @@
 
 .pd-websearch-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   width: 100%;
-  height: 40px;
   margin: 0;
-  padding: 0 12px;
+  padding: 10px 12px;
   border: none;
   background: transparent;
   color: var(--pd-text-primary);
@@ -85,6 +84,7 @@
   flex: none;
   width: 18px;
   height: 18px;
+  margin-top: 1px;
   overflow: hidden;
   border-radius: var(--pd-radius-xs);
 }
@@ -110,12 +110,28 @@
   line-height: 1;
 }
 
+.pd-websearch-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.pd-websearch-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
 .pd-websearch-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--pd-text-primary);
   font-size: var(--pd-font-size-body);
 }
 
@@ -127,4 +143,47 @@
   white-space: nowrap;
   color: var(--pd-text-muted);
   font-size: var(--pd-font-size-footnote);
+}
+
+.pd-websearch-snippet {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pd-text-secondary);
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-footnote);
+  /* Clamp to two lines so tall snippets don't blow out the row height. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* Empty state: a clear "no results" panel instead of a blank, dead-end list. */
+.pd-websearch-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 20px 16px;
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-overlay);
+  box-shadow: var(--pd-shadow-hairline);
+  text-align: center;
+}
+
+.pd-websearch-empty-icon {
+  display: inline-flex;
+  color: var(--pd-text-muted);
+}
+
+.pd-websearch-empty-title {
+  color: var(--pd-text-secondary);
+  font-size: var(--pd-font-size-body);
+}
+
+.pd-websearch-empty-hint {
+  max-width: 34ch;
+  color: var(--pd-text-muted);
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-footnote);
 }

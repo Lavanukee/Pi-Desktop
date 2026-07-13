@@ -94,28 +94,38 @@ const KILL_GRACE_MS = 1500;
  * URL). Dynamic gap: a server that starts WITHOUT a subsequent pi respawn won't
  * re-point the already-running child until the next spawn.
  */
-function buildPiEnv(): Record<string, string | undefined> {
+function buildPiEnv(cwd: string | undefined): Record<string, string | undefined> {
   const utility = getInferenceUtility();
-  if (utility === null) return { ...process.env };
   return {
     ...process.env,
-    PI_DESKTOP_UTILITY_BASE_URL: utility.baseUrl,
-    PI_DESKTOP_UTILITY_MODEL: utility.model,
+    // File-spill containment (blind-test round-2 #2): turn ON the harness's
+    // sandbox-fenced write/edit/read/ls override (packages/harness sandbox-fs.ts)
+    // for every desktop-spawned pi, and hand it the resolved sandbox/project cwd
+    // so a RELATIVE path the model writes lands there — never HOME. Set even when
+    // `cwd` is undefined (a resumed session restores its own cwd; the override
+    // falls back to pi's per-session ctx.cwd, still never HOME).
+    PI_DESKTOP_FS_FENCE: '1',
+    ...(cwd !== undefined ? { PI_DESKTOP_WORKSPACE_ROOT: cwd } : {}),
+    ...(utility !== null
+      ? { PI_DESKTOP_UTILITY_BASE_URL: utility.baseUrl, PI_DESKTOP_UTILITY_MODEL: utility.model }
+      : {}),
   };
 }
 
 const sessions = createPiSessions<WebContents>({
-  createBridge: (req, onEvent, opts) =>
-    new PiBridge(
+  createBridge: (req, onEvent, opts) => {
+    // No project/working-folder + no session to resume → root this conversation
+    // at its dedicated `~/.pi/desktop/sandbox/<id>/` sandbox (created on demand)
+    // rather than letting pi fall back to HOME. An explicit project cwd still
+    // wins; resuming a session defers to its recorded cwd. See electron/sandbox.ts.
+    // Also published to the pi child (buildPiEnv) as PI_DESKTOP_WORKSPACE_ROOT so
+    // the harness file-tool override roots relative writes here, not HOME (#2).
+    const cwd = resolveSessionCwd(req);
+    return new PiBridge(
       {
-        // No project/working-folder + no session to resume → root this
-        // conversation at its dedicated `~/.pi/desktop/sandbox/<id>/` sandbox
-        // (created on demand) rather than letting pi fall back to HOME. An
-        // explicit project cwd still wins; resuming a session defers to its
-        // recorded cwd. See electron/sandbox.ts.
-        cwd: resolveSessionCwd(req),
+        cwd,
         sessionPath: req.sessionPath,
-        env: buildPiEnv(),
+        env: buildPiEnv(cwd),
         // Extensions are skipped on a post-crash retry (a broken/WIP extension
         // that exits pi at startup degrades to a working extension-free session).
         extensionPaths: opts?.extensionsDisabled === true ? [] : EXTENSION_PATHS,
@@ -134,7 +144,8 @@ const sessions = createPiSessions<WebContents>({
         appRoot: app.getAppPath(),
       },
       onEvent,
-    ),
+    );
+  },
   sendEvent: (sender, event) => events.send(sender, 'pi:event', event),
   log,
 });

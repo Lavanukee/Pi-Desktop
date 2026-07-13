@@ -3,9 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   boundCount,
   duckDuckGoBackend,
+  isDuckDuckGoChallenge,
   MAX_RESULTS,
   parseBraveJson,
   parseDuckDuckGoHtml,
+  parseDuckDuckGoLite,
   parseTavilyJson,
   resolveSearchBackends,
   runWebSearch,
@@ -14,14 +16,18 @@ import {
   webSearchConfigFromEnv,
 } from './search.js';
 
-const ddgHtml = readFileSync(new URL('./fixtures/duckduckgo.html', import.meta.url), 'utf8');
-const ddgEmpty = readFileSync(new URL('./fixtures/duckduckgo-empty.html', import.meta.url), 'utf8');
-const braveJson = JSON.parse(
-  readFileSync(new URL('./fixtures/brave.json', import.meta.url), 'utf8'),
-) as unknown;
+const fixture = (name: string): string =>
+  readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
+
+const ddgHtml = fixture('duckduckgo.html'); // legacy redirect-wrapper markup
+const ddgCurrent = fixture('duckduckgo-current.html'); // current direct-href markup
+const ddgLite = fixture('duckduckgo-lite.html');
+const ddgEmpty = fixture('duckduckgo-empty.html');
+const ddgChallenge = fixture('duckduckgo-challenge.html');
+const braveJson = JSON.parse(fixture('brave.json')) as unknown;
 
 describe('parseDuckDuckGoHtml', () => {
-  it('extracts title/url/snippet and decodes the uddg redirect, skipping ad rows', () => {
+  it('extracts title/url/snippet and decodes the legacy uddg redirect, skipping ad rows', () => {
     const results = parseDuckDuckGoHtml(ddgHtml, 10);
     expect(results).toHaveLength(3); // ad row without result__a is skipped
     expect(results[0]).toEqual({
@@ -34,12 +40,53 @@ describe('parseDuckDuckGoHtml', () => {
     expect(results[2]?.title).toBe('Example domains and names - Google Developers');
   });
 
+  // Regression guard: DDG dropped the `//duckduckgo.com/l/?uddg=` redirect
+  // wrapper for a DIRECT https href on result__a. This fixture captures the
+  // CURRENT markup so a future change can't silently drop back to zero results.
+  it('parses the current direct-href markup and drops sponsored result--ad rows', () => {
+    const results = parseDuckDuckGoHtml(ddgCurrent, 10);
+    expect(results).toHaveLength(3); // the result--ad block is excluded
+    expect(results[0]).toEqual({
+      title: 'Example Domain',
+      url: 'https://www.example.com/',
+      snippet:
+        'This domain is for use in illustrative examples in documents. You may use this domain in literature without prior coordination or asking for permission.',
+    });
+    expect(results.map((r) => r.url)).not.toContain('https://duckduckgo.com/y.js?ad=1');
+    expect(results[2]?.title).toBe('Example Domains - IANA');
+  });
+
   it('respects the count bound', () => {
     expect(parseDuckDuckGoHtml(ddgHtml, 1)).toHaveLength(1);
   });
 
   it('returns [] on an anti-bot / no-results page', () => {
     expect(parseDuckDuckGoHtml(ddgEmpty, 10)).toEqual([]);
+  });
+});
+
+describe('parseDuckDuckGoLite', () => {
+  it('extracts title/url and the following-row snippet from the lite table', () => {
+    const results = parseDuckDuckGoLite(ddgLite, 10);
+    expect(results).toHaveLength(2);
+    expect(results[0]).toEqual({
+      title: 'Example Domain',
+      url: 'https://www.example.com/',
+      snippet: 'This domain is for use in illustrative examples in documents.',
+    });
+    expect(results[1]?.url).toBe('https://en.wikipedia.org/wiki/Example.com');
+  });
+
+  it('respects the count bound', () => {
+    expect(parseDuckDuckGoLite(ddgLite, 1)).toHaveLength(1);
+  });
+});
+
+describe('isDuckDuckGoChallenge', () => {
+  it('flags the anomaly interstitial (even when served 200) but not real pages', () => {
+    expect(isDuckDuckGoChallenge(ddgChallenge)).toBe(true);
+    expect(isDuckDuckGoChallenge(ddgCurrent)).toBe(false);
+    expect(isDuckDuckGoChallenge(ddgEmpty)).toBe(false);
   });
 });
 
@@ -151,17 +198,41 @@ describe('runWebSearch fallback', () => {
 });
 
 describe('duckDuckGoBackend with injected fetch', () => {
-  it('parses a served fixture', async () => {
+  it('POSTs the query as a form and parses the served results page', async () => {
+    let seen: { method?: string; body?: unknown } = {};
     const backend = duckDuckGoBackend({
-      fetchImpl: async () => new Response(ddgHtml, { status: 200 }),
+      fetchImpl: async (_url, init) => {
+        seen = { method: init?.method, body: init?.body };
+        return new Response(ddgCurrent, { status: 200 });
+      },
     });
     const results = await backend.search('example', { count: 10 });
     expect(results).toHaveLength(3);
+    expect(seen.method).toBe('POST'); // GET is what triggers DDG's anti-bot page
+    expect(String(seen.body)).toContain('q=example');
   });
 
-  it('returns [] (no throw) on a non-200 anti-bot response', async () => {
+  it('falls back from a challenged html endpoint to the lite endpoint', async () => {
     const backend = duckDuckGoBackend({
-      fetchImpl: async () => new Response('blocked', { status: 403 }),
+      fetchImpl: async (url) =>
+        String(url).includes('/html/')
+          ? new Response('blocked', { status: 403 })
+          : new Response(ddgLite, { status: 200 }),
+    });
+    const results = await backend.search('example', { count: 10 });
+    expect(results).toHaveLength(2); // served by the lite fallback
+  });
+
+  it('throws (so the caller can note it) when every endpoint is challenged', async () => {
+    const backend = duckDuckGoBackend({
+      fetchImpl: async () => new Response(ddgChallenge, { status: 200 }),
+    });
+    await expect(backend.search('example', { count: 10 })).rejects.toThrow(/rate-limit/i);
+  });
+
+  it('returns [] (no throw) when a clean page genuinely has no results', async () => {
+    const backend = duckDuckGoBackend({
+      fetchImpl: async () => new Response(ddgEmpty, { status: 200 }),
     });
     expect(await backend.search('example', { count: 10 })).toEqual([]);
   });

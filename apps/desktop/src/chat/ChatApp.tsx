@@ -161,6 +161,25 @@ export function ChatApp({
     return () => registerCanvasControllerReset(null);
   }, []);
 
+  // ⌘W → close the active canvas tab (blind-test round-2 #5). The Electron menu
+  // sends this instead of closing the window; ⌘⇧W / the red button close the
+  // window. With the canvas closed / no tabs it is a no-op — never the window.
+  useEffect(() => {
+    return window.piDesktop.onEvent('app:accelerator', ({ action }) => {
+      if (action !== 'close-tab') return;
+      const controller = canvasController.current;
+      if (controller === null || !useCanvasStore.getState().canvasOpen) return;
+      const activeTabId = controller.getState().activeTabId;
+      if (activeTabId === null) return;
+      controller.closeTab(activeTabId);
+      // Closing the last tab collapses the rail so the chat isn't left beside an
+      // empty canvas.
+      if (controller.getState().tabs.length === 0) {
+        useCanvasStore.getState().setCanvasOpen(false);
+      }
+    });
+  }, []);
+
   const title = windowTitle ?? (messageCount > 0 ? 'Chat' : 'New chat');
   const empty = messageCount === 0;
 

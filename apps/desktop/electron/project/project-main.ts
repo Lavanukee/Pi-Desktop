@@ -59,6 +59,17 @@ function pathMissing(project: ProjectEntry | null): boolean {
   }
 }
 
+/**
+ * True when the conversation is (or would be) rooted at the per-conversation
+ * SANDBOX rather than a real project — i.e. there is no valid active project:
+ * none selected, or the selected one's folder is gone. The composer folder chip
+ * reads this to show "Sandbox"/"No project" (blind-test round-2 #2). Distinct
+ * from `pathMissing`, which is specifically the "selected but dead" warn.
+ */
+function usingSandbox(active: ProjectEntry | null): boolean {
+  return active === null || pathMissing(active);
+}
+
 function readDoc(): ProjectsDoc {
   const raw = safeRead(PROJECTS_PATH);
   if (raw === null) return { version: 1, projects: [], activeId: null };
@@ -103,9 +114,23 @@ function activatePath(abs: string): ProjectsDoc {
 
 const handlers: IpcHandlers<ProjectInvokeMap> = {
   'project:list': () => {
-    const doc = readDoc();
+    // STALE-CLEAR (round-2 #3): on load, an active project whose folder no longer
+    // exists is cleared to none so the dead name is never surfaced anywhere; the
+    // conversation then defaults to the sandbox and the files panel to "No project
+    // selected". Persist the clear so it sticks across restarts.
+    let doc = readDoc();
+    const current = doc.projects.find((p) => p.id === doc.activeId) ?? null;
+    if (current !== null && pathMissing(current)) {
+      doc = { ...doc, activeId: null };
+      writeDoc(doc);
+    }
     const active = doc.projects.find((p) => p.id === doc.activeId) ?? null;
-    return { projects: doc.projects, activeId: doc.activeId, activeMissing: pathMissing(active) };
+    return {
+      projects: doc.projects,
+      activeId: doc.activeId,
+      activeMissing: pathMissing(active),
+      usingSandbox: usingSandbox(active),
+    };
   },
 
   'project:set': (req) => {
@@ -114,12 +139,22 @@ const handlers: IpcHandlers<ProjectInvokeMap> = {
     if (typeof req.path === 'string' && req.path.length > 0) {
       const next = activatePath(req.path);
       const project = next.projects.find((p) => p.id === next.activeId) ?? null;
-      return { project, projects: next.projects, activeMissing: pathMissing(project) };
+      return {
+        project,
+        projects: next.projects,
+        activeMissing: pathMissing(project),
+        usingSandbox: usingSandbox(project),
+      };
     }
     const project = doc.projects.find((p) => p.id === req.id) ?? null;
     const next: ProjectsDoc = { ...doc, activeId: project?.id ?? doc.activeId };
     writeDoc(next);
-    return { project, projects: next.projects, activeMissing: pathMissing(project) };
+    return {
+      project,
+      projects: next.projects,
+      activeMissing: pathMissing(project),
+      usingSandbox: usingSandbox(project),
+    };
   },
 
   'project:new': async (req) => {
@@ -132,26 +167,42 @@ const handlers: IpcHandlers<ProjectInvokeMap> = {
       if (picked.canceled || picked.filePaths.length === 0) {
         const doc = readDoc();
         const active = doc.projects.find((p) => p.id === doc.activeId) ?? null;
-        return { project: null, projects: doc.projects, activeMissing: pathMissing(active) };
+        return {
+          project: null,
+          projects: doc.projects,
+          activeMissing: pathMissing(active),
+          usingSandbox: usingSandbox(active),
+        };
       }
       target = picked.filePaths[0] ?? null;
     }
     if (target === null) {
       const doc = readDoc();
       const active = doc.projects.find((p) => p.id === doc.activeId) ?? null;
-      return { project: null, projects: doc.projects, activeMissing: pathMissing(active) };
+      return {
+        project: null,
+        projects: doc.projects,
+        activeMissing: pathMissing(active),
+        usingSandbox: usingSandbox(active),
+      };
     }
     const next = activatePath(target);
     const project = next.projects.find((p) => p.id === next.activeId) ?? null;
     log.info('project added', { path: project?.path });
-    return { project, projects: next.projects, activeMissing: pathMissing(project) };
+    return {
+      project,
+      projects: next.projects,
+      activeMissing: pathMissing(project),
+      usingSandbox: usingSandbox(project),
+    };
   },
 
   'project:clear': () => {
     const doc = readDoc();
     const next: ProjectsDoc = { ...doc, activeId: null };
     writeDoc(next);
-    return { projects: next.projects };
+    // No active project → always the sandbox.
+    return { projects: next.projects, usingSandbox: true };
   },
 };
 

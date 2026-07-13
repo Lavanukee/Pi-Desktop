@@ -73,6 +73,10 @@ export function createEventRouter(sink: StoreSink, options: EventRouterOptions =
   const callNames = new Map<string, string>();
   /** toolCall ids that already produced an artifact candidate (or gave up). */
   const pushedForCall = new Set<string>();
+  /** toolCall ids whose parsed arguments already reached the row (toolcall_end
+   * or the tool_execution_start fallback) — so we carry args through exactly
+   * once and never re-finalize a call that already has them. */
+  const finalizedCalls = new Set<string>();
   /** Streamed-args accumulator per call, capped at the peek limit. */
   const argsAccum = new Map<string, string>();
   /** contentIndex → callId for 0.68.1 deltas that omit the call id. */
@@ -85,6 +89,7 @@ export function createEventRouter(sink: StoreSink, options: EventRouterOptions =
     knownToolCalls.clear();
     callNames.clear();
     pushedForCall.clear();
+    finalizedCalls.clear();
     argsAccum.clear();
     callIdByIndex.clear();
     for (const timer of uiTimers.values()) clearTimeout(timer);
@@ -262,6 +267,7 @@ export function createEventRouter(sink: StoreSink, options: EventRouterOptions =
         knownToolCalls.clear();
         callNames.clear();
         pushedForCall.clear();
+        finalizedCalls.clear();
         argsAccum.clear();
         break;
       }
@@ -350,6 +356,7 @@ export function createEventRouter(sink: StoreSink, options: EventRouterOptions =
               // Defensive: if the start event was dropped, still show the call.
               beginToolCallOnce(callId, toolCall.name, toolCall.arguments);
               sink.finalizeToolCall(currentAssistantId, callId, toolCall);
+              finalizedCalls.add(callId);
             }
             break;
           }
@@ -376,8 +383,29 @@ export function createEventRouter(sink: StoreSink, options: EventRouterOptions =
         const op = opFor(e.toolName ?? '');
         // `||`: empty-string ids count as missing (index-as-id providers).
         const callId = e.toolCallId || nextId('te');
-        if (beginToolCallOnce(callId, e.toolName ?? 'tool', args) && filePath !== undefined) {
+        const created = beginToolCallOnce(callId, e.toolName ?? 'tool', args);
+        if (created && filePath !== undefined) {
           pushedForCall.add(callId);
+        }
+        // Carry the ACTUAL invocation args onto the row even when the block was
+        // already registered by a toolcall_start that streamed empty/partial args
+        // and no toolcall_end followed (some providers). Execution args are
+        // authoritative, so the activity row can finally surface the primary arg
+        // (path/command/query). Only when we truly have args (never wipe a
+        // populated block with {}), and only once per call.
+        if (
+          !created &&
+          currentAssistantId !== null &&
+          !finalizedCalls.has(callId) &&
+          Object.keys(args).length > 0
+        ) {
+          finalizedCalls.add(callId);
+          sink.finalizeToolCall(currentAssistantId, callId, {
+            type: 'toolCall',
+            id: callId,
+            name: e.toolName ?? 'tool',
+            arguments: args,
+          });
         }
         if (filePath !== undefined && op !== null) {
           pushFileCandidate(filePath, op, callId, e.toolName);

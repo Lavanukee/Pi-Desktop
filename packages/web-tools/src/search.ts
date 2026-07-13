@@ -49,6 +49,25 @@ interface BackendDeps {
 
 // --- DuckDuckGo HTML backend (default, zero-config) ------------------------
 
+/**
+ * DDG's public HTML endpoints. Requests are POSTed (the form's native method) —
+ * a plain GET is far more likely to be met with the 202/403 anti-bot challenge,
+ * whereas the form POST returns the real results page. `html/` is the rich
+ * primary; `lite/` is a leaner, more permissive fallback with the same content
+ * behind a different (table-based) markup, so a challenge on one still yields
+ * results from the other before the floor gives up.
+ */
+const DDG_HTML_ENDPOINT = 'https://html.duckduckgo.com/html/';
+const DDG_LITE_ENDPOINT = 'https://lite.duckduckgo.com/lite/';
+
+const DDG_HEADERS: Record<string, string> = {
+  'user-agent': DEFAULT_UA,
+  'content-type': 'application/x-www-form-urlencoded',
+  accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'accept-language': 'en-US,en;q=0.9',
+  referer: 'https://duckduckgo.com/',
+};
+
 /** Decode DDG's redirect wrapper (`//duckduckgo.com/l/?uddg=<enc>&rut=...`). */
 function decodeDdgHref(href: string): string | undefined {
   const m = href.match(/[?&]uddg=([^&]+)/);
@@ -67,16 +86,27 @@ function textOf(el: { textContent?: string | null } | null | undefined): string 
   return (el?.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
 
-/** Pure parser for the `html.duckduckgo.com/html/` results page. */
+interface ParsedEl {
+  textContent?: string | null;
+  getAttribute(n: string): string | null;
+  querySelector(sel: string): ParsedEl | null;
+  closest?(sel: string): ParsedEl | null;
+  nextElementSibling?: ParsedEl | null;
+}
+
+/**
+ * Pure parser for the `html.duckduckgo.com/html/` results page. Tolerant of both
+ * the current markup (a direct `https://…` href on `a.result__a`) and the legacy
+ * `//duckduckgo.com/l/?uddg=` redirect wrapper. Sponsored `result--ad` blocks are
+ * dropped so paid rows never masquerade as organic results.
+ */
 export function parseDuckDuckGoHtml(html: string, count: number): SearchResult[] {
   const { document } = parseHTML(html);
   const out: SearchResult[] = [];
-  const blocks = Array.from(document.querySelectorAll('div.result')) as Array<{
-    querySelector(
-      sel: string,
-    ): { textContent?: string | null; getAttribute(n: string): string | null } | null;
-  }>;
+  const blocks = Array.from(document.querySelectorAll('div.result')) as ParsedEl[];
   for (const block of blocks) {
+    const cls = block.getAttribute('class') ?? '';
+    if (/\bresult--ad\b/.test(cls)) continue; // sponsored row
     const anchor = block.querySelector('a.result__a');
     if (anchor === null) continue; // ad / empty / "no results" rows
     const href = anchor.getAttribute('href') ?? '';
@@ -91,21 +121,99 @@ export function parseDuckDuckGoHtml(html: string, count: number): SearchResult[]
   return out;
 }
 
+/**
+ * Pure parser for the `lite.duckduckgo.com/lite/` results table: each result is
+ * an `a.result-link` (direct href) whose snippet lives in a following row's
+ * `td.result-snippet` cell.
+ */
+export function parseDuckDuckGoLite(html: string, count: number): SearchResult[] {
+  const { document } = parseHTML(html);
+  const out: SearchResult[] = [];
+  const anchors = Array.from(document.querySelectorAll('a.result-link')) as ParsedEl[];
+  for (const anchor of anchors) {
+    const url = decodeDdgHref(anchor.getAttribute('href') ?? '');
+    if (url === undefined) continue;
+    const title = textOf(anchor);
+    if (title.length === 0) continue;
+    // Snippet sits in one of the next few rows' `.result-snippet` cell.
+    let snippet = '';
+    let row = anchor.closest?.('tr')?.nextElementSibling ?? null;
+    for (let i = 0; i < 3 && row != null; i++) {
+      const cell = row.querySelector('td.result-snippet') ?? row.querySelector('.result-snippet');
+      if (cell !== null) {
+        snippet = textOf(cell);
+        break;
+      }
+      row = row.nextElementSibling ?? null;
+    }
+    out.push({ title, url, snippet });
+    if (out.length >= count) break;
+  }
+  return out;
+}
+
+/**
+ * Recognise DDG's anti-bot / rate-limit interstitial, which it sometimes serves
+ * with a 2xx status (so a status check alone misses it). Callers treat a matched
+ * page as "blocked" rather than a genuine empty result set.
+ */
+export function isDuckDuckGoChallenge(html: string): boolean {
+  return /anomaly-modal|challenge-form|bots use duckduckgo|If this error persists/i.test(html);
+}
+
+interface DdgEndpoint {
+  readonly label: string;
+  readonly url: string;
+  readonly parse: (html: string, count: number) => SearchResult[];
+}
+
+const DDG_ENDPOINTS: readonly DdgEndpoint[] = [
+  { label: 'html', url: DDG_HTML_ENDPOINT, parse: parseDuckDuckGoHtml },
+  { label: 'lite', url: DDG_LITE_ENDPOINT, parse: parseDuckDuckGoLite },
+];
+
 export function duckDuckGoBackend(deps: BackendDeps = {}): SearchBackend {
   const doFetch = deps.fetchImpl ?? fetch;
   return {
     name: 'duckduckgo',
     async search(query, req) {
-      const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-      const res = await doFetch(url, {
-        headers: { 'user-agent': DEFAULT_UA, accept: 'text/html' },
-        signal: req.signal,
-      });
-      // DDG occasionally serves an anti-bot page (non-200); treat as "no results"
-      // rather than throwing, since DDG is the floor and there is nowhere to fall.
-      if (!res.ok) return [];
-      const html = await res.text();
-      return parseDuckDuckGoHtml(html, req.count);
+      const body = new URLSearchParams({ q: query, kl: 'wt-wt' }).toString();
+      // POST the query to each endpoint in turn. A challenge/blocked page on one
+      // is skipped so the next can answer; only when NONE returns a usable page
+      // do we throw, so the caller records a note ("rate-limited") instead of a
+      // silent, unexplained empty result set.
+      let sawUsablePage = false;
+      let lastStatus = 0;
+      for (const ep of DDG_ENDPOINTS) {
+        let res: Response;
+        try {
+          res = await doFetch(ep.url, {
+            method: 'POST',
+            headers: DDG_HEADERS,
+            body,
+            signal: req.signal,
+          });
+        } catch (err) {
+          if (req.signal?.aborted) throw err; // honour cancellation
+          lastStatus = 0;
+          continue; // transport error on one endpoint — try the next
+        }
+        lastStatus = res.status;
+        if (!res.ok) continue; // 202/403 anti-bot challenge
+        const html = await res.text();
+        if (isDuckDuckGoChallenge(html)) continue;
+        sawUsablePage = true;
+        const results = ep.parse(html, req.count);
+        if (results.length > 0) return results;
+      }
+      if (!sawUsablePage) {
+        throw new Error(
+          `DuckDuckGo served no usable results page (last status ${
+            lastStatus || 'network error'
+          }); it may be rate-limiting automated requests`,
+        );
+      }
+      return []; // reached a clean page that genuinely had no results
     },
   };
 }

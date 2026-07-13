@@ -432,21 +432,28 @@ export async function selectAuto(): Promise<void> {
 /**
  * Footer dropdown tier pick — persist the pinned tier AND apply it now. Unlike
  * the Auto router this is an explicit choice, so there's no hysteresis: switch
- * immediately when the model is downloaded, or surface the friendly download
- * prompt when it isn't.
+ * immediately when the model is downloaded.
+ *
+ * jedd #4: a tier whose model ISN'T on disk can't become the active selection —
+ * picking it opens the friendly download flow WITHOUT pinning a model that isn't
+ * present (so the chip never claims a non-downloaded tier is active, and the
+ * checkmark never lies). The tier only becomes active after the download lands.
  */
 export async function selectTier(tier: ModelTier): Promise<void> {
-  await setModelSelection({ mode: 'tier', tier });
-  // A pinned tier is fixed, so push its auto effort once (if effort is 'auto').
-  pushAutoEffort(tier);
   const models = tierModels();
-  if (models === undefined) return;
-  const pick = models[tier];
+  const pick = models?.[tier];
 
-  if (!pick.downloaded) {
+  // Not downloaded → open the download prompt; do NOT pin it as active (#4).
+  if (pick !== undefined && !pick.downloaded) {
     useModelSelectionStore.getState().setPendingDownload({ tier, pick });
     return;
   }
+
+  await setModelSelection({ mode: 'tier', tier });
+  // A pinned tier is fixed, so push its auto effort once (if effort is 'auto').
+  pushAutoEffort(tier);
+  if (models === undefined || pick === undefined) return;
+
   useModelSelectionStore.getState().setPendingDownload(null);
   const currentModelId = useLlmStore.getState().status.model?.id ?? null;
   useModelSelectionStore.getState().markSwitched(Date.now());

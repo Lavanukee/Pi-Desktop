@@ -104,12 +104,26 @@ try {
     /coding/i.test(JSON.parse(clsRaw).activeClass ?? ''),
     `harness status active class should be "coding", got ${clsRaw}`,
   );
-  await page.locator('[data-testid="harness-timer"]').waitFor({ timeout: 8000 });
-  await page.locator('[data-testid="harness-repairs"]').waitFor({ timeout: 8000 });
-  const repairs = (await page.locator('[data-testid="harness-repairs"]').innerText()).trim();
-  assert(
-    /3/.test(repairs),
-    `repair indicator should total 3 (bash:2 + write:1), got ${JSON.stringify(repairs)}`,
+  // round-2 blind-test #1: the standalone always-visible timer + repair cluster
+  // was consolidated into the ONE thread status indicator, so there are no
+  // separate harness-timer / harness-repairs elements. The same underlying data
+  // still flows through the published harness status — assert on it directly (a
+  // live running timer + the repair-failure total of 3 = bash:2 + write:1).
+  await page.waitForFunction(
+    () => {
+      const raw = window.__pi_store().getState().extensionStatus.harness;
+      if (raw === undefined || raw.length === 0) return false;
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        return false;
+      }
+      const total = Object.values(data.repairFailures ?? {}).reduce((a, b) => a + b, 0);
+      return typeof data.runningTaskMs === 'number' && total === 3;
+    },
+    undefined,
+    { timeout: 8000 },
   );
   // The live plan checklist renders its steps.
   const checklist = page.locator('[data-testid="harness-checklist"]');

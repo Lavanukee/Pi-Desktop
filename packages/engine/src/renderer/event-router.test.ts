@@ -211,6 +211,78 @@ describe('event router — synthesized tool rows (hiding tool calls is a trust v
   });
 });
 
+describe('event router — carries invocation args onto a streamed row (round-2 #2)', () => {
+  const startedPartial = {
+    role: 'assistant' as const,
+    content: [{ type: 'toolCall' as const, id: 'call_1', name: 'read', arguments: {} }],
+  };
+
+  function beginStreamedCall(route: (e: PiBridgeEvent) => void): void {
+    route({ type: 'agent_start' });
+    route({ type: 'turn_start' });
+    // toolcall_start streams the block with EMPTY args (args arrive separately).
+    route({
+      type: 'message_update',
+      message: startedPartial,
+      assistantMessageEvent: { type: 'toolcall_start', contentIndex: 0, partial: startedPartial },
+    } as unknown as PiBridgeEvent);
+  }
+
+  it('finalizes the row with the real args when no toolcall_end arrives', () => {
+    const { sink, route } = makeRouter();
+    beginStreamedCall(route);
+    // The row was announced with {} args; execution carries the authoritative path.
+    route({
+      type: 'tool_execution_start',
+      toolCallId: 'call_1',
+      toolName: 'read',
+      args: { path: '/repo/a.ts' },
+    });
+    const finals = sink.callsFor('finalizeToolCall');
+    expect(finals).toHaveLength(1);
+    // Recorded as [method, assistantId, callId, toolCall] → the call is index 3.
+    expect(finals[0]?.[3]).toMatchObject({
+      id: 'call_1',
+      name: 'read',
+      arguments: { path: '/repo/a.ts' },
+    });
+  });
+
+  it('does NOT re-finalize when toolcall_end already supplied the args', () => {
+    const { sink, route } = makeRouter();
+    beginStreamedCall(route);
+    route({
+      type: 'message_update',
+      message: startedPartial,
+      assistantMessageEvent: {
+        type: 'toolcall_end',
+        contentIndex: 0,
+        toolCall: {
+          type: 'toolCall',
+          id: 'call_1',
+          name: 'read',
+          arguments: { path: '/repo/a.ts' },
+        },
+      },
+    } as unknown as PiBridgeEvent);
+    route({
+      type: 'tool_execution_start',
+      toolCallId: 'call_1',
+      toolName: 'read',
+      args: { path: '/repo/a.ts' },
+    });
+    // Exactly one finalize — from toolcall_end; execution must not double it.
+    expect(sink.callsFor('finalizeToolCall')).toHaveLength(1);
+  });
+
+  it('never wipes a row with empty execution args', () => {
+    const { sink, route } = makeRouter();
+    beginStreamedCall(route);
+    route({ type: 'tool_execution_start', toolCallId: 'call_1', toolName: 'read', args: {} });
+    expect(sink.callsFor('finalizeToolCall')).toHaveLength(0);
+  });
+});
+
 describe('event router — reused and empty toolCallIds (index-as-id providers)', () => {
   const modernPartial = (callId: string) => ({
     role: 'assistant' as const,

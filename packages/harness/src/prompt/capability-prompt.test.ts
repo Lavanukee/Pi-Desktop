@@ -49,6 +49,22 @@ describe('augmentSystemPrompt', () => {
     expect(p).toMatch(/never end by telling the user to open/);
   });
 
+  it('tells the agent to ACT rather than wander: write immediately, call the tool directly, act after a plan (item 8)', () => {
+    const p = CAPABILITY_PROMPT.toLowerCase();
+    // A write/create request must WRITE immediately, not read a pile of files.
+    expect(p).toContain("act, don't wander");
+    expect(p).toContain('write it immediately');
+    expect(p).toMatch(/reading ten files without writing anything is wandering/);
+    // A specific capability must call THAT tool, not read a file to get the date.
+    expect(p).toContain('call that tool directly');
+    expect(p).toContain('to find the date');
+    expect(p).toContain('calendar');
+    // After a plan, ACT — don't re-run tool_search / update_plan.
+    expect(p).toContain('tool_search');
+    expect(p).toContain('update_plan');
+    expect(p).toMatch(/one search, one plan, then do the work/);
+  });
+
   it('keeps the harness/reviewer framing private so it cannot leak into the answer (item 5)', () => {
     const p = CAPABILITY_PROMPT.toLowerCase();
     expect(p).toContain('private scaffolding');

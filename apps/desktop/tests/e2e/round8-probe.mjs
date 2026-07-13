@@ -19,7 +19,7 @@
  *
  * Run `pnpm build` first.
  */
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -266,6 +266,10 @@ try {
   );
 
   // ── E. PROJECT PICKER sets the working folder + file-tree root ─────────────
+  // round-2 #6: a project whose folder is MISSING on disk now correctly resolves
+  // to the sandbox (chip → "Sandbox"), so to exercise the "chip shows the folder
+  // name" path the selected folder must actually exist. Create it first.
+  mkdirSync('/tmp/pi-rt8-project', { recursive: true });
   await page.evaluate(() => window.__pi_project().getState().selectPath('/tmp/pi-rt8-project'));
   await page.waitForFunction(
     () => window.__pi_project().getState().activePath === '/tmp/pi-rt8-project',

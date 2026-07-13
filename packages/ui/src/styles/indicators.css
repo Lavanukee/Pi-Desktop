@@ -165,6 +165,12 @@
   animation: pd-working-sweep var(--pd-shimmer-duration) var(--pd-shimmer-easing) infinite;
 }
 
+/* The folded lifecycle-stage word ("· Reviewing"). Muted, fully solid, and never
+ * animated — it enriches the ONE live indicator without a second moving label. */
+.pd-working-detail {
+  color: var(--pd-text-muted);
+}
+
 .pd-working-elapsed {
   color: var(--pd-text-muted);
 }

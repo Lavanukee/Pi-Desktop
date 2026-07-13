@@ -51,9 +51,12 @@ function ProjectRegion() {
   const projects = useProjectStore((s) => s.projects);
   const activeId = useProjectStore((s) => s.activeId);
   const activePath = useProjectStore((s) => s.activePath);
-  // The CRITICAL missing-project wave may expose an explicit flag; read it
-  // opportunistically (undefined until it lands) and otherwise infer the sandbox
-  // state from the live session cwd below.
+  // jedd #6: drive the sandbox/"No project" chip off the STORE FLAG, not a stale
+  // folder name. The project store already tracks `projectMissing` (the selected
+  // project's folder is gone on disk → pi ran in the conversation sandbox); the
+  // CRITICAL wave may also expose an explicit `usingSandbox`. Prefer the explicit
+  // flag, fall back to `projectMissing`, and only then to the session-cwd sniff.
+  const projectMissing = useProjectStore((s) => s.projectMissing);
   const sandboxFlag = useProjectStore(
     (s) => (s as unknown as { usingSandbox?: boolean }).usingSandbox,
   );
@@ -62,7 +65,7 @@ function ProjectRegion() {
   const newProject = useProjectStore((s) => s.newProject);
   const clearProject = useProjectStore((s) => s.clearProject);
 
-  const sandbox = usesSandbox(activePath, sessionCwd, sandboxFlag);
+  const sandbox = usesSandbox(activePath, sessionCwd, sandboxFlag ?? projectMissing);
   const className = ['pd-project-picker--bar', sandbox ? 'pd-project-picker--sandbox' : '']
     .filter(Boolean)
     .join(' ');

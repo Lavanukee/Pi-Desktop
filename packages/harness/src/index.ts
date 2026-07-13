@@ -78,6 +78,7 @@ import {
 } from './subagent/types.js';
 import { registerAskUser } from './tools/ask-user.js';
 import { registerPlanTool } from './tools/plan-tool.js';
+import { registerSandboxFileTools } from './tools/sandbox-fs.js';
 import { registerToolSearch } from './tools/tool-search.js';
 import {
   detectProjectCheck,
@@ -575,6 +576,13 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
   // provider folds tool results into a user-role turn for Gemma-class templates).
   registerSkillInstructions(pi);
 
+  // File-spill containment (blind-test round-2 #2): override pi's built-in
+  // write/edit/read/ls so a RELATIVE path resolves against the resolved
+  // sandbox/project cwd — never HOME — and mutating ops are fenced to the
+  // workspace + sandbox roots. No-op unless the desktop set PI_DESKTOP_FS_FENCE=1,
+  // so a plain CLI `pi` user keeps the unfenced built-ins. See tools/sandbox-fs.ts.
+  registerSandboxFileTools(pi);
+
   // Tool search — always available so the model can pull in missing tools.
   registerToolSearch(pi, {
     onActivate: (added) => {
@@ -1025,6 +1033,10 @@ export {
   createLoopDetector,
   DEFAULT_LOOP_ABORT_AFTER,
   DEFAULT_LOOP_STEER_AFTER,
+  DEFAULT_WANDER_ABORT_AFTER,
+  DEFAULT_WANDER_STEER_AFTER,
+  EXPLORATION_TOOLS,
+  isExplorationTool,
   type LoopCause,
   type LoopDetector,
   type LoopDetectorConfig,

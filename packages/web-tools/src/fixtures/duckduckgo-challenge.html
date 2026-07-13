@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><title>DuckDuckGo</title></head>
+<body>
+<!--
+  DDG's anti-bot / rate-limit interstitial. It can be served with a 2xx status,
+  so a non-200 check alone misses it; the parser must recognise the page body and
+  the backend must treat it as "blocked" (surface a note) rather than a clean
+  empty result set.
+-->
+<div class="anomaly-modal__mask">
+  <div class="anomaly-modal__modal">
+    <h1>Unfortunately, bots use DuckDuckGo too.</h1>
+    <p>Please complete the following challenge to confirm this search was made by a human.</p>
+    <form id="challenge-form" action="/anomaly.js"></form>
+  </div>
+</div>
+</body>
+</html>

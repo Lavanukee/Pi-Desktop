@@ -17,12 +17,14 @@ import { type WebSearchResultData, WebSearchResults } from './web-search.tsx';
  * trailing chevron appears on hover. Click rolls the chain open to a vertical
  * stacked step list threaded by a left connector line.
  *
- * Round-3 step anatomy:
+ * Step anatomy:
+ *   - every step surfaces its PRIMARY arg inline next to the verb ("Read a file:
+ *     config.ts" / "Ran: <cmd>" / "Searched: <query>") — jedd round-2 #2.
  *   - thinking / search steps are ALWAYS-EXPANDED inside the open chain — the
  *     thought text / web-search list render directly under the row, no click.
- *   - bash / edit / read / file steps show a small PILL below the row ('Script'
- *     / filename.ext); the pill is the click-to-reveal affordance for their
- *     content (command+output / diff / preview).
+ *   - bash / edit / read / file steps make the WHOLE ROW a disclosure control
+ *     (trailing chevron); clicking it reveals the full arg + the content
+ *     (command+output / diff / preview).
  *   - media/preview steps carry `opensInCanvas` and route to the canvas.
  * Every open/collapse is a smooth height roll (reduced-motion safe).
  */
@@ -35,6 +37,15 @@ interface ActivityStepCommon {
   id?: string;
   /** Present/past-tense row label ("Rewriting the plan…" / "Ran a command"). */
   label: string;
+  /**
+   * The step's PRIMARY argument, surfaced inline right after the verb so a row
+   * reads "Read a file: <path>" / "Ran: <cmd>" / "Searched: <query>" instead of
+   * a bare verb (jedd round-2 #2). Carries the FULL value (full path / command /
+   * query / url): file-path kinds show its basename on the collapsed row and the
+   * whole path in the expanded reveal; the rest show it verbatim. Empty/omitted →
+   * no inline arg (the row falls back to just the verb).
+   */
+  detail?: string;
   /** Small pill/subtitle ("Script", or a filename). */
   tag?: ReactNode;
   /** Drives the file-extension icon badge and the default pill/tag. */
@@ -68,6 +79,8 @@ export type ActivityStepData =
       kind: 'search';
       query?: string;
       results?: WebSearchResultData[];
+      /** Backend note shown in the empty state when there are no results. */
+      note?: string;
     })
   | (ActivityStepCommon & {
       // Browser-action steps (round-10 #17): the URL/target is carried for a tag,
@@ -223,15 +236,19 @@ function basename(path: string): string {
   return path.split(/[/\\]/).pop() ?? path;
 }
 
-/** Default pill text for a pill-gated (bash/edit/read/file) step. */
-const PILL_LABEL: Partial<Record<ActivityStepKind, string>> = {
-  bash: 'Script',
-  edit: 'Diff',
-  read: 'File',
-  file: 'File',
-  skill: 'Skill',
-  'browser-read': 'Page',
-};
+/**
+ * Kinds whose `detail` is a file PATH: the collapsed row shows just the basename
+ * (the meaningful tail — "Read a file: config.ts") while the expanded reveal
+ * restates the full path. Command/query/url kinds show `detail` verbatim.
+ */
+const PATH_DETAIL_KINDS = new Set<ActivityStepKind>(['read', 'edit', 'file', 'skill']);
+
+/**
+ * Kinds whose expanded reveal leads with the full primary arg — their inline
+ * content (a file/page preview) doesn't otherwise restate it. bash/edit skip
+ * this: their reveal already shows the command / the diff's own path header.
+ */
+const ARG_HEADER_KINDS = new Set<ActivityStepKind>(['read', 'file', 'skill', 'browser-read']);
 
 /** Char count past which an in-chain thought fades + offers "Show more". */
 const CHAIN_THOUGHT_LONG = 240;
@@ -306,7 +323,11 @@ function StepContent({ step, live = false }: { step: ActivityStepData; live?: bo
       return step.diff ? <DiffView files={step.diff} /> : null;
     case 'search':
       return step.results ? (
-        <WebSearchResults query={step.query ?? step.label} results={step.results} />
+        <WebSearchResults
+          query={step.query ?? step.label}
+          results={step.results}
+          emptyHint={step.note}
+        />
       ) : null;
     case 'read':
     case 'file':
@@ -358,7 +379,7 @@ export interface ActivityStepProps {
   onOpenCanvas?: () => void;
 }
 
-/** One row of the expanded chain: icon + label, then inline content or a pill. */
+/** One row of the expanded chain: icon + verb + inline arg, then a disclosure reveal. */
 export const ActivityStep = forwardRef<HTMLDivElement, ActivityStepProps>(function ActivityStep(
   { data, expanded = false, live = false, onToggle, onOpenCanvas },
   ref,
@@ -366,12 +387,19 @@ export const ActivityStep = forwardRef<HTMLDivElement, ActivityStepProps>(functi
   const running = data.status === 'running';
   const canvas = data.opensInCanvas === true;
   const inline = isInlineKind(data.kind);
-  const pillGated = !canvas && !inline && hasInlineContent(data);
+  // Pill-gated kinds (bash/edit/read/file/skill/browser-read) turn the WHOLE row
+  // into a disclosure control (jedd round-2 #2): click anywhere to reveal the
+  // full arg + the result/output.
+  const disclosable = !canvas && !inline && hasInlineContent(data);
   const canvasTag = data.tag ?? (data.filename ? basename(data.filename) : undefined);
-  const pillLabel =
-    data.tag ?? (data.filename ? basename(data.filename) : (PILL_LABEL[data.kind] ?? 'Details'));
   // The edit step carries its ±stat right beside the label (round-5 #12).
   const editStat = data.kind === 'edit' ? editTotals(data) : null;
+  // The primary arg, surfaced inline next to the verb: a path shows its basename
+  // here (full path lives in the reveal), everything else shows verbatim.
+  const detail = data.detail !== undefined && data.detail !== '' ? data.detail : undefined;
+  const detailInline =
+    detail === undefined ? undefined : PATH_DETAIL_KINDS.has(data.kind) ? basename(detail) : detail;
+  const argHeader = disclosable && detail !== undefined && ARG_HEADER_KINDS.has(data.kind);
 
   const rowInner = (
     <>
@@ -381,6 +409,11 @@ export const ActivityStep = forwardRef<HTMLDivElement, ActivityStepProps>(functi
       <span className="pd-chain-step-label">
         {running ? <ShimmerText>{data.label}</ShimmerText> : data.label}
       </span>
+      {detailInline !== undefined ? (
+        <span className="pd-chain-step-detail" title={detail}>
+          {detailInline}
+        </span>
+      ) : null}
       {editStat ? (
         <DiffStat
           className="pd-chain-step-diffstat"
@@ -396,6 +429,11 @@ export const ActivityStep = forwardRef<HTMLDivElement, ActivityStepProps>(functi
           <IconExternal size={13} />
         </span>
       ) : null}
+      {disclosable ? (
+        <span className="pd-chain-step-chevron" data-expanded={expanded}>
+          <IconChevronRight size={12} />
+        </span>
+      ) : null}
     </>
   );
 
@@ -403,11 +441,20 @@ export const ActivityStep = forwardRef<HTMLDivElement, ActivityStepProps>(functi
     <div
       ref={ref}
       className="pd-chain-step"
-      data-expanded={pillGated ? expanded : undefined}
+      data-expanded={disclosable ? expanded : undefined}
       data-kind={data.kind}
     >
       {canvas ? (
         <button type="button" className="pd-chain-step-row pd-focusable" onClick={onOpenCanvas}>
+          {rowInner}
+        </button>
+      ) : disclosable ? (
+        <button
+          type="button"
+          className="pd-chain-step-row pd-focusable"
+          aria-expanded={expanded}
+          onClick={onToggle}
+        >
           {rowInner}
         </button>
       ) : (
@@ -426,24 +473,16 @@ export const ActivityStep = forwardRef<HTMLDivElement, ActivityStepProps>(functi
         </div>
       ) : null}
 
-      {pillGated ? (
-        <div className="pd-chain-step-pillbox">
-          <button
-            type="button"
-            className="pd-chain-pill pd-focusable"
-            aria-expanded={expanded}
-            onClick={onToggle}
-          >
-            <span className="pd-chain-pill-label">{pillLabel}</span>
-            <span className="pd-chain-pill-chevron" data-expanded={expanded}>
-              <IconChevronRight size={12} />
-            </span>
-          </button>
-          <div className="pd-chain-reveal" data-open={expanded}>
-            <div className="pd-chain-reveal-inner">
-              <div className="pd-chain-step-content pd-scroll">
-                <StepContent step={data} />
-              </div>
+      {disclosable ? (
+        <div className="pd-chain-reveal" data-open={expanded}>
+          <div className="pd-chain-reveal-inner">
+            <div className="pd-chain-step-content pd-scroll">
+              {argHeader ? (
+                <div className="pd-chain-arg" title={detail}>
+                  {detail}
+                </div>
+              ) : null}
+              <StepContent step={data} />
             </div>
           </div>
         </div>

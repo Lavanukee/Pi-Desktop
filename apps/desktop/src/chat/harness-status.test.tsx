@@ -1,14 +1,11 @@
-import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { HarnessStageIndicator } from './HarnessStatus';
-import { type HarnessStage, stageDisplay } from './harness-status';
+import { type HarnessStage, stageDisplay, threadStatusView } from './harness-status';
 
 /**
- * The harness publishes a coarse lifecycle `stage` on its status; the footer must
- * make that phase legible to the owner ("building / testing / touching up / final
- * sweep / done") without inventing a stage the harness never published. These
- * tests pin the pure stage→display mapping and the rendered label, using the
- * repo's jsdom-free static-markup convention.
+ * The harness publishes a coarse lifecycle `stage`; the ONE consolidated thread
+ * indicator (jedd blind-test #1) folds it into a single "Thinking"/"Working"
+ * label. These tests pin the two pure cores — the stage→display mapping and the
+ * consolidated-indicator view — without rendering.
  */
 describe('stageDisplay (pure mapping)', () => {
   it('maps every in-flight stage to its verb, live=true', () => {
@@ -38,28 +35,89 @@ describe('stageDisplay (pure mapping)', () => {
   });
 });
 
-describe('HarnessStageIndicator (renders the published stage)', () => {
-  it('renders an in-flight stage as a muted "verb…" label carrying data-stage', () => {
-    const html = renderToStaticMarkup(<HarnessStageIndicator stage="reviewing" />);
-    expect(html).toContain('data-testid="harness-stage"');
-    expect(html).toContain('data-stage="reviewing"');
-    expect(html).toContain('Reviewing…');
-    expect(html).toContain('text-text-muted');
-    // The subtle per-stage glyph rides alongside the label.
-    expect(html).toContain('<svg');
+describe('threadStatusView (the ONE consolidated indicator)', () => {
+  const base = {
+    isStreaming: true as boolean,
+    retry: null as { attempt: number; maxAttempts: number } | null,
+    toolRunning: false,
+    stage: null as HarnessStage | null | undefined,
+    isAuto: true,
+    switchingToTier: null as string | null,
+  };
+
+  it('shows nothing when idle (not streaming, not switching)', () => {
+    expect(threadStatusView({ ...base, isStreaming: false })).toBeNull();
   });
 
-  it('renders the terminal stage as a plain "Done" in the success tint (no ellipsis)', () => {
-    const html = renderToStaticMarkup(<HarnessStageIndicator stage="done" />);
-    expect(html).toContain('data-stage="done"');
-    expect(html).toContain('>Done<');
-    expect(html).not.toContain('Done…');
-    expect(html).toContain('text-status-success-fg');
+  it('reads "Thinking" while streaming with no tool and no acting stage', () => {
+    expect(threadStatusView(base)).toEqual({
+      label: 'Thinking',
+      detail: undefined,
+      showElapsed: true,
+    });
   });
 
-  it('renders nothing when idle or absent', () => {
-    expect(renderToStaticMarkup(<HarnessStageIndicator stage="idle" />)).toBe('');
-    expect(renderToStaticMarkup(<HarnessStageIndicator stage={undefined} />)).toBe('');
-    expect(renderToStaticMarkup(<HarnessStageIndicator stage={null} />)).toBe('');
+  it('reads "Working" the instant a tool is running', () => {
+    expect(threadStatusView({ ...base, toolRunning: true })).toEqual({
+      label: 'Working',
+      detail: undefined,
+      showElapsed: true,
+    });
+  });
+
+  it('treats acting stages as "Working" even with no tool momentarily in flight', () => {
+    for (const stage of ['working', 'repairing', 'reviewing', 'revising', 'verifying'] as const) {
+      expect(threadStatusView({ ...base, stage })?.label).toBe('Working');
+    }
+  });
+
+  it('folds a refinement stage in as a subtle detail word', () => {
+    expect(threadStatusView({ ...base, stage: 'reviewing' })).toEqual({
+      label: 'Working',
+      detail: 'Reviewing',
+      showElapsed: true,
+    });
+    expect(threadStatusView({ ...base, stage: 'verifying' })?.detail).toBe('Verifying');
+    expect(threadStatusView({ ...base, stage: 'repairing' })?.detail).toBe('Repairing');
+  });
+
+  it('carries no detail for plain working/done (the primary word already says it)', () => {
+    expect(threadStatusView({ ...base, stage: 'working' })?.detail).toBeUndefined();
+    // `done` is terminal, but if it ever streams through it adds nothing.
+    expect(threadStatusView({ ...base, stage: 'done' })?.detail).toBeUndefined();
+  });
+
+  it('surfaces "Classifying" ONLY in Auto mode (jedd #5)', () => {
+    expect(threadStatusView({ ...base, stage: 'classifying', isAuto: true })).toEqual({
+      label: 'Thinking',
+      detail: 'Classifying',
+      showElapsed: true,
+    });
+    // Pinned tier: never classify → just "Thinking", no "Classifying".
+    expect(threadStatusView({ ...base, stage: 'classifying', isAuto: false })).toEqual({
+      label: 'Thinking',
+      detail: undefined,
+      showElapsed: true,
+    });
+  });
+
+  it('shows the retry phrase (winning over the stage) while streaming', () => {
+    expect(
+      threadStatusView({ ...base, retry: { attempt: 2, maxAttempts: 3 }, stage: 'reviewing' }),
+    ).toEqual({ label: 'Retrying (2/3)…', showElapsed: true });
+  });
+
+  it('borrows the indicator for a pre-stream model switch (no elapsed counter)', () => {
+    expect(threadStatusView({ ...base, isStreaming: false, switchingToTier: 'Balanced' })).toEqual({
+      label: 'Switching to Balanced…',
+      showElapsed: false,
+    });
+  });
+
+  it('prefers the live turn over a stale switch flag once streaming has begun', () => {
+    // If both are somehow set, streaming wins — the switch already completed.
+    expect(
+      threadStatusView({ ...base, isStreaming: true, switchingToTier: 'Balanced' })?.label,
+    ).toBe('Thinking');
   });
 });

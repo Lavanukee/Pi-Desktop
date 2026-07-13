@@ -498,6 +498,10 @@ export type AppEventMap = {
   /** Pushed by main on did-finish-load — typically before React mounts, which
    * exercises the pre-mount event buffer end to end. */
   'app:boot': { sentAt: number };
+  /** A menu accelerator that the RENDERER must action (main has no view state).
+   * `close-tab` (⌘W) closes the active canvas tab / current chat — NOT the window
+   * (⌘⇧W / the red button close the window). See main.ts installAppMenu. */
+  'app:accelerator': { action: 'close-tab' };
   /** Inference supervisor state (server/model/TPS) for the composer footer. */
   'llm:status': LlmStatus;
   'llm:download-progress': {

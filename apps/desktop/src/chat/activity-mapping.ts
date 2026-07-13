@@ -255,29 +255,84 @@ function editDiff(args: Record<string, unknown>): DiffFileData[] | undefined {
   ];
 }
 
-/** Parse a web-search tool result into result rows, tolerant of JSON shapes. */
-function parseSearchResults(result: ToolResultMsg | undefined): WebSearchResultData[] {
-  if (result === undefined || result.text.length === 0) return [];
+/** Rows + an optional backend note parsed from a web-search tool result. */
+interface ParsedSearch {
+  results: WebSearchResultData[];
+  note?: string;
+}
+
+function toSearchRow(r: Record<string, unknown>): WebSearchResultData {
+  const url = str(r.url) ?? str(r.link);
+  return {
+    title: str(r.title) ?? str(r.name) ?? url ?? 'Result',
+    url,
+    domain: str(r.domain) ?? hostOf(url),
+    snippet: str(r.snippet) ?? str(r.description) ?? str(r.content) ?? str(r.text),
+  };
+}
+
+/** JSON array / `{ results: [...] }` shapes (what MCP + API search tools emit). */
+function tryJsonRows(text: string): unknown[] | undefined {
   try {
-    const parsed: unknown = JSON.parse(result.text);
-    const rows: unknown = Array.isArray(parsed)
-      ? parsed
-      : Array.isArray((parsed as { results?: unknown })?.results)
-        ? (parsed as { results: unknown[] }).results
-        : [];
-    if (!Array.isArray(rows)) return [];
-    return rows.slice(0, 20).map((raw): WebSearchResultData => {
-      const r = (raw ?? {}) as Record<string, unknown>;
-      const url = str(r.url) ?? str(r.link);
-      return {
-        title: str(r.title) ?? str(r.name) ?? url ?? 'Result',
-        url,
-        domain: str(r.domain) ?? hostOf(url),
-      };
-    });
+    const parsed: unknown = JSON.parse(text);
+    if (Array.isArray(parsed)) return parsed;
+    const rows = (parsed as { results?: unknown } | null)?.results;
+    return Array.isArray(rows) ? rows : undefined;
   } catch {
-    return [];
+    return undefined;
   }
+}
+
+/**
+ * Parse the built-in web_search text body — a header, an optional "(note: …)"
+ * line, then "[n] title / url / snippet" blocks — into rows + note. This is the
+ * real path in the app: the engine forwards only the tool's TEXT (not its
+ * structured `details`), and that text is a human-readable list, not JSON — so a
+ * JSON-only parser always yielded [] and every search rendered "0 results".
+ */
+function parseSearchText(text: string): ParsedSearch {
+  const rows: WebSearchResultData[] = [];
+  let note: string | undefined;
+  let cur: { title: string; url?: string; snippet?: string } | undefined;
+  const flush = (): void => {
+    if (cur === undefined) return;
+    rows.push({ title: cur.title, url: cur.url, domain: hostOf(cur.url), snippet: cur.snippet });
+    cur = undefined;
+  };
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim();
+    const head = /^\[(?:\d+)\]\s+(.*)$/.exec(line);
+    if (head !== null) {
+      flush();
+      cur = { title: head[1] ?? '' };
+      continue;
+    }
+    if (cur === undefined) {
+      const m = /^\(note:\s*(.*?)\)\s*$/.exec(line);
+      if (m !== null) note = m[1];
+      continue; // header / note / blank lines before the first result
+    }
+    if (line.length === 0) continue;
+    if (cur.url === undefined && /^https?:\/\//i.test(line)) {
+      cur.url = line;
+      continue;
+    }
+    cur.snippet = cur.snippet !== undefined ? `${cur.snippet} ${line}` : line;
+  }
+  flush();
+  return { results: rows.slice(0, 20), note };
+}
+
+/** Parse a web-search tool result into rows + note, tolerant of JSON and text. */
+function parseSearchOutcome(result: ToolResultMsg | undefined): ParsedSearch {
+  if (result === undefined || result.text.length === 0) return { results: [] };
+  const rows = tryJsonRows(result.text);
+  if (rows !== undefined) {
+    return {
+      results: rows.slice(0, 20).map((raw) => toSearchRow((raw ?? {}) as Record<string, unknown>)),
+    };
+  }
+  return parseSearchText(result.text);
 }
 
 function hostOf(url: string | undefined): string | undefined {
@@ -328,28 +383,41 @@ export function mapToolStep(
   // ("Read a skill") + sparkle glyph. Only a read-ish tool is promoted; an edit
   // to a skill file stays an edit.
   let kind = toolStepKind(block.name);
-  if (kind === 'read' && isSkillPath(pickPath(args))) kind = 'skill';
-  const filename = baseName(pickPath(args));
+  const path = pickPath(args);
+  if (kind === 'read' && isSkillPath(path)) kind = 'skill';
+  const filename = baseName(path);
   const status = running ? 'running' : 'done';
   const label = stepLabel(kind, running);
+  // The step's PRIMARY arg, surfaced inline next to the verb (jedd round-2 #2):
+  // "Read a file: <path>", "Ran: <cmd>", "Searched: <query>". The UI shows a
+  // path's basename on the collapsed row and the full value in the reveal.
+  const command = str(args.command);
+  const query = str(args.query) ?? str(args.q);
+  const url = str(args.url) ?? str(args.href) ?? str(args.link);
 
   switch (kind) {
     case 'bash':
       return {
-        data: { kind, label, status, command: str(args.command), output: str(result?.text) },
+        data: { kind, label, status, detail: command, command, output: str(result?.text) },
       };
     case 'edit':
-      return { data: { kind, label, status, filename, diff: editDiff(args) } };
-    case 'search':
+      return { data: { kind, label, status, detail: path, filename, diff: editDiff(args) } };
+    case 'search': {
+      const { results, note } = parseSearchOutcome(result);
       return {
         data: {
           kind,
           label,
           status,
-          query: str(args.query) ?? str(args.q),
-          results: parseSearchResults(result),
+          detail: query,
+          query,
+          results,
+          // Surfaced by the empty state so "0 results" explains itself (e.g. a
+          // rate-limit note) instead of being a silent dead-end.
+          note,
         },
       };
+    }
     case 'browser-navigate':
     case 'browser-click':
     case 'browser-type':
@@ -359,7 +427,8 @@ export function mapToolStep(
           kind,
           label,
           status,
-          url: str(args.url) ?? str(args.href) ?? str(args.link),
+          detail: url,
+          url,
           // Only the read/snapshot step expands the page text it returned.
           preview: kind === 'browser-read' ? str(result?.text) : undefined,
         },
@@ -386,10 +455,14 @@ export function mapToolStep(
     case 'skill':
       // A skill/instructions read: same inline-preview shape as a file read, but
       // its own kind → "Read a skill" + sparkle glyph in the chain.
-      return { data: { kind: 'skill', label, status, filename, preview: str(result?.text) } };
+      return {
+        data: { kind: 'skill', label, status, detail: path, filename, preview: str(result?.text) },
+      };
     default:
       // read / file-preview: show the tool output inline.
-      return { data: { kind: 'read', label, status, filename, preview: str(result?.text) } };
+      return {
+        data: { kind: 'read', label, status, detail: path, filename, preview: str(result?.text) },
+      };
   }
 }
 

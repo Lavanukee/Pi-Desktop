@@ -109,11 +109,15 @@ export function TierPickerMenu({
                   ? row.secondary
                   : `${row.secondary} · download`
             }
-            hint={activeTier === row.tier ? <IconCheck size={14} /> : undefined}
-            onSelect={(e) => {
-              e.preventDefault();
-              void selectTier(row.tier);
-            }}
+            // Only a DOWNLOADED tier can read as the active model (jedd #4): a
+            // tier whose model isn't on disk never shows a selected checkmark —
+            // picking it opens the download flow (selectTier) instead of pretending
+            // it's active.
+            hint={activeTier === row.tier && row.downloaded ? <IconCheck size={14} /> : undefined}
+            // No preventDefault: the menu MUST close on selection (jedd #3). The
+            // download flow (non-downloaded pick) opens its own dialog from
+            // selectTier, so keeping the menu open is unnecessary and felt broken.
+            onSelect={() => void selectTier(row.tier)}
           >
             <span className="flex items-center gap-1.5">
               {TIER_ICON[row.tier]}

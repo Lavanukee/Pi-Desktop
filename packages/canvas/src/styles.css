@@ -75,14 +75,17 @@
   padding: var(--pd-space-xs);
 }
 
-/* Chrome-style connected tab strip (FEEL): the strip is the darker "frame"
- * (bg-inset); the ACTIVE tab shares the toolbar/content bg (bg-raised) below and
- * MERGES into it — the flat divider is gone (the op-bar carries its own bottom
- * border), and the tabs bottom-align so the active one sits flush on the seam. */
+/* Chrome/Safari-style connected tab strip. The strip is the darker "frame"
+ * (bg-inset); the ACTIVE tab takes the toolbar/content bg (bg-raised) and MERGES
+ * into the bar below — tabs bottom-align so the active one sits flush on the
+ * seam, and its bottom corners flare into the toolbar through two mask-carved
+ * corner pseudo-elements (alpha-only masks → no colour fringe, and theme-proof:
+ * the carved notch shows the real frame behind it). The op-bar carries the only
+ * bottom border, so there is no divider/seam where the active tab meets it. */
 .pd-canvas-tabbar {
   display: flex;
   align-items: stretch;
-  gap: var(--pd-space-sm);
+  gap: var(--pd-space-xs);
   height: 40px;
   padding: 0 var(--pd-space-xs);
   background: var(--pd-bg-inset);
@@ -108,8 +111,9 @@
 .pd-canvas-tablist {
   display: flex;
   align-items: flex-end;
-  gap: 2px;
-  /* room for the first active tab's left flare (it extends one radius outward) */
+  gap: var(--pd-space-xs);
+  /* room for the first tab's left flare (each active-tab flare extends one
+   * radius past the tab, sitting in the inter-tab gap). */
   padding-left: var(--pd-radius-md);
   flex: 1 1 auto;
   min-width: 0;
@@ -163,26 +167,37 @@
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  max-width: 200px;
-  height: 32px;
-  padding: 0 2px 0 4px;
+  min-width: 88px;
+  max-width: 220px;
+  height: 34px;
+  padding: 0 4px 0 10px;
   /* rounded TOP corners only — the bottom edge rests on the toolbar seam */
   border-radius: var(--pd-radius-md) var(--pd-radius-md) 0 0;
   color: var(--pd-text-secondary);
-  transition: background var(--pd-duration-fast) var(--pd-easing-standard);
+  transition:
+    background var(--pd-duration-fast) var(--pd-easing-standard),
+    color var(--pd-duration-fast) var(--pd-easing-standard);
 }
 
-.pd-canvas-tab:hover {
+/* Inactive tabs read as the (darker) frame — recessed — and lift on hover.
+ * No borders between them: the inter-tab gap is the only separator. */
+.pd-canvas-tab:not([data-active]):hover {
   background: var(--pd-bg-hover);
 }
 
-/* The active tab takes the toolbar/content colour and MERGES into the bar below
- * through two concave bottom flares (::before/::after) — the Chrome "tab curves
- * out into the toolbar" joint. The carved quarter-circle exposes the inset
- * frame; the filled remainder bridges the tab side down onto the content seam. */
+/* The active tab takes the toolbar/content colour and MERGES into the bar below.
+ * Its bottom corners flare OUT into the toolbar through two corner pseudo-els
+ * carved by an alpha MASK: the mask turns a concave quarter-circle transparent
+ * (revealing the real frame behind — no colour to match, so no dark fringe, and
+ * it survives translucent-inset themes) while the rest stays filled with the
+ * raised bg, bridging the tab side down onto the toolbar seam.
+ * NB the corner choice is per-side: the notch sits AWAY from the tab (::before →
+ * top-left, ::after → top-right) so the fill hugs the tab edge, not a scoop. */
 .pd-canvas-tab[data-active] {
   background: var(--pd-bg-raised);
   color: var(--pd-text-primary);
+  /* Lift above neighbours so the flares paint over their base corners cleanly. */
+  z-index: 1;
 }
 
 .pd-canvas-tab[data-active]::before,
@@ -192,24 +207,35 @@
   bottom: 0;
   width: var(--pd-radius-md);
   height: var(--pd-radius-md);
+  background: var(--pd-bg-raised);
   pointer-events: none;
 }
 
 .pd-canvas-tab[data-active]::before {
   left: calc(-1 * var(--pd-radius-md));
-  background: radial-gradient(
-    circle at top right,
-    transparent var(--pd-radius-md),
-    var(--pd-bg-raised) calc(var(--pd-radius-md) + 0.5px)
+  -webkit-mask: radial-gradient(
+    circle at top left,
+    transparent calc(var(--pd-radius-md) - 0.5px),
+    #000 var(--pd-radius-md)
+  );
+  mask: radial-gradient(
+    circle at top left,
+    transparent calc(var(--pd-radius-md) - 0.5px),
+    #000 var(--pd-radius-md)
   );
 }
 
 .pd-canvas-tab[data-active]::after {
   right: calc(-1 * var(--pd-radius-md));
-  background: radial-gradient(
-    circle at top left,
-    transparent var(--pd-radius-md),
-    var(--pd-bg-raised) calc(var(--pd-radius-md) + 0.5px)
+  -webkit-mask: radial-gradient(
+    circle at top right,
+    transparent calc(var(--pd-radius-md) - 0.5px),
+    #000 var(--pd-radius-md)
+  );
+  mask: radial-gradient(
+    circle at top right,
+    transparent calc(var(--pd-radius-md) - 0.5px),
+    #000 var(--pd-radius-md)
   );
 }
 
@@ -218,7 +244,8 @@
   align-items: center;
   gap: var(--pd-space-xs);
   min-width: 0;
-  padding: 4px 4px;
+  flex: 1 1 auto;
+  padding: 0 2px;
   border: none;
   background: none;
   color: inherit;

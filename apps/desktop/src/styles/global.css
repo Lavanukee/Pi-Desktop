@@ -223,26 +223,21 @@ body {
   opacity: 1;
   pointer-events: auto;
   width: var(--pd-sidebar-rail, 64px);
-  /* Collapsed, the rail hugs its icon cluster and TOP-anchors instead of running
-   * the full window height — it ends just below its nav stack, clear of the
-   * reopen/expand control, not as a full-height bar. `max-height` lets a short
-   * window still scroll the stack (.pd-rail shrinks). */
-  height: auto;
-  max-height: 100%;
+  /* FULL height, like the expanded sidebar — the rail runs top→bottom, NOT a
+   * short content-hugging card floating at the top. Its TOP is inset by the
+   * .pd-sidebar-tl strip (traffic-light clearance) and the profile button is
+   * pinned to the foot; height falls through to the base .pd-sidebar (100%). We
+   * only cancel the ui base's off-screen slide here so it parks in place. */
+  height: 100%;
   transition:
     width var(--pd-duration-slow) var(--pd-easing-standard),
     transform var(--pd-duration-slow) var(--pd-easing-standard);
 }
 :root[data-flavor="claude"] .pd-sidebar[data-open="false"] {
+  /* Cancel the ui base's off-screen slide; height falls through to the base
+   * claude rule (calc(100% - 16px)) so the collapsed card is full-height, top
+   * inset by the traffic-light strip and NOT shortened from the bottom. */
   transform: none;
-  /* The ui-package base rule `:root[data-flavor="claude"] .pd-sidebar` sets
-   * height: calc(100% - 16px) at a higher specificity than the flavor-less
-   * `.pd-sidebar[data-open="false"]` above, so height:auto must be re-asserted
-   * HERE (this selector out-specifies the base) or the collapsed claude rail
-   * runs full-height instead of hugging its content. */
-  height: auto;
-  /* claude floats the card with an 8px margin (16px total) — cap to that. */
-  max-height: calc(100% - 16px);
 }
 
 /*
@@ -260,19 +255,24 @@ body {
   --pd-sidebar-rail: calc((32px + var(--pd-icon-size)) * var(--pd-sidebar-scale, 1));
 }
 
-/* Rail contents: a left-anchored vertical stack of icon-only buttons. */
+/* Rail contents: a left-anchored vertical stack of icon-only buttons that fills
+ * the full-height collapsed sidebar; a flex spacer (.pd-rail-spacer) before the
+ * profile button pins it to the foot, and the stack scrolls if a short window
+ * can't fit it. */
 .pd-rail {
   display: flex;
-  /* Size to the icon cluster (the collapsed sidebar is now content-height, so a
-   * flex-grow basis of 0 would collapse the rail to nothing) but still allow
-   * shrink + scroll if a short window caps the sidebar's max-height. */
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 0;
   flex-direction: column;
   align-items: flex-start;
   gap: 4px;
   padding: 4px 0 8px;
   overflow-y: auto;
+}
+/* Pushes the trailing profile button to the foot of the full-height rail. */
+.pd-rail-spacer {
+  flex: 1 1 auto;
+  min-height: 8px;
 }
 .pd-rail-btn {
   display: inline-flex;

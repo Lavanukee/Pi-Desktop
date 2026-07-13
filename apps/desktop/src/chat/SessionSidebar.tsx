@@ -353,9 +353,9 @@ export function SessionSidebar({
             onClick={onOpenConnectors}
             icon={<IconConnector size={16} />}
           />
-          {/* The rail now hugs its content (shorter than the window), so the
-              profile button sits directly after the nav cluster — no bottom
-              spacer pushing it to the window foot. */}
+          {/* The rail runs the FULL sidebar height; this spacer pushes the
+              profile button down to the foot, matching the expanded sidebar. */}
+          <div className="pd-rail-spacer" aria-hidden="true" />
           <SidebarProfileMenu variant="rail" onOpenSettings={onOpenSettings} />
         </div>
       </Sidebar>

@@ -16,22 +16,26 @@ export interface ProjectEntry {
 }
 
 export type ProjectInvokeMap = {
-  /** Every known project + the active id (null = working outside a project). */
+  /** Every known project + the active id (null = working outside a project).
+   * `activeMissing` is true when an active project IS selected but its folder no
+   * longer exists on disk — pi is then rooted at the conversation sandbox
+   * (electron/sandbox.ts), so the UI can surface a "using sandbox" warn state. */
   'project:list': {
     request: undefined;
-    response: { projects: ProjectEntry[]; activeId: string | null };
+    response: { projects: ProjectEntry[]; activeId: string | null; activeMissing: boolean };
   };
   /** Activate a project by id (or by adding/reusing a path). Returns the active
-   * project (null when the id/path could not be resolved). */
+   * project (null when the id/path could not be resolved). `activeMissing` flags
+   * that the active folder is gone from disk (see `project:list`). */
   'project:set': {
     request: { id?: string; path?: string };
-    response: { project: ProjectEntry | null; projects: ProjectEntry[] };
+    response: { project: ProjectEntry | null; projects: ProjectEntry[]; activeMissing: boolean };
   };
   /** Pick a folder (native dialog) → add + activate it. `project` is null when
    * the user cancelled the folder picker. */
   'project:new': {
     request: { path?: string } | undefined;
-    response: { project: ProjectEntry | null; projects: ProjectEntry[] };
+    response: { project: ProjectEntry | null; projects: ProjectEntry[]; activeMissing: boolean };
   };
   /** Clear the active project ("Don't work in a project"). */
   'project:clear': {

@@ -22,7 +22,7 @@ import { usePiStore } from '../../state/pi-slice';
 import { artifactToPayload } from './artifacts';
 import { useBrowserAgent } from './browser-agent';
 import { useCanvasStateReporter } from './canvas-state-report';
-import { openProjectFileTree, useFileWriteCanvasRouting } from './file-tabs';
+import { openProjectFileTree, useFileTabRefresh, useFileWriteCanvasRouting } from './file-tabs';
 import { useNativeSurfaces } from './native-surfaces';
 import { createCanvasDragResize } from './resize-collapse';
 import { useSubagentCanvasRouting } from './subagent-routing';
@@ -69,6 +69,9 @@ export function CanvasTabsPanel() {
   // since it's their job to open the FIRST tab.
   useArtifactCanvasRouting();
   useFileWriteCanvasRouting();
+  // Recover a focused file tab that raced its write and rendered blank (round-
+  // blindtest #10) — re-reads from disk when an EMPTY file tab gains focus.
+  useFileTabRefresh();
   useBashTerminalCanvasRouting();
 
   useEffect(() => {

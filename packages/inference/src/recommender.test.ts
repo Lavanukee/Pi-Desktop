@@ -12,18 +12,36 @@ describe('recommend (speed-optimized budget tiers)', () => {
     expect(r.model.spec).toBe('mtp');
   });
 
-  it('16GB → Gemma4-12B MTP (vision-capable), fast-text', () => {
+  it('16GB → steps down to the 8GB-tier Qwen3.5-4B to keep headroom (12B needs 16)', () => {
+    // The 16GB-tier default (Gemma4-12B) needs ~16GB — exactly the machine total,
+    // no headroom — so recommend() drops to the lighter 8GB-tier speed pick.
     const r = recommend({ totalRamGB: 16 });
-    expect(r.tier).toBe('16GB');
-    expect(r.model.id).toBe('gemma-4-12b-it');
+    expect(r.tier).toBe('8GB');
+    expect(r.model.id).toBe('qwen3.5-4b-mtp');
     expect(r.model.spec).toBe('mtp');
+    expect(r.model.minRamGB).toBeLessThan(16);
   });
 
-  it('24GB → Qwen3.6-27B MTP Q4_K_M', () => {
+  it('24GB → steps down to the 16GB-tier Gemma4-12B (never the exact-fit 27B)', () => {
+    // The 27B needs ~24GB (= the machine total), so it is NOT the DEFAULT pick;
+    // the headroom step-down lands on the vision-capable 12B instead.
     const r = recommend({ totalRamGB: 24 });
-    expect(r.tier).toBe('24GB');
-    expect(r.model.id).toBe('qwen3.6-27b-mtp');
+    expect(r.tier).toBe('16GB');
+    expect(r.model.id).toBe('gemma-4-12b-it');
+    expect(r.model.id).not.toBe('qwen3.6-27b-mtp');
     expect(r.file.quant).toBe('Q4_K_M');
+    expect(r.model.minRamGB).toBeLessThan(24);
+  });
+
+  it('leaves headroom at every tier — no default recommends a model needing ≥ total RAM', () => {
+    for (const ram of [6, 8, 16, 24, 32, 48, 64, 96, 128]) {
+      const r = recommend({ totalRamGB: ram });
+      // A tiny (<8GB) machine is the one exception: nothing lighter exists.
+      if (ram >= 8) expect(r.model.minRamGB, `${ram}GB recommends ${r.model.id}`).toBeLessThan(ram);
+      for (const pick of r.simpleSet) {
+        if (ram >= 8) expect(pick.model.minRamGB).toBeLessThan(ram);
+      }
+    }
   });
 
   it('32GB → Qwen3.6-35B-A3B MoE MTP (UD-Q4_K_M)', () => {
@@ -102,11 +120,12 @@ describe('recommend (speed-optimized budget tiers)', () => {
     });
   });
 
-  it('respects the exact tier boundaries', () => {
+  it('respects the tier boundaries after the headroom step-down', () => {
     expect(recommend({ totalRamGB: 47 }).tier).toBe('32GB');
     expect(recommend({ totalRamGB: 48 }).tier).toBe('48GB');
     expect(recommend({ totalRamGB: 23 }).tier).toBe('16GB');
-    expect(recommend({ totalRamGB: 24 }).tier).toBe('24GB');
+    // 24GB steps down from the nominal 24GB tier (exact-fit 27B) to 16GB.
+    expect(recommend({ totalRamGB: 24 }).tier).toBe('16GB');
     expect(recommend({ totalRamGB: 7 }).tier).toBe('<8GB');
   });
 });

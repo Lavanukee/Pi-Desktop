@@ -32,7 +32,30 @@ export interface EffortKnobs {
   readonly reviewPasses: number;
   /** Whether to run adversarial checks (e.g. try to break the produced output). */
   readonly adversarialChecks: boolean;
-  /** VLM image-refine iterations for high-quality gen mode (v0.2 gen pillar). */
+  /**
+   * Hard per-turn tool-call cap — a generous backstop the loop detector aborts
+   * on when a turn burns through this many tool calls without finishing. Scales
+   * with effort so a "max" run is allowed to grind much longer than a "low" one.
+   */
+  readonly maxTurnSteps: number;
+  /**
+   * Whether the effort-gated REAL verify runs: after the model signals it is done
+   * on a coding/file-ops turn, run the project's own checks (test/typecheck/lint)
+   * in the working dir and feed failures back as a fix steer. On at high/max.
+   */
+  readonly realVerify: boolean;
+  /**
+   * Bound on how many times the REAL verify may feed a failing check back to the
+   * model for a fix within one user turn (so it can't loop forever). 0 disables.
+   */
+  readonly verifyFixAttempts: number;
+  /**
+   * VLM image-refine iterations for high-quality gen mode. RESERVED: defined and
+   * covered by the monotonic effort test, but not yet consumed anywhere — the gen
+   * pillars (image/video/3D) land on the `modalities` branch and will read this
+   * knob to bound their refine loop. Left in the table so the effort contract is
+   * stable for that wave; remove the "reserved" note once a gen path consumes it.
+   */
   readonly imageRefinePasses: number;
 }
 
@@ -43,6 +66,9 @@ const KNOBS: Record<EffortLevel, EffortKnobs> = {
     abortThreshold: 2,
     reviewPasses: 0,
     adversarialChecks: false,
+    maxTurnSteps: 24,
+    realVerify: false,
+    verifyFixAttempts: 0,
     imageRefinePasses: 1,
   },
   medium: {
@@ -51,6 +77,9 @@ const KNOBS: Record<EffortLevel, EffortKnobs> = {
     abortThreshold: 3,
     reviewPasses: 1,
     adversarialChecks: false,
+    maxTurnSteps: 40,
+    realVerify: false,
+    verifyFixAttempts: 0,
     imageRefinePasses: 2,
   },
   high: {
@@ -59,6 +88,9 @@ const KNOBS: Record<EffortLevel, EffortKnobs> = {
     abortThreshold: 4,
     reviewPasses: 2,
     adversarialChecks: true,
+    maxTurnSteps: 60,
+    realVerify: true,
+    verifyFixAttempts: 1,
     imageRefinePasses: 3,
   },
   max: {
@@ -67,6 +99,9 @@ const KNOBS: Record<EffortLevel, EffortKnobs> = {
     abortThreshold: 6,
     reviewPasses: 3,
     adversarialChecks: true,
+    maxTurnSteps: 100,
+    realVerify: true,
+    verifyFixAttempts: 2,
     imageRefinePasses: 4,
   },
 };

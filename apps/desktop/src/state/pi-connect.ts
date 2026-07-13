@@ -6,6 +6,7 @@
 import { createEventRouter, type ImageContent, rehydrateSessionJsonl } from '@pi-desktop/engine';
 import type { TaskClass } from '@pi-desktop/harness';
 import { maybeRouteAuto } from '../chat/auto-router';
+import { resetCanvasForNewSession } from './canvas-store';
 import { ensureVisionMode } from './local-model';
 import { createPiSink, usePiStore } from './pi-slice';
 import { useSettingsStore } from './settings-store';
@@ -163,6 +164,10 @@ export async function newSession(): Promise<{ ok: boolean; cancelled?: boolean; 
   // (also clears any stale bridgeExited/notifications). Unconditional so New
   // chat always yields a clean slate, even if the RPC failed.
   usePiStore.getState().setMessagesExternal([]);
+  // Session isolation (backlog #2): a new conversation gets its OWN clean canvas
+  // — drop the previous chat's accumulated tabs + close the rail so canvases
+  // don't pile up across "separate" chats.
+  resetCanvasForNewSession();
   if (!res.success) return { ok: false, error: res.error };
   if (res.cancelled === true) return { ok: true, cancelled: true };
   // A fresh session adopts the saved custom instructions on its first prompt.
@@ -427,6 +432,9 @@ export async function switchSession(
   const switched = await window.piDesktop.invoke('pi:switch-session', { sessionPath });
   if (!switched.success) return { ok: false, truncated: false, error: switched.error };
   if (switched.cancelled === true) return { ok: false, truncated: false, cancelled: true };
+  // Session isolation (backlog #2): switching to another conversation gives it
+  // its own clean canvas — clear the tabs the previous session accumulated.
+  resetCanvasForNewSession();
   const read = await window.piDesktop.invoke('fs:read-session', { file: sessionPath });
   if (read.text === null) {
     usePiStore.getState().setMessagesExternal([]);

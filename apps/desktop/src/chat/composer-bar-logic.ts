@@ -5,9 +5,11 @@
  *   - the harness `activeTier` → the CENTER tier label (via TIER_LABEL),
  *   - the harness `activeClass` → the hover copy "request categorized as …",
  *   - `effortMode` + `effort` + `activeTier` → the RIGHT effort readout: "Effort ·
- *     Auto" in auto mode (the word "Auto", mirroring the model chip), or "Effort ·
- *     <Level>" when an explicit level is pinned. The tier still drives the slider
- *     POSITION in auto so the knob rests where routing would land.
+ *     Adaptive" in auto mode, or "Effort · <Level>" when an explicit level is
+ *     pinned. The tier still drives the slider POSITION in auto so the knob rests
+ *     where routing would land. (jedd #12: the auto readout says "Adaptive", NOT
+ *     "Auto", so it never collides with the model chip's "Auto" — the two chips
+ *     name clearly distinct axes, model vs effort, instead of two bare "Auto"s.)
  *
  * The harness stays 4-level; Auto ↔ tier resolution lives entirely here + in
  * `state/model-selection` (imported, not redefined).
@@ -38,6 +40,39 @@ export function classificationHover(activeClass: string | null | undefined): str
   return cls === null ? null : `request categorized as ${cls}`;
 }
 
+/** Matches a working dir that lives inside the per-conversation sandbox root
+ * `~/.pi/desktop/sandbox/<id>/` — home-independent so it holds wherever `$HOME`
+ * is. Used by {@link usesSandbox} to detect the missing-project fallback. */
+const SANDBOX_CWD = /(^|\/)\.pi\/desktop\/sandbox(\/|$)/;
+
+/**
+ * LEFT (jedd #13) — whether the composer's folder chip should surface the
+ * per-conversation SANDBOX state instead of a (possibly stale) project name. It's
+ * true when a project is selected but pi is actually running inside the
+ * conversation sandbox `~/.pi/desktop/sandbox/<id>/`: the project folder went
+ * missing on disk and the harness rerouted the live working dir there (see the
+ * CRITICAL missing-project wave) rather than the dead path.
+ *
+ * Prefers an explicit store flag (`usingSandbox`, if that wave has landed it) when
+ * the caller passes one; otherwise INFERS it from pi's live session cwd. It keys
+ * on the cwd being UNDER the sandbox root (not merely "cwd ≠ project path") so a
+ * valid project never false-warns when the OS realpath's its folder — e.g. macOS
+ * resolves `/tmp/foo` to `/private/tmp/foo`, which a naive path-equality check
+ * would read as "not in the project". Returns false when no project is selected
+ * (the plain "No project" state, not a stale-folder warning) or before the session
+ * cwd is known. Pure + node-testable.
+ */
+export function usesSandbox(
+  activePath: string | null,
+  sessionCwd: string | null | undefined,
+  flag?: boolean,
+): boolean {
+  if (flag !== undefined) return flag;
+  if (activePath === null) return false;
+  if (sessionCwd === null || sessionCwd === undefined || sessionCwd === '') return false;
+  return SANDBOX_CWD.test(sessionCwd);
+}
+
 /**
  * Display names for the 4-level effort scale. The mid detent (the auto-resolved
  * default for the balanced tier) reads "Balanced" so the effort readout
@@ -59,13 +94,13 @@ export function effortDisplay(level: EffortLevel): string {
 /** Everything the {@link EffortSlider} needs, derived from settings + the tier. */
 export interface EffortSliderView {
   /** Auto mode: the slider POSITION follows the tier's auto level and a drag flips
-   * to a pinned level; the label reads the word "Effort · Auto". */
+   * to a pinned level; the label reads "Effort · Adaptive". */
   readonly auto: boolean;
   /** The explicit detent index (0..EFFORT_STEP_COUNT-1) for aria + keyboard. */
   readonly index: number;
   /** Fill fraction (0..1): auto → the tier's auto level; level → the level. */
   readonly fill: number;
-  /** Labeled readout: "Effort · Auto" (auto) or "Effort · Balanced/High/Max" (level). */
+  /** Labeled readout: "Effort · Adaptive" (auto) or "Effort · Balanced/High/Max" (level). */
   readonly label: string;
   /** Screen-reader value text. */
   readonly valueText: string;
@@ -75,8 +110,9 @@ export interface EffortSliderView {
  * Resolve the slider surface. In Auto the fill follows the active tier
  * (fast→min, balanced→mid, intelligent→the tick below max via
  * `autoEffortForTier`); with no tier yet it rests on the last explicit level. The
- * Auto readout is the literal "Effort · Auto" (mirroring the model chip's Auto),
- * while the slider position still shows where routing would land. In level mode it
+ * Auto readout is "Effort · Adaptive" (a distinct word from the model chip's
+ * "Auto", jedd #12), while the slider position still shows where routing would
+ * land. In level mode it
  * pins the explicit level and reads "Effort · <Level>" (max is only reachable
  * here, by an explicit drag).
  */
@@ -86,11 +122,12 @@ export function effortSliderView(
   activeTier: ModelTier | null,
 ): EffortSliderView {
   if (effortMode === 'auto') {
-    // In Auto the readout says the literal word "Auto" ("Effort · Auto"), NOT the
-    // resolved level — Auto means "let routing pick the effort", mirroring the
-    // model chip's Auto. The tier still drives the slider POSITION (index/fill)
-    // via `autoEffortForTier` so the knob rests where routing would land; before
-    // the classifier runs (no tier) it rests on the last explicit level.
+    // In Auto the readout says "Adaptive" ("Effort · Adaptive"), NOT the resolved
+    // level — it means "let routing pick the effort". A distinct word from the
+    // model chip's "Auto" (jedd #12) so the two never read as duplicate "Auto"s.
+    // The tier still drives the slider POSITION (index/fill) via `autoEffortForTier`
+    // so the knob rests where routing would land; before the classifier runs (no
+    // tier) it rests on the last explicit level.
     const level = activeTier !== null ? autoEffortForTier(activeTier) : effort;
     const index = Math.max(0, EFFORT_STEPS.indexOf(level));
     const fill = levelToSlider(level);
@@ -98,8 +135,8 @@ export function effortSliderView(
       auto: true,
       index,
       fill,
-      label: 'Effort · Auto',
-      valueText: 'Effort, Auto',
+      label: 'Effort · Adaptive',
+      valueText: 'Effort, adaptive',
     };
   }
   const index = Math.max(0, EFFORT_STEPS.indexOf(effort));

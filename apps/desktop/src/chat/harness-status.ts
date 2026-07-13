@@ -8,11 +8,11 @@
  *
  * Type-only import from the harness package (erased at build — no runtime pull).
  */
-import type { HarnessStatus, PlanItem } from '@pi-desktop/harness';
+import type { HarnessStage, HarnessStatus, PlanItem } from '@pi-desktop/harness';
 import { useMemo } from 'react';
 import { usePiStore } from '../state/pi-slice';
 
-export type { HarnessStatus, PlanItem };
+export type { HarnessStage, HarnessStatus, PlanItem };
 
 /** Parse the published harness status JSON, tolerating absence/garbage. */
 export function parseHarnessStatus(raw: string | undefined): HarnessStatus | null {
@@ -46,4 +46,46 @@ export function repairTotal(status: HarnessStatus | null): number {
 export function classLabel(cls: string | null | undefined): string | null {
   if (cls === null || cls === undefined) return null;
   return cls.replace(/-/g, ' ');
+}
+
+/** Presentational view of the harness lifecycle {@link HarnessStage}. */
+export interface StageDisplay {
+  /** Short verb label the footer renders, e.g. "Classifying". */
+  readonly label: string;
+  /**
+   * Whether the stage is still in flight (`Classifying…`, subtle live tone) vs a
+   * terminal one (`Done`). Drives the trailing ellipsis and the success tint.
+   */
+  readonly live: boolean;
+}
+
+/**
+ * The user-facing verb for each stage the harness publishes. `idle` maps to
+ * `null` (nothing to surface — hide the label). The keys are exhaustive over
+ * {@link HarnessStage} so a newly added stage is a compile error until it gets a
+ * label here — we never render a raw enum value, and never invent a stage the
+ * harness doesn't publish.
+ */
+const STAGE_LABELS: Record<HarnessStage, string | null> = {
+  idle: null,
+  classifying: 'Classifying',
+  working: 'Working',
+  repairing: 'Repairing',
+  reviewing: 'Reviewing',
+  revising: 'Revising',
+  verifying: 'Verifying',
+  done: 'Done',
+};
+
+/**
+ * Map a published harness {@link HarnessStage} to its footer display, or `null`
+ * when there's nothing to show (idle, absent, or an unknown value from an older /
+ * garbled status payload — the lookup tolerates keys outside the enum). Pure, so
+ * the mapping is unit-tested without rendering.
+ */
+export function stageDisplay(stage: HarnessStage | null | undefined): StageDisplay | null {
+  if (stage === null || stage === undefined) return null;
+  const label = STAGE_LABELS[stage];
+  if (label === null || label === undefined) return null;
+  return { label, live: stage !== 'done' };
 }

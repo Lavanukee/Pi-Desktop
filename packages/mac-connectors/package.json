@@ -6,7 +6,8 @@
   "license": "MIT",
   "description": "pi extension: macOS app connectors (Calendar, Reminders, Contacts, Mail, Messages) via osascript + chat.db.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./tool-names": "./src/tool-names.ts"
   },
   "scripts": {
     "lint": "biome check .",

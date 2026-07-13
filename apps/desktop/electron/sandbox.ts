@@ -59,9 +59,19 @@ export function ensureSandboxDir(conversationId: string, home: string = os.homed
   return dir;
 }
 
+/** True when `p` resolves to an existing directory on disk. */
+function directoryExists(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /** The pi:start / pi:restart request shape this resolver reads. */
 export interface SessionCwdRequest {
-  /** Explicit working folder (an active project). Wins when present. */
+  /** Explicit working folder (an active project). Wins when present AND it still
+   * exists on disk. */
   cwd?: string;
   /** Resuming an existing session — pi restores that session's own recorded
    * cwd, so we must NOT override it with a sandbox. */
@@ -72,20 +82,32 @@ export interface SessionCwdRequest {
 
 /**
  * Resolve the cwd a pi child should be spawned in:
- *   1. an explicit project/working-folder cwd wins (existing behavior);
- *   2. else when resuming a session, defer to pi (returns undefined so the
- *      session's recorded cwd is restored);
- *   3. else (a fresh, projectless conversation) the conversation's dedicated
- *      sandbox, created on demand.
- * Returns undefined only when there is nothing to root at (no cwd, no session,
- * no conversation id) — pi then applies its own HOME fallback.
+ *   1. an explicit project/working-folder cwd wins — but ONLY while it still
+ *      EXISTS on disk;
+ *   2. else when resuming a session (and no cwd was requested), defer to pi
+ *      (returns undefined so the session's recorded cwd is restored);
+ *   3. else (a fresh/projectless conversation, OR a project cwd that no longer
+ *      exists) the conversation's dedicated sandbox, created on demand.
+ * Returns undefined only when there is nothing to root at (no usable cwd, no
+ * session, no conversation id) — pi then applies its own HOME fallback.
+ *
+ * The existence gate on (1) is the file-spill fix: a persisted-but-deleted
+ * project path (e.g. `/tmp/pi-rt8-project` removed after a reboot) must NOT be
+ * handed to pi, because pi's own resolver falls back to HOME for a missing cwd
+ * (`existsSync(cwd) ? cwd : os.homedir()`) and the agent then writes files into
+ * the user's HOME. A missing cwd instead falls through to the per-conversation
+ * sandbox — NEVER HOME. We also skip the resume-defer branch when a cwd was
+ * requested-but-missing, so pi is never left to restore that same dead cwd.
  */
 export function resolveSessionCwd(
   req: SessionCwdRequest,
   home: string = os.homedir(),
 ): string | undefined {
-  if (typeof req.cwd === 'string' && req.cwd.length > 0) return req.cwd;
-  if (typeof req.sessionPath === 'string' && req.sessionPath.length > 0) return undefined;
+  const cwdRequested = typeof req.cwd === 'string' && req.cwd.length > 0;
+  if (cwdRequested && directoryExists(req.cwd as string)) return req.cwd;
+  if (!cwdRequested && typeof req.sessionPath === 'string' && req.sessionPath.length > 0) {
+    return undefined;
+  }
   if (typeof req.conversationId === 'string' && req.conversationId.length > 0) {
     return ensureSandboxDir(req.conversationId, home);
   }

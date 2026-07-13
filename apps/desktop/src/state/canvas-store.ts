@@ -35,3 +35,30 @@ export const useCanvasStore = create<CanvasUiState>((set) => ({
   setCanvasOpen: (open) => set({ canvasOpen: open }),
   toggleCanvasOpen: () => set((s) => ({ canvasOpen: !s.canvasOpen })),
 }));
+
+// ── Canvas-reset bridge (session isolation) ────────────────────────────────
+// The canvas TAB set lives in the React-owned CanvasController (@pi-desktop/
+// canvas), which the non-React session lifecycle (pi-connect's newSession /
+// switchSession) can't reach directly. The app shell registers the live
+// controller's `reset` here on mount, so starting or switching a conversation
+// can clear the PREVIOUS conversation's canvas — each chat gets its own clean
+// canvas instead of accumulating tabs across "separate" chats (backlog #2).
+
+let controllerReset: (() => void) | null = null;
+
+/** App shell → register (or, with `null`, unregister) the live CanvasController's
+ * tab-reset. Idempotent; the latest registration wins. */
+export function registerCanvasControllerReset(fn: (() => void) | null): void {
+  controllerReset = fn;
+}
+
+/**
+ * Reset the canvas for a fresh / switched conversation: drop every tab
+ * (CanvasController.reset via the registered bridge) and slide the rail closed
+ * so the new chat starts with an empty canvas. Safe to call when nothing is
+ * registered (a no-op before the shell mounts).
+ */
+export function resetCanvasForNewSession(): void {
+  controllerReset?.();
+  useCanvasStore.getState().setCanvasOpen(false);
+}

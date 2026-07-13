@@ -1036,3 +1036,51 @@ body {
 .pd-composer-bar .pd-project-chip-label {
   max-width: 130px;
 }
+
+/* jedd #13 — the folder chip's per-conversation SANDBOX state. When the selected
+ * project folder is missing and pi fell back to the conversation sandbox, the chip
+ * reads "Sandbox" (see ProjectRegion) in a subtle warning tint instead of the
+ * stale project name. Placed AFTER the base chip rules so it wins at equal
+ * specificity; tokens only. */
+.pd-project-picker--sandbox .pd-project-chip,
+.pd-project-picker--sandbox .pd-project-chip .pd-project-chip-icon {
+  color: var(--pd-status-warning-fg);
+}
+.pd-project-picker--sandbox .pd-project-chip:hover {
+  background: var(--pd-status-warning-bg);
+  color: var(--pd-status-warning-fg);
+}
+
+/* jedd #12 — the subtle shortcut helper line under the empty/home composer. It
+ * carries the @ / / / ! affordances demoted out of the (now friendly) placeholder;
+ * quiet muted text with small key caps, wrapping + centered under the composer. */
+.pd-composer-hints {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 10px;
+  font-size: var(--pd-font-size-footnote);
+  color: var(--pd-text-muted);
+  user-select: none;
+}
+.pd-composer-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.pd-composer-hint kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--pd-radius-sm);
+  background: var(--pd-bg-inset);
+  color: var(--pd-text-secondary);
+  font-family: var(--pd-font-mono);
+  font-size: var(--pd-font-size-caption);
+  line-height: 1;
+}

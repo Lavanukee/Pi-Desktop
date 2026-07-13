@@ -39,25 +39,44 @@ import {
   EFFORT_STEP_COUNT,
   effortSliderView,
   levelForIndex,
+  usesSandbox,
 } from './composer-bar-logic';
 import { useHarnessStatus } from './harness-status';
 
-/** LEFT: the relocated project (working-folder) chip, slimmed for the bar. */
+/** LEFT: the relocated project (working-folder) chip, slimmed for the bar. When
+ * the selected project folder is MISSING and pi fell back to the conversation
+ * sandbox, the chip drops the stale name for a subtle "Sandbox" warn state
+ * (jedd #13) instead of pretending the dead folder is the working dir. */
 function ProjectRegion() {
   const projects = useProjectStore((s) => s.projects);
   const activeId = useProjectStore((s) => s.activeId);
+  const activePath = useProjectStore((s) => s.activePath);
+  // The CRITICAL missing-project wave may expose an explicit flag; read it
+  // opportunistically (undefined until it lands) and otherwise infer the sandbox
+  // state from the live session cwd below.
+  const sandboxFlag = useProjectStore(
+    (s) => (s as unknown as { usingSandbox?: boolean }).usingSandbox,
+  );
+  const sessionCwd = usePiStore((s) => s.session?.cwd);
   const selectProject = useProjectStore((s) => s.selectProject);
   const newProject = useProjectStore((s) => s.newProject);
   const clearProject = useProjectStore((s) => s.clearProject);
+
+  const sandbox = usesSandbox(activePath, sessionCwd, sandboxFlag);
+  const className = ['pd-project-picker--bar', sandbox ? 'pd-project-picker--sandbox' : '']
+    .filter(Boolean)
+    .join(' ');
   return (
     <ProjectPicker
-      className="pd-project-picker--bar"
+      className={className}
       projects={projects.map((p) => ({ id: p.id, name: p.name }))}
-      active={activeId}
+      // In the sandbox we're NOT in the selected project, so don't render its name
+      // as the active working folder — fall through to the "Sandbox" placeholder.
+      active={sandbox ? null : activeId}
       onSelect={(id) => void selectProject(id)}
       onNew={() => void newProject()}
       onClear={() => void clearProject()}
-      placeholder="No project"
+      placeholder={sandbox ? 'Sandbox' : 'No project'}
     />
   );
 }
@@ -124,6 +143,18 @@ function EffortRegion() {
         side="top"
         align="end"
         sideOffset={8}
+        // jedd #14: land the popover's initial focus on the slider thumb (not the
+        // "?" help button) so arrow keys nudge effort immediately. The help button
+        // is already out of the tab order (EffortSlider), but focus the track
+        // explicitly for determinism across Radix focus-scope versions.
+        onOpenAutoFocus={(e) => {
+          const root = e.currentTarget as HTMLElement | null;
+          const slider = root?.querySelector<HTMLElement>('[role="slider"]');
+          if (slider !== null && slider !== undefined) {
+            e.preventDefault();
+            slider.focus();
+          }
+        }}
       >
         <EffortSlider
           steps={EFFORT_STEP_COUNT}

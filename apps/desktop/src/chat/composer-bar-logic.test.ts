@@ -7,6 +7,7 @@ import {
   effortSliderView,
   levelForIndex,
   tierLabel,
+  usesSandbox,
 } from './composer-bar-logic';
 
 /**
@@ -37,6 +38,47 @@ describe('classificationHover', () => {
   });
 });
 
+/**
+ * The folder chip's SANDBOX state (jedd #13): true when a project is selected but
+ * pi's live cwd isn't inside it (its folder went missing and the harness rerouted
+ * to the conversation sandbox), so the chip shows "Sandbox" instead of the stale
+ * project name. Prefers an explicit flag; otherwise infers from the session cwd.
+ */
+describe('usesSandbox', () => {
+  const proj = '/tmp/pi-rt8-project';
+  const sandbox = '/Users/jedd/.pi/desktop/sandbox/abc123';
+
+  it('true when a project is selected but pi fell back to the conversation sandbox', () => {
+    expect(usesSandbox(proj, sandbox)).toBe(true);
+    expect(usesSandbox(proj, `${sandbox}/notes`)).toBe(true); // a subdir of the sandbox
+  });
+
+  it('false when pi is running inside the selected project (root or a descendant)', () => {
+    expect(usesSandbox(proj, proj)).toBe(false);
+    expect(usesSandbox(proj, `${proj}/src/app`)).toBe(false);
+  });
+
+  it('does NOT false-warn when the OS realpaths the project folder (/tmp vs /private/tmp)', () => {
+    // A naive "cwd !== project path" check would wrongly flag this as sandbox.
+    expect(usesSandbox('/tmp/foo', '/private/tmp/foo')).toBe(false);
+  });
+
+  it('false when no project is selected — that is the plain "No project" state', () => {
+    expect(usesSandbox(null, sandbox)).toBe(false);
+  });
+
+  it('false before the session cwd is known (avoids a false warning on load)', () => {
+    expect(usesSandbox(proj, null)).toBe(false);
+    expect(usesSandbox(proj, undefined)).toBe(false);
+    expect(usesSandbox(proj, '')).toBe(false);
+  });
+
+  it('an explicit store flag wins over the cwd inference (either direction)', () => {
+    expect(usesSandbox(proj, proj, true)).toBe(true);
+    expect(usesSandbox(proj, sandbox, false)).toBe(false);
+  });
+});
+
 describe('effortDisplay', () => {
   it('maps the effort scale to display names, with the mid/auto default → "Balanced"', () => {
     expect(effortDisplay('low')).toBe('Low');
@@ -47,41 +89,42 @@ describe('effortDisplay', () => {
 });
 
 describe('effortSliderView', () => {
-  it('auto: the label reads the literal "Effort · Auto" while the tier still drives the slider position', () => {
-    // fast → the knob rests at the low detent, but the readout says "Auto".
+  it('auto: the label reads "Effort · Adaptive" while the tier still drives the slider position', () => {
+    // fast → the knob rests at the low detent, but the readout says "Adaptive".
     expect(effortSliderView('auto', 'medium', 'fast')).toMatchObject({
       auto: true,
       index: 0,
       fill: 0,
-      label: 'Effort · Auto',
-      valueText: 'Effort, Auto',
+      label: 'Effort · Adaptive',
+      valueText: 'Effort, adaptive',
     });
 
-    // balanced → the knob sits at the mid detent; the label stays "Effort · Auto".
+    // balanced → the knob sits at the mid detent; the label stays "Effort · Adaptive".
     const bal = effortSliderView('auto', 'low', 'balanced');
     expect(bal.auto).toBe(true);
-    expect(bal.label).toBe('Effort · Auto');
-    expect(bal.valueText).toBe('Effort, Auto');
+    expect(bal.label).toBe('Effort · Adaptive');
+    expect(bal.valueText).toBe('Effort, adaptive');
     expect(bal.index).toBe(1); // medium — the routed position, not the readout
     expect(bal.fill).toBeCloseTo(1 / 3, 5);
 
-    // intelligent → the knob rests at the tick below max; still "Effort · Auto".
+    // intelligent → the knob rests at the tick below max; still "Effort · Adaptive".
     const smart = effortSliderView('auto', 'low', 'intelligent');
-    expect(smart.label).toBe('Effort · Auto');
-    expect(smart.valueText).toBe('Effort, Auto');
+    expect(smart.label).toBe('Effort · Adaptive');
+    expect(smart.valueText).toBe('Effort, adaptive');
     expect(smart.index).toBe(2);
     expect(smart.fill).toBeCloseTo(2 / 3, 5);
   });
 
-  it('auto + no tier yet: still reads "Effort · Auto", resting the knob on the explicit level', () => {
+  it('auto + no tier yet: still reads "Effort · Adaptive", resting the knob on the explicit level', () => {
     expect(effortSliderView('auto', 'high', null)).toMatchObject({
       auto: true,
-      label: 'Effort · Auto',
-      valueText: 'Effort, Auto',
+      label: 'Effort · Adaptive',
+      valueText: 'Effort, adaptive',
       index: 2, // the knob rests on the last explicit level
     });
-    // Regardless of the resting level, the auto readout is the word "Auto".
-    expect(effortSliderView('auto', 'medium', null).label).toBe('Effort · Auto');
+    // Regardless of the resting level, the auto readout is "Adaptive" (jedd #12 —
+    // a distinct word from the model chip's "Auto").
+    expect(effortSliderView('auto', 'medium', null).label).toBe('Effort · Adaptive');
   });
 
   it('level mode: pins the explicit level (max reachable), ignoring the tier', () => {

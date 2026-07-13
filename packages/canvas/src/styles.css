@@ -89,6 +89,22 @@
   flex: 0 0 auto;
 }
 
+/* Non-scrolling wrapper that hosts the edge-fade overlays. It must NOT establish
+ * a stacking context or a containing block for the `position:fixed` new-tab `+`
+ * popmenu that lives inside the scroller: a plain `position:relative` is safe
+ * (relative does not contain fixed descendants and only creates a stacking
+ * context WITH a z-index, which we omit). The earlier approach put a
+ * `mask-image` on the scroller itself; in Chromium a masked ancestor visually
+ * traps even a fixed descendant in its compositing layer, so the `+` menu
+ * rendered BEHIND the terminal/browser panel and was unclickable
+ * (round-blindtest #8 regression). */
+.pd-canvas-tablist-viewport {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .pd-canvas-tablist {
   display: flex;
   align-items: flex-end;
@@ -99,6 +115,31 @@
   min-width: 0;
   overflow-x: auto;
   scrollbar-width: none;
+}
+
+/* Edge-fade affordance (round-blindtest #8): with the scrollbar hidden, a soft
+ * fade on whichever side has hidden tabs signals "there's more here" and that
+ * the strip scrolls. Rendered as pointer-events:none overlays that are SIBLINGS
+ * of the scroller (never ancestors of the `+` popmenu, so they can't trap it),
+ * fading the edge tabs into the toolbar background. React mounts each overlay
+ * only for the side that is actually overflowing (measured against scrollLeft),
+ * so a settled edge shows no fade. */
+.pd-canvas-tabfade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 24px;
+  pointer-events: none;
+}
+
+.pd-canvas-tabfade--start {
+  left: 0;
+  background: linear-gradient(to right, var(--pd-bg-inset), transparent);
+}
+
+.pd-canvas-tabfade--end {
+  right: 0;
+  background: linear-gradient(to left, var(--pd-bg-inset), transparent);
 }
 
 .pd-canvas-tablist::-webkit-scrollbar {

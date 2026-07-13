@@ -41,7 +41,10 @@ export function PersonalizationPanel() {
           placeholder="e.g. Respond concisely. Prefer TypeScript. Explain your reasoning before showing code."
         />
         <div className="flex items-center justify-end text-footnote text-text-muted">
-          {dirty ? 'Unsaved — click away to save' : 'Saved'}
+          {/* "Saved" only reflects an ACTUAL persisted instruction — an untouched,
+              empty field shows nothing (a non-breaking space holds the row height)
+              rather than a misleading "Saved". */}
+          {dirty ? 'Unsaved — click away to save' : saved.length > 0 ? 'Saved' : ' '}
         </div>
       </SettingRow>
     </SettingSection>

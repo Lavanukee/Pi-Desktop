@@ -7,7 +7,15 @@ import {
   IconPlus,
   IconTerminal,
 } from '@pi-desktop/ui';
-import { type ComponentType, Fragment, type ReactNode, useEffect, useRef, useState } from 'react';
+import {
+  type ComponentType,
+  Fragment,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { type CanvasConfig, CanvasConfigContext, defaultCanvasConfig } from '../context.ts';
 import type { ArtifactContent } from '../model.ts';
 import { defaultSurfaceRegistry, type SurfaceRegistry } from '../registry.ts';
@@ -221,6 +229,71 @@ export function CanvasTabs({
   // shows the X (close) by default; the app can override placement via panelOpen.
   const panelIsOpen = panelOpen ?? !canvas.collapsed;
 
+  // ── Tab-strip overflow (round-blindtest #8) ────────────────────────────────
+  // With many tabs only a few fit; the ACTIVE tab could scroll off with no hint.
+  // The strip is horizontally scrollable (overflow-x:auto); here we (a) ALWAYS
+  // scroll the active tab back into view when it changes, so its surface is never
+  // hidden, and (b) drive the edge-fade overlays (via this `overflow` state and
+  // the `data-overflow-start/-end` hooks) as a "there's more" affordance in
+  // place of a scrollbar. NB: the fade lives on sibling overlays, NOT a
+  // mask on the scroller — a mask there trapped the fixed `+` popmenu (#8).
+  const activeTabId = canvas.activeTabId;
+  const tabCount = canvas.tabs.length;
+  const tablistRef = useRef<HTMLDivElement | null>(null);
+  const activeSlotRef = useRef<HTMLDivElement | null>(null);
+  const resizeObsRef = useRef<ResizeObserver | null>(null);
+  const [overflow, setOverflow] = useState<{ start: boolean; end: boolean }>({
+    start: false,
+    end: false,
+  });
+
+  const measureOverflow = useCallback((): void => {
+    const list = tablistRef.current;
+    if (!list) return;
+    const max = list.scrollWidth - list.clientWidth;
+    const x = list.scrollLeft;
+    setOverflow({ start: x > 1, end: x < max - 1 });
+  }, []);
+
+  // Callback ref so the ResizeObserver (re)binds exactly when the strip mounts
+  // — the strip only exists in the expanded branch, so a plain effect keyed on a
+  // stable dep would miss the collapsed→expanded remount.
+  const setTablistRef = useCallback(
+    (node: HTMLDivElement | null): void => {
+      resizeObsRef.current?.disconnect();
+      resizeObsRef.current = null;
+      tablistRef.current = node;
+      if (node && typeof ResizeObserver !== 'undefined') {
+        const ro = new ResizeObserver(() => measureOverflow());
+        ro.observe(node);
+        resizeObsRef.current = ro;
+      }
+      measureOverflow();
+    },
+    [measureOverflow],
+  );
+
+  useEffect(() => () => resizeObsRef.current?.disconnect(), []);
+
+  // Keep the active tab visible whenever it (or the tab set) changes. Manual
+  // scrollLeft nudge via bounding rects (offsetParent-agnostic) so it never
+  // scrolls an ancestor the way scrollIntoView can.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-scroll on active/count change.
+  useEffect(() => {
+    const list = tablistRef.current;
+    const slot = activeSlotRef.current;
+    if (list && slot) {
+      const listRect = list.getBoundingClientRect();
+      const slotRect = slot.getBoundingClientRect();
+      if (slotRect.left < listRect.left) {
+        list.scrollLeft -= listRect.left - slotRect.left + 12;
+      } else if (slotRect.right > listRect.right) {
+        list.scrollLeft += slotRect.right - listRect.right + 12;
+      }
+    }
+    measureOverflow();
+  }, [activeTabId, tabCount, measureOverflow]);
+
   if (canvas.collapsed) {
     return (
       <div
@@ -244,43 +317,67 @@ export function CanvasTabs({
     <CanvasConfigContext.Provider value={config}>
       <div className={rootClass} data-fullscreen={canvas.fullscreen || undefined}>
         <div className="pd-canvas-tabbar">
-          <div className="pd-canvas-tablist" role="tablist">
-            {canvas.tabs.map((tab) => {
-              const meta = CANVAS_TAB_KINDS[tab.kind];
-              const Icon = meta.icon;
-              const active = tab.id === canvas.activeTabId;
-              return (
-                // The new-tab `+` sits immediately AFTER the active tab (not at
-                // the far right of the strip).
-                <div key={tab.id} className="pd-canvas-tab-slot">
+          {/* Non-scrolling wrapper: hosts the edge-fade overlays as SIBLINGS of
+              the scroller. The fade must not live on the scroller itself (a
+              mask there trapped the fixed `+` popmenu behind the panel — #8). */}
+          <div className="pd-canvas-tablist-viewport">
+            <div
+              ref={setTablistRef}
+              className="pd-canvas-tablist"
+              role="tablist"
+              onScroll={measureOverflow}
+              data-overflow-start={overflow.start || undefined}
+              data-overflow-end={overflow.end || undefined}
+            >
+              {canvas.tabs.map((tab) => {
+                const meta = CANVAS_TAB_KINDS[tab.kind];
+                const Icon = meta.icon;
+                const active = tab.id === canvas.activeTabId;
+                return (
+                  // The new-tab `+` sits immediately AFTER the active tab (not at
+                  // the far right of the strip).
                   <div
-                    className="pd-canvas-tab"
-                    data-active={active || undefined}
-                    data-kind={tab.kind}
+                    key={tab.id}
+                    ref={active ? activeSlotRef : undefined}
+                    className="pd-canvas-tab-slot"
                   >
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={active}
-                      className="pd-canvas-tab-main"
-                      onClick={() => canvas.focusTab(tab.id)}
+                    <div
+                      className="pd-canvas-tab"
+                      data-active={active || undefined}
+                      data-kind={tab.kind}
                     >
-                      <span className="pd-canvas-tab-icon">{tab.icon ?? <Icon size={14} />}</span>
-                      <span className="pd-canvas-tab-label">{tab.title || meta.label}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="pd-canvas-tab-close"
-                      aria-label={`Close ${tab.title || meta.label}`}
-                      onClick={() => canvas.closeTab(tab.id)}
-                    >
-                      <IconClose size={12} />
-                    </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        className="pd-canvas-tab-main"
+                        onClick={() => canvas.focusTab(tab.id)}
+                      >
+                        <span className="pd-canvas-tab-icon">{tab.icon ?? <Icon size={14} />}</span>
+                        <span className="pd-canvas-tab-label">{tab.title || meta.label}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="pd-canvas-tab-close"
+                        aria-label={`Close ${tab.title || meta.label}`}
+                        onClick={() => canvas.closeTab(tab.id)}
+                      >
+                        <IconClose size={12} />
+                      </button>
+                    </div>
+                    {active ? (
+                      <NewTabButton onPick={newTab} onOpenChange={onMenuOpenChange} />
+                    ) : null}
                   </div>
-                  {active ? <NewTabButton onPick={newTab} onOpenChange={onMenuOpenChange} /> : null}
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+            {overflow.start ? (
+              <span className="pd-canvas-tabfade pd-canvas-tabfade--start" aria-hidden="true" />
+            ) : null}
+            {overflow.end ? (
+              <span className="pd-canvas-tabfade pd-canvas-tabfade--end" aria-hidden="true" />
+            ) : null}
           </div>
           <div className="pd-canvas-tabbar-controls">
             {copyText ? <CopyControl text={copyText} onCopy={onCopy} /> : null}

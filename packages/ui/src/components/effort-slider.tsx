@@ -144,11 +144,16 @@ export function EffortSlider({
         >
           {label}
         </span>
+        {/* A hover/pointer help affordance only — kept OUT of the tab order
+            (tabIndex -1) so keyboard focus, and the popover's initial focus, land
+            on the slider thumb below rather than this "?" button (jedd #14: arrow
+            keys were nudging the help button instead of the thumb). */}
         <button
           type="button"
           className="pd-effort-help"
+          tabIndex={-1}
           aria-label="How effort works"
-          title="Higher effort spends more time reasoning before answering. Auto matches the effort to each request."
+          title="Higher effort spends more time reasoning before answering. Adaptive matches the effort to each request."
         >
           ?
         </button>

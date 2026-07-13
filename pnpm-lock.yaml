@@ -417,6 +417,9 @@ importers:
       '@pi-desktop/browser-use':
         specifier: workspace:*
         version: link:../browser-use
+      '@pi-desktop/mac-connectors':
+        specifier: workspace:*
+        version: link:../mac-connectors
       '@sinclair/typebox':
         specifier: ^0.34.49
         version: 0.34.49

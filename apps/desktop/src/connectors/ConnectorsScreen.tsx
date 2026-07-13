@@ -55,6 +55,15 @@ const MODE_OPTIONS: Array<{ value: McpMode; label: string }> = [
   { value: 'bash-cli', label: 'Bash CLI' },
 ];
 
+/** One-line explanation of each connector run mode, shown under the toggle. */
+const MODE_HINTS: Record<McpMode, string> = {
+  lite: 'Lite — a compact proxy: tools are summarized and fetched on demand, so many connectors fit in a small context.',
+  native:
+    'Native — every connector tool is exposed directly to the model. Most capable, but uses more context.',
+  'bash-cli':
+    'Bash CLI — connectors are driven from the terminal via a discoverable `--help` command surface.',
+};
+
 const CREATE_ITEMS = ['Create plugin', 'Add marketplace', 'Record a skill', 'Request a plugin'];
 
 export function ConnectorsScreen({ onClose }: { onClose: () => void }) {
@@ -190,16 +199,24 @@ export function ConnectorsScreen({ onClose }: { onClose: () => void }) {
                 <SkillsTab />
               ) : (
                 <div className="flex flex-col gap-6">
-                  {/* MCP mode control. */}
-                  <div className="flex items-center gap-2">
-                    <span className="text-footnote text-text-muted">How connectors run</span>
-                    <SegmentedControl
-                      aria-label="MCP mode"
-                      data-testid="connectors-mcp-mode"
-                      value={mode}
-                      onValueChange={(v) => void updateSettings({ mcpMode: v as McpMode })}
-                      options={MODE_OPTIONS}
-                    />
+                  {/* MCP mode control + a one-line explanation of the active mode. */}
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-footnote text-text-muted">How connectors run</span>
+                      <SegmentedControl
+                        aria-label="MCP mode"
+                        data-testid="connectors-mcp-mode"
+                        value={mode}
+                        onValueChange={(v) => void updateSettings({ mcpMode: v as McpMode })}
+                        options={MODE_OPTIONS}
+                      />
+                    </div>
+                    <p
+                      className="text-caption text-text-muted leading-relaxed"
+                      data-testid="connectors-mode-hint"
+                    >
+                      {MODE_HINTS[mode]}
+                    </p>
                   </div>
 
                   {/* Sectioned 2-column grid. */}

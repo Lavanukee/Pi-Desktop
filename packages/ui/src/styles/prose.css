@@ -14,7 +14,14 @@
   line-height: var(--pd-leading-response);
   font-weight: var(--pd-font-weight-body);
   font-variation-settings: var(--pd-font-response-variation);
+  /* Reflow within a narrowed column (round-blindtest #9): when the canvas opens
+   * and the chat column shrinks, long words / inline-code / URLs must wrap
+   * instead of overflowing and being clipped. `min-width: 0` lets this flex
+   * child shrink below its content's intrinsic width; anywhere/break-word do the
+   * actual breaking (incl. otherwise-unbreakable tokens). */
+  min-width: 0;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .pd-prose > :first-child {

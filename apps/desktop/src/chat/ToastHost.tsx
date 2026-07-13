@@ -6,6 +6,7 @@
 import { Button, Toast, ToastViewport } from '@pi-desktop/ui';
 import { restartPi } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
+import { BRIDGE_EXIT_TOAST, isBridgeExitNotice } from './toast-policy';
 
 export function ToastHost() {
   const notifications = usePiStore((s) => s.notifications);
@@ -20,7 +21,10 @@ export function ToastHost() {
   return (
     <>
       {notifications
-        .filter((n) => n.level === 'error')
+        // Drop the raw "pi exited (<code>)." crash line — it stacks a second red
+        // toast with a scary signal code next to the humanized bridge-exit toast.
+        // The bridge-exit toast below is its single, friendly replacement.
+        .filter((n) => n.level === 'error' && !isBridgeExitNotice(n.message))
         .map((n) => (
           <Toast
             key={n.id}
@@ -38,9 +42,11 @@ export function ToastHost() {
       {bridgeExited !== null ? (
         <Toast
           open
-          tone="danger"
-          title="Pi stopped"
-          description="The agent process exited. Restart to continue this session."
+          // Amber, not red: a restart is recoverable, not an error the user
+          // caused. Humanized copy — never the raw signal/exit code (143).
+          tone="warning"
+          title={BRIDGE_EXIT_TOAST.title}
+          description={BRIDGE_EXIT_TOAST.description}
           duration={Number.POSITIVE_INFINITY}
           // The X (RadixToast.Close) fires onOpenChange(false). Without a handler
           // the `open` prop stays true and the toast never closes — clear the

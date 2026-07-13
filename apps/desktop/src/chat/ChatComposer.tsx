@@ -458,11 +458,18 @@ export function ChatComposer({
   };
 
   const showSend = flavor === 'codex' || canSend || isStreaming;
+  // jedd #12: the primary placeholder is friendly for a first-timer — the
+  // developer-jargon @ / ! hints were demoted to the subtle helper line below
+  // (home only), not baked into the placeholder. A single short line also stops
+  // the empty composer from looking oversized (the old 3-line jargon overflowed
+  // and faded, inflating the card).
   const placeholder = isStreaming
     ? 'Send another to steer…'
     : bashMode
       ? 'Run a shell command…'
-      : 'Ask Pi anything. @ to mention files, / for commands, ! to run bash.';
+      : 'Ask Pi anything…';
+  // Only the empty home screen (no messages yet) shows the shortcut helper line.
+  const isHome = usePiStore((s) => s.messages.length === 0);
 
   // #19: fade the placeholder's bottom rather than slicing it. We flip the fade
   // ON only when the empty-state placeholder actually overflows the visible
@@ -614,6 +621,23 @@ export function ChatComposer({
             below it: project chip · active tier · effort slider. */}
         <ComposerBar />
       </div>
+
+      {/* jedd #12: the @ / / ! shortcuts, demoted out of the placeholder to a
+          subtle helper line under the composer — shown only on the empty home
+          screen so a first-timer discovers them without jargon in the input. */}
+      {isHome && !isStreaming ? (
+        <div className="pd-composer-hints" data-testid="composer-hints">
+          <span className="pd-composer-hint">
+            <kbd>@</kbd> files
+          </span>
+          <span className="pd-composer-hint">
+            <kbd>/</kbd> commands
+          </span>
+          <span className="pd-composer-hint">
+            <kbd>!</kbd> bash
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

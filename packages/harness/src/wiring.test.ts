@@ -18,9 +18,14 @@ import { repairToolCallArguments } from '@pi-desktop/provider-llamacpp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   HARNESS_CONFIG_ENTRY,
+  HARNESS_LOOP_ENTRY,
   HARNESS_REVIEW_ENTRY,
+  HARNESS_VERIFY_ENTRY,
+  type HarnessStage,
+  type ProjectCheck,
   type StoredEntryLike,
   SUBAGENT_DEPTH_ENV,
+  type VerifyBashRunner,
   wireHarness,
 } from './index.js';
 import type { CallModel } from './model-call/call-model.js';
@@ -35,18 +40,35 @@ const SCHEMA: ToolSchemaLike = {
 // biome-ignore lint/suspicious/noExplicitAny: event handler shape varies per event.
 type AnyHandler = (event: any, ctx: any) => any;
 
-function makeRig(opts: { effort?: string; callModel?: CallModel } = {}) {
+function makeRig(
+  opts: {
+    effort?: string;
+    mode?: string;
+    preset?: string;
+    callModel?: CallModel;
+    verify?: {
+      runBash?: VerifyBashRunner;
+      detectCheck?: (cwd: string) => ProjectCheck | null;
+    };
+    cwd?: string;
+  } = {},
+) {
   const handlers = new Map<string, AnyHandler[]>();
   const entries: StoredEntryLike[] = [];
-  if (opts.effort !== undefined) {
+  if (opts.effort !== undefined || opts.mode !== undefined || opts.preset !== undefined) {
     entries.push({
       type: 'custom',
       customType: HARNESS_CONFIG_ENTRY,
-      data: { effort: opts.effort },
+      data: {
+        ...(opts.effort !== undefined ? { effort: opts.effort } : {}),
+        ...(opts.mode !== undefined ? { mode: opts.mode } : {}),
+        ...(opts.preset !== undefined ? { preset: opts.preset } : {}),
+      },
     });
   }
   let activeTools: string[] = [];
   const sentUserMessages: string[] = [];
+  const steerMessages: string[] = [];
 
   const pi = {
     on: (event: string, h: AnyHandler) => {
@@ -76,26 +98,71 @@ function makeRig(opts: { effort?: string; callModel?: CallModel } = {}) {
     appendEntry: (customType: string, data: unknown) => {
       entries.push({ type: 'custom', customType, data });
     },
-    sendUserMessage: (content: string) => {
-      sentUserMessages.push(typeof content === 'string' ? content : JSON.stringify(content));
+    sendUserMessage: (content: string, options?: { deliverAs?: string }) => {
+      const text = typeof content === 'string' ? content : JSON.stringify(content);
+      sentUserMessages.push(text);
+      if (options?.deliverAs === 'steer') steerMessages.push(text);
     },
   } as unknown as ExtensionAPI;
 
   const abort = vi.fn();
   const notify = vi.fn();
   const confirm = vi.fn(async () => true);
+  const setStatus = vi.fn();
   const ctx = {
     hasUI: true,
-    ui: { notify, confirm, setStatus: vi.fn() },
+    cwd: opts.cwd ?? '/workdir',
+    ui: { notify, confirm, setStatus },
     getContextUsage: () => ({ tokens: 1, contextWindow: 100, percent: 1 }),
     sessionManager: { getEntries: () => entries },
     abort,
   } as unknown as ExtensionContext & ExtensionCommandContext;
 
-  const handle = wireHarness(pi, { callModel: opts.callModel });
+  /** Every `stage` value published on the 'harness' status channel, in order. */
+  const publishedStages = (): HarnessStage[] => {
+    const out: HarnessStage[] = [];
+    for (const call of setStatus.mock.calls) {
+      if (call[0] !== 'harness' || typeof call[1] !== 'string') continue;
+      try {
+        const s = (JSON.parse(call[1]) as { stage?: HarnessStage }).stage;
+        if (s !== undefined) out.push(s);
+      } catch {
+        /* ignore */
+      }
+    }
+    return out;
+  };
+
+  const handle = wireHarness(pi, {
+    ...(opts.callModel !== undefined ? { callModel: opts.callModel } : {}),
+    ...(opts.verify !== undefined ? { verify: opts.verify } : {}),
+  });
   const fire = (event: string, e: unknown) =>
     Promise.all((handlers.get(event) ?? []).map((h) => h(e, ctx)));
-  return { pi, entries, ctx, handle, fire, sentUserMessages, abort, notify, confirm };
+  return {
+    pi,
+    entries,
+    ctx,
+    handle,
+    fire,
+    sentUserMessages,
+    steerMessages,
+    publishedStages,
+    setStatus,
+    abort,
+    notify,
+    confirm,
+  };
+}
+
+/** Fire a full classify turn so the loop detector + activeClass are initialized. */
+async function startTurn(rig: ReturnType<typeof makeRig>, prompt = 'do a thing') {
+  await rig.fire('before_agent_start', {
+    type: 'before_agent_start',
+    prompt,
+    systemPrompt: 'sys',
+    images: [],
+  });
 }
 
 async function startSession(rig: ReturnType<typeof makeRig>) {
@@ -183,7 +250,14 @@ describe('effort-gated reviewer pass', () => {
     // reviewPasses(2)>0 + adversarialChecks(true) → both passes ran.
     expect(callModel).toHaveBeenCalled();
     expect(rig.sentUserMessages).toHaveLength(1);
-    expect(rig.sentUserMessages[0]).toContain('reviewer flagged');
+    const steer = (rig.sentUserMessages[0] ?? '').toLowerCase();
+    // The steer carries the concrete issue to fix…
+    expect(steer).toContain('missing edge case');
+    // …and tells the model to keep it private (item 5)…
+    expect(steer).toContain('internal');
+    // …with NONE of the harness-internal vocabulary the model was parroting.
+    expect(steer).not.toContain('reviewer');
+    expect(steer).not.toContain('harness');
     const review = rig.entries.find((e) => e.customType === HARNESS_REVIEW_ENTRY);
     expect(review?.data).toMatchObject({ flagged: true });
   });
@@ -252,5 +326,262 @@ describe('SB-3 — a headless subagent context resolves deterministically (never
     expect(rig.confirm).not.toHaveBeenCalled();
     expect(result.ok).toBe(true);
     expect(result.rung).toBe(4);
+  });
+});
+
+// --- Fix #3: loop / no-progress breaking -----------------------------------
+
+const TOOL_CALL = (input: unknown) => ({
+  type: 'tool_call' as const,
+  toolName: 'bash',
+  toolCallId: 'tc',
+  input,
+});
+const TOOL_END = (isError: boolean) => ({
+  type: 'tool_execution_end' as const,
+  toolCallId: 'tc',
+  toolName: 'bash',
+  result: {},
+  isError,
+});
+
+describe('loop detector — live wiring through tool_call / tool_execution_end', () => {
+  const loopEntries = (rig: ReturnType<typeof makeRig>) =>
+    rig.entries
+      .filter((e) => e.customType === HARNESS_LOOP_ENTRY)
+      .map((e) => e.data as { action?: string; cause?: string });
+
+  it('steers once at the 3rd identical call, then aborts the turn at the 5th', async () => {
+    const rig = makeRig({ effort: 'medium' }); // steerAfter 3 / abortAfter 5
+    await startSession(rig);
+    await startTurn(rig);
+    const call = () => rig.fire('tool_call', TOOL_CALL({ command: 'ls' }));
+
+    await call();
+    await call();
+    await call(); // 3rd → steer
+    expect(rig.steerMessages).toHaveLength(1);
+    expect(loopEntries(rig)).toContainEqual({
+      action: 'steer',
+      cause: 'identical',
+      reason: expect.any(String),
+    });
+    expect(rig.abort).not.toHaveBeenCalled();
+
+    await call(); // 4th → nothing (already steered)
+    expect(rig.steerMessages).toHaveLength(1);
+    await call(); // 5th → abort
+    expect(rig.abort).toHaveBeenCalledOnce();
+    expect(loopEntries(rig)).toContainEqual({
+      action: 'abort',
+      cause: 'identical',
+      reason: expect.any(String),
+    });
+  });
+
+  it('steers then aborts on a consecutive tool-execution-error streak', async () => {
+    const rig = makeRig({ effort: 'medium' });
+    await startSession(rig);
+    await startTurn(rig);
+    const err = () => rig.fire('tool_execution_end', TOOL_END(true));
+
+    await err();
+    await err();
+    await err(); // 3rd error → steer
+    expect(rig.steerMessages).toHaveLength(1);
+    expect(loopEntries(rig)).toContainEqual({
+      action: 'steer',
+      cause: 'error',
+      reason: expect.any(String),
+    });
+    await err();
+    await err(); // 5th error → abort
+    expect(rig.abort).toHaveBeenCalledOnce();
+    expect(loopEntries(rig)).toContainEqual({
+      action: 'abort',
+      cause: 'error',
+      reason: expect.any(String),
+    });
+  });
+
+  it('resets per turn — a fresh before_agent_start re-arms the detector', async () => {
+    const rig = makeRig({ effort: 'medium' });
+    await startSession(rig);
+    await startTurn(rig);
+    const call = () => rig.fire('tool_call', TOOL_CALL({ command: 'ls' }));
+    await call();
+    await call();
+    await call(); // steer #1
+    expect(rig.steerMessages).toHaveLength(1);
+
+    await startTurn(rig); // new turn → detector rebuilt, streak + steer cleared
+    await call();
+    await call();
+    await call(); // steer #2 (proves the reset)
+    expect(rig.steerMessages).toHaveLength(2);
+    expect(rig.abort).not.toHaveBeenCalled();
+  });
+});
+
+// --- Fix #4: effort-gated REAL verify + bounded fix loop -------------------
+
+const TEST_CHECK: ProjectCheck = { command: 'npm run test', kind: 'test', label: 'npm run test' };
+const failingBash = (): VerifyBashRunner =>
+  vi.fn(async () => ({ exitCode: 1, stdout: '', stderr: 'FAIL: 2 tests' }));
+const passingBash = (): VerifyBashRunner =>
+  vi.fn(async () => ({ exitCode: 0, stdout: 'all good', stderr: '' }));
+
+describe('effort-gated REAL verify (bounded fix loop)', () => {
+  it('high effort + coding: steers ONE fix on a failing check, then stops (budget 1)', async () => {
+    const runBash = failingBash();
+    const rig = makeRig({ effort: 'high', verify: { runBash, detectCheck: () => TEST_CHECK } });
+    await startSession(rig);
+    rig.handle.applyPreset('coding', rig.ctx);
+
+    expect(await rig.handle.verifyTurn(rig.ctx)).toBe(true); // fix #1
+    expect(rig.sentUserMessages.some((m) => m.includes('npm run test'))).toBe(true);
+    expect(await rig.handle.verifyTurn(rig.ctx)).toBe(false); // budget exhausted → give up
+    expect(runBash).toHaveBeenCalledTimes(2);
+
+    const verifyData = rig.entries
+      .filter((e) => e.customType === HARNESS_VERIFY_ENTRY)
+      .map((e) => e.data as Record<string, unknown>);
+    expect(verifyData.some((d) => d.fix === true)).toBe(true);
+    expect(verifyData.some((d) => d.gaveUp === true)).toBe(true);
+  });
+
+  it('max effort raises the fix budget to 2', async () => {
+    const runBash = failingBash();
+    const rig = makeRig({ effort: 'max', verify: { runBash, detectCheck: () => TEST_CHECK } });
+    await startSession(rig);
+    rig.handle.applyPreset('file-ops', rig.ctx);
+    expect(await rig.handle.verifyTurn(rig.ctx)).toBe(true); // fix #1
+    expect(await rig.handle.verifyTurn(rig.ctx)).toBe(true); // fix #2
+    expect(await rig.handle.verifyTurn(rig.ctx)).toBe(false); // budget exhausted
+    expect(runBash).toHaveBeenCalledTimes(3);
+  });
+
+  it('a passing check triggers no fix', async () => {
+    const runBash = passingBash();
+    const rig = makeRig({ effort: 'high', verify: { runBash, detectCheck: () => TEST_CHECK } });
+    await startSession(rig);
+    rig.handle.applyPreset('coding', rig.ctx);
+    expect(await rig.handle.verifyTurn(rig.ctx)).toBe(false);
+    expect(rig.sentUserMessages).toHaveLength(0);
+    expect(runBash).toHaveBeenCalledOnce();
+  });
+
+  it('does NOT run below high effort', async () => {
+    const runBash = failingBash();
+    const rig = makeRig({ effort: 'medium', verify: { runBash, detectCheck: () => TEST_CHECK } });
+    await startSession(rig);
+    rig.handle.applyPreset('coding', rig.ctx);
+    expect(await rig.handle.verifyTurn(rig.ctx)).toBe(false);
+    expect(runBash).not.toHaveBeenCalled();
+  });
+
+  it('does NOT run for non-coding/file-ops classes', async () => {
+    const runBash = failingBash();
+    const rig = makeRig({ effort: 'high', verify: { runBash, detectCheck: () => TEST_CHECK } });
+    await startSession(rig);
+    rig.handle.applyPreset('simple-QA', rig.ctx);
+    expect(await rig.handle.verifyTurn(rig.ctx)).toBe(false);
+    expect(runBash).not.toHaveBeenCalled();
+  });
+
+  it('is permission-mode aware — skipped in review-all', async () => {
+    const runBash = failingBash();
+    const rig = makeRig({
+      effort: 'high',
+      mode: 'review-all',
+      verify: { runBash, detectCheck: () => TEST_CHECK },
+    });
+    await startSession(rig);
+    rig.handle.applyPreset('coding', rig.ctx);
+    expect(await rig.handle.verifyTurn(rig.ctx)).toBe(false);
+    expect(runBash).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a syntax check over touched files when no infra is detected', async () => {
+    const runBash = failingBash();
+    const rig = makeRig({ effort: 'high', verify: { runBash, detectCheck: () => null } });
+    await startSession(rig);
+    await startTurn(rig);
+    rig.handle.applyPreset('coding', rig.ctx);
+    // A write tool call records the touched file the syntax fallback checks.
+    await rig.fire('tool_call', {
+      type: 'tool_call',
+      toolName: 'write',
+      toolCallId: 'w1',
+      input: { path: 'mod.py', content: 'x=1' },
+    });
+    expect(await rig.handle.verifyTurn(rig.ctx)).toBe(true);
+    expect(runBash).toHaveBeenCalledWith(expect.stringContaining('py_compile'), expect.anything());
+  });
+});
+
+// --- Fix #5: HarnessStatus.stage transitions -------------------------------
+
+describe('HarnessStatus.stage transitions publish at the seams', () => {
+  it('idle → classifying → working → done across a plain turn', async () => {
+    const rig = makeRig({ effort: 'medium' });
+    await startSession(rig);
+    expect(rig.handle.getStatus(rig.ctx).stage).toBe('idle');
+
+    await startTurn(rig);
+    expect(rig.handle.getStatus(rig.ctx).stage).toBe('classifying');
+
+    await rig.fire('agent_start', { type: 'agent_start' });
+    expect(rig.handle.getStatus(rig.ctx).stage).toBe('working');
+
+    await rig.fire('agent_end', {
+      type: 'agent_end',
+      messages: [{ role: 'assistant', content: 'here you go' }],
+    });
+    expect(rig.handle.getStatus(rig.ctx).stage).toBe('done');
+
+    expect(rig.publishedStages()).toEqual(
+      expect.arrayContaining(['idle', 'classifying', 'working', 'done']),
+    );
+  });
+
+  it('reviewer flag → reviewing then revising are both published', async () => {
+    const bad = vi.fn(async () => '{"ok":false,"issues":["x"]}');
+    const rig = makeRig({ effort: 'high', callModel: bad });
+    await startSession(rig);
+    await startTurn(rig);
+    expect(await rig.handle.reviewTurn('result', rig.ctx)).toBe(true);
+    const stages = rig.publishedStages();
+    expect(stages).toContain('reviewing');
+    expect(stages).toContain('revising');
+    expect(rig.handle.getStatus(rig.ctx).stage).toBe('revising');
+  });
+
+  it("the real verify publishes 'verifying'", async () => {
+    const rig = makeRig({
+      effort: 'high',
+      verify: { runBash: passingBash(), detectCheck: () => TEST_CHECK },
+    });
+    await startSession(rig);
+    rig.handle.applyPreset('coding', rig.ctx);
+    await rig.handle.verifyTurn(rig.ctx);
+    expect(rig.publishedStages()).toContain('verifying');
+  });
+
+  it("a repair rung publishes 'repairing', cleared to 'working' on the next tool result", async () => {
+    const rig = makeRig({ effort: 'low' }); // no callModel → ladder falls to rungs 3–5
+    await startSession(rig);
+    await startTurn(rig);
+    const deps = rig.handle.buildRepairDeps();
+    await repairToolCallArguments('garbage {{{', {
+      toolName: 'bash',
+      schema: SCHEMA,
+      extraRungs: deps.extraRungs,
+    });
+    expect(rig.publishedStages()).toContain('repairing');
+    expect(rig.handle.getStatus(rig.ctx).stage).toBe('repairing');
+
+    await rig.fire('tool_execution_end', TOOL_END(false));
+    expect(rig.handle.getStatus(rig.ctx).stage).toBe('working');
   });
 });

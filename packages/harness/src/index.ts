@@ -34,6 +34,7 @@ import {
 import { createClassifierEscalation } from './classify/escalation.js';
 import { modelTierForClass } from './classify/tier.js';
 import { effortKnobs, isEffortLevel } from './effort/effort.js';
+import { createLoopDetector, type LoopDetector, loopDetectorConfig } from './loop/loop-detector.js';
 import { parseModelParams, smallModelWarning } from './model/model-size.js';
 import { type CallModel, callModelFromEnv } from './model-call/call-model.js';
 import { createBashFlagger } from './permissions/flag-bash.js';
@@ -43,6 +44,7 @@ import {
   registerPermissions,
 } from './permissions/modes.js';
 import { resolvePresetTools } from './presets/presets.js';
+import { augmentSystemPrompt } from './prompt/capability-prompt.js';
 import { connectRepairBridge, type LiveRepairDeps } from './repair/bridge.js';
 import { createToolCallFixer, withRepairAttempts } from './repair/fixer.js';
 import { createHarnessExtraRungs, type HarnessRepairDeps } from './repair/rungs.js';
@@ -52,10 +54,13 @@ import {
   DEFAULT_CONFIG,
   HARNESS_CLASSIFY_ENTRY,
   HARNESS_CONFIG_ENTRY,
+  HARNESS_LOOP_ENTRY,
   HARNESS_REPAIR_ENTRY,
   HARNESS_REVIEW_ENTRY,
   HARNESS_TITLE_ENTRY,
+  HARNESS_VERIFY_ENTRY,
   type HarnessConfig,
+  type HarnessStage,
   type HarnessStatus,
   type PlanItem,
   restoreConfig,
@@ -74,6 +79,14 @@ import {
 import { registerAskUser } from './tools/ask-user.js';
 import { registerPlanTool } from './tools/plan-tool.js';
 import { registerToolSearch } from './tools/tool-search.js';
+import {
+  detectProjectCheck,
+  makeExecBashRunner,
+  makeFsProbe,
+  type ProjectCheck,
+  runVerifyPass,
+  type VerifyBashRunner,
+} from './verify/verify.js';
 
 export const packageName = '@pi-desktop/harness';
 
@@ -101,6 +114,16 @@ interface HarnessRuntime {
   planTitle: string | null;
   /** Latest subagent scheduler snapshot (null until the first spawn_subagent). */
   subagentSnapshot: SchedulerSnapshot | null;
+  /** Coarse lifecycle stage of the current turn (published in HarnessStatus). */
+  stage: HarnessStage;
+  /** Per-turn loop / no-progress detector (rebuilt each turn from effort knobs). */
+  loopDetector: LoopDetector | null;
+  /** Files the current agent loop wrote/edited (for the verify syntax fallback). */
+  touchedFiles: string[];
+  /** Remaining REAL-verify fix steers allowed in the active verify sequence. */
+  verifyFixesRemaining: number;
+  /** True while inside a self-triggered verify fix sequence (so the budget isn't reset). */
+  verifyActive: boolean;
 }
 
 /** Options for {@link wireHarness}. All optional; the app passes none (`-e` load). */
@@ -111,6 +134,17 @@ export interface WireHarnessOptions {
    * every model-dependent feature degrades to heuristic/skip.
    */
   readonly callModel?: CallModel;
+  /**
+   * Seams for the effort-gated REAL verify (fix #4). Omitted → built from
+   * `pi.exec` + a node:fs probe over `ctx.cwd`. Tests inject a fake bash runner
+   * and a stubbed check detector so the bounded-fix loop is exercised offline.
+   */
+  readonly verify?: {
+    /** Run a shell command in the working dir. Default: `pi.exec` via `sh -c`. */
+    readonly runBash?: VerifyBashRunner;
+    /** Detect the project check for a cwd. Default: {@link detectProjectCheck}. */
+    readonly detectCheck?: (cwd: string) => ProjectCheck | null;
+  };
 }
 
 /** A handle returned by {@link wireHarness} for tests + programmatic wiring. */
@@ -123,6 +157,11 @@ export interface HarnessHandle {
   buildRepairDeps(): LiveRepairDeps;
   /** Run the reviewer/adversarial passes for a finished turn (effort-gated). */
   reviewTurn(output: string, ctx: ExtensionContext): Promise<boolean>;
+  /**
+   * Run the effort-gated REAL verify for a finished coding/file-ops turn. Returns
+   * true when it steered a fix back to the model (bounded per turn).
+   */
+  verifyTurn(ctx: ExtensionContext): Promise<boolean>;
 }
 
 function getEntries(ctx: ExtensionContext): StoredEntryLike[] {
@@ -250,7 +289,20 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     plan: null,
     planTitle: null,
     subagentSnapshot: null,
+    stage: 'idle',
+    loopDetector: null,
+    touchedFiles: [],
+    verifyFixesRemaining: 0,
+    verifyActive: false,
   };
+
+  // Effort-gated REAL verify seams (fix #4). Default to pi.exec + a node:fs probe;
+  // tests inject a fake bash runner and a stubbed detector.
+  const verifyBash: VerifyBashRunner | undefined =
+    options.verify?.runBash ??
+    (typeof pi.exec === 'function' ? makeExecBashRunner(pi.exec.bind(pi)) : undefined);
+  const verifyDetectCheck: (cwd: string) => ProjectCheck | null =
+    options.verify?.detectCheck ?? ((cwd) => detectProjectCheck(makeFsProbe(cwd)));
 
   // The utility model powering fixer + reviewer + classifier escalation. Absent
   // (no PI_DESKTOP_UTILITY_BASE_URL and no injected callModel) → those features
@@ -278,9 +330,13 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
 
     const harnessDeps: HarnessRepairDeps = {
       abortThreshold: knobs.abortThreshold,
-      // Rung trace (no `ok` → not counted as a failure).
-      onRung: (info) =>
-        pi.appendEntry(HARNESS_REPAIR_ENTRY, { rung: info.rung, toolName: info.toolName }),
+      // Rung trace (no `ok` → not counted as a failure). Entering a repair rung is
+      // a seam for the 'repairing' stage (fix #5) — the tool-execution-end hook
+      // flips it back to 'working' once the retried call resolves.
+      onRung: (info) => {
+        pi.appendEntry(HARNESS_REPAIR_ENTRY, { rung: info.rung, toolName: info.toolName });
+        setStage('repairing', runtime.currentCtx);
+      },
       bumpFailureCount: (t) => {
         const n = (failureCounts.get(t) ?? 0) + 1;
         failureCounts.set(t, n);
@@ -341,6 +397,7 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     const knobs = effortKnobs(runtime.config.effort);
     if (knobs.reviewPasses <= 0 && !knobs.adversarialChecks) return false;
 
+    setStage('reviewing', ctx);
     const task = runtime.lastPrompt;
     const issues: string[] = [];
     // Run up to `reviewPasses` reviewer passes so a higher effort really does run
@@ -370,16 +427,145 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
 
     // Trigger a revision turn, and don't review that revision (avoid a loop).
     runtime.suppressNextReview = true;
+    setStage('revising', ctx);
+    if (ctx.hasUI) {
+      ctx.ui.notify(`Refining the result (${issues.length} point(s) to tighten)…`, 'warning');
+    }
+    // Private steer — deliberately free of any "reviewer"/"harness" vocabulary the
+    // model might parrot into its user-facing reply (blind-test item 5). The last
+    // clause tells the model to keep this instruction to itself and just deliver
+    // the improved result.
+    pi.sendUserMessage?.(
+      `Before you finish, tighten your last result — fix these points:\n- ${issues.join('\n- ')}\n\nApply the fixes and deliver the improved result directly. This note is internal: do not mention it, a "revision", or these points in your reply.`,
+      { deliverAs: 'followUp' },
+    );
+    return true;
+  }
+
+  /**
+   * Effort-gated REAL verify (fix #4): after the model finishes a coding/file-ops
+   * turn at high/max effort, run the project's OWN checks (test/typecheck/lint) in
+   * the working dir. On a genuine failure, steer the output back for a fix —
+   * bounded to `verifyFixAttempts` per user turn so it can't loop forever. Safe:
+   * timeout + bounded + skipped in review-all (where the user approves every act).
+   * Returns true when it steered a fix. Needs NO utility model — it runs real
+   * checks, so it works with zero model headroom.
+   */
+  async function verifyTurn(ctx: ExtensionContext): Promise<boolean> {
+    const knobs = effortKnobs(runtime.config.effort);
+    // Gate: effort (high/max), class (coding/file-ops only — never chat/trivial),
+    // a usable bash seam, and permission mode (skip auto-run in review-all).
+    if (
+      !knobs.realVerify ||
+      verifyBash === undefined ||
+      (runtime.activeClass !== 'coding' && runtime.activeClass !== 'file-ops') ||
+      runtime.config.mode === 'review-all'
+    ) {
+      runtime.verifyActive = false;
+      return false;
+    }
+    // A fresh verify sequence (not a self-triggered fix revision) resets the budget.
+    if (!runtime.verifyActive) runtime.verifyFixesRemaining = knobs.verifyFixAttempts;
+
+    setStage('verifying', ctx);
+    let pass: Awaited<ReturnType<typeof runVerifyPass>>;
+    try {
+      pass = await runVerifyPass({
+        cwd: ctx.cwd,
+        runBash: verifyBash,
+        detectCheck: verifyDetectCheck,
+        touchedFiles: runtime.touchedFiles,
+        ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
+      });
+    } catch {
+      runtime.verifyActive = false;
+      return false;
+    }
+
+    // Nothing to run, or the check passed / was inconclusive → sequence over.
+    if (pass.check === null || pass.outcome === null || pass.outcome.status !== 'fail') {
+      if (pass.check !== null && pass.outcome !== null) {
+        pi.appendEntry(HARNESS_VERIFY_ENTRY, {
+          effort: runtime.config.effort,
+          kind: pass.check.kind,
+          status: pass.outcome.status,
+          command: pass.outcome.command,
+        });
+      }
+      runtime.verifyActive = false;
+      return false;
+    }
+
+    // A genuine failure. If the fix budget remains, steer the output back.
+    if (runtime.verifyFixesRemaining > 0) {
+      runtime.verifyFixesRemaining -= 1;
+      runtime.verifyActive = true;
+      pi.appendEntry(HARNESS_VERIFY_ENTRY, {
+        effort: runtime.config.effort,
+        kind: pass.check.kind,
+        status: 'fail',
+        command: pass.outcome.command,
+        fix: true,
+      });
+      setStage('revising', ctx);
+      if (ctx.hasUI) {
+        ctx.ui.notify(`Verify: ${pass.check.label} failed — requesting a fix.`, 'warning');
+      }
+      // Private steer (blind-test item 5): a plain check-output steer with an
+      // explicit "keep this internal" clause so the fix loop never surfaces as
+      // meta narration in the user-facing reply.
+      pi.sendUserMessage?.(
+        `A check failed after your last change:\n\n$ ${pass.outcome.command}\n${pass.outcome.output}\n\nFix the code so this check passes, then stop. This is an internal check — fix it silently and don't mention it in your reply.`,
+        { deliverAs: 'followUp' },
+      );
+      return true;
+    }
+
+    // Budget exhausted and still failing → give up (surface it), never loop.
+    runtime.verifyActive = false;
+    pi.appendEntry(HARNESS_VERIFY_ENTRY, {
+      effort: runtime.config.effort,
+      kind: pass.check.kind,
+      status: 'fail',
+      command: pass.outcome.command,
+      gaveUp: true,
+    });
     if (ctx.hasUI) {
       ctx.ui.notify(
-        `Reviewer flagged ${issues.length} issue(s); requesting a revision.`,
+        `Verify: ${pass.check.label} still failing after ${knobs.verifyFixAttempts} fix attempt(s).`,
         'warning',
       );
     }
-    pi.sendUserMessage?.(
-      `A reviewer flagged issues with your last result:\n- ${issues.join('\n- ')}\nPlease revise to address these.`,
-      { deliverAs: 'followUp' },
-    );
+    return false;
+  }
+
+  /**
+   * Act on a {@link LoopDetector} signal (fix #3): a steer injects one corrective
+   * nudge into the live stream; an abort surfaces a reason + calls ctx.abort().
+   * Returns true when it aborted (so the tool_call hook can also block the call).
+   */
+  function handleLoopSignal(signal: ReturnType<LoopDetector['onToolCall']>): boolean {
+    const ctx = runtime.currentCtx;
+    if (signal.kind === 'none') return false;
+    if (signal.kind === 'steer') {
+      pi.appendEntry(HARNESS_LOOP_ENTRY, {
+        action: 'steer',
+        cause: signal.cause,
+        reason: signal.reason,
+      });
+      if (ctx?.hasUI === true) ctx.ui.notify(`Loop guard: ${signal.reason} — nudging.`, 'warning');
+      pi.sendUserMessage?.(signal.message, { deliverAs: 'steer' });
+      return false;
+    }
+    // abort
+    pi.appendEntry(HARNESS_LOOP_ENTRY, {
+      action: 'abort',
+      cause: signal.cause,
+      reason: signal.reason,
+    });
+    if (ctx?.hasUI === true)
+      ctx.ui.notify(`Loop guard aborted the turn: ${signal.reason}.`, 'error');
+    ctx?.abort();
     return true;
   }
 
@@ -448,6 +634,7 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
       repairFailures: countRepairFailures(getEntries(ctx)),
       plan: runtime.plan,
       planTitle: runtime.planTitle,
+      stage: runtime.stage,
     };
   }
 
@@ -460,6 +647,17 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
         ? `⏱ ${((Date.now() - runtime.taskStart) / 1000).toFixed(1)}s`
         : undefined,
     );
+  }
+
+  /**
+   * Set the coarse lifecycle {@link HarnessStage} and republish the status so the
+   * app's activity indicator reflects the seam that just fired. De-duped: a no-op
+   * when the stage is unchanged (the 1s timer already republishes otherwise).
+   */
+  function setStage(stage: HarnessStage, ctx: ExtensionContext | null): void {
+    if (ctx === null || runtime.stage === stage) return;
+    runtime.stage = stage;
+    publishStatus(ctx);
   }
 
   /**
@@ -531,6 +729,12 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     runtime.plan = null;
     runtime.planTitle = null;
     runtime.subagentSnapshot = null;
+    // Fresh session → idle stage and cleared per-turn loop/verify state.
+    runtime.stage = 'idle';
+    runtime.loopDetector = null;
+    runtime.touchedFiles = [];
+    runtime.verifyActive = false;
+    runtime.verifyFixesRemaining = 0;
     // A new/switched session gets a fresh title (recomputed on its first turn).
     runtime.title = restoreTitle(getEntries(ctx));
     // Push repair deps now that the effort level is known (abortThreshold etc.).
@@ -555,6 +759,22 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     runtime.turnIndex += 1;
     runtime.currentCtx = ctx;
     runtime.lastPrompt = event.prompt;
+    // Fresh agent loop: a new loop detector (effort-scaled cap/streaks) and an
+    // empty touched-file set. Reset per turn (fix #3). NOTE: the verify fix budget
+    // is deliberately NOT reset here — a self-triggered fix revision is also a new
+    // before_agent_start, and verifyTurn manages that budget via `verifyActive`.
+    runtime.loopDetector = createLoopDetector(
+      loopDetectorConfig(effortKnobs(runtime.config.effort)),
+    );
+    runtime.touchedFiles = [];
+    setStage('classifying', ctx);
+    // Capability-affirming system prompt (fix: the model must KNOW it can act on
+    // the machine and must not disclaim abilities it has). pi 0.68.1 applies a
+    // `{ systemPrompt }` returned from this handler for the turn (agent-session's
+    // emitBeforeAgentStart), chained across extensions — so we augment whatever
+    // base/previously-chained prompt arrives. Built BEFORE the classify prefix so
+    // the tier-2 piggyback shares the EXACT prompt the real turn will run on.
+    const augmentedSystemPrompt = augmentSystemPrompt(event.systemPrompt);
     let cls: TaskClass;
     if (runtime.config.preset === 'auto') {
       const input: ClassifyInput = {
@@ -566,7 +786,7 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
         // read when it escalates; tier-1 heuristics ignore it).
         priorMessages: buildConversationPrefix(
           getEntries(ctx),
-          event.systemPrompt ?? '',
+          augmentedSystemPrompt,
           event.prompt,
         ),
       };
@@ -585,20 +805,62 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     }
     applyPreset(cls, ctx);
     pi.appendEntry(HARNESS_CLASSIFY_ENTRY, { class: cls, turnIndex: runtime.turnIndex });
+    // Replace the turn's system prompt with the capability-affirming version.
+    return { systemPrompt: augmentedSystemPrompt };
   });
 
   // Running-task timer.
   pi.on('agent_start', (_event, ctx) => {
     runtime.currentCtx = ctx;
     runtime.taskStart = Date.now();
+    setStage('working', ctx);
     publishStatus(ctx);
   });
   pi.on('agent_end', async (event, ctx) => {
     runtime.currentCtx = ctx;
     runtime.taskStart = null;
     publishStatus(ctx);
-    // Effort high/max → reviewer + adversarial critique of the produced result.
-    await reviewTurn(extractAssistantText(event.messages), ctx);
+    const output = extractAssistantText(event.messages);
+    // 1) Effort high/max → run the project's REAL checks on coding/file-ops turns.
+    //    If it steers a fix, skip the LLM reviewer this cycle (don't double-steer
+    //    the same revision — the reviewer runs on the fixed result next time).
+    const fixRequested = await verifyTurn(ctx);
+    // 2) Otherwise → reviewer + adversarial critique of the produced result.
+    const revisionRequested = fixRequested || (await reviewTurn(output, ctx));
+    // 3) Final stage for the turn: 'revising' if another loop follows, else done/idle.
+    setStage(revisionRequested ? 'revising' : output.length > 0 ? 'done' : 'idle', ctx);
+  });
+
+  // Loop / no-progress breaking (fix #3), plus touched-file tracking for the
+  // verify syntax fallback. Feeds the per-turn detector the identical-call streak
+  // (before execution) and the consecutive-error streak (after execution).
+  pi.on('tool_call', (event, ctx) => {
+    runtime.currentCtx = ctx;
+    // Remember files this turn writes/edits (for verify's syntax fallback, fix #4).
+    if (event.toolName === 'write' || event.toolName === 'edit') {
+      const input = event.input as Record<string, unknown>;
+      const path = input.path ?? input.file_path ?? input.filePath;
+      if (typeof path === 'string' && path.length > 0 && !runtime.touchedFiles.includes(path)) {
+        runtime.touchedFiles.push(path);
+      }
+    }
+    const detector = runtime.loopDetector;
+    if (detector === null) return;
+    const signal = detector.onToolCall(event.toolName, event.input);
+    if (handleLoopSignal(signal)) {
+      // Aborted (identical-call or hard-cap) → also block this final bad call.
+      return { block: true, reason: signal.kind === 'abort' ? signal.reason : undefined };
+    }
+    return;
+  });
+  pi.on('tool_execution_end', (event, ctx) => {
+    runtime.currentCtx = ctx;
+    // A completed tool call clears the transient 'repairing' stage (fix #5).
+    if (runtime.stage === 'repairing') setStage('working', ctx);
+    const detector = runtime.loopDetector;
+    if (detector === null) return;
+    // Consecutive-error streak → steer once, then abort (can't block post-hoc).
+    handleLoopSignal(detector.onToolResult(event.isError === true));
   });
 
   // Model changes → small-model warning + status refresh.
@@ -711,6 +973,7 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     applyPreset,
     buildRepairDeps,
     reviewTurn,
+    verifyTurn,
   };
 }
 
@@ -759,6 +1022,18 @@ export {
   isEffortLevel,
 } from './effort/effort.js';
 export {
+  createLoopDetector,
+  DEFAULT_LOOP_ABORT_AFTER,
+  DEFAULT_LOOP_STEER_AFTER,
+  type LoopCause,
+  type LoopDetector,
+  type LoopDetectorConfig,
+  type LoopSignal,
+  type LoopSnapshot,
+  loopDetectorConfig,
+  toolCallSignature,
+} from './loop/loop-detector.js';
+export {
   ADVANCED_CLASSES,
   inspectModelSize,
   isAdvancedClass,
@@ -806,8 +1081,14 @@ export {
   PRESET_TOOLS,
   type ResolvePresetOptions,
   resolvePresetTools,
+  SUBAGENT_PRESET_CLASSES,
   TOOL_SEARCH_TOOL_NAME,
 } from './presets/presets.js';
+export {
+  augmentSystemPrompt,
+  CAPABILITY_PROMPT,
+  CAPABILITY_PROMPT_MARKER,
+} from './prompt/capability-prompt.js';
 export {
   connectRepairBridge as connectHarnessRepairBridge,
   type LiveRepairDeps,
@@ -853,11 +1134,16 @@ export {
   DEFAULT_CONFIG,
   HARNESS_CLASSIFY_ENTRY,
   HARNESS_CONFIG_ENTRY,
+  HARNESS_LOOP_ENTRY,
   HARNESS_REPAIR_ENTRY,
   HARNESS_REVIEW_ENTRY,
+  HARNESS_STAGES,
   HARNESS_TITLE_ENTRY,
+  HARNESS_VERIFY_ENTRY,
   type HarnessConfig,
+  type HarnessStage,
   type HarnessStatus,
+  isHarnessStage,
   isPlanItemStatus,
   PLAN_ITEM_STATUSES,
   type PlanItem,
@@ -914,3 +1200,20 @@ export {
   type ToolMatch,
   type ToolSearchOptions,
 } from './tools/tool-search.js';
+export {
+  type CheckOutcome,
+  detectPackageManager,
+  detectProjectCheck,
+  type ExecLike,
+  makeExecBashRunner,
+  makeFsProbe,
+  type ProjectCheck,
+  type ProjectProbe,
+  runCheck,
+  runVerifyPass,
+  syntaxCheckCommand,
+  VERIFY_TIMEOUT_MS,
+  type VerifyBashRunner,
+  type VerifyPassDeps,
+  type VerifyPassResult,
+} from './verify/verify.js';

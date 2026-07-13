@@ -12,6 +12,7 @@
  */
 
 import { BROWSER_TOOL_NAMES } from '@pi-desktop/browser-use/tool-names';
+import { MAC_CONNECTOR_TOOLS } from '@pi-desktop/mac-connectors/tool-names';
 import type { TaskClass } from '../classify/classify.js';
 import { SPAWN_SUBAGENT_TOOL_NAME } from '../subagent/types.js';
 
@@ -20,15 +21,35 @@ export const TOOL_SEARCH_TOOL_NAME = 'tool_search';
 
 /**
  * Harness tools kept active in EVERY preset (when registered), independent of
- * the task class — the model must always be able to publish a plan, ask the user
- * a question, and spawn a subagent. `tool_search` is handled separately (it is
- * gated by {@link ResolvePresetOptions.includeToolSearch}).
+ * the task class — the model must always be able to publish a plan and ask the
+ * user a question. `tool_search` is handled separately (it is gated by
+ * {@link ResolvePresetOptions.includeToolSearch}).
+ *
+ * NOTE: `spawn_subagent` was REMOVED from this list (blind-test item 6). It was
+ * front-loaded into every preset, so a small model reflexively spawned a child
+ * agent for even a "write a doc" / "create 3 files" task (and those children then
+ * over-eagerly drove the browser). It is now front-loaded only for genuinely
+ * multi-step classes ({@link SUBAGENT_PRESET_CLASSES}); every other class still
+ * reaches it on demand via `tool_search` (it stays globally registered).
  */
-export const ALWAYS_ACTIVE_TOOLS: readonly string[] = [
-  'update_plan',
-  'ask_user',
-  SPAWN_SUBAGENT_TOOL_NAME,
-];
+export const ALWAYS_ACTIVE_TOOLS: readonly string[] = ['update_plan', 'ask_user'];
+
+/**
+ * Classes whose work is genuinely multi-step / parallelizable enough to warrant
+ * front-loading `spawn_subagent`. The trivial tiers and single-artifact create
+ * tasks (simple-QA, basic-tools, file-ops, 2d-art, other) deliberately OMIT it so
+ * the model doesn't reach for a subagent on a one-file / one-answer task
+ * (blind-test item 6). Any class can still pull it in via `tool_search`.
+ */
+export const SUBAGENT_PRESET_CLASSES: ReadonlySet<TaskClass> = new Set<TaskClass>([
+  'coding',
+  'browser-use',
+  'motion-graphics',
+  'advanced-video',
+  'video-edit',
+  'perception',
+  '3d',
+]);
 
 // Common tool clusters (built-in pi tools + this repo's web-tools/gen tools).
 const CORE_FS = ['read', 'write', 'edit', 'ls', 'find', 'grep'] as const;
@@ -41,6 +62,13 @@ const PYTHON = ['python_run'] as const;
 // drifted to non-existent `browser_eval`/`browser_screenshot` and omitted
 // `browser_snapshot`/`browser_read`, so browser tasks looped, blind.)
 const BROWSER = BROWSER_TOOL_NAMES;
+// The macOS personal-info connectors (Calendar / Reminders / Contacts / Mail /
+// Messages), imported from the connector package so a rename is a COMPILE error
+// here, not a silent runtime miss (same discipline as BROWSER). These are the
+// tools the model needs for "what's on my calendar", "text mom", "any new mail"
+// — the class of request that was previously routed to a tool-search-only preset
+// and so drew "I can't access your calendar" refusals.
+const MAC_CONNECTORS = MAC_CONNECTOR_TOOLS;
 const IMAGE_GEN = ['image_generate', 'image_edit'] as const;
 const VIDEO_GEN = ['video_generate', 'video_edit'] as const;
 const MOTION_GEN = ['motion_graphics_render'] as const;
@@ -74,8 +102,14 @@ export const PRESET_TOOLS: Record<TaskClass, readonly string[]> = {
   perception: [...PERCEPTION, 'video_edit'],
   '3d': [...THREE_D_GEN, ...IMAGE_GEN],
   '2d-art': [...IMAGE_GEN],
-  // 'other' → tool-search-only (empty desired list; tool_search still appended).
-  other: [],
+  // 'other' is where the classifier routes connector/integration requests —
+  // calendar/mail/messages/contacts/reminders keywords all score into it (see
+  // classify.ts CATEGORY_RULES 'other'). Surface the macOS connectors directly
+  // so a "what's on my calendar" request has the tool in hand rather than having
+  // to discover it (the round-* refusal bug: the model disclaimed an ability it
+  // ships). tool_search stays appended for the pure-fallback 'other' case and to
+  // reach anything else (they degrade gracefully when a connector isn't present).
+  other: [...MAC_CONNECTORS],
 };
 
 export interface ResolvePresetOptions {
@@ -119,6 +153,17 @@ export function resolvePresetTools(
   ) {
     out.push(TOOL_SEARCH_TOOL_NAME);
     seen.add(TOOL_SEARCH_TOOL_NAME);
+  }
+  // Front-load the subagent tool ONLY for genuinely-agentic classes (blind-test
+  // item 6). Trivial doc/file/answer tasks omit it here and reach it via
+  // tool_search instead, so the model stops spawning a child for simple work.
+  if (
+    SUBAGENT_PRESET_CLASSES.has(cls) &&
+    available.has(SPAWN_SUBAGENT_TOOL_NAME) &&
+    !seen.has(SPAWN_SUBAGENT_TOOL_NAME)
+  ) {
+    out.push(SPAWN_SUBAGENT_TOOL_NAME);
+    seen.add(SPAWN_SUBAGENT_TOOL_NAME);
   }
   // Plan + ask-user stay active across every class (when registered) so the
   // model can always surface progress and ask questions.

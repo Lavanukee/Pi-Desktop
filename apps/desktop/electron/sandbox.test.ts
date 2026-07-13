@@ -96,6 +96,38 @@ describe('resolveSessionCwd — projectless conversation lands in its sandbox', 
     expect(fs.existsSync(sandboxPathFor('fresh', home))).toBe(false);
   });
 
+  it('routes a MISSING (stale/deleted) project cwd to the sandbox, never HOME (file-spill fix)', () => {
+    // The persisted active project no longer exists on disk (deleted /tmp dir).
+    const deleted = path.join(home, 'pi-rt8-project'); // never created
+    expect(fs.existsSync(deleted)).toBe(false);
+
+    const cwd = resolveSessionCwd({ cwd: deleted, conversationId: 'wc-9' }, home);
+
+    // NOT the dead project path, NOT HOME — the conversation's own sandbox.
+    expect(cwd).toBe(sandboxPathFor('wc-9', home));
+    expect(cwd).not.toBe(deleted);
+    expect(cwd).not.toBe(home);
+    expect(fs.statSync(cwd as string).isDirectory()).toBe(true);
+  });
+
+  it('prefers the sandbox over a resumed session when the requested cwd is missing', () => {
+    // A missing cwd must not fall through to pi restoring that same dead cwd, so
+    // even with a sessionPath present we root at the sandbox.
+    const deleted = path.join(home, 'gone');
+    const cwd = resolveSessionCwd(
+      { cwd: deleted, sessionPath: '/some/session.jsonl', conversationId: 'wc-10' },
+      home,
+    );
+    expect(cwd).toBe(sandboxPathFor('wc-10', home));
+  });
+
+  it('rejects a cwd that exists but is a FILE (not a directory) → sandbox', () => {
+    const file = path.join(home, 'not-a-dir');
+    fs.writeFileSync(file, 'x', 'utf8');
+    const cwd = resolveSessionCwd({ cwd: file, conversationId: 'wc-11' }, home);
+    expect(cwd).toBe(sandboxPathFor('wc-11', home));
+  });
+
   it('defers to the resumed session (returns undefined) so pi restores its cwd', () => {
     const cwd = resolveSessionCwd(
       { sessionPath: '/some/session.jsonl', conversationId: 'fresh' },

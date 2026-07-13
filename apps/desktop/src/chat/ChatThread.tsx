@@ -184,7 +184,9 @@ function AssistantGroup({
   let textN = 0;
   let activityN = 0;
   return (
-    <div className="flex flex-col gap-2">
+    // min-w-0 so this flex child can shrink below its content's intrinsic width
+    // and the prose reflows when the canvas narrows the column (blindtest #9).
+    <div className="flex min-w-0 flex-col gap-2">
       {segments.map((seg) => {
         if (seg.kind === 'text') {
           return <Markdown key={`${groupId}-t${textN++}`} text={seg.text} />;
@@ -209,7 +211,7 @@ function AssistantGroup({
                 .filter((x): x is { id: string; src: string } => x.src !== undefined)
             : [];
         return (
-          <div key={`${groupId}-a${activityN++}`} className="flex flex-col gap-2">
+          <div key={`${groupId}-a${activityN++}`} className="flex min-w-0 flex-col gap-2">
             <ThreadActivityChain
               blocks={seg.blocks}
               resultForBlock={resultForBlock}

@@ -8,12 +8,17 @@
  * (#A3); the collapse control lives in the sidebar just right of the traffic
  * lights (#A5); files can be dropped anywhere in the window (#A8).
  */
-import { CanvasProvider, IconPanelRight } from '@pi-desktop/canvas';
+import {
+  type CanvasController,
+  CanvasProvider,
+  createCanvasController,
+  IconPanelRight,
+} from '@pi-desktop/canvas';
 import type { Model } from '@pi-desktop/engine';
 import { IconButton, IconClose, MainSurface, TopBar } from '@pi-desktop/ui';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { SettingsSection } from '../settings/SettingsView';
-import { useCanvasStore } from '../state/canvas-store';
+import { registerCanvasControllerReset, useCanvasStore } from '../state/canvas-store';
 import { getModels, setSessionName, startPi } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { useProjectStore } from '../state/project-store';
@@ -143,6 +148,19 @@ export function ChatApp({
     });
   }, [modelId]);
 
+  // App-owned canvas controller (the blessed CanvasProvider pattern — "the app
+  // usually creates one and drives it"). Owning it here lets us register its
+  // tab-reset with the session lifecycle so a new/switched conversation starts
+  // with a clean canvas (session isolation, backlog #2).
+  const canvasController = useRef<CanvasController | null>(null);
+  if (canvasController.current === null) canvasController.current = createCanvasController();
+  useEffect(() => {
+    const controller = canvasController.current;
+    if (controller === null) return;
+    registerCanvasControllerReset(() => controller.reset());
+    return () => registerCanvasControllerReset(null);
+  }, []);
+
   const title = windowTitle ?? (messageCount > 0 ? 'Chat' : 'New chat');
   const empty = messageCount === 0;
 
@@ -158,7 +176,7 @@ export function ChatApp({
   );
 
   return (
-    <CanvasProvider>
+    <CanvasProvider controller={canvasController.current}>
       <div className="flex h-full">
         {/* The sidebar stays mounted; when collapsed the slot narrows to a
             ~64px ICON RAIL (round-8 #1) rather than hiding — global.css owns the

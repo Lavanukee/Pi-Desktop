@@ -14,6 +14,12 @@
  *                    extra RAM buys context/headroom — a single-file GGUF bigger
  *                    than ~32GB needs sharded downloads, a follow-up).
  *
+ * The tiers above are the RAM-nominal mapping; {@link recommend} additionally
+ * applies a HEADROOM step-down so a default recommendation never wants the whole
+ * machine — a pick's minimum RAM must sit strictly below the machine's total, not
+ * merely equal it. A 24GB Mac therefore DEFAULTS to the 16GB-tier Gemma4-12B, not
+ * the exact-fit 27B (which the power-user 3-tier picker still offers as an opt-in).
+ *
  * Beside the primary, a small "Recommended for your Mac" {@link SimplePick} set
  * (1–3 clear picks) is produced for NON-POWER-USERS: the speed pick, a
  * vision-capable pick when it fits, and the lightweight helper.
@@ -168,10 +174,54 @@ function tierFor(ram: number): BudgetTier {
   return '<8GB';
 }
 
+/** Budget tiers smallest→largest — the step-down ladder for headroom fitting. */
+const TIER_LADDER: readonly BudgetTier[] = [
+  '<8GB',
+  '8GB',
+  '16GB',
+  '24GB',
+  '32GB',
+  '48GB',
+  '64GB',
+  '96GB',
+  '128GB',
+];
+
+/** minRam (GB) of a tier's PRIMARY pick — 0 when its model can't be resolved. */
+function primaryMinRamGB(tier: BudgetTier): number {
+  return getCatalogModel(primaryFor(tier).modelId)?.minRamGB ?? 0;
+}
+
+/**
+ * The tier to actually RECOMMEND: the RAM-nominal {@link tierFor} tier, stepped
+ * DOWN until its primary pick leaves headroom — the model's minimum RAM must be
+ * strictly below the machine's total, never ≥ it. So a 24GB Mac isn't handed a
+ * 24GB-hungry 27B (which would swallow the whole machine); it drops to a lighter
+ * pick with room to breathe. Never steps below the smallest tier.
+ *
+ * This governs ONLY the "Recommended for your Mac" defaults — the power-user
+ * 3-tier picker ({@link resolveTierModels}) still offers the heavier model as an
+ * explicit opt-in.
+ */
+function fittingTier(ram: number): BudgetTier {
+  const nominal = tierFor(ram);
+  const start = TIER_LADDER.indexOf(nominal);
+  if (start < 0) return nominal;
+  for (let i = start; i >= 1; i -= 1) {
+    const t = TIER_LADDER[i];
+    if (t !== undefined && primaryMinRamGB(t) < ram) return t;
+  }
+  // Fell through to the smallest tier — it's the best we can offer.
+  return TIER_LADDER[0] ?? nominal;
+}
+
 /** Recommend a (speed-optimized) model configuration for the given RAM budget. */
 export function recommend(hw: { totalRamGB: number }): Recommendation {
   const ram = hw.totalRamGB;
-  const tier = tierFor(ram);
+  const nominalTier = tierFor(ram);
+  // Leave headroom: never DEFAULT-recommend a pick whose RAM need ≥ the machine's
+  // total (a 24GB Mac gets the 16GB-tier 12B, not the exact-fit 27B).
+  const tier = fittingTier(ram);
   const primary = primaryFor(tier);
 
   const { model, file } = resolve(primary);
@@ -184,13 +234,15 @@ export function recommend(hw: { totalRamGB: number }): Recommendation {
       : model.spec === 'eagle3'
         ? ' with EAGLE-3 speculative decoding'
         : '';
+  const steppedDown = tier !== nominalTier;
   const rationale =
     tier === '<8GB'
       ? `${ram}GB RAM is below the 8GB floor for a large model; running the ` +
         `${model.displayName} (${file.quant})${specNote} as the fast primary.`
-      : `${ram}GB RAM → ${tier} tier → ${model.displayName} ${file.quant} in ` +
-        `${primary.launchMode} mode${specNote} (needs ~${model.minRamGB}GB), plus the ` +
-        `${utility.model.displayName} utility slot.`;
+      : `${ram}GB RAM → ${model.displayName} ${file.quant} in ${primary.launchMode} ` +
+        `mode${specNote} (needs ~${model.minRamGB}GB${
+          steppedDown ? `; a lighter pick that keeps headroom on ${ram}GB` : ''
+        }), plus the ${utility.model.displayName} utility slot.`;
 
   return {
     tier,

@@ -5,9 +5,9 @@
  *
  *   #2  the effort SLIDER is no longer inline — an "Effort" button
  *       (data-testid=composer-effort) opens it inside a popover, and the button
- *       carries the labeled readout: "Effort · Auto" in the default auto state
- *       (the word "Auto", mirroring the model chip), or "Effort · <Level>" when a
- *       level is pinned.
+ *       carries the labeled readout: "Effort · Adaptive" in the default auto
+ *       state (a DISTINCT word from the model chip's "Auto", jedd #12), or
+ *       "Effort · <Level>" when a level is pinned.
  *   round-15 the center TierRegion is gone: the bar renders folder-LEFT +
  *       effort-RIGHT only, with an empty flex spacer between them, so the
  *       composer-tier* testids never mount and the stray .pd-tier-dot is gone.
@@ -62,7 +62,7 @@ try {
   // Make sure we start from Auto (the default) so the chip speaks for routing,
   // and reset the effort to auto/medium — settings persist app-globally (not in
   // the throwaway user-data-dir), so a prior pinned (level-mode) effort would
-  // otherwise leak in and make the "Effort · Auto" readout non-deterministic.
+  // otherwise leak in and make the "Effort · Adaptive" readout non-deterministic.
   await page.evaluate(() =>
     window
       .__settings_store()
@@ -143,20 +143,21 @@ try {
   // ── #2: the "Effort" button opens the slider in a popover ──────────────────
   const effortBtn = page.locator('[data-testid="composer-effort"]');
   await effortBtn.waitFor({ timeout: 8000 });
-  // In the default auto state the button reads the literal "Effort · Auto" (the
-  // word "Auto", mirroring the model chip) — NOT the resolved level, even though
-  // the balanced tier is routed and the slider knob rests at the balanced tick.
+  // In the default auto state the button reads the literal "Effort · Adaptive"
+  // (jedd #12: a DISTINCT word from the model chip's "Auto" so the two never read
+  // as duplicate "Auto"s) — NOT the resolved level, even though the balanced tier
+  // is routed and the slider knob rests at the balanced tick.
   await page.waitForFunction(
     () =>
       (document.querySelector('[data-testid="composer-effort"]')?.textContent ?? '').trim() ===
-      'Effort · Auto',
+      'Effort · Adaptive',
     undefined,
     { timeout: 8000 },
   );
   const effortLabel = (await effortBtn.innerText()).trim();
   assert(
-    effortLabel === 'Effort · Auto',
-    `the effort button should read "Effort · Auto" in the default auto state, got ${JSON.stringify(effortLabel)}`,
+    effortLabel === 'Effort · Adaptive',
+    `the effort button should read "Effort · Adaptive" in the default auto state, got ${JSON.stringify(effortLabel)}`,
   );
   assert(
     (await page.locator('[data-testid="composer-effort-slider"]').count()) === 0,
@@ -251,7 +252,7 @@ try {
 
   console.log(
     'round14-composer-probe OK — no .pd-tier-dot / composer-tier; empty center spacer; ' +
-      'the Effort button reads "Effort · Auto" and reveals the slider popover; the footer ' +
+      'the Effort button reads "Effort · Adaptive" and reveals the slider popover; the footer ' +
       'chip shows "Auto · gemma4 e2b" (the LOADED model, not the tier) under Auto and "Balanced" ' +
       'when a tier is pinned; the tok/s readout is gone from the input bar; and the turn-stats ' +
       'info button is hidden for power users',

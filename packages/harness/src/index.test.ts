@@ -6,7 +6,12 @@ import type {
   ToolInfo,
 } from '@mariozechner/pi-coding-agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HARNESS_CONFIG_ENTRY, type StoredEntryLike, wireHarness } from './index.js';
+import {
+  CAPABILITY_PROMPT_MARKER,
+  HARNESS_CONFIG_ENTRY,
+  type StoredEntryLike,
+  wireHarness,
+} from './index.js';
 
 // biome-ignore lint/suspicious/noExplicitAny: event handler shape varies per event in the fake bus.
 type AnyHandler = (event: any, ctx: any) => any;
@@ -116,6 +121,29 @@ describe('wireHarness', () => {
     expect(lastCall).toContain('bash');
     expect(lastCall).toContain('python_run');
     expect(lastCall).toContain('tool_search');
+  });
+
+  it('returns a capability-affirming system prompt from before_agent_start (appended to the base)', async () => {
+    const f = makeFakePi(['read', 'bash']);
+    wireHarness(f.pi);
+    const { ctx } = makeCtx(f.entries);
+    await f.fire('session_start', { type: 'session_start', reason: 'startup' }, ctx);
+    const results = await f.fire(
+      'before_agent_start',
+      {
+        type: 'before_agent_start',
+        prompt: "what's on my calendar?",
+        systemPrompt: 'You are a helpful coding agent.',
+        systemPromptOptions: {},
+      },
+      ctx,
+    );
+    const result = results[0] as { systemPrompt?: string } | undefined;
+    expect(result?.systemPrompt).toBeDefined();
+    // The base is preserved and the capability section is appended after it.
+    expect(result?.systemPrompt?.startsWith('You are a helpful coding agent.')).toBe(true);
+    expect(result?.systemPrompt).toContain(CAPABILITY_PROMPT_MARKER);
+    expect(result?.systemPrompt).toContain('tool_search');
   });
 
   it('emits the classify+title piggyback title over the status channel (turn 1)', async () => {

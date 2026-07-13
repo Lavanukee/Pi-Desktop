@@ -167,6 +167,36 @@ async function readFile(absPath: string): Promise<ReadFileResult | null> {
   }
 }
 
+/**
+ * True when a read carries something DISPLAYABLE: real text (an empty file reads
+ * as `''`, which counts), or a binary / too-large NOTICE. A bare `{ text: null }`
+ * means the file couldn't be read (missing / vanished / raced), which carries
+ * nothing — callers must NOT overwrite already-shown content with it (round-
+ * blindtest #10: a failed read was blanking the file surface).
+ */
+function readHasContent(read: ReadFileResult | null): read is ReadFileResult {
+  return read !== null && (read.text !== null || read.binary || read.tooLarge);
+}
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Read a file, retrying a few times while it momentarily reads as MISSING. A
+ * just-written file can lag its tool result by a beat (buffered write / atomic
+ * rename), and a single read that lands in that gap otherwise leaves the tab
+ * blank forever (round-blindtest #10). Returns the first usable read, else the
+ * last attempt (so callers can still clear `streaming`).
+ */
+async function readFileSettled(absPath: string, attempts = 3): Promise<ReadFileResult | null> {
+  let last: ReadFileResult | null = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    last = await readFile(absPath);
+    if (readHasContent(last)) return last;
+    if (attempt < attempts - 1) await delay(120 * (attempt + 1));
+  }
+  return last;
+}
+
 async function readTree(rootDir: string): Promise<FileTreeNode[]> {
   try {
     const res = await window.piDesktop.invoke('fs:list-tree', { root: rootDir });
@@ -260,13 +290,15 @@ export async function openFileInCanvas(
   if (existing) controller.focusTab(existing.id);
   else controller.upsertTab(key, { ...fileTabSpec(absPath, cwd), streaming: false });
   const { root } = treeRootFor(absPath, cwd);
-  const [read, tree] = await Promise.all([readFile(absPath), readTree(root)]);
+  const [read, tree] = await Promise.all([readFileSettled(absPath), readTree(root)]);
   const tab = controller.getState().tabs.find((t) => t.key === key);
   if (tab === undefined) return;
   controller.updateTab(tab.id, {
     streaming: false,
     fileTree: tree,
-    ...(read ? { artifact: fileArtifact(absPath, read) } : {}),
+    // Only replace content with a read that actually loaded — a missing/raced
+    // read must never blank the surface (round-blindtest #10).
+    ...(readHasContent(read) ? { artifact: fileArtifact(absPath, read) } : {}),
   });
   void hydrateOpenApps(controller, key, absPath);
 }
@@ -324,19 +356,59 @@ export function useFileWriteCanvasRouting(): void {
         if (Object.keys(patch).length > 0) controller.updateTab(existing.id, patch);
       }
 
-      // Finalize once from disk when the write completes.
+      // Finalize once from disk when the write completes. Always drop the
+      // `streaming` flag; only REPLACE the shown content with a read that
+      // actually loaded (retried, since a fresh write can lag a beat) so a
+      // missing/raced read never blanks the tab (round-blindtest #10).
       if (!ev.running && !finalized.current.has(ev.callId)) {
         finalized.current.add(ev.callId);
-        void readFile(ev.path).then((read) => {
-          if (read === null) return;
+        void readFileSettled(ev.path).then((read) => {
           const tab = controller.getState().tabs.find((t) => t.key === key);
-          if (tab)
-            controller.updateTab(tab.id, {
-              streaming: false,
-              artifact: fileArtifact(ev.path, read),
-            });
+          if (tab === undefined) return;
+          controller.updateTab(tab.id, {
+            streaming: false,
+            ...(readHasContent(read) ? { artifact: fileArtifact(ev.path, read) } : {}),
+          });
         });
       }
     }
   }, [messages, cwd, controller]);
+}
+
+/**
+ * Recover a file tab that became active while showing NOTHING — its first read
+ * raced the write, or the file wasn't there yet — by re-reading from disk when
+ * it gains focus and filling it once real content lands (round-blindtest #10:
+ * "opened file → only line 1, no text"). Also picks up out-of-band changes when
+ * the user revisits an empty tab.
+ *
+ * Deliberately scoped to EMPTY tabs (no artifact, or empty text) and never fires
+ * while `streaming`, so it can NEVER clobber a populated tab's unsaved in-editor
+ * edits — a populated tab is left exactly as the user last saw it.
+ */
+export function useFileTabRefresh(): void {
+  const { controller, activeTabId, tabs } = useCanvasTabs();
+  const active = tabs.find((t) => t.id === activeTabId);
+  const filePath = active?.kind === 'file' ? active.filePath : undefined;
+  const needsLoad =
+    active?.kind === 'file' &&
+    active.streaming !== true &&
+    (active.artifact === undefined || active.artifact.content.text === '');
+
+  useEffect(() => {
+    if (filePath === undefined || !needsLoad) return;
+    let cancelled = false;
+    void readFileSettled(filePath).then((read) => {
+      // Only fill when there's REAL text to show — an empty read leaves the
+      // (already empty) tab untouched, and a still-missing read never blanks it.
+      if (cancelled || !readHasContent(read) || read.text === null || read.text === '') return;
+      const tab = controller.getState().tabs.find((t) => t.key === fileTabKey(filePath));
+      if (tab !== undefined && tab.streaming !== true) {
+        controller.updateTab(tab.id, { artifact: fileArtifact(filePath, read) });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [filePath, needsLoad, controller]);
 }

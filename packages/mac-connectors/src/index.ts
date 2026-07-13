@@ -40,6 +40,21 @@ import {
 } from './messages.js';
 import { type OsascriptRunner, systemOsascriptRunner } from './osascript.js';
 import { runRemindersCreate, runRemindersList } from './reminders.js';
+// Stable tool names — the identifiers W5 gates on via pi's `tool_call` event —
+// live in a dependency-free module so name-only consumers (the harness presets)
+// can import them without dragging in this extension. Re-exported below.
+import {
+  CALENDAR_CREATE_EVENT_TOOL,
+  CALENDAR_LIST_EVENTS_TOOL,
+  CONTACTS_SEARCH_TOOL,
+  MAIL_READ_TOOL,
+  MAIL_RECENT_TOOL,
+  MAIL_SEARCH_TOOL,
+  MESSAGES_RECENT_TOOL,
+  MESSAGES_SEND_TOOL,
+  REMINDERS_CREATE_TOOL,
+  REMINDERS_LIST_TOOL,
+} from './tool-names.js';
 
 export * from './calendar.js';
 export * from './contacts.js';
@@ -48,32 +63,7 @@ export * from './mail.js';
 export * from './messages.js';
 export * from './osascript.js';
 export * from './reminders.js';
-
-/** Stable tool names — also the identifiers W5 can gate on via pi's `tool_call` event. */
-export const CALENDAR_LIST_EVENTS_TOOL = 'calendar_list_events';
-export const CALENDAR_CREATE_EVENT_TOOL = 'calendar_create_event';
-export const REMINDERS_LIST_TOOL = 'reminders_list';
-export const REMINDERS_CREATE_TOOL = 'reminders_create';
-export const CONTACTS_SEARCH_TOOL = 'contacts_search';
-export const MAIL_SEARCH_TOOL = 'mail_search';
-export const MAIL_RECENT_TOOL = 'mail_recent';
-export const MAIL_READ_TOOL = 'mail_read';
-export const MESSAGES_RECENT_TOOL = 'messages_recent';
-export const MESSAGES_SEND_TOOL = 'messages_send';
-
-/** Every tool name this extension registers, in registration order. */
-export const MAC_CONNECTOR_TOOLS = [
-  CALENDAR_LIST_EVENTS_TOOL,
-  CALENDAR_CREATE_EVENT_TOOL,
-  REMINDERS_LIST_TOOL,
-  REMINDERS_CREATE_TOOL,
-  CONTACTS_SEARCH_TOOL,
-  MAIL_SEARCH_TOOL,
-  MAIL_RECENT_TOOL,
-  MAIL_READ_TOOL,
-  MESSAGES_RECENT_TOOL,
-  MESSAGES_SEND_TOOL,
-] as const;
+export * from './tool-names.js';
 
 export interface MacConnectorsOptions {
   /** Injected AppleScript runner; defaults to the real `osascript`-backed runner. */

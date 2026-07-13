@@ -1,11 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_CONNECTOR_IDS, BUILTIN_CONNECTORS } from './builtin-connectors';
+import { BUILTIN_CONNECTOR_IDS, BUILTIN_CONNECTORS, MAC_CONNECTORS } from './builtin-connectors';
 import { BRANDED_CONNECTOR_IDS } from './connector-icons';
 import { isBuiltinConnector, KNOWN_CONNECTORS, KNOWN_CONNECTORS_BY_ID } from './detect-apps';
 
 describe('built-in connectors', () => {
-  it('ships HyperFrames and Video editing', () => {
-    expect(BUILTIN_CONNECTOR_IDS).toEqual(['hyperframes', 'video-editing']);
+  it('ships HyperFrames, Video editing, and the first-party macOS connectors', () => {
+    expect(BUILTIN_CONNECTOR_IDS).toEqual([
+      'hyperframes',
+      'video-editing',
+      'mac-calendar',
+      'mac-mail',
+      'mac-messages',
+      'mac-contacts',
+      'mac-reminders',
+    ]);
   });
 
   it('marks each builtin as kind:builtin with a sentinel empty command', () => {
@@ -56,8 +64,38 @@ describe('built-in connectors', () => {
   it('isBuiltinConnector is true only for the builtins', () => {
     expect(isBuiltinConnector('hyperframes')).toBe(true);
     expect(isBuiltinConnector('video-editing')).toBe(true);
+    expect(isBuiltinConnector('mac-calendar')).toBe(true);
     expect(isBuiltinConnector('github')).toBe(false);
     expect(isBuiltinConnector('memory')).toBe(false);
     expect(isBuiltinConnector('does-not-exist')).toBe(false);
+  });
+
+  it('surfaces the first-party macOS connectors as discoverable "By us" builtins', () => {
+    const macIds = ['mac-calendar', 'mac-mail', 'mac-messages', 'mac-contacts', 'mac-reminders'];
+    expect(MAC_CONNECTORS.map((c) => c.id)).toEqual(macIds);
+    for (const id of macIds) {
+      const c = KNOWN_CONNECTORS_BY_ID[id];
+      // Present in the gallery catalog + marked as our always-on preinstalled tool.
+      expect(c, `${id} missing from catalog`).toBeDefined();
+      expect(c?.kind).toBe('builtin');
+      expect(c?.firstParty).toBe(true); // → the "By us" section
+      expect(c?.template.command).toBe(''); // never spawns a server
+      expect(isBuiltinConnector(id)).toBe(true);
+      // Every card advertises the real tools it exposes (drives the detail view).
+      expect(c?.tools?.length ?? 0).toBeGreaterThan(0);
+      for (const t of c?.tools ?? []) expect(t.description.length).toBeGreaterThan(0);
+    }
+    // The real mac-connector tool names are advertised, so the model's calendar/
+    // mail/etc. capability is discoverable rather than invisible.
+    const advertised = MAC_CONNECTORS.flatMap((c) => (c.tools ?? []).map((t) => t.name));
+    for (const name of [
+      'calendar_list_events',
+      'mail_search',
+      'messages_send',
+      'contacts_search',
+      'reminders_create',
+    ]) {
+      expect(advertised).toContain(name);
+    }
   });
 });

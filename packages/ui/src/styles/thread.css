@@ -21,6 +21,11 @@
   flex-direction: column;
   gap: 4px;
   align-items: flex-start;
+  /* Never exceed the thread column, and let inner content shrink so it reflows
+   * rather than overflowing/clipping when the canvas narrows it (round-
+   * blindtest #9). */
+  min-width: 0;
+  max-width: 100%;
 }
 
 /*
@@ -58,7 +63,10 @@
 /* Assistant voice: serif 16/1.5 (claude, dark wght 360) vs sans 14/22 w430+
  * (codex) — entirely token-driven. */
 .pd-msg--assistant {
-  max-width: var(--pd-thread-prose-width);
+  /* Cap at the prose column, but still allow shrinking below it so a narrowed
+   * column (canvas open) reflows the text instead of clipping it (#9). */
+  max-width: min(100%, var(--pd-thread-prose-width));
+  min-width: 0;
   color: var(--pd-text-primary);
   font-family: var(--pd-font-response-family);
   font-size: var(--pd-font-response-size);
@@ -66,6 +74,7 @@
   font-weight: var(--pd-font-weight-body);
   font-variation-settings: var(--pd-font-response-variation);
   overflow-wrap: anywhere;
+  word-break: break-word;
   /* Assistant copy is selectable too (round-3 #P3). */
   user-select: text;
 }

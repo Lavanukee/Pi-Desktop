@@ -178,6 +178,29 @@ const NEUTRAL_ICON_SVGS: Record<string, string> = {
   'video-editing': neutralSvg(
     '<circle cx="6" cy="6.5" r="2.15"/><circle cx="6" cy="17.5" r="2.15"/><path d="M7.9 7.7 19.5 16.5M7.9 16.3 19.5 7.5M12 12l4-2.9"/>',
   ),
+  // ── First-party macOS connectors ("By us") ─────────────────────────────────
+  // Neutral category glyphs (NOT the trademarked Apple app icons): a calendar
+  // grid, an envelope, a chat bubble, a person, and a checklist.
+  // Calendar grid.
+  'mac-calendar': neutralSvg(
+    '<rect x="3.75" y="5" width="16.5" height="15" rx="2"/><path d="M3.75 9.25h16.5"/><path d="M8 3.5v3M16 3.5v3"/><path d="M7.5 13h2.5M14 13h2.5M7.5 16.5h2.5"/>',
+  ),
+  // Envelope.
+  'mac-mail': neutralSvg(
+    '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="m4.25 7.5 7.75 5.75L19.75 7.5"/>',
+  ),
+  // Rounded chat bubble with a tail.
+  'mac-messages': neutralSvg(
+    '<path d="M12 4.75c-4.55 0-8.25 2.9-8.25 6.5 0 1.9 1.05 3.6 2.7 4.75-.15 1.15-.7 2.2-1.45 3 1.5-.2 2.9-.75 4-1.6.95.25 1.95.35 3 .35 4.55 0 8.25-2.9 8.25-6.5s-3.7-6.5-8.25-6.5z"/>',
+  ),
+  // Person (bust in a head + shoulders arc).
+  'mac-contacts': neutralSvg(
+    '<circle cx="12" cy="8.5" r="3.5"/><path d="M5.75 19a6.25 6.25 0 0 1 12.5 0"/>',
+  ),
+  // Checklist (two checked rows).
+  'mac-reminders': neutralSvg(
+    '<path d="M4.25 7.25 5.5 8.5l2.25-2.5"/><path d="M4.25 15.25 5.5 16.5l2.25-2.5"/><path d="M11 7.5h8.75M11 15.5h8.75"/>',
+  ),
 };
 
 /**

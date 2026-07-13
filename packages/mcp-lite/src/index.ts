@@ -24,7 +24,7 @@ export {
   registerCliTool,
   renderHelp,
 } from './bash-cli';
-export { BUILTIN_CONNECTOR_IDS, BUILTIN_CONNECTORS } from './builtin-connectors';
+export { BUILTIN_CONNECTOR_IDS, BUILTIN_CONNECTORS, MAC_CONNECTORS } from './builtin-connectors';
 export {
   type CatalogServerEntry,
   type CatalogToolEntry,

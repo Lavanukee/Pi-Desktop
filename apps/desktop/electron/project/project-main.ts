@@ -43,6 +43,22 @@ function safeRead(file: string): string | null {
   }
 }
 
+/**
+ * True when `project` is set but its working folder no longer exists on disk (or
+ * is not a directory). The renderer surfaces this as a "using sandbox" warn on
+ * the folder chip: a missing project path makes pi root the conversation at its
+ * sandbox rather than HOME (electron/sandbox.ts resolveSessionCwd). `null` (no
+ * active project) is never "missing".
+ */
+function pathMissing(project: ProjectEntry | null): boolean {
+  if (project === null) return false;
+  try {
+    return !fs.statSync(project.path).isDirectory();
+  } catch {
+    return true; // gone / unreadable → treat as missing
+  }
+}
+
 function readDoc(): ProjectsDoc {
   const raw = safeRead(PROJECTS_PATH);
   if (raw === null) return { version: 1, projects: [], activeId: null };
@@ -88,7 +104,8 @@ function activatePath(abs: string): ProjectsDoc {
 const handlers: IpcHandlers<ProjectInvokeMap> = {
   'project:list': () => {
     const doc = readDoc();
-    return { projects: doc.projects, activeId: doc.activeId };
+    const active = doc.projects.find((p) => p.id === doc.activeId) ?? null;
+    return { projects: doc.projects, activeId: doc.activeId, activeMissing: pathMissing(active) };
   },
 
   'project:set': (req) => {
@@ -97,12 +114,12 @@ const handlers: IpcHandlers<ProjectInvokeMap> = {
     if (typeof req.path === 'string' && req.path.length > 0) {
       const next = activatePath(req.path);
       const project = next.projects.find((p) => p.id === next.activeId) ?? null;
-      return { project, projects: next.projects };
+      return { project, projects: next.projects, activeMissing: pathMissing(project) };
     }
     const project = doc.projects.find((p) => p.id === req.id) ?? null;
     const next: ProjectsDoc = { ...doc, activeId: project?.id ?? doc.activeId };
     writeDoc(next);
-    return { project, projects: next.projects };
+    return { project, projects: next.projects, activeMissing: pathMissing(project) };
   },
 
   'project:new': async (req) => {
@@ -114,18 +131,20 @@ const handlers: IpcHandlers<ProjectInvokeMap> = {
       });
       if (picked.canceled || picked.filePaths.length === 0) {
         const doc = readDoc();
-        return { project: null, projects: doc.projects };
+        const active = doc.projects.find((p) => p.id === doc.activeId) ?? null;
+        return { project: null, projects: doc.projects, activeMissing: pathMissing(active) };
       }
       target = picked.filePaths[0] ?? null;
     }
     if (target === null) {
       const doc = readDoc();
-      return { project: null, projects: doc.projects };
+      const active = doc.projects.find((p) => p.id === doc.activeId) ?? null;
+      return { project: null, projects: doc.projects, activeMissing: pathMissing(active) };
     }
     const next = activatePath(target);
     const project = next.projects.find((p) => p.id === next.activeId) ?? null;
     log.info('project added', { path: project?.path });
-    return { project, projects: next.projects };
+    return { project, projects: next.projects, activeMissing: pathMissing(project) };
   },
 
   'project:clear': () => {

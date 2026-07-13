@@ -15,8 +15,45 @@ export const HARNESS_CLASSIFY_ENTRY = 'harness/classify';
 export const HARNESS_REPAIR_ENTRY = 'harness/repair';
 /** Reviewer/adversarial pass outcome (effort high/max). */
 export const HARNESS_REVIEW_ENTRY = 'harness/review';
+/** Loop-detector steer/abort telemetry (repeated/failed tool-call breaking). */
+export const HARNESS_LOOP_ENTRY = 'harness/loop';
+/** Effort-gated REAL verify outcome (project checks at high/max). */
+export const HARNESS_VERIFY_ENTRY = 'harness/verify';
 /** The conversation title produced by the classify+title piggyback (turn 1). */
 export const HARNESS_TITLE_ENTRY = 'harness/title';
+
+/**
+ * Coarse lifecycle stage of the harness for the current turn, surfaced so the app
+ * can render what the agent is doing right now. Set at the seams that already
+ * fire (see {@link HarnessStatus.stage}): before_agent_start → 'classifying',
+ * agent_start → 'working', repair rung entry → 'repairing', the reviewer pass →
+ * 'reviewing'/'revising', the effort verify → 'verifying', agent_end →
+ * 'done'/'idle'.
+ */
+export type HarnessStage =
+  | 'idle'
+  | 'classifying'
+  | 'working'
+  | 'repairing'
+  | 'reviewing'
+  | 'revising'
+  | 'verifying'
+  | 'done';
+
+export const HARNESS_STAGES: readonly HarnessStage[] = [
+  'idle',
+  'classifying',
+  'working',
+  'repairing',
+  'reviewing',
+  'revising',
+  'verifying',
+  'done',
+];
+
+export function isHarnessStage(v: unknown): v is HarnessStage {
+  return typeof v === 'string' && (HARNESS_STAGES as readonly string[]).includes(v);
+}
 
 /** Preset selection: a fixed class, or `auto` to let the classifier decide. */
 export type PresetSelection = TaskClass | 'auto';
@@ -93,6 +130,12 @@ export interface HarnessStatus extends HarnessConfig {
   readonly plan: readonly PlanItem[] | null;
   /** Optional heading for the plan panel (from the `update_plan` tool). */
   readonly planTitle: string | null;
+  /**
+   * The coarse lifecycle stage of the current turn (classifying → working →
+   * repairing/reviewing/revising/verifying → done/idle), for the app to render a
+   * live activity indicator. Set at the harness's existing seams.
+   */
+  readonly stage: HarnessStage;
 }
 
 /** Minimal structural view of a persisted session entry. */

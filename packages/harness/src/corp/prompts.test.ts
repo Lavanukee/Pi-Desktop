@@ -12,6 +12,8 @@ import {
   isSpecialistKind,
   PROMPT_LIBRARY,
   type PromptLibraryId,
+  ROLE_THINKING,
+  roleThinkingEnabled,
   SPECIALIST_KINDS,
 } from './prompts.js';
 
@@ -101,6 +103,40 @@ describe('composeNodePrompt', () => {
     expect(out.startsWith(base.prompt)).toBe(true);
     expect(out).toContain('Prefer Godot connectors.');
     expect(out).toContain('the contract still governs'); // the guard framing is preserved
+  });
+});
+
+describe('MANAGER_PROMPT (via the library)', () => {
+  it('invites using the contract notes field for the un-captured remainder', () => {
+    const manager = getRolePrompt('manager').prompt;
+    expect(manager).toContain('notes');
+    // The invitation names the kinds of thing notes is for.
+    expect(manager).toContain('failed');
+    expect(manager.toLowerCase()).toContain('constraint');
+  });
+
+  it('bounds contract granularity (6–12) and names the split-into-sub-divisions signal', () => {
+    const manager = getRolePrompt('manager').prompt;
+    expect(manager).toMatch(/6[–-]12/); // the bounded range, not "100"
+    expect(manager).not.toContain('100');
+    expect(manager.toLowerCase()).toContain('sub-division');
+  });
+});
+
+describe('ROLE_THINKING (per-role thinking control knob)', () => {
+  it('runs structured-output roles thinking-OFF and judgment roles thinking-ON', () => {
+    // Manager + division-head emit contract JSON — thinking off (runaway <think>).
+    expect(roleThinkingEnabled('manager')).toBe(false);
+    expect(roleThinkingEnabled('division-head')).toBe(false);
+    // CEO + engineer + specialists reason for judgment — thinking on.
+    expect(roleThinkingEnabled('ceo')).toBe(true);
+    expect(roleThinkingEnabled('engineer')).toBe(true);
+    for (const kind of SPECIALIST_KINDS) expect(roleThinkingEnabled(kind)).toBe(true);
+  });
+
+  it('has an explicit boolean entry for every core role and specialist', () => {
+    for (const role of CORE_ROLES) expect(typeof ROLE_THINKING[role]).toBe('boolean');
+    for (const kind of SPECIALIST_KINDS) expect(typeof ROLE_THINKING[kind]).toBe('boolean');
   });
 });
 

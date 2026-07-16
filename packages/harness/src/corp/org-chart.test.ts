@@ -131,4 +131,18 @@ describe('isOrgChart', () => {
     expect(isOrgChart({ ...validChart(), nodeStatus: ['idle'] })).toBe(false);
     expect(isOrgChart({ ...validChart(), nodeStatus: { eng: 'nope' } })).toBe(false);
   });
+
+  it('accepts an optional contract notes string (present or absent)', () => {
+    const base = validChart();
+    const [c0] = base.contracts;
+    expect(c0?.notes).toBeUndefined(); // absent is fine
+    expect(isOrgChart(base)).toBe(true);
+    const withNotes = { ...base, contracts: [{ ...c0, notes: 'avoid the O(n^2) approach' }] };
+    expect(isOrgChart(withNotes)).toBe(true);
+  });
+
+  it('rejects a non-string contract notes field', () => {
+    const bad = { ...validChart().contracts[0], notes: 42 };
+    expect(isOrgChart({ ...validChart(), contracts: [bad] })).toBe(false);
+  });
 });

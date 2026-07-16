@@ -177,6 +177,14 @@ export interface Contract {
   /** Contract ids that must be `merged` before this one becomes `ready`. */
   readonly dependsOn: readonly string[];
   /**
+   * Free-form "anything not captured by the other fields" note the author (a
+   * manager) may attach to a contract: a past approach that failed and should be
+   * avoided, a special instruction, a constraint, a gotcha, a warning. Optional
+   * and unstructured on purpose — the typed fields above still govern the work;
+   * this is the escape hatch for the human-legible remainder.
+   */
+  readonly notes?: string;
+  /**
    * Workspace placement, decided at division init (spec §9): `shared` works on
    * a branch of the common tree; `isolated` gets its own working directory to
    * avoid collisions. Undefined = engine default (shared).
@@ -283,7 +291,7 @@ function isOrgNode(v: unknown): v is OrgNode {
   );
 }
 
-function isContract(v: unknown): v is Contract {
+export function isContract(v: unknown): v is Contract {
   if (v === null || typeof v !== 'object') return false;
   const c = v as Record<string, unknown>;
   const available = c.available as Record<string, unknown> | null | undefined;
@@ -300,6 +308,7 @@ function isContract(v: unknown): v is Contract {
     isStringArray(available.imports) &&
     typeof c.reviewRubric === 'string' &&
     isStringArray(c.dependsOn) &&
+    (c.notes === undefined || typeof c.notes === 'string') &&
     (c.workspace === undefined || c.workspace === 'shared' || c.workspace === 'isolated') &&
     isContractStatus(c.status)
   );

@@ -48,6 +48,44 @@ export function isSpecialistKind(v: unknown): v is SpecialistKind {
   return typeof v === 'string' && (SPECIALIST_KINDS as readonly string[]).includes(v);
 }
 
+/**
+ * Per-role model-"thinking" control — a real harness knob (not yet wired into
+ * live dispatch; consumed by the slice-1 driver and future Phase-2 dispatch).
+ *
+ * Thinking models (e.g. qwen3.5) reason inside a `<think>…</think>` block before
+ * answering. That splits cleanly along the kind of turn:
+ *
+ *  - STRUCTURED-OUTPUT roles (`manager`, `division-head` — they emit a JSON array
+ *    of contracts) run thinking OFF. Real-model testing showed the manager's
+ *    contract-writing turn running away inside `<think>` and never closing it,
+ *    starving the actual JSON — a 0-contract outcome. Thinking-off fixes it.
+ *  - JUDGMENT roles (the solo/promotion worker, `ceo`, `engineer`, and the
+ *    advisory specialists) run thinking ON — their reasoning IS the value (the
+ *    promote-or-not call, the final review, evidence-grounded findings, code).
+ *
+ * A `false` entry means the dispatcher sends the provider's thinking-off switch
+ * for that turn (for llama.cpp: `chat_template_kwargs.enable_thinking:false`,
+ * plus a `/no_think` tag in the prompt as belt-and-suspenders); `true` leaves
+ * thinking enabled. The pre-promotion solo worker has no node role of its own —
+ * it is a judgment turn, so it runs thinking ON like the roles above.
+ */
+export const ROLE_THINKING: Readonly<Record<CoreRole | SpecialistKind, boolean>> = {
+  ceo: true,
+  manager: false,
+  'division-head': false,
+  engineer: true,
+  'visual-critic': true,
+  security: true,
+  performance: true,
+  accessibility: true,
+  correctness: true,
+};
+
+/** Whether a role runs with model "thinking" enabled (see {@link ROLE_THINKING}). */
+export function roleThinkingEnabled(role: CoreRole | SpecialistKind): boolean {
+  return ROLE_THINKING[role];
+}
+
 /** Common division archetypes that establish good practice up front. Managers
  * spin up custom divisions by extending one of these (or `engineer`'s base). */
 export type DivisionArchetype = 'frontend-dev' | 'backend-dev';
@@ -102,7 +140,8 @@ const CEO_PROMPT = `You are the CEO of this project. You hold the vision — and
 const MANAGER_PROMPT = `You are part of the manager block — the permanent layer between the CEO and the divisions. You hold structure, not the vision.
 
 - Translate the vision brief into typed contracts: input, output, slot, available tools/imports, and a review rubric written BEFORE implementation.
-- Granularity is small and deliberate: many few-minute contracts beat a few hour-long ones. If a contract needs an hour, split it.
+- Use each contract's optional \`notes\` field for anything a worker needs that the other fields don't capture: a past approach that failed and should be avoided, a special instruction, a constraint, or a warning. You are encouraged to write it whenever such context exists; leave it out when there is nothing extra to say.
+- Granularity is small and deliberate, but bounded: each contract is small and focused, and a division holds roughly 6–12 of them. If a contract would take an hour, split it — but if a division genuinely needs MORE than ~12 contracts, that is the signal to split it into sub-divisions (a division-head owning each), not to cram them into one oversized contract set.
 - Build the queue as a dependency DAG and keep it current. You queue work — you never start it; a contract runs only when its prerequisites clear. Independent work goes off to the side.
 - Create divisions from the predefined library; you may lightly extend a base prompt for a custom division. The contract, not the prompt, governs the work.
 - Propose org-chart changes (add/cut divisions) to the CEO for sign-off; remove divisions that no longer earn their place.

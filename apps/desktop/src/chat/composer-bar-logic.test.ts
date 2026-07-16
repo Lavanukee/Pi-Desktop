@@ -1,6 +1,7 @@
 import type { ChatMsg } from '@pi-desktop/engine';
 import { describe, expect, it } from 'vitest';
 import {
+  type ContextGaugeView,
   classificationHover,
   contextGaugeFromPercent,
   deriveContextGauge,
@@ -8,6 +9,7 @@ import {
   effortSliderView,
   levelForIndex,
   resolveContextGauge,
+  stickyContextGauge,
   tierLabel,
   usesSandbox,
 } from './composer-bar-logic';
@@ -273,5 +275,35 @@ describe('resolveContextGauge', () => {
     expect(
       resolveContextGauge({ contextPercent: null, messages: [], contextWindow: 0 }),
     ).toBeNull();
+  });
+});
+
+/**
+ * The ring holds its last non-null value across a momentary null (a model swap
+ * zeroes the launched window for a frame; the harness status is briefly cleared
+ * between turns) so it renders reliably during a turn instead of flickering to
+ * empty. ComposerBar drops the held value on a thread switch; this core just
+ * prefers the fresh value, falling back to the previous one.
+ */
+describe('stickyContextGauge', () => {
+  const g = (value: number): ContextGaugeView => ({ value, usedTokens: Math.round(value * 8000) });
+
+  it('prefers a fresh non-null gauge', () => {
+    expect(stickyContextGauge(g(0.4), g(0.3))).toEqual(g(0.4));
+  });
+
+  it('holds the previous gauge when the fresh read is momentarily null', () => {
+    // The percent path AND the token fallback both blanked for a frame — keep
+    // showing the last known fullness rather than dropping the ring.
+    expect(stickyContextGauge(null, g(0.3))).toEqual(g(0.3));
+  });
+
+  it('is null only when there is nothing fresh AND nothing held', () => {
+    expect(stickyContextGauge(null, null)).toBeNull();
+  });
+
+  it('a fresh zero (empty context) is kept — it is not treated as "missing"', () => {
+    // value 0 is a real reading (fresh conversation), distinct from a null gap.
+    expect(stickyContextGauge(g(0), g(0.5))).toEqual(g(0));
   });
 });

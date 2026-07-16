@@ -10,6 +10,7 @@ import {
   buildChatCompletionsRequest,
   createLlamaCppStream,
   type LlamaCppTimings,
+  promptProgressFraction,
 } from './stream.js';
 
 function makeModel(baseUrl = 'http://127.0.0.1:8080/v1'): Model<'openai-completions'> {
@@ -74,6 +75,29 @@ describe('buildChatCompletionsRequest', () => {
     expect(body.messages[1]?.role).toBe('user');
     expect(body.tools).toHaveLength(1);
   });
+
+  it('opts into prefill progress frames with return_progress', () => {
+    const body = buildChatCompletionsRequest(makeModel(), {
+      systemPrompt: 'sys',
+      messages: [{ role: 'user', content: 'hello', timestamp: 0 }],
+    }) as { return_progress?: boolean; stream_options?: { include_usage?: boolean } };
+    expect(body.return_progress).toBe(true);
+    expect(body.stream_options).toEqual({ include_usage: true });
+  });
+});
+
+describe('promptProgressFraction (pure)', () => {
+  it('is processed/total clamped to 0..1', () => {
+    expect(promptProgressFraction({ processed: 512, total: 1024 })).toBeCloseTo(0.5, 5);
+    expect(promptProgressFraction({ processed: 1024, total: 1024 })).toBe(1);
+    expect(promptProgressFraction({ processed: 2048, total: 1024 })).toBe(1); // over-report
+  });
+
+  it('is 0 when the total is unknown / not yet reported (no divide-by-zero)', () => {
+    expect(promptProgressFraction({ processed: 10 })).toBe(0);
+    expect(promptProgressFraction({ processed: 10, total: 0 })).toBe(0);
+    expect(promptProgressFraction({})).toBe(0);
+  });
 });
 
 describe('createLlamaCppStream — text', () => {
@@ -100,6 +124,48 @@ describe('createLlamaCppStream — text', () => {
     expect(onTimings).toHaveBeenCalledWith(timings);
     // Sanity: the POST went to the chat/completions endpoint.
     expect(calls).toHaveLength(1);
+  });
+
+  it('reports prefill progress from `prompt_progress` frames, then streams text', async () => {
+    // Two choice-less prefill frames arrive before the first token — exactly the
+    // shape llama-server emits under `return_progress: true`.
+    const { fetchImpl } = sseFetch([
+      { choices: [], prompt_progress: { processed: 256, total: 1024 } },
+      { choices: [], prompt_progress: { processed: 1024, total: 1024 } },
+      { choices: [{ delta: { content: 'Hi' } }] },
+      { choices: [{ delta: {}, finish_reason: 'stop' }] },
+    ]);
+    const onPromptProgress = vi.fn();
+    const stream = createLlamaCppStream({ fetchImpl, onPromptProgress })(
+      makeModel(),
+      emptyContext(),
+    );
+    const { final } = await consume(stream);
+
+    // Both prefill frames surfaced with a normalized fraction; the choice-less
+    // frames did not break text parsing.
+    expect(onPromptProgress).toHaveBeenCalledTimes(2);
+    expect(onPromptProgress.mock.calls[0]?.[0]).toEqual({
+      processed: 256,
+      total: 1024,
+      fraction: 0.25,
+    });
+    expect(onPromptProgress.mock.calls[1]?.[0]).toMatchObject({ fraction: 1 });
+    const text = final.content.find((c) => c.type === 'text');
+    expect(text?.type === 'text' && text.text).toBe('Hi');
+    expect(final.stopReason).toBe('stop');
+  });
+
+  it('does not require onPromptProgress — a prefill frame is a safe no-op without it', async () => {
+    const { fetchImpl } = sseFetch([
+      { choices: [], prompt_progress: { processed: 10, total: 20 } },
+      { choices: [{ delta: { content: 'ok' } }] },
+      { choices: [{ delta: {}, finish_reason: 'stop' }] },
+    ]);
+    const stream = createLlamaCppStream({ fetchImpl })(makeModel(), emptyContext());
+    const { final } = await consume(stream);
+    const text = final.content.find((c) => c.type === 'text');
+    expect(text?.type === 'text' && text.text).toBe('ok');
   });
 });
 

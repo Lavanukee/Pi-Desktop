@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { type HarnessStage, stageDisplay, threadStatusView } from './harness-status';
+import {
+  type HarnessStage,
+  parsePrefillPercent,
+  stageDisplay,
+  threadStatusView,
+} from './harness-status';
 
 /**
  * The harness publishes a coarse lifecycle `stage`; the ONE consolidated thread
@@ -43,6 +48,7 @@ describe('threadStatusView (the ONE consolidated indicator)', () => {
     stage: null as HarnessStage | null | undefined,
     isAuto: true,
     switchingToTier: null as string | null,
+    promptProgress: null as number | null,
   };
 
   it('shows nothing when idle (not streaming, not switching)', () => {
@@ -119,5 +125,68 @@ describe('threadStatusView (the ONE consolidated indicator)', () => {
     expect(
       threadStatusView({ ...base, isStreaming: true, switchingToTier: 'Balanced' })?.label,
     ).toBe('Thinking');
+  });
+
+  it('shows "Processing N%" during prefill, ahead of Thinking/Working', () => {
+    expect(threadStatusView({ ...base, promptProgress: 42 })).toEqual({
+      label: 'Processing',
+      detail: '42%',
+      showElapsed: true,
+    });
+    // Wins over an acting stage / running tool — prefill precedes any real work.
+    expect(
+      threadStatusView({ ...base, promptProgress: 3, stage: 'working', toolRunning: true })?.label,
+    ).toBe('Processing');
+  });
+
+  it('surfaces prefill even before the turn flips to streaming (precedes Thinking)', () => {
+    expect(threadStatusView({ ...base, isStreaming: false, promptProgress: 10 })).toEqual({
+      label: 'Processing',
+      detail: '10%',
+      showElapsed: true,
+    });
+  });
+
+  it('lets a pre-stream model switch win over prefill (the swap happens first)', () => {
+    expect(
+      threadStatusView({
+        ...base,
+        isStreaming: false,
+        switchingToTier: 'Balanced',
+        promptProgress: 20,
+      })?.label,
+    ).toBe('Switching to Balanced…');
+  });
+
+  it('hands off to Thinking/Working once prefill is done (promptProgress null)', () => {
+    expect(threadStatusView({ ...base, promptProgress: null })?.label).toBe('Thinking');
+    expect(threadStatusView({ ...base, promptProgress: null, toolRunning: true })?.label).toBe(
+      'Working',
+    );
+  });
+});
+
+/**
+ * Prefill progress rides the generic `extensionStatus` channel as a percent
+ * string; the indicator parses it into 0..99 (or null when absent/done).
+ */
+describe('parsePrefillPercent', () => {
+  it('parses a 0..99 percent string', () => {
+    expect(parsePrefillPercent('0')).toBe(0);
+    expect(parsePrefillPercent('42')).toBe(42);
+    expect(parsePrefillPercent('99')).toBe(99);
+    expect(parsePrefillPercent('37.5')).toBe(37.5);
+  });
+
+  it('collapses "complete" (>= 100) to null — prefill is over, hand off', () => {
+    expect(parsePrefillPercent('100')).toBeNull();
+    expect(parsePrefillPercent('120')).toBeNull();
+  });
+
+  it('is null for absent / empty / garbled / negative values', () => {
+    expect(parsePrefillPercent(undefined)).toBeNull();
+    expect(parsePrefillPercent('')).toBeNull();
+    expect(parsePrefillPercent('nope')).toBeNull();
+    expect(parsePrefillPercent('-5')).toBeNull();
   });
 });

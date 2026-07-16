@@ -42,6 +42,37 @@ export interface LlamaCppTimings {
   readonly predicted_per_second?: number;
 }
 
+/**
+ * llama-server prompt-processing progress frame, emitted on the streaming SSE
+ * during PREFILL (before the first token) when the request opts in with
+ * `return_progress: true`. Confirmed present in the b9934 server binary
+ * (`prompt_progress` / "Include prompt processing progress events in stream
+ * mode"). `processed`/`total` are prompt tokens; `cache` is the reused prefix.
+ */
+export interface LlamaPromptProgress {
+  readonly total?: number;
+  readonly cache?: number;
+  readonly processed?: number;
+  readonly time_ms?: number;
+}
+
+/** Normalized prefill progress the {@link LlamaCppStreamDeps.onPromptProgress}
+ * seam reports. `fraction` is processed/total clamped to 0..1 (0 when the total
+ * is not yet known), so the host can render "Processing N%". */
+export interface PromptProgress {
+  readonly processed: number;
+  readonly total: number;
+  readonly fraction: number;
+}
+
+/** processed/total → a clamped 0..1 fraction (0 when total is unknown/0). Pure. */
+export function promptProgressFraction(p: LlamaPromptProgress): number {
+  const total = p.total ?? 0;
+  if (total <= 0) return 0;
+  const processed = p.processed ?? 0;
+  return Math.min(1, Math.max(0, processed / total));
+}
+
 export interface LlamaCppStreamDeps {
   /** Injectable fetch (tests / proxies). Defaults to global fetch. */
   readonly fetchImpl?: typeof fetch;
@@ -51,6 +82,14 @@ export interface LlamaCppStreamDeps {
   readonly extraRungs?: readonly RepairRung[];
   /** Called with the final `timings` block — bridge to the supervisor's TPS. */
   readonly onTimings?: (t: LlamaCppTimings) => void;
+  /**
+   * Called for each prefill progress frame (`prompt_progress`) the server emits
+   * before the first token — the seam a host lane forwards to the UI's
+   * "Processing N%" indicator. Like {@link onTimings}, the provider only
+   * OBSERVES it here (it runs inside pi); surfacing it to the renderer is the
+   * host's job. Fires only when the request opts in via `return_progress`.
+   */
+  readonly onPromptProgress?: (p: PromptProgress) => void;
   /** Called when a tool call needed repair (observability / W5 seam). */
   readonly onRepair?: (info: { toolName: string; rung: number | undefined; ok: boolean }) => void;
   /**
@@ -148,6 +187,10 @@ export function buildChatCompletionsRequest(
     messages,
     stream: true,
     stream_options: { include_usage: true },
+    // Opt in to llama-server's prefill progress frames (`prompt_progress`) so the
+    // UI can show "Processing N%" while a big prompt is still being ingested,
+    // before the first token. Ignored by servers that don't support it.
+    return_progress: true,
   };
   if (context.tools !== undefined && context.tools.length > 0) {
     body.tools = context.tools.map((t) => ({
@@ -180,6 +223,9 @@ interface OAIChunk {
   choices?: OAIChoice[];
   usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
   timings?: LlamaCppTimings;
+  /** Prefill progress (present on `return_progress` prefill frames, which carry
+   * an empty `choices` array — handled before the per-choice delta logic). */
+  prompt_progress?: LlamaPromptProgress;
 }
 
 interface ToolState {
@@ -266,6 +312,19 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
           if (chunk.usage != null) {
             output.usage.input = chunk.usage.prompt_tokens ?? output.usage.input;
             output.usage.output = chunk.usage.completion_tokens ?? output.usage.output;
+          }
+
+          // Prefill progress: emitted during prompt ingestion (before the first
+          // token), typically on a frame with an empty `choices` array. Observe
+          // it here — ahead of the per-choice delta logic below, which `continue`s
+          // past choice-less frames — and hand it to the host's "Processing N%"
+          // seam.
+          if (chunk.prompt_progress !== undefined) {
+            deps.onPromptProgress?.({
+              processed: chunk.prompt_progress.processed ?? 0,
+              total: chunk.prompt_progress.total ?? 0,
+              fraction: promptProgressFraction(chunk.prompt_progress),
+            });
           }
 
           const choice = chunk.choices?.[0];

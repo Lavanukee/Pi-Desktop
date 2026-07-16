@@ -36,6 +36,30 @@ export function classLabel(cls: string | null | undefined): string | null {
   return cls.replace(/-/g, ' ');
 }
 
+/**
+ * The pi status key the host publishes prefill progress under while llama-server
+ * is still ingesting a big prompt (before the first token). The value is a
+ * percent string ("0".."100"); absent/cleared once the first token streams. Read
+ * off the same generic `extensionStatus` channel the harness uses for everything
+ * else, so no engine/store plumbing is required. Prefixed `harness` so a session
+ * switch drops it with the rest of the harness panels (see pi-slice
+ * `setMessagesExternal`). Source: provider-llamacpp's `prompt_progress` frames
+ * (`return_progress`), forwarded by the inference lane exactly like TPS.
+ */
+export const PREFILL_STATUS_KEY = 'harness-prefill';
+
+/**
+ * Parse the prefill percent published under {@link PREFILL_STATUS_KEY} into a
+ * 0..100 number, or null when absent/garbled/complete. `>= 100` collapses to
+ * null (prefill is done — hand off to Thinking/Working). Pure + node-testable.
+ */
+export function parsePrefillPercent(raw: string | undefined): number | null {
+  if (raw === undefined || raw.length === 0) return null;
+  const pct = Number(raw);
+  if (!Number.isFinite(pct) || pct < 0) return null;
+  return pct >= 100 ? null : pct;
+}
+
 /** Presentational view of the harness lifecycle {@link HarnessStage}. */
 export interface StageDisplay {
   /** Short verb label the footer renders, e.g. "Classifying". */
@@ -123,11 +147,19 @@ export interface ThreadStatusInputs {
    * indicator also covers the seconds-long model swap the footer no longer shows.
    */
   readonly switchingToTier: string | null;
+  /**
+   * Prefill progress percent (0..99) while the local server is still ingesting
+   * the prompt before the first token, or null when not prefilling / done. When
+   * present it PRECEDES Thinking/Working — a big prompt on a cold cache can take
+   * seconds, and this fills that otherwise-silent gap with "Processing N%".
+   */
+  readonly promptProgress: number | null;
 }
 
 /** The single consolidated thread indicator's rendered view, or null when idle. */
 export interface ThreadStatusView {
-  /** The primary status word ("Thinking" / "Working" / "Retrying (n/m)…" / "Switching…"). */
+  /** The primary status word ("Processing" / "Thinking" / "Working" / "Retrying
+   * (n/m)…" / "Switching…"). */
   readonly label: string;
   /** A subtle, static folded stage word, or undefined. */
   readonly detail?: string;
@@ -139,21 +171,31 @@ export interface ThreadStatusView {
  * The ONE live status indicator (jedd blind-test #1). Reduces the whole
  * status surface — the duplicate thinking/working labels, the footer stage
  * cluster, the switching pill — to a single thread-rendered view that reads
- * "Thinking" while the model reasons and "Working" while it acts (a running tool
- * OR an acting harness stage), with the harness lifecycle stage FOLDED IN subtly
- * as a muted detail word. Classification is only surfaced in Auto mode (#5). A
+ * "Processing N%" while the server ingests the prompt (prefill), then "Thinking"
+ * while the model reasons and "Working" while it acts (a running tool OR an
+ * acting harness stage), with the harness lifecycle stage FOLDED IN subtly as a
+ * muted detail word. Classification is only surfaced in Auto mode (#5). A
  * pre-stream model switch borrows the same indicator so the swap isn't silent.
  * Returns null when there is nothing to show. Pure + unit-tested.
  */
 export function threadStatusView(inp: ThreadStatusInputs): ThreadStatusView | null {
   // Pre-stream model swap (Auto routing / explicit tier pick): the ONE indicator
-  // covers it so the footer/bar can stay clean. Only while NOT yet streaming.
-  if (!inp.isStreaming) {
-    if (inp.switchingToTier !== null) {
-      return { label: `Switching to ${inp.switchingToTier}…`, showElapsed: false };
-    }
-    return null;
+  // covers it so the footer/bar can stay clean. Only while NOT yet streaming, and
+  // it wins over prefill — the swap (llama restart) happens before any ingestion.
+  if (!inp.isStreaming && inp.switchingToTier !== null) {
+    return { label: `Switching to ${inp.switchingToTier}…`, showElapsed: false };
   }
+
+  // Prefill: the server is ingesting the prompt before the first token. This
+  // PRECEDES Thinking/Working (and shows whether or not the turn has flipped to
+  // streaming yet) so a long cold-cache prefill isn't a silent dead spot.
+  if (inp.promptProgress !== null) {
+    const pct = Math.round(Math.max(0, Math.min(99, inp.promptProgress)));
+    return { label: 'Processing', detail: `${pct}%`, showElapsed: true };
+  }
+
+  // Idle (not streaming, not switching, not prefilling): nothing to show.
+  if (!inp.isStreaming) return null;
 
   if (inp.retry !== null) {
     return {

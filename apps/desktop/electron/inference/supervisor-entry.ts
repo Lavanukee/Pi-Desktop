@@ -19,9 +19,11 @@ import {
   CATALOG,
   type CatalogFile,
   type CatalogModel,
+  chatTemplatePath,
   createMlxSupervisor,
   detectHardware,
   downloadModel,
+  ensureChatTemplate,
   ensureLlamaCpp,
   ensureMlx,
   estimateRamGB,
@@ -41,6 +43,7 @@ import {
   recommend,
   resolveTierModels,
   searchHfModels,
+  startParentDeathWatchdog,
   type TierPick,
   writeModelsJson,
 } from '@pi-desktop/inference';
@@ -74,6 +77,71 @@ const MODELS_JSON = join(homedir(), '.pi', 'agent', 'models.json');
 const PROVIDER_NAME = 'llamacpp';
 /** models.json provider key for MLX models (bound to provider-mlx's mlx-stream). */
 const MLX_PROVIDER_NAME = 'mlx';
+
+/** Renderer-owned settings file (read-only here) — the source of the HF token
+ * used to fetch a model's gated base-repo chat template. */
+const SETTINGS_JSON = join(homedir(), '.pi', 'desktop', 'settings.json');
+/** Bound a chat-template fetch so a slow/hung HF request can never wedge a launch. */
+const CHAT_TEMPLATE_FETCH_TIMEOUT_MS = 15_000;
+
+/** Read the persisted HF token (base repos like `google/gemma-4-*` are gated).
+ * Best-effort: returns undefined when the file is absent/corrupt/empty. */
+function persistedHfToken(): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(SETTINGS_JSON, 'utf8'));
+    const raw =
+      typeof parsed === 'object' && parsed !== null
+        ? (parsed as { hfToken?: unknown }).hfToken
+        : undefined;
+    return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolve the `--jinja --chat-template-file <path>` args for a model with a
+ * canonical `baseRepo` (Gemma-4). Fetches + caches the official template (see
+ * `chat-template.ts`); on any failure falls back to a previously-cached template
+ * (e.g. pulled at download time with the user's token) and, absent that, returns
+ * `[]` so the launch is UNCHANGED. Bounded so it can never hang a server start.
+ */
+async function resolveChatTemplateArgs(
+  model: CatalogModel,
+  hfToken: string | undefined,
+): Promise<string[]> {
+  const baseRepo = model.baseRepo;
+  if (baseRepo === undefined) return [];
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CHAT_TEMPLATE_FETCH_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    const res = await ensureChatTemplate(baseRepo, { hfToken, signal: controller.signal });
+    return ['--jinja', '--chat-template-file', res.path];
+  } catch {
+    const cached = chatTemplatePath(baseRepo);
+    if (existsSync(cached)) return ['--jinja', '--chat-template-file', cached];
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Best-effort chat-template prefetch during download, when the user's token is
+ * in hand — so the launcher finds a warm cache (no network) at start. Never
+ * throws; a failure just defers the fetch to launch time. */
+async function prefetchChatTemplate(baseRepo: string, hfToken: string | undefined): Promise<void> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CHAT_TEMPLATE_FETCH_TIMEOUT_MS);
+  timer.unref?.();
+  try {
+    await ensureChatTemplate(baseRepo, { hfToken, signal: controller.signal });
+  } catch {
+    // best-effort — retried (with the persisted token) at start.
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** Discovered Browse-HF models, adapted to the catalog shape. Persisted so a
  * downloaded HF model survives a supervisor restart and stays in the local set. */
@@ -408,6 +476,10 @@ async function downloadOne(
           },
         }),
     });
+    // Opportunistically warm the chat-template cache while the user's HF token
+    // is in hand (base repos are gated) so the launcher finds it without a
+    // network round-trip. Best-effort — never fails the download.
+    if (model.baseRepo !== undefined) await prefetchChatTemplate(model.baseRepo, hfToken);
     settleDownloadPhase();
     emitStatus();
     return { success: true };
@@ -654,6 +726,12 @@ async function startServer(
         ? join(dir, model.draftModel.name)
         : undefined;
 
+    // Force the model's OFFICIAL chat template (from its base repo) so llama.cpp
+    // routes to the real chat/tool parser instead of the GGUF's stale embedded
+    // template. Best-effort + bounded: no baseRepo (or no cached/fetchable
+    // template) → `[]`, leaving the launch unchanged. Applies in both modes.
+    const chatTemplateArgs = await resolveChatTemplateArgs(model, persistedHfToken());
+
     const supervisor = new LlamaServerSupervisor({
       serverPath: install.serverPath,
       modelPath,
@@ -667,6 +745,11 @@ async function startServer(
       specType: model.spec === 'eagle3' ? 'draft-eagle3' : 'draft-mtp',
       eagle3Supported: features.eagle3,
       draftPath: draftPath !== undefined && existsSync(draftPath) ? draftPath : undefined,
+      extraArgs: chatTemplateArgs.length > 0 ? chatTemplateArgs : undefined,
+      // Guarantee no orphaned llama-server: a detached watchdog SIGKILLs this
+      // child if THIS utilityProcess dies via a hard crash / SIGKILL (where the
+      // signal/exit reap handlers below can never run).
+      watchdogFactory: (pid) => startParentDeathWatchdog({ targetPid: pid }),
     });
 
     supervisor.on((event) => {

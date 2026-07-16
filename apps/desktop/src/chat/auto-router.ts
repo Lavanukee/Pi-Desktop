@@ -47,8 +47,10 @@ import { useLlmStore } from '../state/llm-store';
 import { activateLocalModel } from '../state/local-model';
 import { autoEffortForTier } from '../state/model-selection';
 import { type DowngradeMemory, useModelSelectionStore } from '../state/model-selection-store';
-import { applyHarnessConfig } from '../state/pi-connect';
+import { agentInFlight, applyHarnessConfig } from '../state/pi-connect';
+import { usePiStore } from '../state/pi-slice';
 import { setModelSelection, useSettingsStore } from '../state/settings-store';
+import { parseHarnessStatus } from './harness-status';
 
 // --- Tuning knobs ----------------------------------------------------------
 
@@ -66,13 +68,32 @@ export function tierRank(tier: ModelTier): number {
 
 /** Classify a prompt and map it to the capability tier the Auto router targets.
  * A `forcedClass` (from a composer "+" force-action) short-circuits the heuristic
- * so the routed model matches the pinned task class regardless of prompt text. */
+ * so the routed model matches the pinned task class regardless of prompt text.
+ *
+ * `priorClass` + `turnIndex` thread the SAME conversation-continuity signal the
+ * harness's own classifier uses (a terse follow-up like "continue" inherits the
+ * prior task's class). Sourcing `priorClass` from the harness's published
+ * `activeClass` is how the app router's tier-1 stays in lock-step with the
+ * harness's classification for a task (see {@link maybeRouteAuto}) — without it
+ * the app would reclassify a bare "continue" from scratch and disagree on the
+ * model mid-task. */
 export function tierForPrompt(
   prompt: string,
-  opts: { hasImages?: boolean; forcedClass?: TaskClass } = {},
+  opts: {
+    hasImages?: boolean;
+    forcedClass?: TaskClass;
+    priorClass?: TaskClass;
+    turnIndex?: number;
+  } = {},
 ): ModelTier {
   return modelTierForClass(
-    classify({ prompt, hasImages: opts.hasImages, forcedClass: opts.forcedClass }).class,
+    classify({
+      prompt,
+      hasImages: opts.hasImages,
+      forcedClass: opts.forcedClass,
+      priorClass: opts.priorClass,
+      turnIndex: opts.turnIndex,
+    }).class,
   );
 }
 
@@ -147,6 +168,14 @@ export interface RouteInputs {
   downloaded: boolean;
   /** `Date.now()` at decision time (injected for testability). */
   now: number;
+  /**
+   * Whether a turn is currently in flight (streaming / a queued follow-up). When
+   * true the running model is LOCKED for the task and Auto must NOT hard-restart
+   * llama — the switch waits for the next clean idle boundary. Defaults to false
+   * (a fresh, idle send). Explicit user model changes never reach here, so they
+   * are unaffected by this gate.
+   */
+  inFlight?: boolean;
 }
 
 export type RouteAction = 'none' | 'switch' | 'download-prompt';
@@ -165,6 +194,16 @@ export interface RouteDecision {
  * same-model no-op guard, the not-downloaded → prompt rule, and the debounce.
  */
 export function decideRoute(mem: RouterMemory, inp: RouteInputs): RouteDecision {
+  // 0. A turn is IN FLIGHT → the model is locked for the task. Never hard-restart
+  //    llama mid-stream/mid-task; hold the current model and leave the cross-turn
+  //    memory UNTOUCHED (a queued follow-up is not a fresh routing decision, so it
+  //    must not advance the debounce clock or the lazy-down counter). Auto still
+  //    routes at the next clean IDLE boundary; an explicit user model change never
+  //    calls decideRoute, so it bypasses this gate entirely.
+  if (inp.inFlight === true) {
+    return { action: 'none', reason: 'in-flight', memory: mem };
+  }
+
   // 1. The target model is already running → never restart. Covers two tiers
   //    resolving to the SAME model id on a small machine (a "switch" that is a
   //    real no-op). Clears any half-counted downgrade.
@@ -220,6 +259,30 @@ export function decideRoute(mem: RouterMemory, inp: RouteInputs): RouteDecision 
     reason: cur === null ? 'initial' : 'tier-change',
     memory: { pendingDowngrade: null, lastSwitchAt: inp.now },
   };
+}
+
+// --- Explicit (user-driven) tier pick (pure) -------------------------------
+
+export type ExplicitSwitchAction = 'download-prompt' | 'none' | 'switch';
+
+/**
+ * The decision for an EXPLICIT user tier pick (footer dropdown / model menu).
+ * Deliberately un-gated: unlike the Auto router this has NO hysteresis, NO
+ * debounce, and NO in-flight lock — an explicit user model change is honored
+ * immediately (the user asked for it), even mid-stream. A tier whose model isn't
+ * on disk opens the friendly download flow instead of switching; the
+ * already-running model is a no-op. This is the counterpart to
+ * {@link decideRoute}'s in-flight gate: the gate stops IMPLICIT mid-task
+ * switches, this stays open so a user can always take manual control.
+ */
+export function explicitSwitchAction(inp: {
+  downloaded: boolean;
+  targetModelId: string;
+  currentModelId: string | null;
+}): ExplicitSwitchAction {
+  if (!inp.downloaded) return 'download-prompt';
+  if (inp.currentModelId !== null && inp.currentModelId === inp.targetModelId) return 'none';
+  return 'switch';
 }
 
 // --- Auto-download prompt view (pure) --------------------------------------
@@ -280,6 +343,36 @@ function tierModels(): Record<ModelTier, LlmTierPick> | undefined {
   return useLlmStore.getState().recommendation?.tierModels;
 }
 
+/**
+ * The harness's authoritative classification for the CURRENT task, read live from
+ * its published status. `activeClass` is fed back into our own tier-1 as the
+ * continuity prior (so a terse follow-up inherits the same class the harness
+ * keeps), and `activeTier` — which the harness may have tier-2-corrected — anchors
+ * the hysteresis's notion of "where we are" instead of the raw running-model→tier
+ * mapping. Together they keep the app router and the harness in agreement on the
+ * model for a task. Both null before the harness has classified (a fresh task's
+ * first turn), where the app's own tier-1 bootstraps the pick.
+ */
+function harnessTaskContext(): {
+  priorClass: TaskClass | undefined;
+  activeTier: ModelTier | null;
+} {
+  const status = parseHarnessStatus(usePiStore.getState().extensionStatus.harness);
+  return {
+    priorClass: status?.activeClass ?? undefined,
+    activeTier: status?.activeTier ?? null,
+  };
+}
+
+/** Prior user turns in the thread (0-based turn index for the classifier's
+ * continuation branch). `sendPrompt` appends this turn's user echo BEFORE routing,
+ * so the current message is already counted — subtract it to get the prior count.
+ * >0 (with a `priorClass`) is what lets a bare "continue" inherit the task class. */
+function priorUserTurns(): number {
+  const users = usePiStore.getState().messages.filter((m) => m.kind === 'user').length;
+  return Math.max(0, users - 1);
+}
+
 /** The last effort level auto-pushed to the harness — so `effort:'auto'` only
  * fires a `/harness effort` when the tier (hence the level) actually changes,
  * not on every send. */
@@ -288,8 +381,12 @@ let lastAutoEffort: EffortLevel | null = null;
 /**
  * When effort is in 'auto' mode, the effort level FOLLOWS the active tier
  * (fast→low, balanced→medium, intelligent→high — max is explicit-drag only).
- * Push it to the harness only on a real change (round-12: the effort slider's
- * Auto tracks the classifier's per-turn tier). No-op when effort is pinned.
+ * Push it to the harness only on a real change. No-op when effort is pinned.
+ *
+ * Callers must gate this behind the in-flight check: it is only invoked at a clean
+ * IDLE boundary (see {@link maybeRouteAuto}), so effort never silently re-derives
+ * mid-task/mid-stream. Combined with the harness-continuity tier resolution, the
+ * level only moves when the TASK's tier actually changes at a boundary.
  */
 function pushAutoEffort(tier: ModelTier): void {
   if (useSettingsStore.getState().settings.effortMode !== 'auto') return;
@@ -323,6 +420,19 @@ async function performSwitch(tier: ModelTier, pick: LlmTierPick): Promise<void> 
  * No-op unless the selection is Auto. Awaited by the sender so the turn runs on
  * the routed model; the download-prompt path returns immediately (a slow
  * download must never block a send). Never throws.
+ *
+ * The model is chosen ONCE at a clean IDLE boundary (a fresh task's first send)
+ * and then HELD for the task:
+ *   - a turn in flight (streaming / a queued follow-up) is a hard NO-OP here — the
+ *     running model is locked, so a second/queued send can't hard-restart llama
+ *     mid-stream (the in-flight guard in {@link decideRoute}). An explicit user
+ *     model change is the only thing that switches mid-task, and it doesn't route.
+ *   - the tier is reconciled with the harness: our own tier-1 uses the harness's
+ *     published `activeClass` as its continuity prior, and the hysteresis anchors
+ *     on the harness's (possibly tier-2-corrected) `activeTier` — so the app router
+ *     and the harness agree on the model for the task.
+ *   - Auto-effort is pushed only here, at the same idle boundary, so it never
+ *     silently re-derives mid-task.
  */
 export async function maybeRouteAuto(
   prompt: string,
@@ -333,31 +443,50 @@ export async function maybeRouteAuto(
     const models = tierModels();
     if (models === undefined) return; // catalog not loaded → nothing to route to
 
+    // The model is LOCKED once a turn is in flight — Auto only (re)picks a model
+    // and re-derives effort at a clean idle boundary. A restart already in flight
+    // (a live "switching…" banner) is treated the same, so overlapping sends never
+    // stack two llama restarts.
+    const inFlight = agentInFlight() || useModelSelectionStore.getState().switching !== null;
+
     const currentModelId = useLlmStore.getState().status.model?.id ?? null;
+
+    // Agree with the harness (see {@link harnessTaskContext}): feed its authoritative
+    // `activeClass` into our tier-1 as the continuity prior, and anchor the
+    // hysteresis on its published `activeTier`.
+    const { priorClass, activeTier } = harnessTaskContext();
     const desiredTier = tierForPrompt(prompt, {
       hasImages: opts.hasImages,
       forcedClass: opts.forcedClass,
+      priorClass,
+      turnIndex: priorUserTurns(),
     });
-    // Auto effort tracks the classifier's tier for this turn (independent of
-    // whether the MODEL switches — two tiers can share one model but want
-    // different effort).
-    pushAutoEffort(desiredTier);
+
+    // Auto effort follows the task tier, but ONLY at an idle boundary — never
+    // silently mid-stream/mid-task. Skipped entirely while a turn is in flight.
+    if (!inFlight) pushAutoEffort(desiredTier);
+
     const pick = models[desiredTier];
+    // Prefer the harness's authoritative tier for "where we are"; fall back to the
+    // running model's tier before the harness has classified.
+    const currentTier = activeTier ?? tierForModelId(models, currentModelId);
 
     const sel = useModelSelectionStore.getState();
     const decision = decideRoute(
       { pendingDowngrade: sel.pendingDowngrade, lastSwitchAt: sel.lastSwitchAt },
       {
-        currentTier: tierForModelId(models, currentModelId),
+        currentTier,
         desiredTier,
         targetModelId: pick.modelId,
         currentModelId,
         downloaded: pick.downloaded,
         now: Date.now(),
+        inFlight,
       },
     );
 
-    // Commit the cross-turn memory regardless of the action.
+    // Commit the cross-turn memory regardless of the action. (In flight,
+    // decideRoute returns the memory unchanged.)
     useModelSelectionStore.setState({
       pendingDowngrade: decision.memory.pendingDowngrade,
       lastSwitchAt: decision.memory.lastSwitchAt,
@@ -442,9 +571,20 @@ export async function selectAuto(): Promise<void> {
 export async function selectTier(tier: ModelTier): Promise<void> {
   const models = tierModels();
   const pick = models?.[tier];
+  const currentModelId = useLlmStore.getState().status.model?.id ?? null;
+  // Explicit user pick: no hysteresis, no debounce, and — deliberately — no
+  // in-flight gate. {@link explicitSwitchAction} is the pure decision.
+  const action =
+    pick !== undefined
+      ? explicitSwitchAction({
+          downloaded: pick.downloaded,
+          targetModelId: pick.modelId,
+          currentModelId,
+        })
+      : null;
 
   // Not downloaded → open the download prompt; do NOT pin it as active (#4).
-  if (pick !== undefined && !pick.downloaded) {
+  if (action === 'download-prompt' && pick !== undefined) {
     useModelSelectionStore.getState().setPendingDownload({ tier, pick });
     return;
   }
@@ -452,12 +592,11 @@ export async function selectTier(tier: ModelTier): Promise<void> {
   await setModelSelection({ mode: 'tier', tier });
   // A pinned tier is fixed, so push its auto effort once (if effort is 'auto').
   pushAutoEffort(tier);
-  if (models === undefined || pick === undefined) return;
+  if (pick === undefined) return; // catalog not loaded — pin persisted, nothing to launch
 
   useModelSelectionStore.getState().setPendingDownload(null);
-  const currentModelId = useLlmStore.getState().status.model?.id ?? null;
   useModelSelectionStore.getState().markSwitched(Date.now());
-  if (pick.modelId === currentModelId) return; // already on it — no restart
+  if (action !== 'switch') return; // already on it — no restart
   await performSwitch(tier, pick);
 }
 

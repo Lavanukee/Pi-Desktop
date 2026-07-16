@@ -206,6 +206,21 @@ describe('catalog', () => {
     }
   });
 
+  it('carries the canonical base repo for the Gemma-4 family (chat-template source)', () => {
+    expect(getCatalogModel('gemma-4-e2b-it')?.baseRepo).toBe('google/gemma-4-E2B-it');
+    expect(getCatalogModel('gemma-4-e4b-it')?.baseRepo).toBe('google/gemma-4-E4B-it');
+    expect(getCatalogModel('gemma-4-12b-it')?.baseRepo).toBe('google/gemma-4-12b-it');
+    expect(getCatalogModel('gemma-4-26b-a4b-it')?.baseRepo).toBe('google/gemma-4-26B-A4B-it');
+    expect(getCatalogModel('gemma-4-31b-it')?.baseRepo).toBe('google/gemma-4-31B-it');
+    // Every Gemma-4 entry declares one; non-Gemma entries do not (mechanism is
+    // general/opt-in, not Gemma-hardcoded).
+    for (const m of CATALOG) {
+      if (m.id.startsWith('gemma-4-')) expect(m.baseRepo).toMatch(/^google\/gemma-4-/);
+    }
+    expect(getCatalogModel('qwen3.6-27b-mtp')?.baseRepo).toBeUndefined();
+    expect(getCatalogModel('nemotron-3-nano-30b-a3b')?.baseRepo).toBeUndefined();
+  });
+
   it('builds HF resolve URLs', () => {
     expect(hfResolveUrl('unsloth/gemma-4-E2B-it-GGUF', 'gemma-4-E2B-it-Q4_K_M.gguf')).toBe(
       'https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_K_M.gguf',

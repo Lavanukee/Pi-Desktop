@@ -26,6 +26,20 @@ export function messageNeedsVision(msg: OutgoingMessage): boolean {
   return (msg.imageDataUris?.length ?? 0) > 0;
 }
 
+/**
+ * True when a turn is IN FLIGHT — either the agent is actively streaming or a
+ * follow-up is queued behind it. While in flight the running model is LOCKED for
+ * the task: neither the Auto router nor the on-demand vision relaunch may
+ * hard-restart llama (a restart would kill the in-progress generation). The switch
+ * waits for the next clean idle boundary; only an EXPLICIT user model change is
+ * allowed to restart mid-task. Read live off the pi-slice so any send path
+ * (composer, edit-fork, programmatic resend) observes the same lock.
+ */
+export function agentInFlight(): boolean {
+  const agent = usePiStore.getState().agent;
+  return agent.isStreaming || agent.pendingMessageCount > 0;
+}
+
 let disconnect: (() => void) | null = null;
 
 /**
@@ -214,7 +228,12 @@ export async function sendPrompt(
     // BEFORE dispatch — sticky, restart-based, honest about the MTP tradeoff.
     // This takes precedence over Auto tier-routing so an image turn does exactly
     // ONE restart, not two. Awaited; never throws.
-    await ensureVisionMode();
+    //
+    // Gated by the in-flight lock: a vision relaunch is a hard llama restart too,
+    // so it must not fire while a turn is streaming/queued — the composer routes
+    // an in-flight send to `steerPrompt` (no restart), and any other in-flight
+    // caller holds the current model until the next idle boundary.
+    if (!agentInFlight()) await ensureVisionMode();
   } else {
     // Round-12 Auto router (W3): when the selection is Auto, classify this prompt
     // and (per the hysteresis) switch the running model to the routed tier BEFORE

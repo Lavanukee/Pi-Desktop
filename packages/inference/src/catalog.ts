@@ -111,6 +111,15 @@ export interface CatalogModel {
   readonly displayName: string;
   /** HuggingFace repo, e.g. "unsloth/gemma-4-E2B-it-GGUF". */
   readonly hfRepo: string;
+  /**
+   * Canonical BASE (non-GGUF) repo that carries the authoritative
+   * `chat_template.jinja`, e.g. "google/gemma-4-E2B-it". When set, the launcher
+   * fetches + caches that template and passes `--jinja --chat-template-file`
+   * (see `chat-template.ts`) so llama.cpp routes to the model's real chat/tool
+   * parser instead of the GGUF's embedded (often stale) template. Usually gated
+   * — the fetch uses the plumbed HF token. General-purpose: any model may set it.
+   */
+  readonly baseRepo?: string;
   /** Main GGUF file(s). Multiple entries = user picks a quant. */
   readonly files: readonly CatalogFile[];
   /** Vision projector sibling (multimodal launch). */
@@ -163,6 +172,7 @@ export const GEMMA4_E2B: CatalogModel = {
   id: 'gemma-4-e2b-it',
   displayName: 'Gemma 4 E2B Instruct',
   hfRepo: 'unsloth/gemma-4-E2B-it-GGUF',
+  baseRepo: 'google/gemma-4-E2B-it',
   files: [
     {
       name: 'gemma-4-E2B-it-Q4_K_M.gguf',
@@ -202,6 +212,7 @@ const GEMMA4_E4B: CatalogModel = {
   id: 'gemma-4-e4b-it',
   displayName: 'Gemma 4 E4B Instruct',
   hfRepo: 'unsloth/gemma-4-E4B-it-GGUF',
+  baseRepo: 'google/gemma-4-E4B-it',
   files: [
     {
       name: 'gemma-4-E4B-it-Q4_K_M.gguf',
@@ -239,6 +250,7 @@ const GEMMA4_12B: CatalogModel = {
   id: 'gemma-4-12b-it',
   displayName: 'Gemma 4 12B Instruct',
   hfRepo: 'unsloth/gemma-4-12b-it-GGUF',
+  baseRepo: 'google/gemma-4-12b-it',
   files: [
     {
       name: 'gemma-4-12b-it-Q4_K_M.gguf',
@@ -287,6 +299,7 @@ const GEMMA4_26B_A4B: CatalogModel = {
   id: 'gemma-4-26b-a4b-it',
   displayName: 'Gemma 4 26B-A4B Instruct',
   hfRepo: 'unsloth/gemma-4-26B-A4B-it-GGUF',
+  baseRepo: 'google/gemma-4-26B-A4B-it',
   // Repo ships only UD-quants at the Q4/Q6 tiers (no plain Q4_K_M/Q6_K).
   files: [
     {
@@ -339,6 +352,7 @@ const GEMMA4_31B: CatalogModel = {
   id: 'gemma-4-31b-it',
   displayName: 'Gemma 4 31B Instruct',
   hfRepo: 'unsloth/gemma-4-31B-it-GGUF',
+  baseRepo: 'google/gemma-4-31B-it',
   files: [
     {
       name: 'gemma-4-31B-it-Q4_K_M.gguf',

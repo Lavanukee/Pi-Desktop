@@ -7,6 +7,7 @@
 export const packageName = '@pi-desktop/inference';
 
 export * from './catalog.js';
+export * from './chat-template.js';
 export * from './download.js';
 export * from './hardware.js';
 export * from './hf-search.js';
@@ -18,3 +19,4 @@ export * from './models-json.js';
 export * from './paths.js';
 export * from './recommender.js';
 export * from './supervisor.js';
+export * from './watchdog.js';

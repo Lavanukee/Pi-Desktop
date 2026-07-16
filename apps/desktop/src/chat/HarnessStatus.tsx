@@ -25,7 +25,13 @@ import { TIER_LABEL } from '../../../../packages/harness/src/classify/tier.ts';
 import { useModelSwitching } from '../state/model-selection-store';
 import { usePiStore } from '../state/pi-slice';
 import { useModelSelection } from '../state/settings-store';
-import { type PlanItem, threadStatusView, useHarnessStatus } from './harness-status';
+import {
+  type PlanItem,
+  PREFILL_STATUS_KEY,
+  parsePrefillPercent,
+  threadStatusView,
+  useHarnessStatus,
+} from './harness-status';
 
 /** A plan longer than this starts collapsed so it doesn't crowd the thread. */
 const LONG_PLAN_THRESHOLD = 6;
@@ -61,6 +67,10 @@ export function ThreadStatusIndicator() {
   const retry = usePiStore((s) => s.agent.retry);
   const agentStartedAt = usePiStore((s) => s.agent.agentStartedAt);
   const toolRunning = usePiStore((s) => s.runningToolCalls.length > 0);
+  // Prefill progress rides the generic extensionStatus channel (published by the
+  // inference lane from provider-llamacpp's `prompt_progress` frames), so no
+  // engine/store plumbing is needed — the indicator just reads and parses it.
+  const prefillRaw = usePiStore((s) => s.extensionStatus[PREFILL_STATUS_KEY]);
   const status = useHarnessStatus();
   const selection = useModelSelection();
   const switching = useModelSwitching();
@@ -73,6 +83,7 @@ export function ThreadStatusIndicator() {
     stage: status?.stage ?? null,
     isAuto: selection.mode === 'auto',
     switchingToTier: switching !== null ? TIER_LABEL[switching.toTier] : null,
+    promptProgress: parsePrefillPercent(prefillRaw),
   });
   if (view === null) return null;
 

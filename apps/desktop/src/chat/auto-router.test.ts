@@ -10,8 +10,10 @@ import {
   DOWNGRADE_TURNS,
   decideRoute,
   downloadPromptView,
+  explicitSwitchAction,
   formatTierBytes,
   pickPreloadModel,
+  type RouteInputs,
   type RouterMemory,
   SWITCH_DEBOUNCE_MS,
   tierForModelId,
@@ -60,6 +62,26 @@ describe('tierForPrompt (classify → tier)', () => {
 
   it('honors forcedClass — perception pins balanced', () => {
     expect(tierForPrompt('hello', { forcedClass: 'perception' })).toBe('balanced');
+  });
+});
+
+// The app router must classify a task the SAME way the harness does, or the two
+// disagree on the model mid-task. The seam: the harness's published `activeClass`
+// is threaded back in as the continuity prior (+ a non-zero turnIndex), so a terse
+// follow-up inherits the task class instead of being reclassified from scratch.
+describe('tierForPrompt — harness continuity (app ↔ harness agreement)', () => {
+  it('a bare "continue" with no prior class falls back to its own weak class', () => {
+    expect(tierForPrompt('continue')).toBe('balanced');
+  });
+
+  it('inherits the harness prior class on a terse follow-up (matches harness tier-1)', () => {
+    // Fed the harness's activeClass=coding as the prior, "continue" inherits the
+    // coding task → intelligent, so the app router agrees with the harness.
+    expect(tierForPrompt('continue', { priorClass: 'coding', turnIndex: 1 })).toBe('intelligent');
+  });
+
+  it('turnIndex 0 (first turn of a session) ignores the prior — no spurious continuation', () => {
+    expect(tierForPrompt('continue', { priorClass: 'coding', turnIndex: 0 })).toBe('balanced');
   });
 });
 
@@ -193,6 +215,69 @@ describe('decideRoute — hysteresis', () => {
     );
     expect(d.action).toBe('none');
     expect(d.reason).toBe('debounced');
+  });
+});
+
+describe('decideRoute — in-flight lock (never switch mid-task)', () => {
+  // A warranted upgrade that WOULD switch at a clean idle boundary.
+  const upgrade: RouteInputs = {
+    currentTier: 'fast',
+    desiredTier: 'intelligent',
+    targetModelId: 'big',
+    currentModelId: 'small',
+    downloaded: true,
+    now: LATE,
+  };
+
+  it('an in-flight send does NOT switch — the model is locked for the task', () => {
+    // Baseline: the exact same inputs switch when the turn is idle…
+    expect(decideRoute(FRESH, upgrade).action).toBe('switch');
+    // …but hold when a turn is in flight.
+    const busy = decideRoute(FRESH, { ...upgrade, inFlight: true });
+    expect(busy.action).toBe('none');
+    expect(busy.reason).toBe('in-flight');
+  });
+
+  it('leaves cross-turn memory UNTOUCHED (a queued send is not a routing decision)', () => {
+    const mem: RouterMemory = { pendingDowngrade: { tier: 'fast', count: 1 }, lastSwitchAt: 4242 };
+    // No debounce stamp advanced, no lazy-down counted while in flight.
+    expect(decideRoute(mem, { ...upgrade, inFlight: true }).memory).toEqual(mem);
+  });
+
+  it('fresh-task Auto still routes: an idle initial pick switches straight away', () => {
+    const fresh = decideRoute(FRESH, {
+      currentTier: null,
+      desiredTier: 'balanced',
+      targetModelId: 'mid',
+      currentModelId: null,
+      downloaded: true,
+      now: LATE,
+      inFlight: false,
+    });
+    expect(fresh.action).toBe('switch');
+    expect(fresh.reason).toBe('initial');
+  });
+});
+
+describe('explicitSwitchAction (explicit user pick — bypasses the in-flight gate)', () => {
+  // The explicit path takes NO `inFlight` argument by design: a user model change
+  // is always honored, even mid-stream (the one thing allowed to switch mid-task).
+  it('switches to a different downloaded model', () => {
+    expect(
+      explicitSwitchAction({ downloaded: true, targetModelId: 'big', currentModelId: 'small' }),
+    ).toBe('switch');
+  });
+
+  it('is a no-op when the target model already runs', () => {
+    expect(
+      explicitSwitchAction({ downloaded: true, targetModelId: 'big', currentModelId: 'big' }),
+    ).toBe('none');
+  });
+
+  it('opens the download flow for an undownloaded model instead of switching', () => {
+    expect(
+      explicitSwitchAction({ downloaded: false, targetModelId: 'big', currentModelId: 'small' }),
+    ).toBe('download-prompt');
   });
 });
 

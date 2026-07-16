@@ -19,6 +19,7 @@
 import { spawn as spawnCb } from 'node:child_process';
 import { createServer } from 'node:net';
 import type { LaunchMode } from './catalog.js';
+import type { WatchdogHandle } from './watchdog.js';
 
 /** llama.cpp per-request `timings` block (subset we read). */
 export interface LlamaTimings {
@@ -170,6 +171,15 @@ export interface SupervisorOptions {
   readonly env?: Record<string, string | undefined>;
 
   /**
+   * Parent-death watchdog factory. When provided, each spawned llama-server is
+   * guarded by a watchdog (see `watchdog.ts`) that SIGKILLs it if THIS process
+   * dies via a hard crash / SIGKILL where the graceful kill ladder can't run —
+   * so no llama-server ever outlives the app. Omitted in unit tests (they inject
+   * a fake) and unset by default (no watchdog spawned), keeping launches inert.
+   */
+  readonly watchdogFactory?: (targetPid: number) => WatchdogHandle;
+
+  /**
    * Health endpoint path (default `/health`). A non-llama.cpp OpenAI-compatible
    * server (the round-12 MLX `mlx_lm.server`, which has no `/health`) probes
    * `/v1/models` instead — see {@link createMlxSupervisor}.
@@ -222,6 +232,7 @@ export class LlamaServerSupervisor {
   private readonly now: () => number;
 
   private child: LlamaChildProcess | null = null;
+  private watchdog: WatchdogHandle | null = null;
   private port = 0;
   private disposed = false;
   private started = false;
@@ -340,12 +351,39 @@ export class LlamaServerSupervisor {
     child.on('exit', (code, signal) => this.handleExit(code, signal));
   }
 
+  /** Arm a fresh parent-death watchdog for `pid` (replacing any previous one). */
+  private armWatchdog(pid: number | undefined): void {
+    this.disarmWatchdog();
+    if (this.opts.watchdogFactory === undefined || pid === undefined || pid <= 0) return;
+    try {
+      this.watchdog = this.opts.watchdogFactory(pid);
+    } catch {
+      // A watchdog we couldn't launch must never block the server launch.
+      this.watchdog = null;
+    }
+  }
+
+  /** Stand the current watchdog down (we are reaping the child ourselves). Idempotent. */
+  private disarmWatchdog(): void {
+    const w = this.watchdog;
+    this.watchdog = null;
+    if (w !== null) {
+      try {
+        w.stop();
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
   private handleExit(code: number | null, signal: string | null): void {
     if (this.killTimer !== null) {
       clearTimeout(this.killTimer);
       this.killTimer = null;
     }
     this.child = null;
+    // The child is gone — its watchdog has nothing left to guard.
+    this.disarmWatchdog();
     if (this.disposed) return;
     this.emit({ type: 'crash', code, signal });
     void this.attemptRestart();
@@ -376,6 +414,9 @@ export class LlamaServerSupervisor {
     });
     this.child = child;
     this.wireChild(child);
+    // Arm the parent-death watchdog immediately (before health) so even a
+    // crash during startup can't leave an orphaned llama-server behind.
+    this.armWatchdog(child.pid);
     const healthy = await this.pollHealth();
     if (!healthy) {
       // Health never came up; kill this instance and let restart logic decide.
@@ -426,6 +467,7 @@ export class LlamaServerSupervisor {
     this.disposed = true;
     const child = this.child;
     if (child === null) {
+      this.disarmWatchdog();
       this.emit({ type: 'exit', reason: 'disposed' });
       return;
     }
@@ -457,6 +499,7 @@ export class LlamaServerSupervisor {
       this.killTimer.unref?.();
     });
     this.child = null;
+    this.disarmWatchdog();
     this.emit({ type: 'exit', reason: 'disposed' });
   }
 
@@ -474,6 +517,9 @@ export class LlamaServerSupervisor {
       clearTimeout(this.killTimer);
       this.killTimer = null;
     }
+    // Stand the watchdog down synchronously — we're reaping the child right here,
+    // so the sidecar must not also try (and its own process must not linger).
+    this.disarmWatchdog();
     const child = this.child;
     this.child = null;
     if (child === null) return;

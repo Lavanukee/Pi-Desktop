@@ -219,3 +219,21 @@ export function resolveContextGauge(opts: {
     deriveContextGauge(opts.messages, opts.contextWindow)
   );
 }
+
+/**
+ * Keep the ring steady across a momentary null. A freshly {@link
+ * resolveContextGauge}-d value can transiently resolve to `null` mid-conversation
+ * even though the context is not actually empty — e.g. a model swap zeroes the
+ * launched window for a frame (percent path unknown AND window 0), or the harness
+ * status is briefly cleared/republished between turns. Blanking the ring on those
+ * single frames reads as a flicker, so this holds the last non-null gauge whenever
+ * the fresh read is null. The caller drops the held value when the THREAD identity
+ * changes (new / switched session) so a fresh conversation starts empty instead of
+ * inheriting the prior fill — see {@link ComposerBar}'s ContextRegion. Pure.
+ */
+export function stickyContextGauge(
+  fresh: ContextGaugeView | null,
+  previous: ContextGaugeView | null,
+): ContextGaugeView | null {
+  return fresh ?? previous;
+}

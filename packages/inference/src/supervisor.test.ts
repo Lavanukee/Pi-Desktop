@@ -255,6 +255,103 @@ describe('LlamaServerSupervisor lifecycle', () => {
     expect(child?.killed).toEqual(['SIGKILL']);
   });
 
+  it('arms a parent-death watchdog with the child pid and stops it on dispose', async () => {
+    const stops: number[] = [];
+    const pids: number[] = [];
+    const sup = new LlamaServerSupervisor({
+      serverPath: '/bin/llama-server',
+      modelPath: '/m.gguf',
+      launchMode: 'fast-text',
+      port: 9200,
+      healthIntervalMs: 1,
+      spawnFn: () => asChild(new FakeChild(7777)),
+      fetchImpl: okFetch(() => true),
+      watchdogFactory: (pid) => {
+        pids.push(pid);
+        const idx = pids.length - 1;
+        return {
+          stop() {
+            stops.push(idx);
+          },
+        };
+      },
+    });
+    await sup.start();
+    expect(pids).toEqual([7777]);
+    expect(stops).toEqual([]);
+    await sup.dispose();
+    expect(stops.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('stops the watchdog synchronously on killImmediately', async () => {
+    let stopped = 0;
+    const sup = new LlamaServerSupervisor({
+      serverPath: '/bin/llama-server',
+      modelPath: '/m.gguf',
+      launchMode: 'fast-text',
+      port: 9201,
+      healthIntervalMs: 1,
+      spawnFn: () => asChild(new FakeChild(8888, true)),
+      fetchImpl: okFetch(() => true),
+      watchdogFactory: () => ({
+        stop() {
+          stopped += 1;
+        },
+      }),
+    });
+    await sup.start();
+    sup.killImmediately();
+    expect(stopped).toBeGreaterThanOrEqual(1);
+  });
+
+  it('re-arms a fresh watchdog on crash-restart and stops the old one', async () => {
+    const pids: number[] = [];
+    const stops: number[] = [];
+    let nextPid = 1000;
+    let lastChild: FakeChild | undefined;
+    const sup = new LlamaServerSupervisor({
+      serverPath: '/bin/llama-server',
+      modelPath: '/m.gguf',
+      launchMode: 'fast-text',
+      port: 9202,
+      healthIntervalMs: 1,
+      restartBaseDelayMs: 5,
+      spawnFn: () => {
+        nextPid += 1;
+        lastChild = new FakeChild(nextPid);
+        return asChild(lastChild);
+      },
+      fetchImpl: okFetch(() => true),
+      watchdogFactory: (pid) => {
+        pids.push(pid);
+        const idx = pids.length - 1;
+        return {
+          stop() {
+            stops.push(idx);
+          },
+        };
+      },
+    });
+    await sup.start();
+    expect(pids).toHaveLength(1);
+
+    const restarted = new Promise<void>((resolve) => {
+      const off = sup.on((e) => {
+        if (e.type === 'ready' && pids.length >= 2) {
+          off();
+          resolve();
+        }
+      });
+    });
+    lastChild?.emit('exit', 1, null);
+    await restarted;
+
+    expect(pids).toHaveLength(2);
+    expect(pids[0]).not.toBe(pids[1]);
+    expect(stops).toContain(0); // the crashed child's watchdog was disarmed
+    await sup.dispose();
+  });
+
   it('dispose escalates SIGTERM → SIGKILL when the child lingers', async () => {
     let child: FakeChild | undefined;
     const sup = new LlamaServerSupervisor({

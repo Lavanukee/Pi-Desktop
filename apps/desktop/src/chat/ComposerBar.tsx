@@ -29,16 +29,19 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@pi-desktop/ui';
+import { useRef } from 'react';
 import { useLlmStore } from '../state/llm-store';
 import { autoEffortForTier } from '../state/model-selection';
 import { usePiStore } from '../state/pi-slice';
 import { useProjectStore } from '../state/project-store';
 import { useEffortMode, useSettingsStore } from '../state/settings-store';
 import {
+  type ContextGaugeView,
   EFFORT_STEP_COUNT,
   effortSliderView,
   levelForIndex,
   resolveContextGauge,
+  stickyContextGauge,
   usesSandbox,
 } from './composer-bar-logic';
 import { useHarnessStatus } from './harness-status';
@@ -96,7 +99,23 @@ function ContextRegion() {
   const messages = usePiStore((s) => s.messages);
   const contextWindow = useLlmStore((s) => s.status.model?.contextWindow ?? 0);
   const contextPercent = useHarnessStatus()?.contextPercent;
-  const gauge = resolveContextGauge({ contextPercent, messages, contextWindow });
+  const fresh = resolveContextGauge({ contextPercent, messages, contextWindow });
+
+  // Hold the last non-null value across a momentary null so the ring renders
+  // reliably during a turn and doesn't flicker to empty — a model swap zeroes the
+  // launched window for a frame, and the harness status can be briefly cleared
+  // between turns. Reset when the THREAD identity changes (new / switched session,
+  // keyed on the first message id — empty on a brand-new chat) so a fresh
+  // conversation starts empty instead of inheriting the previous thread's fill.
+  const threadKey = messages.length === 0 ? '' : (messages[0]?.id ?? '');
+  const stickyRef = useRef<{ key: string; gauge: ContextGaugeView | null }>({
+    key: threadKey,
+    gauge: null,
+  });
+  if (stickyRef.current.key !== threadKey) stickyRef.current = { key: threadKey, gauge: null };
+  const gauge = stickyContextGauge(fresh, stickyRef.current.gauge);
+  stickyRef.current.gauge = gauge;
+
   if (gauge === null) return null;
   return (
     <ContextGaugeTooltip

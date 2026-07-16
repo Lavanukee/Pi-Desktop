@@ -4,7 +4,8 @@
  *   #A3  empty state centers the composer vertically (not pinned to the bottom)
  *   #A7  the rule-based suggestion overlay is gone
  *   #A13 assistant text renders through the design-system Markdown (.pd-markdown)
- *   #A10 the thread scroll is elastic (overscroll-behavior: contain)
+ *   #A10 the thread scroll HARD-STOPS at the edges (overscroll-behavior: none — R14 C2
+ *        removed the JS rubber-band; no bounce, no scroll-chaining)
  *   #A9  clicking Edit flips the user bubble into an inline editor (not the composer)
  *   #A8  a file dragged anywhere shows the fullscreen drop overlay + attaches a preview
  * Run `pnpm build` first.
@@ -82,14 +83,16 @@ try {
     'assistant text should render inside .pd-markdown (#A13)',
   );
 
-  // #A10: the thread scroller is present and has elastic overscroll containment.
+  // #A10 / R14 C2: the thread scroller HARD-STOPS at its edges — the JS
+  // rubber-band is gone and overscroll-behavior is `none` (no bounce, no
+  // scroll-chaining out of the pane).
   {
     const scroll = page.locator('[data-testid="chat-scroll"]');
     await scroll.waitFor({ state: 'visible', timeout: 8000 });
     const behavior = await scroll.evaluate(
       (el) => getComputedStyle(el).overscrollBehaviorY || getComputedStyle(el).overscrollBehavior,
     );
-    assert(/contain/.test(behavior), `expected elastic overscroll:contain, got ${behavior}`);
+    assert(/none/.test(behavior), `expected hard-stop overscroll:none, got ${behavior}`);
   }
 
   // #A9: clicking Edit on the user bubble opens an inline editor (NOT the composer).
@@ -130,7 +133,7 @@ try {
   });
 
   console.log(
-    'round3-probe OK — centered composer, no suggestions, markdown, elastic scroll, inline edit, drop overlay',
+    'round3-probe OK — centered composer, no suggestions, markdown, hard-stop scroll, inline edit, drop overlay',
   );
 } finally {
   await app.close();

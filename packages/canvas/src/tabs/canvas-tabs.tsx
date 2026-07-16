@@ -334,8 +334,6 @@ export function CanvasTabs({
                 const Icon = meta.icon;
                 const active = tab.id === canvas.activeTabId;
                 return (
-                  // The new-tab `+` sits immediately AFTER the active tab (not at
-                  // the far right of the strip).
                   <div
                     key={tab.id}
                     ref={active ? activeSlotRef : undefined}
@@ -365,9 +363,6 @@ export function CanvasTabs({
                         <IconClose size={12} />
                       </button>
                     </div>
-                    {active ? (
-                      <NewTabButton onPick={newTab} onOpenChange={onMenuOpenChange} />
-                    ) : null}
                   </div>
                 );
               })}
@@ -379,6 +374,13 @@ export function CanvasTabs({
               <span className="pd-canvas-tabfade pd-canvas-tabfade--end" aria-hidden="true" />
             ) : null}
           </div>
+          {/* The new-tab `+` is the RIGHTMOST element of the tab strip — after
+              ALL tabs, always visible (Safari-style), not adjacent to the active
+              tab. Only shown once tabs exist; an empty canvas presents the
+              new-tab actions in its home state instead. */}
+          {canvas.tabs.length > 0 ? (
+            <NewTabButton onPick={newTab} onOpenChange={onMenuOpenChange} />
+          ) : null}
           <div className="pd-canvas-tabbar-controls">
             {copyText ? <CopyControl text={copyText} onCopy={onCopy} /> : null}
             {onPopout && canvas.activeTab?.artifact ? (

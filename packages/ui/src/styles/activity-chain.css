@@ -164,6 +164,80 @@ button.pd-chain-step-row:hover {
   white-space: nowrap;
 }
 
+/* File-op rows stack the verb over a filename SUBLINE (spec-tool-call-row): a
+ * two-line row where line 2 names the file the row opens in the canvas. */
+.pd-chain-step-labels {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.pd-chain-step-subline {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-mono);
+  font-size: var(--pd-font-size-caption);
+  line-height: var(--pd-leading-caption);
+}
+
+/* Connector/MCP brand mark inside a chain step — sized to the glyph slot. */
+.pd-chain-connector-icon {
+  align-items: center;
+  justify-content: center;
+}
+
+/*
+ * Split file-op row: the main area OPENS the file in the canvas, a trailing
+ * chevron button discloses the raw args + result. Two buttons, so the row is a
+ * plain flex container (no nested interactive elements).
+ */
+.pd-chain-step-row--split {
+  padding: 0;
+}
+
+.pd-chain-step-open-main {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 4px 2px 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pd-chain-step-open-main:hover {
+  color: var(--pd-text-primary);
+}
+
+.pd-chain-step-open-main:hover .pd-chain-step-subline {
+  color: var(--pd-text-secondary);
+}
+
+.pd-chain-step-disclose {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  margin: 0;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  color: var(--pd-text-muted);
+  cursor: pointer;
+}
+
+.pd-chain-step-disclose:hover {
+  color: var(--pd-text-secondary);
+}
+
 /* The primary arg surfaced next to the verb ("Read a file: <path>"). Takes the
  * remaining row width and ellipsizes; the reveal + title carry the full value. */
 .pd-chain-step-detail {

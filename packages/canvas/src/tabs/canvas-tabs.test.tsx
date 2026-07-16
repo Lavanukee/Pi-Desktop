@@ -250,22 +250,38 @@ describe('CanvasTabs', () => {
     expect(c.getState().tabs).toHaveLength(3);
   });
 
-  it('places the new-tab + immediately after the ACTIVE tab', async () => {
+  it('places the new-tab + at the RIGHTMOST of the tab strip (after all tabs), not adjacent to the active tab', async () => {
     const c = seededController(); // active is the last (image "Render") tab
     const { container } = await render(<CanvasTabs controller={c} />);
-    // The + lives inside the active tab's slot (not in the right-hand controls).
-    const activeSlot = container
-      .querySelector('.pd-canvas-tab[data-active]')
-      ?.closest('.pd-canvas-tab-slot');
-    expect(activeSlot?.querySelector('.pd-canvas-newtab')).toBeTruthy();
-    expect(container.querySelector('.pd-canvas-tabbar-controls [aria-label="New tab"]')).toBeNull();
-    // Only the active tab carries a +.
+    // Exactly ONE + and it is NOT nested inside any tab slot (it used to sit in
+    // the active tab's slot — now it's a standalone element after the strip).
+    const plus = container.querySelector('.pd-canvas-newtab');
+    expect(plus).toBeTruthy();
     expect(container.querySelectorAll('.pd-canvas-newtab')).toHaveLength(1);
+    expect(plus?.closest('.pd-canvas-tab-slot')).toBeNull();
 
-    // Focus the FIRST tab → the + follows it now.
+    // Order within the tab bar: [tab list] → [ + ] → [panel controls]. The + is
+    // a direct child of the bar AFTER the whole scrolling tab list.
+    const kids = [...(container.querySelector('.pd-canvas-tabbar')?.children ?? [])];
+    const viewportIdx = kids.findIndex((n) => n.classList.contains('pd-canvas-tablist-viewport'));
+    const plusIdx = kids.findIndex((n) => n.querySelector('.pd-canvas-newtab') !== null);
+    const controlsIdx = kids.findIndex((n) => n.classList.contains('pd-canvas-tabbar-controls'));
+    expect(viewportIdx).toBeGreaterThanOrEqual(0);
+    expect(plusIdx).toBeGreaterThan(viewportIdx);
+    expect(controlsIdx).toBeGreaterThan(plusIdx);
+
+    // Focusing another tab does NOT move the + (no longer per-active-tab).
     await click(container.querySelector('.pd-canvas-tab-main'));
-    const firstSlot = container.querySelectorAll('.pd-canvas-tab-slot')[0];
-    expect(firstSlot?.querySelector('.pd-canvas-newtab')).toBeTruthy();
+    expect(container.querySelectorAll('.pd-canvas-newtab')).toHaveLength(1);
+    expect(container.querySelector('.pd-canvas-newtab')?.closest('.pd-canvas-tab-slot')).toBeNull();
+  });
+
+  it('omits the tab-strip + when there are no tabs (the empty home state owns new-tab)', async () => {
+    const c = new CanvasController({ idFactory: () => 'e1' });
+    const { container } = await render(<CanvasTabs controller={c} />);
+    // No tabs → no tab-strip +, but the empty-state action list is present.
+    expect(container.querySelector('.pd-canvas-tabbar .pd-canvas-newtab')).toBeNull();
+    expect(container.querySelectorAll('.pd-canvas-empty-action')).toHaveLength(4);
   });
 
   it('renders the per-kind operation bar for the active tab', async () => {

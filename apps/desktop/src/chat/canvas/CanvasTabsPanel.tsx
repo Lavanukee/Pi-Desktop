@@ -51,7 +51,7 @@ export function CanvasTabsPanel() {
   // Phase 2b: the real WebContentsView / PTY handlers for the live surfaces, plus
   // the overlay-open seam that lowers a native browser view while the `+` menu is
   // up (round-10 #2 — the view otherwise paints over the DOM menu).
-  const { handlers: surfaceHandlers, setOverlayOpen } = useNativeSurfaces(controller);
+  const { handlers: surfaceHandlers, setOverlayOpen, setPanelOpen } = useNativeSurfaces(controller);
   // browser-use: open/focus + register the agent browser tab on request from
   // the main-process bridge, and reflect its "driving" chrome.
   useBrowserAgent(controller);
@@ -101,6 +101,16 @@ export function CanvasTabsPanel() {
   useEffect(() => {
     setRenderWidth(open ? sideWidth : 0);
   }, [open, sideWidth]);
+
+  // Round-14 close bug: a native browser WebContentsView paints ABOVE the DOM and
+  // is NOT clipped by the aside sliding to width 0, so closing the canvas would
+  // leave the browser stranded over the chat. Drive the native views' visibility
+  // off the panel's open state — hide every browser view on close, re-show the
+  // active one on open. (The DOM aside already animates to 0 and the chat column
+  // reclaims the width; this closes the native-overlay half of the same close.)
+  useEffect(() => {
+    setPanelOpen(open);
+  }, [open, setPanelOpen]);
 
   // Round-11 (#2): keep the rail MOUNTED through its slide-OUT so closing an
   // EMPTY canvas animates (width → 0) instead of vanishing. A closed-but-tabbed

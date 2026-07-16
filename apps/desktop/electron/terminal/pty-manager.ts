@@ -199,6 +199,23 @@ function spawnSession(
   return { pid: session.pid, backend: session.backend };
 }
 
+/**
+ * Kill every live PTY/shell session — the app-quit teardown hook. Terminal
+ * children are normally reaped when their owner WebContents is destroyed
+ * (wireOwnerTeardown), but a quit that tears the app down before window-close
+ * would otherwise leave shells running, so reap them all here too.
+ */
+export function disposeAllPtys(): void {
+  for (const [tabId, session] of [...sessions]) {
+    try {
+      session.kill();
+    } catch {
+      // already gone
+    }
+    sessions.delete(tabId);
+  }
+}
+
 /** Register the trusted-sender-gated `pty:*` channels. */
 export function registerPtyIpc(): void {
   const handle = (

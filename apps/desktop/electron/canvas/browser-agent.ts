@@ -76,6 +76,13 @@ let cachedCanvasState: CanvasState | null = null;
 let pendingOpen: { resolve: (id: string) => void; reject: (e: Error) => void } | null = null;
 /** Cached page reduced-motion preference (refreshed on navigate). */
 let reducedMotion = false;
+/** Whether the model is actively driving (between setDriving true/false). Drives
+ * whether the virtual cursor is re-asserted after a navigation (persistence). */
+let isDriving = false;
+/** Last virtual-cursor position, so the overlay can be re-injected at the same
+ * spot after a page navigation wipes it (persistent cursor, round-14). */
+let lastCursorX = 0;
+let lastCursorY = 0;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => {
@@ -142,6 +149,7 @@ async function ensureAgentTab(): Promise<string> {
 }
 
 function setDriving(driving: boolean): void {
+  isDriving = driving;
   const wc = getAgentWindow();
   if (wc !== null && !wc.isDestroyed()) events.send(wc, 'browser:agent-driving', { driving });
   if (!driving && agentTabId !== null && browserManager.has(agentTabId)) {
@@ -160,8 +168,21 @@ async function cursor(op: Parameters<typeof cursorCommand>[0]): Promise<void> {
 
 /** Animate the pointer to (x, y) and let it visibly travel before acting. */
 async function moveCursor(x: number, y: number): Promise<void> {
+  lastCursorX = x;
+  lastCursorY = y;
   await cursor({ kind: 'move', x, y });
   await sleep(reducedMotion ? 0 : CURSOR_TRAVEL_MS);
+}
+
+/**
+ * Persist the virtual cursor across a navigation. A page load wipes the injected
+ * overlay, so once the new document has settled we re-inject it at its last
+ * position — but only while the model is still driving — so the pointer feels
+ * continuous instead of vanishing between pages (round-14 persistent cursor).
+ */
+async function reassertCursor(): Promise<void> {
+  if (!isDriving || agentTabId === null) return;
+  await cursor({ kind: 'move', x: lastCursorX, y: lastCursorY });
 }
 
 async function detectReduced(tabId: string): Promise<boolean> {
@@ -258,6 +279,7 @@ async function dispatch(
       await cursor({ kind: 'hide' });
       const state = await browserManager.navigateAndWait(id, String(params.url), NAV_TIMEOUT_MS);
       reducedMotion = await detectReduced(id);
+      await reassertCursor();
       return state;
     }
     case 'evaluate': {
@@ -291,7 +313,9 @@ async function dispatch(
     case 'reload': {
       const id = await ensureAgentTab();
       await cursor({ kind: 'hide' });
-      return browserManager.historyAndWait(id, method, NAV_TIMEOUT_MS);
+      const state = await browserManager.historyAndWait(id, method, NAV_TIMEOUT_MS);
+      await reassertCursor();
+      return state;
     }
     case 'waitForLoad': {
       const id = await ensureAgentTab();
@@ -415,4 +439,5 @@ export function disposeBrowserAgent(): void {
   server = null;
   agentTabId = null;
   cachedCanvasState = null;
+  isDriving = false;
 }

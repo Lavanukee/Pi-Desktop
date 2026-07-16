@@ -609,3 +609,81 @@ describe('PiBridge spawn arguments', () => {
     expect(call?.env.ELECTRON_RUN_AS_NODE).toBe('1');
   });
 });
+
+describe('PiBridge detached process-group reaping (subagent grandchildren)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  interface GroupSetup {
+    child: FakeChild;
+    bridge: PiBridge;
+    groupKills: Array<{ target: number; signal: string }>;
+    spawnDetached: Array<boolean | undefined>;
+  }
+
+  function groupSetup(
+    detached: boolean,
+    killProcessGroup?: (target: number, signal: 'SIGTERM' | 'SIGKILL') => void,
+  ): GroupSetup {
+    const child = new FakeChild();
+    const groupKills: GroupSetup['groupKills'] = [];
+    const spawnDetached: GroupSetup['spawnDetached'] = [];
+    const bridge = new PiBridge(
+      {
+        cwd: process.cwd(),
+        binPath: '/fake/pi',
+        readyProbe: false,
+        env: {},
+        killGraceMs: 1500,
+        detached,
+        spawnFn: (_cmd, _args, options) => {
+          spawnDetached.push(options.detached);
+          return child;
+        },
+        killProcessGroup:
+          killProcessGroup ?? ((target, signal) => groupKills.push({ target, signal })),
+      },
+      () => {},
+    );
+    return { child, bridge, groupKills, spawnDetached };
+  }
+
+  it('passes detached through to the spawn options', () => {
+    const { spawnDetached } = groupSetup(true);
+    expect(spawnDetached[0]).toBe(true);
+  });
+
+  it('dispose signals the whole process GROUP (negative pid), not just the child', () => {
+    const { child, bridge, groupKills } = groupSetup(true);
+    bridge.dispose();
+    // A negative pid targets the group leader's whole group → pi + subagents.
+    expect(groupKills).toEqual([{ target: -4242, signal: 'SIGTERM' }]);
+    expect(child.kills).toEqual([]); // group path used; no direct child.kill
+    vi.advanceTimersByTime(1500);
+    expect(groupKills).toEqual([
+      { target: -4242, signal: 'SIGTERM' },
+      { target: -4242, signal: 'SIGKILL' },
+    ]);
+  });
+
+  it('killNow SIGKILLs the whole group immediately', () => {
+    const { bridge, groupKills } = groupSetup(true);
+    bridge.killNow();
+    expect(groupKills).toEqual([{ target: -4242, signal: 'SIGKILL' }]);
+  });
+
+  it('falls back to a direct child kill when the group signal throws (group gone)', () => {
+    const { child, bridge } = groupSetup(true, () => {
+      throw new Error('ESRCH');
+    });
+    bridge.dispose();
+    expect(child.kills).toEqual(['SIGTERM']);
+  });
+
+  it('non-detached bridges kill only the direct child (no group signal)', () => {
+    const { child, bridge, groupKills } = groupSetup(false);
+    bridge.dispose();
+    expect(groupKills).toEqual([]);
+    expect(child.kills).toEqual(['SIGTERM']);
+  });
+});

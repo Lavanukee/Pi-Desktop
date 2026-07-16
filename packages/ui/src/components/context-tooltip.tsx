@@ -59,9 +59,14 @@ export function ContextGaugeTooltip({
         <span className="pd-context-card">
           <ProgressBar value={rounded} max={100} className="pd-context-card-bar" />
           <span className="pd-context-card-line">Context window: {rounded}% full</span>
-          <span className="pd-context-card-line pd-context-card-line--muted">
-            {formatTokens(usedTokens)} / {formatTokens(totalTokens)} tokens used
-          </span>
+          {/* Token counts only when the window is known — a percent-only source
+           * (pi's own accounting on a remote/AFM model) has no token totals, so
+           * the "0 / 0 tokens" line is suppressed rather than shown as a lie. */}
+          {totalTokens > 0 ? (
+            <span className="pd-context-card-line pd-context-card-line--muted">
+              {formatTokens(usedTokens)} / {formatTokens(totalTokens)} tokens used
+            </span>
+          ) : null}
           {note !== undefined ? <span className="pd-context-card-note">{note}</span> : null}
         </span>
       }

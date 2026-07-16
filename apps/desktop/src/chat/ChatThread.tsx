@@ -81,67 +81,6 @@ function toRenderItems(messages: ChatMsg[], claimed: Set<string>): RenderItem[] 
   return items;
 }
 
-const clampN = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-
-/**
- * Elastic overscroll (round-3 #A10): translate the thread content with damped
- * tension when the wheel pushes past the top/bottom edge, then spring it back —
- * a rubber-band instead of a hard stop. Chromium doesn't rubber-band inner
- * overflow panes, so we drive it from wheel deltas. `overscroll-behavior:
- * contain` (CSS) stops scroll-chaining. Reduced-motion opts out entirely.
- */
-function useElasticOverscroll(
-  scrollRef: React.RefObject<HTMLDivElement | null>,
-  contentRef: React.RefObject<HTMLDivElement | null>,
-): void {
-  useEffect(() => {
-    const el = scrollRef.current;
-    const content = contentRef.current;
-    if (el === null || content === null) return;
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-
-    const MAX = 64;
-    let offset = 0;
-    let releaseTimer = 0;
-
-    const apply = (v: number) => {
-      content.style.transform = v === 0 ? '' : `translateY(${v.toFixed(2)}px)`;
-    };
-    const release = () => {
-      offset = 0;
-      content.style.transition = 'transform 340ms cubic-bezier(0.22, 1, 0.36, 1)';
-      apply(0);
-      window.setTimeout(() => {
-        content.style.transition = '';
-      }, 360);
-    };
-    const onWheel = (e: WheelEvent) => {
-      const atTop = el.scrollTop <= 0;
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= 1;
-      const dy = e.deltaY;
-      const pulling = (atTop && dy < 0) || (atBottom && dy > 0);
-      if (pulling) {
-        e.preventDefault();
-        content.style.transition = '';
-        // The further it is pulled, the more it resists (rubber-band tension).
-        const resist = 1 - Math.min(0.85, Math.abs(offset) / MAX);
-        offset = clampN(offset - dy * 0.3 * resist, -MAX, MAX);
-        apply(offset);
-        window.clearTimeout(releaseTimer);
-        releaseTimer = window.setTimeout(release, 90);
-      } else if (offset !== 0) {
-        window.clearTimeout(releaseTimer);
-        release();
-      }
-    };
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => {
-      el.removeEventListener('wheel', onWheel);
-      window.clearTimeout(releaseTimer);
-    };
-  }, [scrollRef, contentRef]);
-}
-
 function AssistantGroup({
   group,
   resultByCallId,
@@ -256,13 +195,11 @@ export function ChatThread() {
   };
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
   // Autoscroll "stick": true only while the user is parked at the bottom. It is
   // released the instant the user scrolls UP (free-scroll during generation,
   // round-8) and re-armed only when they return to the bottom — so a burst of
   // streaming re-renders can never yank the view back down while they read above.
   const pinnedRef = useRef(true);
-  useElasticOverscroll(scrollRef, contentRef);
 
   // Re-arm the stick only when genuinely back at the bottom (tight threshold so
   // scrolling even slightly up stays released).
@@ -352,147 +289,145 @@ export function ChatThread() {
         className="pd-elastic-scroll min-h-0 flex-1"
         data-testid="chat-scroll"
       >
-        <div ref={contentRef} className="pd-elastic-content">
-          <Thread>
-            {historyTruncated ? (
-              <div className="pb-2 text-center text-footnote text-text-muted">
-                Earlier messages were truncated when this session was restored.
-              </div>
-            ) : null}
+        <Thread>
+          {historyTruncated ? (
+            <div className="pb-2 text-center text-footnote text-text-muted">
+              Earlier messages were truncated when this session was restored.
+            </div>
+          ) : null}
 
-            {items.map((item) => {
-              if (item.kind === 'user') {
-                const message = item.message;
-                const ordinal = userOrdinalById.get(message.id) ?? -1;
-                const group = branches[ordinal];
-                // A message with alternates shows a persistent ‹ n / m › switcher
-                // beneath its bubble (kept out of the hover-only action bar so the
-                // alternates are always discoverable).
-                const switcher =
-                  group !== undefined && group.files.length > 1 ? (
-                    <div className="flex justify-end">
-                      <BranchSwitcher
-                        data-testid="branch-switcher"
-                        index={group.active}
-                        total={group.files.length}
-                        onPrev={() => void switchBranch(ordinal, group.active - 1)}
-                        onNext={() => void switchBranch(ordinal, group.active + 1)}
-                      />
-                    </div>
-                  ) : null;
+          {items.map((item) => {
+            if (item.kind === 'user') {
+              const message = item.message;
+              const ordinal = userOrdinalById.get(message.id) ?? -1;
+              const group = branches[ordinal];
+              // A message with alternates shows a persistent ‹ n / m › switcher
+              // beneath its bubble (kept out of the hover-only action bar so the
+              // alternates are always discoverable).
+              const switcher =
+                group !== undefined && group.files.length > 1 ? (
+                  <div className="flex justify-end">
+                    <BranchSwitcher
+                      data-testid="branch-switcher"
+                      index={group.active}
+                      total={group.files.length}
+                      onPrev={() => void switchBranch(ordinal, group.active - 1)}
+                      onNext={() => void switchBranch(ordinal, group.active + 1)}
+                    />
+                  </div>
+                ) : null;
 
-                // Inline edit mode: the bubble becomes an editable textarea (#A9).
-                if (editingId === message.id) {
-                  return (
-                    <div key={message.id} className="flex flex-col gap-1">
-                      <EditableMessage
-                        data-testid="editing-message"
-                        value={message.text}
-                        editing
-                        onSave={saveEdit}
-                        onCancel={() => setEditingId(null)}
-                      />
-                      {switcher}
-                    </div>
-                  );
-                }
+              // Inline edit mode: the bubble becomes an editable textarea (#A9).
+              if (editingId === message.id) {
                 return (
                   <div key={message.id} className="flex flex-col gap-1">
-                    <MessageRow
-                      kind="user"
-                      actions={
-                        <MessageActions
-                          onCopy={() => copyText(message.text)}
-                          onEdit={() => setEditingId(message.id)}
-                        />
-                      }
-                    >
-                      <div className="flex flex-col gap-2">
-                        {message.images !== undefined && message.images.length > 0 ? (
-                          <div className="flex flex-wrap gap-2">
-                            {message.images.map((src) => (
-                              // biome-ignore lint/a11y/useAltText: user attachment thumbnail
-                              <img key={src} src={src} className="max-h-32 rounded-md" />
-                            ))}
-                          </div>
-                        ) : null}
-                        {message.text.length > 0 ? (
-                          <span className="whitespace-pre-wrap">{message.text}</span>
-                        ) : null}
-                      </div>
-                    </MessageRow>
+                    <EditableMessage
+                      data-testid="editing-message"
+                      value={message.text}
+                      editing
+                      onSave={saveEdit}
+                      onCancel={() => setEditingId(null)}
+                    />
                     {switcher}
                   </div>
                 );
               }
-
-              if (item.kind === 'assistant') {
-                const group = item.group;
-                const first = group[0];
-                if (first === undefined) return null;
-                const totalTokens = [...group].reverse().find((m) => m.usage !== undefined)
-                  ?.usage?.totalTokens;
-                const streaming = group.some((m) => m.isStreaming === true);
-                return (
+              return (
+                <div key={message.id} className="flex flex-col gap-1">
                   <MessageRow
-                    key={first.id}
-                    kind="assistant"
+                    kind="user"
                     actions={
                       <MessageActions
-                        onCopy={() => copyText(groupPlainText(group))}
-                        onRetry={() => retryFrom(first.id)}
-                        tokenCount={totalTokens}
-                        tokensPerSecond={streaming ? undefined : tps}
+                        onCopy={() => copyText(message.text)}
+                        onEdit={() => setEditingId(message.id)}
                       />
                     }
                   >
-                    <AssistantGroup
-                      group={group}
-                      resultByCallId={resultByCallId}
-                      runningToolCalls={runningToolCalls}
-                      tps={streaming ? undefined : tps}
-                    />
+                    <div className="flex flex-col gap-2">
+                      {message.images !== undefined && message.images.length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {message.images.map((src) => (
+                            // biome-ignore lint/a11y/useAltText: user attachment thumbnail
+                            <img key={src} src={src} className="max-h-32 rounded-md" />
+                          ))}
+                        </div>
+                      ) : null}
+                      {message.text.length > 0 ? (
+                        <span className="whitespace-pre-wrap">{message.text}</span>
+                      ) : null}
+                    </div>
                   </MessageRow>
-                );
-              }
+                  {switcher}
+                </div>
+              );
+            }
 
-              if (item.kind === 'bash') {
-                const message = item.message;
-                return (
-                  <ActivityRow
-                    key={message.id}
-                    icon={<IconTerminal size={14} />}
-                    label={`! ${message.command}`}
-                  >
-                    <pre className="whitespace-pre-wrap pt-1 text-code text-text-secondary">
-                      {message.output || '(no output)'}
-                    </pre>
-                  </ActivityRow>
-                );
-              }
+            if (item.kind === 'assistant') {
+              const group = item.group;
+              const first = group[0];
+              if (first === undefined) return null;
+              const totalTokens = [...group].reverse().find((m) => m.usage !== undefined)
+                ?.usage?.totalTokens;
+              const streaming = group.some((m) => m.isStreaming === true);
+              return (
+                <MessageRow
+                  key={first.id}
+                  kind="assistant"
+                  actions={
+                    <MessageActions
+                      onCopy={() => copyText(groupPlainText(group))}
+                      onRetry={() => retryFrom(first.id)}
+                      tokenCount={totalTokens}
+                      tokensPerSecond={streaming ? undefined : tps}
+                    />
+                  }
+                >
+                  <AssistantGroup
+                    group={group}
+                    resultByCallId={resultByCallId}
+                    runningToolCalls={runningToolCalls}
+                    tps={streaming ? undefined : tps}
+                  />
+                </MessageRow>
+              );
+            }
 
-              // Orphan tool result (rehydrated with no matching assistant block).
+            if (item.kind === 'bash') {
               const message = item.message;
               return (
                 <ActivityRow
                   key={message.id}
                   icon={<IconTerminal size={14} />}
-                  label={message.toolName}
+                  label={`! ${message.command}`}
                 >
                   <pre className="whitespace-pre-wrap pt-1 text-code text-text-secondary">
-                    {message.text || '(no output)'}
+                    {message.output || '(no output)'}
                   </pre>
                 </ActivityRow>
               );
-            })}
+            }
 
-            {/* The ONE live status indicator (jedd blind-test #1): a single
+            // Orphan tool result (rehydrated with no matching assistant block).
+            const message = item.message;
+            return (
+              <ActivityRow
+                key={message.id}
+                icon={<IconTerminal size={14} />}
+                label={message.toolName}
+              >
+                <pre className="whitespace-pre-wrap pt-1 text-code text-text-secondary">
+                  {message.text || '(no output)'}
+                </pre>
+              </ActivityRow>
+            );
+          })}
+
+          {/* The ONE live status indicator (jedd blind-test #1): a single
                 thread-rendered element that reads "Thinking" while the model
                 reasons and "Working" while it acts, with the harness stage folded
                 in subtly. No duplicate label, no footer status, no stray spinner. */}
-            <ThreadStatusIndicator />
-          </Thread>
-        </div>
+          <ThreadStatusIndicator />
+        </Thread>
       </ScrollArea>
     </div>
   );

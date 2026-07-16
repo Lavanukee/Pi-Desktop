@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { ActivityStep, type ActivityStepData } from './activity-chain.tsx';
+import { ActivityChain, ActivityStep, type ActivityStepData } from './activity-chain.tsx';
 
 /**
  * Tool-row arg surfacing + disclosure (jedd round-2 #2). Every tool row must
@@ -22,11 +22,11 @@ describe('ActivityStep — primary arg surfaced inline', () => {
     preview: 'export const x = 1;',
   };
 
-  it('shows the verb AND the file basename on the inline row', () => {
+  it('shows the verb AND the file basename as a subline (spec-tool-call-row)', () => {
     const html = render(read);
     expect(html).toContain('Read a file');
-    expect(html).toContain('pd-chain-step-detail');
-    // The inline arg shows only the basename (the meaningful tail)…
+    // A file-op row names its file on a SUBLINE under the verb (not inline).
+    expect(html).toContain('pd-chain-step-subline');
     expect(html).toContain('>config.ts<');
     // …with the full path carried on `title` for hover.
     expect(html).toContain('title="/Users/jedd/src/deep/config.ts"');
@@ -90,5 +90,116 @@ describe('ActivityStep — primary arg surfaced inline', () => {
   it('omits the inline arg entirely when no detail is provided', () => {
     const html = render({ kind: 'read', label: 'Read a file', preview: 'body' });
     expect(html).not.toContain('pd-chain-step-detail');
+    expect(html).not.toContain('pd-chain-step-subline');
+  });
+});
+
+/**
+ * A2 — a read/edit/skill row can OPEN its file in the canvas. With `onOpenFile`
+ * wired, the primary click opens the file and a separate chevron button still
+ * discloses the args + result (deliverable 2 + 3 coexisting, no nested buttons).
+ */
+describe('ActivityStep — open-in-canvas affordance', () => {
+  const read: ActivityStepData = {
+    kind: 'read',
+    label: 'Read a file',
+    detail: '/repo/src/app.ts',
+    filename: 'app.ts',
+    preview: 'body',
+  };
+
+  it('splits into an open-file main button + a disclosure chevron when content exists', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStep data={read} onOpenFile={() => {}} expanded={false} />,
+    );
+    expect(html).toContain('pd-chain-step-row--split');
+    expect(html).toContain('pd-chain-step-open-main');
+    expect(html).toContain('pd-chain-step-disclose');
+    // The main button's accessible name names the file it opens.
+    expect(html).toContain('Open app.ts in canvas');
+    // The chevron still drives the reveal.
+    expect(html).toContain('aria-expanded="false"');
+  });
+
+  it('makes the WHOLE row open the file when there is no content to disclose yet', () => {
+    const running: ActivityStepData = {
+      kind: 'read',
+      label: 'Reading a file',
+      status: 'running',
+      detail: '/repo/src/app.ts',
+      filename: 'app.ts',
+    };
+    const html = renderToStaticMarkup(<ActivityStep data={running} onOpenFile={() => {}} />);
+    expect(html).toContain('Open app.ts in canvas');
+    expect(html).not.toContain('pd-chain-step-row--split');
+    expect(html).not.toContain('pd-chain-step-chevron');
+  });
+
+  it('does NOT offer to open a non-file kind (e.g. bash) even with onOpenFile wired', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStep
+        data={{ kind: 'bash', label: 'Ran a command', detail: 'ls', command: 'ls', output: 'ok' }}
+        onOpenFile={() => {}}
+      />,
+    );
+    expect(html).not.toContain('pd-chain-step-open-main');
+  });
+});
+
+/**
+ * A1/A4 — a connector row renders "Used <connector icon> <connector name>" with
+ * the injected brand SVG, and every generic tool row is a disclosure that reveals
+ * the raw args + result (never a mislabeled "Read a file").
+ */
+describe('ActivityStep — connector + generic tool rows', () => {
+  it('renders a connector row with its injected brand SVG and a disclosure', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStep
+        data={{
+          kind: 'connector',
+          label: 'Set a reminder',
+          iconSvg: '<svg data-testid="brand"></svg>',
+          argsText: '{ "title": "Call" }',
+          output: 'ok',
+        }}
+      />,
+    );
+    expect(html).toContain('Set a reminder');
+    expect(html).toContain('data-testid="brand"');
+    expect(html).toContain('pd-chain-step-chevron');
+  });
+
+  it('reveals a generic tool row’s input + output on expand', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStep
+        data={{ kind: 'tool', label: 'Do thing', argsText: 'input-args-here', output: 'result' }}
+        expanded
+      />,
+    );
+    expect(html).toContain('Do thing');
+    expect(html).toContain('input-args-here');
+    expect(html).toContain('result');
+    // Labeled Input + Output frames inside the reveal.
+    expect(html).toContain('>Input<');
+    expect(html).toContain('>Output<');
+  });
+});
+
+/**
+ * A3 — the terminal "Done" row appears ONLY once the run is finished, never on
+ * the momentary inter-tool gap while the chain is live (`active`).
+ */
+describe('ActivityChain — "Done" gating (A3 flash fix)', () => {
+  const steps: ActivityStepData[] = [{ kind: 'bash', label: 'Ran a command', status: 'done' }];
+
+  it('shows "Done" when the run is finished (not active)', () => {
+    const html = renderToStaticMarkup(<ActivityChain steps={steps} expanded active={false} />);
+    expect(html).toContain('pd-chain-done');
+    expect(html).toContain('Done');
+  });
+
+  it('hides "Done" while the chain is still live (active) — no mid-chain flash', () => {
+    const html = renderToStaticMarkup(<ActivityChain steps={steps} expanded active />);
+    expect(html).not.toContain('pd-chain-done');
   });
 });

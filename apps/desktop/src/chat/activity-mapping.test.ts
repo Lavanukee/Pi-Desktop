@@ -9,6 +9,7 @@ import {
   type GroupSegment,
   mapThinkingStep,
   mapToolStep,
+  resolveTool,
   segmentBlocks,
   segmentGroup,
   toolStepKind,
@@ -136,6 +137,119 @@ describe('toolStepKind', () => {
     expect(toolStepKind('playwright_goto')).toBe('browser-navigate');
     // A plain file read must stay a file read, not get diverted to a browser kind.
     expect(toolStepKind('read_file')).toBe('read');
+  });
+});
+
+describe('resolveTool (R14 registry — each tool its own kind, neutral fallback)', () => {
+  it('classifies the first-party builtins to their OWN kinds (not "read")', () => {
+    expect(toolStepKind('tool_search')).toBe('tool-search');
+    expect(toolStepKind('python_run')).toBe('python');
+    expect(toolStepKind('run_python')).toBe('python');
+    expect(toolStepKind('web_search')).toBe('search');
+    // The magnifier-over-tools search is NOT the web search.
+    expect(toolStepKind('tool_search')).not.toBe('search');
+  });
+
+  it('maps macOS connector tools to the `connector` kind with their brand identity', () => {
+    const rem = resolveTool('reminders_create');
+    expect(rem.kind).toBe('connector');
+    expect(rem.connectorId).toBe('mac-reminders');
+    expect(rem.label).toEqual(['Setting a reminder', 'Set a reminder']);
+
+    expect(resolveTool('calendar_list_events')).toMatchObject({
+      kind: 'connector',
+      connectorId: 'mac-calendar',
+    });
+    expect(resolveTool('mail_send')).toMatchObject({ kind: 'connector', connectorId: 'mac-mail' });
+    // A connector tool NOT in the exact registry still resolves by prefix.
+    expect(resolveTool('calendar_delete_event')).toMatchObject({
+      kind: 'connector',
+      connectorId: 'mac-calendar',
+    });
+  });
+
+  it('resolves an MCP-namespaced tool to a connector (brand icon when known)', () => {
+    // Branded MCP server (simple-icons has `linear`).
+    const linear = resolveTool('mcp__linear__create_issue');
+    expect(linear.kind).toBe('connector');
+    expect(linear.connectorId).toBe('linear');
+    expect(linear.displayName).toBe('Linear');
+    // Unknown-brand MCP server → still a connector row, named by the server, no id.
+    const unknown = resolveTool('acmecorp__do_thing');
+    expect(unknown.kind).toBe('connector');
+    expect(unknown.connectorId).toBeUndefined();
+    expect(unknown.displayName).toBe('Acmecorp');
+  });
+
+  it('falls an UNKNOWN tool back to the neutral `tool` kind — NEVER "read"', () => {
+    const t = resolveTool('summarize_document');
+    expect(t.kind).toBe('tool');
+    expect(t.kind).not.toBe('read');
+    expect(t.displayName).toBe('Summarize document');
+    // Genuinely read-ish inspection tools DO still read as `read`.
+    expect(toolStepKind('grep')).toBe('read');
+    expect(toolStepKind('ls')).toBe('read');
+  });
+});
+
+describe('mapToolStep (R14 new kinds)', () => {
+  it('reminders_create renders "Set a reminder" with the connector brand SVG + reveal', () => {
+    const step = mapToolStep(
+      call('c1', 'reminders_create', { title: 'Call mom', due: 'tomorrow' }),
+      result('c1', 'Created reminder'),
+      false,
+    ).data;
+    expect(step.kind).toBe('connector');
+    expect(step.label).toBe('Set a reminder');
+    if (step.kind !== 'connector') throw new Error('expected connector');
+    expect(step.iconSvg).toBeDefined();
+    expect(step.iconSvg).toContain('<svg');
+    expect(step.detail).toBe('Call mom');
+    expect(step.argsText).toContain('Call mom');
+    expect(step.output).toBe('Created reminder');
+  });
+
+  it('a running connector call reads present-tense ("Setting a reminder")', () => {
+    expect(
+      mapToolStep(call('c1', 'reminders_create', { title: 'x' }), undefined, true).data.label,
+    ).toBe('Setting a reminder');
+  });
+
+  it('an unknown tool maps to a neutral generic row (humanized name, args + result)', () => {
+    const step = mapToolStep(
+      call('c1', 'summarize_document', { path: '/x/y.md' }),
+      result('c1', 'a summary'),
+      false,
+    ).data;
+    expect(step.kind).toBe('tool');
+    expect(step.label).toBe('Summarize document');
+    if (step.kind !== 'tool') throw new Error('expected tool');
+    expect(step.argsText).toContain('/x/y.md');
+    expect(step.output).toBe('a summary');
+  });
+
+  it('tool_search reads "Searched tools" and reveals its query + matches', () => {
+    const step = mapToolStep(
+      call('c1', 'tool_search', { query: 'calendar' }),
+      result('c1', 'calendar_create_event\ncalendar_list_events'),
+      false,
+    ).data;
+    expect(step.kind).toBe('tool-search');
+    expect(step.label).toBe('Searched tools');
+    expect(step.detail).toBe('calendar');
+  });
+
+  it('python_run reads "Ran Python" and carries its code + output like a terminal', () => {
+    const step = mapToolStep(
+      call('c1', 'python_run', { code: 'print(2+2)' }),
+      result('c1', '4'),
+      false,
+    ).data;
+    expect(step.kind).toBe('python');
+    expect(step.label).toBe('Ran Python');
+    if (step.kind !== 'python') throw new Error('expected python');
+    expect(step.command).toBe('print(2+2)');
+    expect(step.output).toBe('4');
   });
 });
 

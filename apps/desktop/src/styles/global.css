@@ -223,64 +223,111 @@ body {
   opacity: 1;
   pointer-events: auto;
   width: var(--pd-sidebar-rail, 64px);
-  /* FULL height, like the expanded sidebar — the rail runs top→bottom, NOT a
-   * short content-hugging card floating at the top. Its TOP is inset by the
-   * .pd-sidebar-tl strip (traffic-light clearance) and the profile button is
-   * pinned to the foot; height falls through to the base .pd-sidebar (100%). We
-   * only cancel the ui base's off-screen slide here so it parks in place. */
+  /* FULL height, like the expanded sidebar — the SHELL runs top→bottom (the
+   * rail-height contract the e2e probe asserts), NOT a short card floating at
+   * the top. R14 C1: the visible card CHROME (bg + edge) now rides on the inner
+   * .pd-rail, which begins BELOW the .pd-sidebar-tl traffic-light strip — so the
+   * card's top edge lands just above the Expand button and the macOS lights sit
+   * on the plain window backdrop above it. This shell is therefore transparent
+   * and chrome-less; the profile button stays pinned to the foot. We only cancel
+   * the ui base's off-screen slide here so it parks in place. */
   height: 100%;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
   transition:
     width var(--pd-duration-slow) var(--pd-easing-standard),
     transform var(--pd-duration-slow) var(--pd-easing-standard);
 }
 :root[data-flavor="claude"] .pd-sidebar[data-open="false"] {
-  /* Cancel the ui base's off-screen slide; height falls through to the base
-   * claude rule (calc(100% - 16px)) so the collapsed card is full-height, top
-   * inset by the traffic-light strip and NOT shortened from the bottom. */
+  /* Cancel the ui base's off-screen slide + the claude float chrome (that chrome
+   * moves onto .pd-rail below the strip). Height falls through to the base claude
+   * rule (calc(100% - 16px)) so the shell is full-height, top inset by the strip
+   * and NOT shortened from the bottom. */
   transform: none;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+:root[data-flavor="codex"] .pd-sidebar[data-open="false"] {
+  /* Cancel the codex frosted-glass chrome on the shell; it moves onto .pd-rail. */
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 /*
- * Round-14 #7: the collapsed rail is LEFT-ANCHORED so a rail glyph sits at the
- * SAME x as its expanded-row glyph — killing the collapse "grow + snap right,
- * then slide left" jank. Expanded rows lead at 16px (8px .pd-sidebar-scroll pad
- * + 8px .pd-sidebar-row pad) then an --pd-icon-size icon box; the rail buttons
- * reproduce that lead (padding-left:16px + an inner .pd-rail-btn-icon box) so
- * the glyph x is identical BY CONSTRUCTION in both flavors — never a hard-coded
- * padding that only matches one. The rail width is 2×icon-center
- * (32px + --pd-icon-size ⇒ 52px claude / 48px codex) so the icon still reads
- * centered within the narrow rail.
+ * Round-14 #7 / R14 C3: a collapsed rail glyph sits at the SAME x as its
+ * expanded-row glyph — killing the collapse "grow + snap right, then slide left"
+ * jank. An expanded row's glyph centers at (8px .pd-sidebar-scroll pad + 8px
+ * .pd-sidebar-row pad + half its --pd-icon-size box). The rail width below is
+ * exactly 2× that center (32px + --pd-icon-size ⇒ 52px claude / 48px codex), so
+ * CENTERING the icon button (and its glyph) in the rail lands the glyph on that
+ * identical x by construction. R14 C3: centering (vs the old left-anchored
+ * padding-left) also keeps the 40px hover/active wash centered on the glyph — it
+ * used to sit ~4px left of it because a left-anchored 40px box in a 48–52px rail
+ * centers left of the rail centre.
  */
 :root {
   --pd-sidebar-rail: calc((32px + var(--pd-icon-size)) * var(--pd-sidebar-scale, 1));
 }
 
-/* Rail contents: a left-anchored vertical stack of icon-only buttons that fills
- * the full-height collapsed sidebar; a flex spacer (.pd-rail-spacer) before the
- * profile button pins it to the foot, and the stack scrolls if a short window
- * can't fit it. */
+/* Rail contents: R14 C1 — this IS the collapsed sidebar's VISIBLE floating card
+ * now. The card chrome (bg + flavor edge below) lives here rather than on the
+ * .pd-sidebar shell, so the card begins just BELOW the .pd-sidebar-tl strip and
+ * its top edge clears the macOS traffic lights, landing just above the Expand
+ * button; the shell above stays transparent + full-height. A CENTERED vertical
+ * stack of icon-only buttons (R14 C3 — centered so the hover wash sits on the
+ * glyph); a flex spacer (.pd-rail-spacer) before the profile button pins it to
+ * the foot, and the stack scrolls if a short window can't fit it. */
 .pd-rail {
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 4px;
   padding: 4px 0 8px;
   overflow-y: auto;
+  background: var(--pd-bg-sidebar);
+}
+/* Claude: the collapsed card is a floating, rounded, bordered panel (mirrors the
+ * expanded .pd-sidebar float chrome that the shell no longer carries). */
+:root[data-flavor="claude"] .pd-rail {
+  border-radius: var(--pd-radius-lg);
+  box-shadow:
+    0 0 0 1px var(--pd-sidebar-border),
+    var(--pd-sidebar-shadow);
+}
+/* Codex: frosted-glass rail with a hairline right edge (mirrors expanded codex). */
+:root[data-flavor="codex"] .pd-rail {
+  background: color-mix(
+    in srgb,
+    var(--pd-bg-sidebar) calc(var(--pd-sidebar-translucency) * 100%),
+    transparent
+  );
+  box-shadow: inset -1px 0 0 0 var(--pd-sidebar-border);
+  -webkit-backdrop-filter: blur(var(--pd-sidebar-blur));
+  backdrop-filter: blur(var(--pd-sidebar-blur));
 }
 /* Pushes the trailing profile button to the foot of the full-height rail. */
 .pd-rail-spacer {
   flex: 1 1 auto;
   min-height: 8px;
 }
+/* R14 C3: the 40px button (its hover/active wash) is CENTERED in the rail, and
+ * its glyph is centered inside it — so the wash sits symmetrically on the glyph
+ * instead of ~4px to its left (the old left-anchored justify-content:flex-start +
+ * padding-left:16px put the 40px box against the rail's left edge, off-centre in
+ * the wider rail). The glyph x is unchanged: rail-centred == the old
+ * padding-left + half-icon x (see the --pd-sidebar-rail note above). */
 .pd-rail-btn {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   width: calc(40px * var(--pd-sidebar-scale, 1));
   height: calc(40px * var(--pd-sidebar-scale, 1));
-  padding-left: calc(16px * var(--pd-sidebar-scale, 1));
   border: 0;
   border-radius: var(--pd-radius-md, 8px);
   background: transparent;
@@ -319,15 +366,15 @@ body {
 }
 
 /*
- * #A10: elastic overscroll. `contain` stops the wheel from chaining out of the
- * pane; the rubber-band translate is driven in JS (ChatThread) and rides on the
- * content wrapper below.
+ * R14 C2: HARD STOP at the scroll edges — no rubber-band. `overscroll-behavior:
+ * none` stops the wheel from chaining out of the pane (what `contain` used to do)
+ * AND suppresses the browser's own overscroll/bounce affordance, so the thread
+ * stops dead at the top/bottom. The old JS elastic-translate (a damped
+ * translateY spring driven from wheel deltas) has been removed from ChatThread,
+ * so there is no longer a `.pd-elastic-content` transform wrapper.
  */
 .pd-elastic-scroll {
-  overscroll-behavior: contain;
-}
-.pd-elastic-content {
-  will-change: transform;
+  overscroll-behavior: none;
 }
 
 /* #A8c: attachment previews — image thumbnail, else a filename + ext chip. */

@@ -459,4 +459,28 @@ export class LlamaServerSupervisor {
     this.child = null;
     this.emit({ type: 'exit', reason: 'disposed' });
   }
+
+  /**
+   * Synchronous, immediate SIGKILL of the llama-server child — the app-quit /
+   * utilityProcess-teardown backstop where the async {@link dispose} ladder
+   * cannot run (a `process.on('exit')` handler only runs synchronous work, and a
+   * caught SIGTERM must reap the grandchild before the process leaves). Idempotent
+   * and safe to call after dispose(); leaves no orphaned llama-server holding the
+   * model in RAM/VRAM. The OS reclaims the child's GPU allocation on process death.
+   */
+  killImmediately(): void {
+    this.disposed = true;
+    if (this.killTimer !== null) {
+      clearTimeout(this.killTimer);
+      this.killTimer = null;
+    }
+    const child = this.child;
+    this.child = null;
+    if (child === null) return;
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // already gone
+    }
+  }
 }

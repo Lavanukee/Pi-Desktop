@@ -18,12 +18,16 @@ import { useCanvasTabs } from '@pi-desktop/canvas';
 import type { ToolResultMsg } from '@pi-desktop/engine';
 import { ActivityChain } from '@pi-desktop/ui';
 import type { ReactNode } from 'react';
+import { usePiStore } from '../state/pi-slice';
 import {
   type ActivityBlock,
   type MappedStep,
   mapThinkingStep,
   mapToolStep,
 } from './activity-mapping';
+// Local module (NOT a package barrel) — keep the open-in-canvas action off the
+// renderer-forbidden barrels (the gotcha); `openFileInCanvas` reads via IPC.
+import { openFileInCanvas } from './canvas/file-tabs';
 
 export { segmentBlocks } from './activity-mapping';
 
@@ -38,6 +42,14 @@ function estimateThoughtMs(text: string, tps: number | undefined): number | unde
   const tokens = Math.max(1, Math.round(text.length / 4));
   const ms = Math.round((tokens / tps) * 1000);
   return ms >= 1000 ? ms : undefined;
+}
+
+/** Resolve a tool-arg path to an absolute one (join with the session cwd when it
+ * arrived relative) so `openFileInCanvas`'s `fs:read-file` can find it. */
+function resolveAbsPath(path: string, cwd: string | undefined): string {
+  if (path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path)) return path;
+  if (cwd !== undefined && cwd.length > 0) return `${cwd.replace(/\/+$/, '')}/${path}`;
+  return path;
 }
 
 /**
@@ -66,6 +78,7 @@ export function ThreadActivityChain({
   tps?: number;
 }): ReactNode {
   const canvas = useCanvasTabs();
+  const cwd = usePiStore((s) => s.session?.cwd ?? undefined);
 
   // Thinking duration (round-3 #A13/activity): the engine carries no per-block
   // timestamps, so approximate the model's thinking time as the pre-first-tool
@@ -119,6 +132,14 @@ export function ThreadActivityChain({
       onOpenCanvas={(_step, index) => {
         const spec = steps[index]?.tabSpec;
         if (spec?.key !== undefined) canvas.upsertTab(spec.key, spec);
+      }}
+      // A read/edit/skill row's primary click opens that file in the canvas
+      // (deliverable A2). The full path lives on `step.detail`; resolve it against
+      // the session cwd when it arrived relative so the IPC read can find it.
+      onOpenFile={(step) => {
+        const path = step.detail;
+        if (path === undefined || path.length === 0) return;
+        void openFileInCanvas(canvas.controller, resolveAbsPath(path, cwd), cwd);
       }}
     />
   );

@@ -101,6 +101,34 @@ function ensureChild(): UtilityProcess {
   return proc;
 }
 
+/**
+ * App-quit teardown for the inference stack. Killing the utilityProcess is what
+ * makes its `process.on('SIGTERM'|'exit')` handlers reap the llama-server
+ * grandchild (supervisor-entry.ts) — so no llama-server survives quit holding
+ * the model in RAM/VRAM. Bounded: if the utilityProcess is wedged and never
+ * emits `exit`, we resolve on the timeout rather than blocking the quit.
+ *
+ * Wired into the single ordered quit sequence (pi-main quit-hold `extraTeardown`),
+ * which runs BEFORE `app.exit()`. `app.exit()` does not emit `will-quit`, so the
+ * `will-quit` handler below is only a backstop for quit paths that bypass the hold.
+ */
+export async function shutdownInference(timeoutMs = 1500): Promise<void> {
+  const proc = child;
+  if (proc === null) return;
+  const exited = new Promise<void>((resolve) => proc.once('exit', () => resolve()));
+  try {
+    // Default SIGTERM: caught in supervisor-entry, which SIGKILLs llama-server.
+    proc.kill();
+  } catch {
+    // already gone
+  }
+  const timed = new Promise<void>((resolve) => {
+    const t = setTimeout(resolve, timeoutMs);
+    t.unref?.();
+  });
+  await Promise.race([exited, timed]);
+}
+
 function request<T>(req: LlmRequestBody): Promise<T> {
   const proc = ensureChild();
   const id = ++nextId;

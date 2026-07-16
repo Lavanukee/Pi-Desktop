@@ -51,13 +51,14 @@ interface Setup {
   disposeAll: ReturnType<typeof vi.fn>;
 }
 
-function setup(bridges: FakeBridge[]): Setup {
+function setup(bridges: FakeBridge[], extraTeardown?: () => Promise<void>): Setup {
   const app = new FakeApp();
   const disposeAll = vi.fn();
   installPiQuitHold(app, {
     bridges: () => [...bridges],
     disposeAll,
     graceMs: GRACE_MS,
+    extraTeardown,
   });
   return { app, bridges, disposeAll };
 }
@@ -110,6 +111,66 @@ describe('installPiQuitHold', () => {
     expect(app.emitBeforeQuit().prevented).toBe(false);
     expect(disposeAll).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(GRACE_MS + 250);
+    expect(app.exits).toBe(1);
+  });
+
+  it('runs extraTeardown and HOLDS the quit even when no pi bridge is alive', async () => {
+    // llama-server / pi-mac helper / PTYs outlive the per-window pi bridges, so
+    // the hold must run for them even with zero live bridges.
+    const dead = new FakeBridge();
+    dead.exit();
+    let torn = false;
+    const teardown = vi.fn(async () => {
+      torn = true;
+    });
+    const { app, disposeAll } = setup([dead], teardown);
+    expect(app.emitBeforeQuit().prevented).toBe(true);
+    expect(disposeAll).toHaveBeenCalledTimes(1);
+    expect(teardown).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(torn).toBe(true);
+    expect(app.exits).toBe(1);
+  });
+
+  it('awaits extraTeardown alongside bridge exits before exiting', async () => {
+    const bridge = new FakeBridge();
+    let resolveTeardown: () => void = () => {};
+    const teardown = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveTeardown = resolve;
+        }),
+    );
+    const { app } = setup([bridge], teardown);
+    app.emitBeforeQuit();
+    bridge.exit();
+    await vi.advanceTimersByTimeAsync(0);
+    // The bridge exited, but the child-process teardown is still running.
+    expect(app.exits).toBe(0);
+    resolveTeardown();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(app.exits).toBe(1);
+  });
+
+  it('still exits at the cap when extraTeardown hangs', async () => {
+    const bridge = new FakeBridge();
+    const teardown = vi.fn(() => new Promise<void>(() => {})); // never resolves
+    const { app } = setup([bridge], teardown);
+    app.emitBeforeQuit();
+    bridge.exit();
+    await vi.advanceTimersByTimeAsync(GRACE_MS + 250);
+    expect(app.exits).toBe(1);
+  });
+
+  it('a rejected extraTeardown never blocks the quit', async () => {
+    const bridge = new FakeBridge();
+    const teardown = vi.fn(async () => {
+      throw new Error('teardown boom');
+    });
+    const { app } = setup([bridge], teardown);
+    app.emitBeforeQuit();
+    bridge.exit();
+    await vi.advanceTimersByTimeAsync(0);
     expect(app.exits).toBe(1);
   });
 });

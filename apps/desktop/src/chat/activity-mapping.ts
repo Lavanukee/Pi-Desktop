@@ -17,6 +17,12 @@ import type {
   DiffLine,
   WebSearchResultData,
 } from '@pi-desktop/ui';
+// Deep source import of the PURE connector-icons module (only pulls
+// `simple-icons`), NOT the `@pi-desktop/mcp-lite` barrel — value-importing the
+// barrel would drag the MCP/pi SDK into the renderer bundle and break `vite build`
+// (the renderer-barrel gotcha). Same sanctioned deep-path seam
+// `HarnessStatus.tsx`/`composer-bar-logic.ts` use for harness/src.
+import { connectorIconSvg } from '../../../../packages/mcp-lite/src/connector-icons.ts';
 import { type DetectedArtifact, segmentMessageText } from './canvas/artifacts';
 
 type ToolCallBlock = Extract<ContentBlock, { type: 'toolCall' }>;
@@ -164,19 +170,24 @@ export function isSkillPath(path: string | undefined): boolean {
   return /(^|\/)\.pi\/(agent\/)?skills\//.test(norm);
 }
 
-/** Present-tense (running) / past-tense (done) label per step kind. */
+/** Present-tense (running) / past-tense (done) label per step kind. Connector +
+ * generic-tool rows override this with a name-derived label (see {@link labelFor}). */
 const STEP_LABELS: Record<ActivityStepKind, [running: string, done: string]> = {
   thinking: ['Thinking…', 'Thought'],
   bash: ['Running a command', 'Ran a command'],
+  python: ['Running Python', 'Ran Python'],
   edit: ['Editing a file', 'Edited a file'],
   read: ['Reading a file', 'Read a file'],
   file: ['Presenting a file', 'Presented a file'],
   skill: ['Reading a skill', 'Read a skill'],
   search: ['Searching the web', 'Searched the web'],
+  'tool-search': ['Searching tools', 'Searched tools'],
   'browser-navigate': ['Navigating', 'Visited a page'],
   'browser-click': ['Clicking', 'Clicked'],
   'browser-type': ['Typing', 'Typed'],
   'browser-read': ['Reading the page', 'Read the page'],
+  connector: ['Using a connector', 'Used a connector'],
+  tool: ['Running a tool', 'Used a tool'],
   image: ['Generating an image', 'Generated an image'],
   pdf: ['Creating a PDF', 'Created a PDF'],
   'canvas-open': ['Opening the canvas', 'Opened the canvas'],
@@ -186,11 +197,159 @@ function stepLabel(kind: ActivityStepKind, running: boolean): string {
   return STEP_LABELS[kind][running ? 0 : 1];
 }
 
-/** Classify a tool name into a step kind (drives icon + summary phrasing). */
-export function toolStepKind(name: string): ActivityStepKind {
+/**
+ * How one tool NAME resolves: its step kind plus (for connector / generic-tool
+ * rows) a display name, a specific label pair, and a connector id for the brand
+ * icon. This is the heart of the tool → {icon, label, verb} REGISTRY — a tool the
+ * registry knows gets its OWN glyph + phrasing; an unknown tool gets the NEUTRAL
+ * generic `tool` kind (puzzle glyph + humanized name), NEVER the file read.
+ */
+export interface ToolResolution {
+  readonly kind: ActivityStepKind;
+  /** Overrides the kind's default [running, done] label pair (e.g. "Set a reminder"). */
+  readonly label?: readonly [running: string, done: string];
+  /** For `connector`: the connector id used to resolve the brand icon SVG. */
+  readonly connectorId?: string;
+  /** Display name for the label ("Reminders", "Linear", or a humanized tool name). */
+  readonly displayName?: string;
+}
+
+/** A connector-kind resolution, wiring an action label to a connector's brand icon. */
+function connectorTool(
+  connectorId: string,
+  displayName: string,
+  label: readonly [string, string],
+): ToolResolution {
+  return { kind: 'connector', connectorId, displayName, label };
+}
+
+/**
+ * EXACT tool-name → resolution registry. First-party builtins + the macOS
+ * connectors get a distinct glyph, label, and (for connectors) their brand mark.
+ * Everything not matched here falls through to the heuristics + the neutral
+ * generic fallback in {@link resolveTool}.
+ */
+const TOOL_REGISTRY: Record<string, ToolResolution> = {
+  // file read
+  read: { kind: 'read' },
+  view: { kind: 'read' },
+  open_file: { kind: 'read' },
+  read_file: { kind: 'read' },
+  cat: { kind: 'read' },
+  // shell
+  bash: { kind: 'bash' },
+  shell: { kind: 'bash' },
+  run: { kind: 'bash' },
+  exec: { kind: 'bash' },
+  run_command: { kind: 'bash' },
+  // python / code execution
+  python_run: { kind: 'python' },
+  python: { kind: 'python' },
+  run_python: { kind: 'python' },
+  execute_python: { kind: 'python' },
+  // tool search (the harness `tool_search` builtin — the tool registry, not the web)
+  tool_search: { kind: 'tool-search' },
+  search_tools: { kind: 'tool-search' },
+  // web search
+  web_search: { kind: 'search' },
+  brave_search: { kind: 'search' },
+  google: { kind: 'search' },
+  search_web: { kind: 'search' },
+  // macOS Calendar
+  calendar_create_event: connectorTool('mac-calendar', 'Calendar', [
+    'Creating an event',
+    'Created an event',
+  ]),
+  calendar_list_events: connectorTool('mac-calendar', 'Calendar', [
+    'Reading the calendar',
+    'Read the calendar',
+  ]),
+  // macOS Mail
+  mail_send: connectorTool('mac-mail', 'Mail', ['Sending an email', 'Sent an email']),
+  mail_search: connectorTool('mac-mail', 'Mail', ['Searching Mail', 'Searched Mail']),
+  mail_recent: connectorTool('mac-mail', 'Mail', ['Reading Mail', 'Read Mail']),
+  mail_read: connectorTool('mac-mail', 'Mail', ['Reading a message', 'Read a message']),
+  // macOS Messages
+  messages_send: connectorTool('mac-messages', 'Messages', ['Sending a message', 'Sent a message']),
+  messages_recent: connectorTool('mac-messages', 'Messages', ['Reading messages', 'Read messages']),
+  // macOS Contacts
+  contacts_search: connectorTool('mac-contacts', 'Contacts', [
+    'Searching Contacts',
+    'Searched Contacts',
+  ]),
+  // macOS Reminders
+  reminders_create: connectorTool('mac-reminders', 'Reminders', [
+    'Setting a reminder',
+    'Set a reminder',
+  ]),
+  reminders_list: connectorTool('mac-reminders', 'Reminders', [
+    'Reading reminders',
+    'Read reminders',
+  ]),
+};
+
+/** Tool-name prefix (before the first `_`/`.`) → its macOS connector identity. */
+const CONNECTOR_PREFIXES: Record<string, { id: string; name: string }> = {
+  calendar: { id: 'mac-calendar', name: 'Calendar' },
+  mail: { id: 'mac-mail', name: 'Mail' },
+  messages: { id: 'mac-messages', name: 'Messages' },
+  contacts: { id: 'mac-contacts', name: 'Contacts' },
+  reminders: { id: 'mac-reminders', name: 'Reminders' },
+};
+
+/** Title-case a connector id/slug for display ("google-calendar" → "Google Calendar"). */
+function humanizeConnectorId(id: string): string {
+  return id
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+/** Humanize a raw tool name for the neutral fallback ("mcp__srv__do_thing" →
+ * "Do thing", "summarize_document" → "Summarize document"). */
+function humanizeToolName(name: string): string {
+  const tail = name.split(/__|\./).filter(Boolean).pop() ?? name;
+  const words = tail.replace(/[_-]+/g, ' ').trim();
+  if (words.length === 0) return name;
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * Resolve an MCP-namespaced tool (`mcp__<server>__<tool>`, `<server>__<tool>`,
+ * `<server>.<tool>`) to a connector row: its brand mark when `simple-icons` has
+ * the server, else a neutral connector row named after the server. Returns null
+ * for a non-namespaced name.
+ */
+function resolveMcpConnector(name: string): ToolResolution | null {
+  const parts = name.split(/__|\./).filter(Boolean);
+  if (parts.length < 2) return null;
+  let server = (parts[0] ?? '').toLowerCase();
+  if (server === 'mcp' && parts.length >= 3) server = (parts[1] ?? '').toLowerCase();
+  if (server.length === 0) return null;
+  const hasBrand = connectorIconSvg(server) !== undefined;
+  return {
+    kind: 'connector',
+    ...(hasBrand ? { connectorId: server } : {}),
+    displayName: humanizeConnectorId(server),
+  };
+}
+
+/**
+ * Resolve a tool name to its {@link ToolResolution}. Exact registry first, then
+ * name heuristics (edit/write, browser namespace, image/pdf, read-ish file
+ * inspection), then connector-prefix + MCP-namespace detection, and finally the
+ * NEUTRAL generic `tool` fallback. Crucially the fallback is `tool`, NOT `read`:
+ * an unrecognized tool never masquerades as "Read a file".
+ */
+export function resolveTool(rawName: string): ToolResolution {
+  const name = rawName ?? '';
   const n = name.toLowerCase();
-  if (n === 'bash' || n === 'shell' || n === 'run' || n === 'exec' || n === 'run_command')
-    return 'bash';
+
+  const exact = TOOL_REGISTRY[n];
+  if (exact !== undefined) return exact;
+
+  // Edit/write family (before read-ish, so write_file → edit not read).
   if (
     n.includes('edit') ||
     n.includes('write') ||
@@ -201,28 +360,87 @@ export function toolStepKind(name: string): ActivityStepKind {
     n.includes('apply_patch') ||
     n.includes('patch')
   )
-    return 'edit';
-  if (n === 'web_search' || n === 'brave_search' || n === 'google' || n === 'search_web')
-    return 'search';
+    return { kind: 'edit' };
+
+  if (n.includes('web_search') || n.includes('search_web')) return { kind: 'search' };
+  if (n === 'tool_search' || n.includes('search_tools') || n.includes('find_tools'))
+    return { kind: 'tool-search' };
+  if (/(^|_)python(_|$)/.test(n)) return { kind: 'python' };
+
   // Browser-use tool steps (round-10 #17/#9): keep them OFF the generic file
   // "read" glyph. Detected inside the browser/playwright/puppeteer namespace, then
   // split by verb so each renders its own icon + label (compass/pointer/keyboard/
   // eye) instead of a wrong "Read a file" row.
   if (n.includes('browser') || n.includes('playwright') || n.includes('puppeteer')) {
     if (/navigate|goto|go_to|open|visit|url|back|forward|reload|refresh/.test(n))
-      return 'browser-navigate';
-    if (/type|fill|input|press|key|sendkeys|clear/.test(n)) return 'browser-type';
+      return { kind: 'browser-navigate' };
+    if (/type|fill|input|press|key|sendkeys|clear/.test(n)) return { kind: 'browser-type' };
     if (/click|tap|hover|select|choose|drag|check|scroll|swipe|mouse/.test(n))
-      return 'browser-click';
-    // read / snapshot / screenshot / get_text / content / accessibility / wait…
-    return 'browser-read';
+      return { kind: 'browser-click' };
+    return { kind: 'browser-read' };
   }
+
   if (n.includes('image') || n === 'dalle' || n === 'generate_image' || n === 'imagegen')
-    return 'image';
-  if (n.includes('pdf')) return 'pdf';
-  // read / cat / ls / list / glob / grep / find / fetch and unknowns all read-ish:
-  // a file/preview step that expands its output inline.
-  return 'read';
+    return { kind: 'image' };
+  if (n.includes('pdf')) return { kind: 'pdf' };
+
+  // Genuinely read-ish FILE inspection (the authoritative read op names +
+  // cat/ls/glob/grep/find/head/tail/stat/tree): a file-preview step that expands
+  // its output inline. NOT a catch-all — an unknown tool never lands here.
+  if (/(^|_)(read|cat|ls|list|glob|grep|rg|ripgrep|find|head|tail|stat|tree|read_dir)(_|$)/.test(n))
+    return { kind: 'read' };
+
+  // Connector by tool-name prefix (calendar_/mail_/reminders_/…).
+  const prefix = n.split(/[_.]/)[0] ?? '';
+  const pfx = CONNECTOR_PREFIXES[prefix];
+  if (pfx !== undefined) return { kind: 'connector', connectorId: pfx.id, displayName: pfx.name };
+
+  // MCP-namespaced (server__tool / server.tool / mcp__server__tool).
+  const mcp = resolveMcpConnector(name);
+  if (mcp !== null) return mcp;
+
+  // NEUTRAL fallback: a generic tool row, humanized name + puzzle glyph.
+  return { kind: 'tool', displayName: humanizeToolName(name) };
+}
+
+/** Classify a tool name into a step kind (drives icon + summary phrasing). */
+export function toolStepKind(name: string): ActivityStepKind {
+  return resolveTool(name).kind;
+}
+
+/** The row label for a resolved tool, past/present tense. Connector + generic
+ * rows read from the resolved display name; the rest use {@link STEP_LABELS}. */
+function labelFor(kind: ActivityStepKind, resolution: ToolResolution, running: boolean): string {
+  if (resolution.label !== undefined) return resolution.label[running ? 0 : 1];
+  if (kind === 'connector') {
+    const nm = resolution.displayName ?? 'a connector';
+    return running ? `Using ${nm}` : `Used ${nm}`;
+  }
+  if (kind === 'tool') return resolution.displayName ?? stepLabel('tool', running);
+  return stepLabel(kind, running);
+}
+
+/** Pretty-print a tool call's arguments for the generic reveal (Input block). */
+function formatArgs(args: Record<string, unknown>): string | undefined {
+  if (Object.keys(args).length === 0) return undefined;
+  try {
+    return JSON.stringify(args, null, 2);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The most meaningful single arg to surface inline for a connector/tool row. */
+function primaryArg(args: Record<string, unknown>): string | undefined {
+  return (
+    str(args.query) ??
+    str(args.q) ??
+    str(args.title) ??
+    str(args.name) ??
+    str(args.subject) ??
+    str(args.url) ??
+    pickPath(args)
+  );
 }
 
 /** Build a best-effort DiffFileData[] from an edit tool's arguments. */
@@ -378,25 +596,30 @@ export function mapToolStep(
   running: boolean,
 ): MappedStep {
   const args = block.arguments ?? {};
-  // A read whose target is a SKILL / tool-instructions file is reclassified from
-  // the generic `read` to the distinct `skill` kind (Wave B #3a) — its own label
-  // ("Read a skill") + sparkle glyph. Only a read-ish tool is promoted; an edit
-  // to a skill file stays an edit.
-  let kind = toolStepKind(block.name);
+  // Resolve the tool through the registry (its OWN icon + label + verb), then —
+  // for a read whose target is a SKILL / tool-instructions file — reclassify the
+  // generic `read` to the distinct `skill` kind (Wave B #3a). Only a read-ish
+  // tool is promoted; an edit to a skill file stays an edit.
+  const resolution = resolveTool(block.name);
+  let kind = resolution.kind;
   const path = pickPath(args);
   if (kind === 'read' && isSkillPath(path)) kind = 'skill';
   const filename = baseName(path);
   const status = running ? 'running' : 'done';
-  const label = stepLabel(kind, running);
+  const label = labelFor(kind, resolution, running);
   // The step's PRIMARY arg, surfaced inline next to the verb (jedd round-2 #2):
   // "Read a file: <path>", "Ran: <cmd>", "Searched: <query>". The UI shows a
   // path's basename on the collapsed row and the full value in the reveal.
-  const command = str(args.command);
+  const command = str(args.command) ?? str(args.code) ?? str(args.script) ?? str(args.source);
   const query = str(args.query) ?? str(args.q);
   const url = str(args.url) ?? str(args.href) ?? str(args.link);
 
   switch (kind) {
     case 'bash':
+      return {
+        data: { kind, label, status, detail: command, command, output: str(result?.text) },
+      };
+    case 'python':
       return {
         data: { kind, label, status, detail: command, command, output: str(result?.text) },
       };
@@ -457,6 +680,37 @@ export function mapToolStep(
       // its own kind → "Read a skill" + sparkle glyph in the chain.
       return {
         data: { kind: 'skill', label, status, detail: path, filename, preview: str(result?.text) },
+      };
+    case 'connector':
+      // "Used <connector icon> <connector name>": the connector's brand mark
+      // (mcp-lite connector-icons) + a name-derived label. The reveal shows the
+      // raw call args (Input) + the tool result (Output).
+      return {
+        data: {
+          kind: 'connector',
+          label,
+          status,
+          detail: primaryArg(args),
+          ...(resolution.connectorId !== undefined
+            ? { iconSvg: connectorIconSvg(resolution.connectorId) }
+            : {}),
+          argsText: formatArgs(args),
+          output: str(result?.text),
+        },
+      };
+    case 'tool-search':
+    case 'tool':
+      // tool_search + the NEUTRAL generic fallback: a distinct glyph + humanized
+      // name, args + result revealed on click. NEVER a mislabeled "Read a file".
+      return {
+        data: {
+          kind,
+          label,
+          status,
+          detail: primaryArg(args),
+          argsText: formatArgs(args),
+          output: str(result?.text),
+        },
       };
     default:
       // read / file-preview: show the tool output inline.

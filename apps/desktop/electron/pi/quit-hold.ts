@@ -28,6 +28,15 @@ export interface QuitHoldOptions {
   disposeAll: () => void;
   /** The bridges' killGraceMs; the hold caps at this plus a small margin. */
   graceMs: number;
+  /**
+   * Teardown for NON-pi children reaped in the SAME held quit window — the
+   * inference utilityProcess+llama-server, the pi-mac helper, and PTYs. Kicked
+   * off alongside the pi disposal and awaited (bounded by the same cap) before
+   * `app.exit()`, so no llama-server / helper survives quit. Must always resolve
+   * (never hang); the cap is the safety net. Runs on EVERY quit — even when no pi
+   * bridge is alive — because these children outlive the per-window pi bridges.
+   */
+  extraTeardown?: () => Promise<void>;
 }
 
 export function installPiQuitHold(app: QuitHoldApp, opts: QuitHoldOptions): void {
@@ -35,7 +44,9 @@ export function installPiQuitHold(app: QuitHoldApp, opts: QuitHoldOptions): void
   app.on('before-quit', (event) => {
     if (quitting) return;
     const survivors = opts.bridges().filter((b) => b.alive);
-    if (survivors.length === 0) {
+    // Nothing left to reap (no live pi, no extra teardown) → let the quit
+    // proceed after a best-effort dispose.
+    if (survivors.length === 0 && opts.extraTeardown === undefined) {
       opts.disposeAll();
       return;
     }
@@ -43,8 +54,17 @@ export function installPiQuitHold(app: QuitHoldApp, opts: QuitHoldOptions): void
     quitting = true;
     const exits = survivors.map((b) => b.whenExited());
     opts.disposeAll();
+    // `extraTeardown` must never take down the quit: a synchronous throw or a
+    // rejected promise is swallowed so the cap/exit path still runs.
+    let extra: Promise<void>;
+    try {
+      extra = opts.extraTeardown?.() ?? Promise.resolve();
+    } catch {
+      extra = Promise.resolve();
+    }
     const cap = new Promise<void>((resolve) => setTimeout(resolve, opts.graceMs + 250));
-    void Promise.race([Promise.all(exits), cap]).then(() => {
+    const settled = Promise.all([Promise.all(exits), extra.catch(() => {})]);
+    void Promise.race([settled, cap]).then(() => {
       for (const b of survivors) {
         if (b.alive) b.killNow();
       }

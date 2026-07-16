@@ -227,6 +227,34 @@ describe('LlamaServerSupervisor lifecycle', () => {
     await sup.dispose();
   });
 
+  it('killImmediately synchronously SIGKILLs the child and is idempotent', async () => {
+    let child: FakeChild | undefined;
+    const sup = new LlamaServerSupervisor({
+      serverPath: '/bin/llama-server',
+      modelPath: '/m.gguf',
+      launchMode: 'fast-text',
+      port: 9103,
+      healthIntervalMs: 1,
+      // linger: even a child that ignores SIGTERM must die here.
+      spawnFn: () => {
+        child = new FakeChild(4242, true);
+        return asChild(child);
+      },
+      fetchImpl: okFetch(() => true),
+    });
+    await sup.start();
+
+    // The utilityProcess-teardown backstop: a single synchronous SIGKILL, no
+    // async dispose ladder, so no orphaned llama-server survives quit.
+    sup.killImmediately();
+    expect(child?.killed).toEqual(['SIGKILL']);
+    expect(sup.running).toBe(false);
+
+    // Idempotent: the child is already cleared, so a second call is a no-op.
+    sup.killImmediately();
+    expect(child?.killed).toEqual(['SIGKILL']);
+  });
+
   it('dispose escalates SIGTERM → SIGKILL when the child lingers', async () => {
     let child: FakeChild | undefined;
     const sup = new LlamaServerSupervisor({

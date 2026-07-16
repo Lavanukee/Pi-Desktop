@@ -35,10 +35,10 @@ import { usePiStore } from '../state/pi-slice';
 import { useProjectStore } from '../state/project-store';
 import { useEffortMode, useSettingsStore } from '../state/settings-store';
 import {
-  deriveContextGauge,
   EFFORT_STEP_COUNT,
   effortSliderView,
   levelForIndex,
+  resolveContextGauge,
   usesSandbox,
 } from './composer-bar-logic';
 import { useHarnessStatus } from './harness-status';
@@ -86,13 +86,17 @@ function ProjectRegion() {
 
 /**
  * RIGHT, left of Effort: the context-fullness ring (round-A #5). Relocated off the
- * input-bar footer to sit just LEFT of the Effort control. Reads the latest turn's
- * usage (pi store) over the launched model's context window (llm store).
+ * input-bar footer to sit just LEFT of the Effort control. Prefers pi's OWN
+ * per-turn context accounting (`HarnessStatus.contextPercent`, from
+ * `ctx.getContextUsage()`) — which updates on every provider (local llama /
+ * remote / AFM) — and only falls back to the launched-window token math when the
+ * harness hasn't reported a percent yet. This is why the ring is no longer stuck.
  */
 function ContextRegion() {
   const messages = usePiStore((s) => s.messages);
   const contextWindow = useLlmStore((s) => s.status.model?.contextWindow ?? 0);
-  const gauge = deriveContextGauge(messages, contextWindow);
+  const contextPercent = useHarnessStatus()?.contextPercent;
+  const gauge = resolveContextGauge({ contextPercent, messages, contextWindow });
   if (gauge === null) return null;
   return (
     <ContextGaugeTooltip

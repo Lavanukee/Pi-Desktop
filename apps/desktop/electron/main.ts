@@ -28,14 +28,14 @@ import { registerConnectorsIpc } from './connectors/connectors-main';
 import { fsHandlers } from './fs-handlers';
 import { registerGenCatalogIpc } from './gen/gen-manager';
 import { registerImportIpc } from './import/import-main';
-import { registerLlmIpc } from './inference/llm-main';
+import { registerLlmIpc, shutdownInference } from './inference/llm-main';
 import type { AppEventMap, CoreInvokeMap, FsInvokeMap } from './ipc-contract';
-import { registerMacAgentIpc } from './mac/mac-agent';
+import { disposeMacAgent, registerMacAgentIpc } from './mac/mac-agent';
 import { registerPiIpc } from './pi/pi-main';
 import { registerProjectIpc } from './project/project-main';
 import { applySettingsEnvFromDisk, registerSettingsIpc } from './settings/settings-main';
 import { registerSkillsIpc } from './skills/skills-main';
-import { registerPtyIpc } from './terminal/pty-manager';
+import { disposeAllPtys, registerPtyIpc } from './terminal/pty-manager';
 import {
   isTrustedIpcEvent,
   registerTrustedSender,
@@ -288,6 +288,25 @@ function installAppMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+/**
+ * Reap every NON-pi child process on app quit, in the pi quit-hold's held
+ * window (so it completes before `app.exit()`):
+ *   - the inference utilityProcess + its llama-server grandchild (shutdownInference),
+ *   - the long-lived pi-mac computer-use helper (disposeMacAgent), and
+ *   - any terminal PTY/shell sessions (disposeAllPtys).
+ * The pi children (and, via their process group, their subagent grandchildren)
+ * are reaped by the quit-hold's own `disposeAll`. `allSettled` so one slow/failed
+ * teardown never blocks the others; the quit-hold's grace cap bounds the whole
+ * wait. Guaranteed: no llama-server, pi, subagent-pi, or helper survives quit.
+ */
+async function reapChildProcesses(): Promise<void> {
+  await Promise.allSettled([
+    shutdownInference(),
+    (async () => disposeMacAgent())(),
+    (async () => disposeAllPtys())(),
+  ]);
+}
+
 function registerAppIpc(): void {
   // ipcMain.handle always passes an IpcMainInvokeEvent (registration-side
   // guarantee), which satisfies the structural ValidatableIpcEvent slice.
@@ -391,7 +410,7 @@ if (!hasSingleInstanceLock) {
       if (icon !== null) app.dock.setIcon(icon);
     }
     registerAppIpc();
-    registerPiIpc();
+    registerPiIpc({ extraTeardown: reapChildProcesses });
     // Native canvas surfaces (Phase 2b): per-tab WebContentsView + PTY managers.
     registerBrowserIpc();
     registerPtyIpc();

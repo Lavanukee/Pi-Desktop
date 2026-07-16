@@ -45,12 +45,15 @@ export function cursorCommand(op: CursorOp): string {
       cur = document.createElement('div');
       cur.id = CID;
       cur.setAttribute('aria-hidden', 'true');
-      cur.style.cssText = 'position:fixed;left:-100px;top:-100px;width:22px;height:22px;z-index:2147483647;pointer-events:none;margin:0;padding:0;will-change:left,top;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.45));';
+      cur.style.cssText = 'position:fixed;left:-100px;top:-100px;width:22px;height:22px;z-index:2147483647;pointer-events:none;margin:0;padding:0;opacity:0;transform-origin:top left;will-change:left,top,transform,opacity;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.45));';
       cur.innerHTML = '<svg width="22" height="22" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg"><path d="M3 2 L3 17 L7.2 13.1 L10 19.5 L12.6 18.3 L9.8 12 L15.5 12 Z" fill="#fff" stroke="#1a73e8" stroke-width="1.4" stroke-linejoin="round"/></svg>';
       (document.body || document.documentElement).appendChild(cur);
     }
-    cur.style.transition = reduce ? 'none' : 'left 0.28s cubic-bezier(0.22,0.61,0.36,1), top 0.28s cubic-bezier(0.22,0.61,0.36,1)';
+    // Ease to the target position (both axes), and lightly spring the press +
+    // fade-in so the persistent overlay reads as a real, moving pointer.
+    cur.style.transition = reduce ? 'none' : 'left 0.32s cubic-bezier(0.22,0.61,0.36,1), top 0.32s cubic-bezier(0.22,0.61,0.36,1), transform 0.16s ease-out, opacity 0.2s ease-out';
     cur.style.display = 'block';
+    cur.style.opacity = '1';
 
     function pill() {
       var t = document.getElementById(TID);
@@ -76,15 +79,21 @@ export function cursorCommand(op: CursorOp): string {
       if (tp && tp.style.display !== 'none') { tp.style.left = (op.x + 16) + 'px'; tp.style.top = (op.y + 18) + 'px'; }
     }
     if (op.kind === 'click') {
+      // Tactile press: dip the cursor toward its tip, then spring back.
+      if (!reduce) {
+        cur.style.transform = 'scale(0.82)';
+        setTimeout(function(){ cur.style.transform = 'scale(1)'; }, 140);
+      }
+      // Expanding pulse ring centred on the click point.
       var ring = document.createElement('div');
       ring.id = RID;
-      ring.style.cssText = 'position:fixed;left:' + op.x + 'px;top:' + op.y + 'px;width:12px;height:12px;margin:-6px 0 0 -6px;border:2px solid #1a73e8;border-radius:50%;z-index:2147483646;pointer-events:none;opacity:0.9;';
+      ring.style.cssText = 'position:fixed;left:' + op.x + 'px;top:' + op.y + 'px;width:16px;height:16px;margin:-8px 0 0 -8px;border:2px solid #1a73e8;border-radius:50%;z-index:2147483646;pointer-events:none;opacity:0.9;box-shadow:0 0 0 1px rgba(255,255,255,0.35);';
       (document.body || document.documentElement).appendChild(ring);
       if (reduce) { setTimeout(function(){ ring.remove(); }, 220); }
       else {
-        ring.style.transition = 'transform 0.4s ease-out, opacity 0.4s ease-out';
-        requestAnimationFrame(function(){ ring.style.transform = 'scale(3)'; ring.style.opacity = '0'; });
-        setTimeout(function(){ ring.remove(); }, 460);
+        ring.style.transition = 'transform 0.45s cubic-bezier(0.16,0.84,0.44,1), opacity 0.45s ease-out';
+        requestAnimationFrame(function(){ ring.style.transform = 'scale(3.4)'; ring.style.opacity = '0'; });
+        setTimeout(function(){ ring.remove(); }, 500);
       }
     }
     if (op.kind === 'typing') {

@@ -2,10 +2,12 @@ import type { ChatMsg } from '@pi-desktop/engine';
 import { describe, expect, it } from 'vitest';
 import {
   classificationHover,
+  contextGaugeFromPercent,
   deriveContextGauge,
   effortDisplay,
   effortSliderView,
   levelForIndex,
+  resolveContextGauge,
   tierLabel,
   usesSandbox,
 } from './composer-bar-logic';
@@ -197,5 +199,79 @@ describe('deriveContextGauge', () => {
     expect(deriveContextGauge([user('u'), assistant('a')], 8000)).toBeNull();
     expect(deriveContextGauge([assistant('a', 4000)], 0)).toBeNull();
     expect(deriveContextGauge([], 8000)).toBeNull();
+  });
+});
+
+/**
+ * R14 A5 — the ring reflects pi's OWN accounting (harness `contextPercent` from
+ * `ctx.getContextUsage()`), so it updates on every provider and is no longer
+ * stuck to needing both a launched llama window AND provider-reported tokens.
+ */
+describe('contextGaugeFromPercent', () => {
+  it('drives the ring straight from pi’s percent, window-independent', () => {
+    // No local llama window (0) but pi reports 42% → the ring still renders.
+    expect(contextGaugeFromPercent(42, 0)).toEqual({ value: 0.42, usedTokens: 0 });
+    // With a known window, used tokens are derived for the tooltip.
+    expect(contextGaugeFromPercent(50, 8000)).toEqual({ value: 0.5, usedTokens: 4000 });
+  });
+
+  it('clamps to 0..1 and ignores a null/undefined/NaN percent', () => {
+    expect(contextGaugeFromPercent(140, 8000)?.value).toBe(1);
+    expect(contextGaugeFromPercent(-5, 8000)?.value).toBe(0);
+    expect(contextGaugeFromPercent(null, 8000)).toBeNull();
+    expect(contextGaugeFromPercent(undefined, 8000)).toBeNull();
+    expect(contextGaugeFromPercent(Number.NaN, 8000)).toBeNull();
+  });
+});
+
+describe('resolveContextGauge', () => {
+  const assistantMsg = (id: string, totalTokens: number): ChatMsg => ({
+    kind: 'assistant',
+    id,
+    blocks: [],
+    timestamp: 0,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+  });
+
+  it('PREFERS pi’s harness percent over the token/window fallback', () => {
+    // Harness says 30% even though token math over the window would say ~50%.
+    const gauge = resolveContextGauge({
+      contextPercent: 30,
+      messages: [assistantMsg('a', 4000)],
+      contextWindow: 8000,
+    });
+    expect(gauge).toEqual({ value: 0.3, usedTokens: 2400 });
+  });
+
+  it('falls back to token/window math when the harness has NOT reported a percent', () => {
+    const gauge = resolveContextGauge({
+      contextPercent: null,
+      messages: [assistantMsg('a', 4000)],
+      contextWindow: 8000,
+    });
+    expect(gauge).toEqual({ value: 0.5, usedTokens: 4000 });
+  });
+
+  it('renders from the harness percent even with NO launched window (the stuck-ring case)', () => {
+    // Remote/AFM provider: window 0, no usage tokens — the old ring was null here.
+    const gauge = resolveContextGauge({
+      contextPercent: 12,
+      messages: [{ kind: 'user', id: 'u', text: 'hi', timestamp: 0 }],
+      contextWindow: 0,
+    });
+    expect(gauge).toEqual({ value: 0.12, usedTokens: 0 });
+  });
+
+  it('is null when neither source has anything to show', () => {
+    expect(
+      resolveContextGauge({ contextPercent: null, messages: [], contextWindow: 0 }),
+    ).toBeNull();
   });
 });

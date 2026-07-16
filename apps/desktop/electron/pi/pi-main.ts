@@ -139,6 +139,10 @@ const sessions = createPiSessions<WebContents>({
         // primary path and makes the extension-free respawn a true last resort.
         extraArgs: ['--no-extensions'],
         killGraceMs: KILL_GRACE_MS,
+        // Spawn pi as its own process-group leader so quit/dispose reaps its
+        // subagent grandchildren too, not just the direct child (task #55): a
+        // hard-kill otherwise strands orphaned subagent pi processes.
+        detached: true,
         // Bundled resolution root; PI_BIN (E2E/mock) and explicit binPath
         // still take precedence inside the engine.
         appRoot: app.getAppPath(),
@@ -168,12 +172,19 @@ function registerAll(handlers: PiSessionHandlers<WebContents>): void {
   }
 }
 
-export function registerPiIpc(): void {
+/**
+ * @param opts.extraTeardown Non-pi child processes to reap in the SAME held quit
+ *   window as the pi bridges — the inference utilityProcess+llama-server, the
+ *   pi-mac helper, and terminal PTYs. Composed in main.ts (the wiring root) and
+ *   awaited (bounded by the quit grace) before `app.exit()`.
+ */
+export function registerPiIpc(opts: { extraTeardown?: () => Promise<void> } = {}): void {
   registerAll(sessions.handlers);
 
   installPiQuitHold(app, {
     bridges: () => sessions.bridges(),
     disposeAll: () => sessions.disposeAll(),
     graceMs: KILL_GRACE_MS,
+    extraTeardown: opts.extraTeardown,
   });
 }

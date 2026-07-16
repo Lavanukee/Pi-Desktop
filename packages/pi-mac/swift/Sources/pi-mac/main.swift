@@ -1,4 +1,15 @@
+import AppKit
 import Foundation
+
+// Run as a background agent: no dock tile, no menu bar, never in the app
+// switcher. pi-mac links AppKit (NSWorkspace/CGEvent/screenshot), and an
+// AppKit-linked executable otherwise defaults to a REGULAR activation policy —
+// which paints a second, generic ("exec"/terminal-looking) icon in the dock the
+// moment Electron main spawns the `--serve` helper for computer-use. `.prohibited`
+// suppresses that tile while leaving CGEvent synthesis + AX reads fully working
+// (they are gated by the TCC grant on the spawning bundle, not by activation
+// policy). Set FIRST, before any subcommand touches the window server.
+NSApplication.shared.setActivationPolicy(.prohibited)
 
 // pi-mac: a tiny argv dispatcher for Mac computer-use.
 //

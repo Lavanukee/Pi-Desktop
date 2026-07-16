@@ -180,3 +180,42 @@ export function deriveContextGauge(
   }
   return null;
 }
+
+/**
+ * The ring from pi's OWN accounting — the harness republishes
+ * `ctx.getContextUsage().percent` in its status blob every turn
+ * (`HarnessStatus.contextPercent`, 0..100). This is the authoritative,
+ * provider-independent source: it updates whether the model is a local llama, a
+ * remote provider, or AFM — none of which reliably report the
+ * `AssistantMsg.usage.totalTokens` the {@link deriveContextGauge} fallback needs,
+ * and it doesn't depend on the launched llama's context window (0 when no local
+ * server is up). Returns null when the harness hasn't published a percent yet.
+ * `usedTokens` is only derivable when the window is also known (0 otherwise — the
+ * tooltip then hides the token line).
+ */
+export function contextGaugeFromPercent(
+  percent: number | null | undefined,
+  contextWindow: number,
+): ContextGaugeView | null {
+  if (percent === null || percent === undefined || !Number.isFinite(percent)) return null;
+  const value = Math.min(1, Math.max(0, percent / 100));
+  return { value, usedTokens: contextWindow > 0 ? Math.round(value * contextWindow) : 0 };
+}
+
+/**
+ * Resolve the context ring, preferring pi's own {@link contextGaugeFromPercent}
+ * accounting (updates on every provider) and falling back to the launched-window
+ * token math ({@link deriveContextGauge}) only when the harness hasn't reported a
+ * percent. This is why the ring is no longer "stuck" — it no longer requires both
+ * a launched llama window AND provider-reported usage tokens.
+ */
+export function resolveContextGauge(opts: {
+  contextPercent: number | null | undefined;
+  messages: readonly ChatMsg[];
+  contextWindow: number;
+}): ContextGaugeView | null {
+  return (
+    contextGaugeFromPercent(opts.contextPercent, opts.contextWindow) ??
+    deriveContextGauge(opts.messages, opts.contextWindow)
+  );
+}

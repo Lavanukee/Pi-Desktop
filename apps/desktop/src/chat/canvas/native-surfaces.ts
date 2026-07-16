@@ -22,9 +22,10 @@ import '@xterm/xterm/css/xterm.css';
 import type { CanvasController, CanvasTab, CanvasTabsHandlers } from '@pi-desktop/canvas';
 import { FitAddon } from '@xterm/addon-fit';
 import { type ITheme, Terminal } from '@xterm/xterm';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { BrowserBounds } from '../../../electron/canvas/browser-contract';
 import { usePiStore } from '../../state/pi-slice';
+import { browserBoundsForPanel, rectToBounds } from './browser-bounds';
 import { fileArtifactFromText, openFileInCanvas } from './file-tabs';
 
 const MONO_STACK =
@@ -103,12 +104,8 @@ interface TerminalEntry {
   lastRows: number;
 }
 
-function rectToBounds(rect: DOMRect): BrowserBounds {
-  return { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
-}
-
 /** Owns the per-tab native views/PTYs for one window. One instance per panel. */
-class NativeSurfaces {
+export class NativeSurfaces {
   readonly handlers: CanvasTabsHandlers;
   readonly #controller: CanvasController;
   readonly #browsers = new Map<string, BrowserEntry>();
@@ -116,6 +113,14 @@ class NativeSurfaces {
   /** Session cwd (project dir), kept fresh by the hook, for the file-tree
    * breadcrumb when the user opens a file from the tree panel. */
   #cwd: string | undefined;
+  /**
+   * Whether the canvas panel is OPEN. Native browser views paint ABOVE the DOM
+   * and are NOT clipped by the collapsing aside, so a rect callback that fired
+   * `visible:true` while the panel is closed would strand the view over the chat
+   * (round-14 close bug). Every rect emit honours this, and `setPanelOpen`
+   * hides/re-shows on the open→closed / closed→open edge.
+   */
+  #panelOpen = true;
 
   constructor(controller: CanvasController) {
     this.#controller = controller;
@@ -251,7 +256,13 @@ class NativeSurfaces {
       }
       const bounds = rectToBounds(rect);
       this.#browsers.set(tabId, { lastBounds: bounds });
-      void window.piDesktop.invoke('browser:set-bounds', { tabId, bounds, visible: true });
+      // Only show the view while the panel is open — a stray scroll/resize emit
+      // must not re-strand it over the chat after the canvas has been closed.
+      void window.piDesktop.invoke('browser:set-bounds', {
+        tabId,
+        bounds,
+        visible: this.#panelOpen,
+      });
       return;
     }
     if (kind === 'terminal' && rect !== null) this.#fitTerminal(tabId);
@@ -280,8 +291,26 @@ class NativeSurfaces {
     void window.piDesktop.invoke('browser:set-bounds', {
       tabId: tab.id,
       bounds: entry.lastBounds,
-      visible: !open,
+      // Never raise the view while the whole panel is closed.
+      visible: !open && this.#panelOpen,
     });
+  }
+
+  /**
+   * The canvas panel opened / closed (round-14 close bug). Closing the canvas
+   * must fully hide EVERY native browser view — they paint over the DOM and are
+   * not clipped by the collapsing aside, so without this they float, stranded,
+   * over the chat column after close. Reopening re-shows only the ACTIVE browser
+   * tab at its last bounds (the surface never unmounted, so the rect path can't
+   * do it). The `#onRect` emit also honours `#panelOpen`, so a stray
+   * scroll/resize while closed can't re-strand a view.
+   */
+  setPanelOpen(open: boolean): void {
+    this.#panelOpen = open;
+    const activeId = this.#controller.getState().activeTabId;
+    for (const intent of browserBoundsForPanel(open, activeId, this.#browsers)) {
+      void window.piDesktop.invoke('browser:set-bounds', intent);
+    }
   }
 
   applyBrowserState(patch: {
@@ -478,6 +507,9 @@ export interface NativeSurfacesApi {
   handlers: CanvasTabsHandlers;
   /** The `+` new-tab menu opened/closed — lower/raise the active browser view. */
   setOverlayOpen: (open: boolean) => void;
+  /** The canvas panel opened/closed — hide every native browser view on close,
+   * re-show the active one on open (round-14 close bug). */
+  setPanelOpen: (open: boolean) => void;
 }
 
 /**
@@ -511,5 +543,9 @@ export function useNativeSurfaces(controller: CanvasController): NativeSurfacesA
     };
   }, [controller, manager]);
 
-  return { handlers: manager.handlers, setOverlayOpen: (open) => manager.setOverlayOpen(open) };
+  // Stable callbacks (the manager is created once) so effects keyed on them
+  // don't re-fire every render.
+  const setOverlayOpen = useCallback((open: boolean) => manager.setOverlayOpen(open), [manager]);
+  const setPanelOpen = useCallback((open: boolean) => manager.setPanelOpen(open), [manager]);
+  return { handlers: manager.handlers, setOverlayOpen, setPanelOpen };
 }

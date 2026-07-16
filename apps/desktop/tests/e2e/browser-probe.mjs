@@ -6,7 +6,9 @@
  *       controller.updateTab) into the tab label — proof the native view
  *       actually loaded + ran the page, and the URL bar reflects the URL;
  *   (2) a second navigation + Back exercises the WebContentsView history and
- *       the back/fwd enabled state end to end.
+ *       the back/fwd enabled state end to end;
+ *   (3) closing the canvas panel fully collapses it (round-14 close bug) so the
+ *       chat reclaims the width — the native-view hide is unit-tested separately.
  * Run `pnpm build` first.
  */
 import { existsSync, mkdtempSync } from 'node:fs';
@@ -116,8 +118,26 @@ try {
     { timeout: 10000 },
   );
 
+  // (3) Round-14 close bug: closing the canvas panel must fully collapse it so
+  // the chat column reclaims the width. (The native-overlay half — hiding the
+  // WebContentsView so it can't float over the chat — is covered by the
+  // browserBoundsForPanel unit test; here we assert the DOM-observable collapse.)
+  const panel = page.locator('[data-testid="canvas-tabs-panel"]');
+  const widthOpen = (await panel.boundingBox())?.width ?? 0;
+  assert(widthOpen > 100, `canvas should be open/wide before close (was ${widthOpen})`);
+  await page.locator('[data-testid="canvas-tabs-panel"] [aria-label="Close canvas panel"]').click();
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('[data-testid="canvas-tabs-panel"]');
+      if (el === null) return true; // a full unmount also satisfies "closed"
+      return el.getAttribute('data-open') === 'false' && el.getBoundingClientRect().width < 40;
+    },
+    undefined,
+    { timeout: 8000 },
+  );
+
   console.log(
-    'browser-probe OK — WebContentsView loaded a data: page (title flowed to the tab + URL bar), and back/forward history works',
+    'browser-probe OK — WebContentsView loaded a data: page (title flowed to the tab + URL bar), back/forward history works, and closing the canvas fully collapses the panel',
   );
 } finally {
   await app.close();

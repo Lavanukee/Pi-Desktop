@@ -764,6 +764,40 @@ parentPort.on('message', (event) => {
     );
 });
 
+/**
+ * Reap the llama-server grandchild when THIS utilityProcess is torn down.
+ *
+ * The app-quit path SIGTERMs this utilityProcess (llm-main.ts shutdownInference).
+ * Without these handlers, killing the utilityProcess never runs the supervisor's
+ * kill ladder, so the spawned llama-server is orphaned and keeps holding the
+ * model in RAM/VRAM after quit. On a caught signal we synchronously SIGKILL the
+ * child (the async dispose ladder can't be trusted to finish before the parent
+ * force-exits us), then leave; `process.on('exit')` is the final synchronous
+ * backstop for any path that skips the signal handlers.
+ */
+let reaped = false;
+function reapAndExit(): void {
+  if (reaped) return;
+  reaped = true;
+  const c = current;
+  current = null;
+  try {
+    c?.supervisor.killImmediately();
+  } catch {
+    // best-effort — a dead child is exactly the outcome we want
+  }
+  process.exit(0);
+}
+process.once('SIGTERM', reapAndExit);
+process.once('SIGINT', reapAndExit);
+process.on('exit', () => {
+  try {
+    current?.supervisor.killImmediately();
+  } catch {
+    // best-effort
+  }
+});
+
 // Restore any previously-registered HF models so they stay in the local set
 // across a supervisor restart, then announce initial idle state so the host has
 // something to broadcast on attach.

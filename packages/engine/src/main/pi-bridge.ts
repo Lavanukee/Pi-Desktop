@@ -50,7 +50,7 @@ export interface PiChildProcess {
 export type PiSpawnFn = (
   command: string,
   args: string[],
-  options: { cwd: string; env: Record<string, string | undefined> },
+  options: { cwd: string; env: Record<string, string | undefined>; detached?: boolean },
 ) => PiChildProcess;
 
 export interface PiBridgeOptions {
@@ -82,8 +82,23 @@ export interface PiBridgeOptions {
   /** Grace period between SIGTERM and SIGKILL in dispose(). Default 1500. */
   killGraceMs?: number;
 
+  /**
+   * Spawn pi as its own process-group leader (`detached`) so dispose()/killNow()
+   * can reap the WHOLE tree — pi's subagent grandchildren included — with a
+   * single negative-pid group signal, instead of leaking orphaned subagent pi
+   * processes on hard-kill (task #55). Default false (a plain child.kill()).
+   * Production wiring (pi-main.ts) sets true; POSIX only — ignored on win32.
+   */
+  detached?: boolean;
+
   // -- structural injection (tests) ----------------------------------------
   spawnFn?: PiSpawnFn;
+  /**
+   * Signal a process GROUP by (negative) pid; defaults to `process.kill`.
+   * Injected so the detached group-kill path is unit-testable without a real
+   * process group.
+   */
+  killProcessGroup?: (target: number, signal: 'SIGTERM' | 'SIGKILL') => void;
   env?: Record<string, string | undefined>;
   /** `process.execPath` stand-in for the bundled spawn plan. */
   execPath?: string;
@@ -138,6 +153,9 @@ export class PiBridge {
   private readonly dialogIds = new Set<string>();
   private readonly onEvent: (e: PiBridgeEvent) => void;
   private readonly killGraceMs: number;
+  /** Whether pi was spawned as its own process-group leader (see options). */
+  private readonly detached: boolean;
+  private readonly killProcessGroup: (target: number, signal: 'SIGTERM' | 'SIGKILL') => void;
   private readyResolve: (() => void) | null = null;
   private readonly readyPromise: Promise<void>;
   private exitResolve: (() => void) | null = null;
@@ -152,6 +170,11 @@ export class PiBridge {
   constructor(opts: PiBridgeOptions, onEvent: (e: PiBridgeEvent) => void) {
     this.onEvent = onEvent;
     this.killGraceMs = opts.killGraceMs ?? 1500;
+    // Process-group reaping is POSIX-only (negative-pid signalling); on win32 it
+    // degrades to a plain child kill.
+    this.detached = opts.detached === true && process.platform !== 'win32';
+    this.killProcessGroup =
+      opts.killProcessGroup ?? ((target, signal) => process.kill(target, signal));
     const env = opts.env ?? process.env;
 
     this.spawnPlan = resolvePiSpawn({
@@ -182,6 +205,9 @@ export class PiBridge {
         FORCE_COLOR: '0',
         NO_COLOR: '1',
       },
+      // A new session/process group so dispose()/killNow() can reap pi's own
+      // subagent grandchildren via a group signal (see PiBridgeOptions.detached).
+      detached: this.detached,
     });
     this.pid = this.child.pid ?? -1;
 
@@ -508,40 +534,52 @@ export class PiBridge {
     }
   }
 
-  /** Kill ladder: close stdin, SIGTERM, then SIGKILL if it lingers. */
+  /**
+   * SIGTERM/SIGKILL the pi process. When pi was spawned detached (a process-group
+   * leader), signal the whole GROUP via the negative pid so pi's subagent
+   * grandchildren are reaped too — otherwise a hard-kill of the direct child
+   * orphans the subagents it spawned (task #55). Falls back to a direct child
+   * kill if the group signal throws (group already gone, or non-POSIX) or pi has
+   * no pid.
+   */
+  private signalTree(signal: 'SIGTERM' | 'SIGKILL'): void {
+    const pid = this.child.pid;
+    if (this.detached && typeof pid === 'number' && pid > 0) {
+      try {
+        this.killProcessGroup(-pid, signal);
+        return;
+      } catch {
+        // Group gone / unsupported — fall through to a direct child kill.
+      }
+    }
+    try {
+      this.child.kill(signal);
+    } catch {
+      // Process may already be gone.
+    }
+  }
+
+  /** Kill ladder: close stdin, SIGTERM, then SIGKILL if it lingers. Reaps the
+   * whole process tree (pi + subagents) when spawned detached. */
   dispose(): void {
     try {
       this.child.stdin.end();
     } catch {
       // stdin may already be destroyed.
     }
-    try {
-      this.child.kill('SIGTERM');
-    } catch {
-      // Process may already be gone.
-    }
+    this.signalTree('SIGTERM');
     if (!this.exited && this.killTimer === null) {
-      this.killTimer = setTimeout(() => {
-        try {
-          this.child.kill('SIGKILL');
-        } catch {
-          // Process may already be gone.
-        }
-      }, this.killGraceMs);
+      this.killTimer = setTimeout(() => this.signalTree('SIGKILL'), this.killGraceMs);
       this.killTimer.unref?.();
     }
   }
 
   /** Immediate SIGKILL, bypassing dispose()'s grace timer. The app-quit path
-   * needs this: the unref'd timer dies with the process. */
+   * needs this: the unref'd timer dies with the process. Reaps the whole tree. */
   killNow(): void {
     if (this.killTimer !== null) clearTimeout(this.killTimer);
     this.killTimer = null;
-    try {
-      this.child.kill('SIGKILL');
-    } catch {
-      // Process may already be gone.
-    }
+    this.signalTree('SIGKILL');
   }
 }
 

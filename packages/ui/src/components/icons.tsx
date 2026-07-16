@@ -148,6 +148,19 @@ export function IconFile(props: IconProps) {
   );
 }
 
+/**
+ * Code-execution glyph (angle brackets `< >`). Reads as "ran code / Python",
+ * kept distinct from the bash terminal caret (`>` prompt) so a python_run row
+ * never collides with a shell-command row.
+ */
+export function IconCode(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5.5 4.5 2.5 8l3 3.5M10.5 4.5l3 3.5-3 3.5" />
+    </Icon>
+  );
+}
+
 /** Thinking / duration glyph (clock). */
 export function IconClock(props: IconProps) {
   return (

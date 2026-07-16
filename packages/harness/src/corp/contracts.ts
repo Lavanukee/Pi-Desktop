@@ -138,6 +138,18 @@ function collectContracts(elements: readonly unknown[]): Contract[] {
  * nested objects/arrays (e.g. `available`, `dependsOn`) never split an element,
  * and a final element cut off mid-stream (its braces never close) is simply not
  * collected. Returns each complete element's raw JSON substring, in order.
+ *
+ * Re-synchronization (real-qwen defect): a `notes` value whose closing quote the
+ * model dropped — so a raw newline lands inside the still-"open" string — would
+ * otherwise DESYNC the scan. The unterminated `"` swallows the element's closing
+ * `}` and the `},{` boundary as string content, then flips string parity for the
+ * rest of the array, so every later well-formed element is lost. Because a raw
+ * control character is illegal inside a JSON string, encountering one while
+ * `inString` is proof the string was never closed: we treat the newline as the
+ * string's end and re-sync, so the poisoned element's `}` is counted, the next
+ * top-level `{` starts a fresh element, and the elements after the defect survive
+ * (the poisoned substring itself is left for per-element repair in
+ * {@link parseManagerContracts}).
  */
 function salvageTopLevelObjects(text: string): string[] {
   const unfenced = stripFences(text);
@@ -154,6 +166,10 @@ function salvageTopLevelObjects(text: string): string[] {
       if (escaped) escaped = false;
       else if (ch === '\\') escaped = true;
       else if (ch === '"') inString = false;
+      // A raw newline/CR is illegal inside a JSON string ⇒ the closing quote was
+      // dropped. Treat it as the string's end and re-sync the brace scan so this
+      // poisoned element does not discard the well-formed ones after it.
+      else if (ch === '\n' || ch === '\r') inString = false;
       continue;
     }
     if (ch === '"') inString = true;
@@ -178,6 +194,50 @@ function salvageTopLevelObjects(text: string): string[] {
 }
 
 /**
+ * Lenient repair of a single JSON fragment whose string(s) a small model left
+ * unterminated by dropping the closing quote — so a raw newline (or CR) sits
+ * inside the string, which is illegal JSON and makes `JSON.parse` throw on the
+ * control character. We insert the missing `"` at the first raw newline of each
+ * open string, terminating it there. Pure and deterministic; it never throws and
+ * returns the input unchanged when no string is open at a newline (the common,
+ * well-formed case). Mirrors the provider's rung-1 syntactic tolerance in spirit
+ * (the harness must not depend on the provider build, so it is reimplemented
+ * here, small and local).
+ */
+function repairUnterminatedStrings(fragment: string): string {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < fragment.length; i++) {
+    const ch = fragment[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        out += ch;
+      } else if (ch === '\\') {
+        escaped = true;
+        out += ch;
+      } else if (ch === '"') {
+        inString = false;
+        out += ch;
+      } else if (ch === '\n' || ch === '\r') {
+        // Unterminated string closed by a raw newline: insert the missing quote
+        // before the newline, then continue outside the string.
+        out += '"';
+        out += ch;
+        inString = false;
+      } else {
+        out += ch;
+      }
+      continue;
+    }
+    if (ch === '"') inString = true;
+    out += ch;
+  }
+  return out;
+}
+
+/**
  * Parse a manager reply into validated {@link Contract}[]. Tolerant of fences /
  * prose around the array and of the two most-omitted fields (via
  * {@link normalizeContractCandidate}); every element is validated with
@@ -188,7 +248,14 @@ function salvageTopLevelObjects(text: string): string[] {
  * none), and a salvage path (spec §10) when the array is unclosed/truncated or
  * fails to JSON.parse — it recovers every complete top-level `{…}` element
  * individually so a reply cut off mid-array still yields its finished contracts
- * instead of nothing. Returns `[]` (never throws) when nothing usable is present.
+ * instead of nothing.
+ *
+ * The salvage path is resilient to a single poisoned element (real-qwen defect: a
+ * `notes` string left unterminated by a raw newline). {@link salvageTopLevelObjects}
+ * re-synchronizes past it so every well-formed element AFTER the defect survives;
+ * and each element that fails to parse on its own gets one lenient repair pass
+ * ({@link repairUnterminatedStrings}) so the poisoned element is usually recovered
+ * too. Returns `[]` (never throws) when nothing usable is present.
  */
 export function parseManagerContracts(text: string): Contract[] {
   const region = extractJsonArray(text);
@@ -206,7 +273,14 @@ export function parseManagerContracts(text: string): Contract[] {
     try {
       salvaged.push(JSON.parse(raw));
     } catch {
-      // Skip an element that isn't valid JSON on its own.
+      // Malformed on its own — most often an unterminated string closed by a raw
+      // newline. Attempt the lenient repair before giving up; still-broken
+      // elements are dropped, never taking the rest of the array down with them.
+      try {
+        salvaged.push(JSON.parse(repairUnterminatedStrings(raw)));
+      } catch {
+        // Genuinely unusable — drop just this one element.
+      }
     }
   }
   return collectContracts(salvaged);

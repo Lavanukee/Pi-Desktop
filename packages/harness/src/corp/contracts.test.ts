@@ -216,4 +216,62 @@ Let me know if you want more.`;
     expect(contracts).toHaveLength(1);
     expect(contracts[0]?.id).toBe('ok');
   });
+
+  it('re-syncs past a mid-array element whose notes string is unterminated by a raw newline', () => {
+    // EXACT real-qwen failure fixture: a division emitted a 12-element JSON array,
+    // but element #4's `notes` value was left unterminated — the model dropped the
+    // closing quote, so a RAW NEWLINE lands inside the string and the value runs
+    // straight into the object's closing `}` (…"notes": "single-track.\n }, { …).
+    // Before the fix this (a) failed the whole-array JSON.parse (illegal control
+    // char) AND (b) desynced the salvage scanner on the unterminated `"`, so ONLY
+    // the 3 well-formed contracts BEFORE the defect were recovered and the 8 valid
+    // ones AFTER it were silently discarded (12 authored → 3 recovered).
+    const contract = (i: number): string =>
+      `  {
+    "id": "div-${i}",
+    "title": "Contract ${i}",
+    "ownerNodeId": "div-eng-${i}",
+    "input": "input ${i}",
+    "output": "output ${i}",
+    "slot": "src/div/${i}.ts",
+    "available": { "tools": ["read", "write"], "imports": ["@pi-desktop/ui"] },
+    "reviewRubric": "rubric ${i}",
+    "dependsOn": [],
+    "status": "queued",
+    "notes": "note ${i}"
+  }`;
+    // Element #4: same shape, but the final field `notes` is left unterminated —
+    // no closing quote before the raw newline that precedes the object's `}`.
+    const brokenFourth = `  {
+    "id": "div-4",
+    "title": "Contract 4",
+    "ownerNodeId": "div-eng-4",
+    "input": "input 4",
+    "output": "output 4",
+    "slot": "src/div/4.ts",
+    "available": { "tools": ["read", "write"], "imports": ["@pi-desktop/ui"] },
+    "reviewRubric": "rubric 4",
+    "dependsOn": [],
+    "status": "queued",
+    "notes": "single-track.
+  }`;
+    const elements = [1, 2, 3].map(contract);
+    elements.push(brokenFourth);
+    for (let i = 5; i <= 12; i++) elements.push(contract(i));
+    const reply = `Here are the contracts for the division:\n\n[\n${elements.join(',\n')}\n]\n`;
+
+    const contracts = parseManagerContracts(reply);
+    const ids = contracts.map((c) => c.id);
+
+    // The regression guard: the 8 well-formed contracts AFTER the defect MUST all
+    // survive (previously only the 3 before it did).
+    for (let i = 5; i <= 12; i++) expect(ids).toContain(`div-${i}`);
+    expect(ids).toEqual(expect.arrayContaining(['div-1', 'div-2', 'div-3']));
+    // At minimum 11 of 12 (the 3 before + the 8 after); ideally 12 because the
+    // poisoned 4th is repaired (unterminated notes closed at the newline).
+    expect(contracts.length).toBeGreaterThanOrEqual(11);
+    // This fixture's 4th element is fully repairable → all 12 come back in order.
+    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((i) => `div-${i}`));
+    expect(contracts.find((c) => c.id === 'div-4')?.notes).toBe('single-track.');
+  });
 });

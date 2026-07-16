@@ -450,11 +450,22 @@ const QWEN35_2B_MTP: CatalogModel = {
   quantRange: 'Q3–Q8 + UD + IQ',
 };
 
-/** Qwen3.5 4B (embedded MTP): the 8GB-tier speed pick. */
+/**
+ * Qwen3.5 4B (embedded MTP): the DEFAULT small / worker model — the fast-tier
+ * speed pick AND the harness utility/classifier model (title generation, the
+ * rung-2 tool-call fixer, classifier escalation). Its Qwen3.5 hybrid attention
+ * (~75% Gated DeltaNet linear layers + ~25% full GQA) gives ~4× smaller KV
+ * cache and ~4× faster prefill than a dense model of similar size — a big win
+ * for `-np` parallel utility workers and prompt prefill. `baseRepo` points at
+ * Qwen's canonical (non-gated) `chat_template.jinja` so the launcher routes to
+ * the real Qwen tool-call parser via `--jinja --chat-template-file` (see
+ * chat-template.ts), the same reason the Gemma-4 family declares one.
+ */
 const QWEN35_4B_MTP: CatalogModel = {
   id: 'qwen3.5-4b-mtp',
   displayName: 'Qwen3.5 4B (MTP)',
   hfRepo: 'unsloth/Qwen3.5-4B-MTP-GGUF',
+  baseRepo: 'Qwen/Qwen3.5-4B',
   files: [
     {
       name: 'Qwen3.5-4B-Q4_K_M.gguf',

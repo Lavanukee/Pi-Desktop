@@ -65,10 +65,10 @@ describe('recommend (speed-optimized budget tiers)', () => {
     }
   });
 
-  it('below 8GB → Gemma4-E2B (MTP) as the fast primary', () => {
+  it('below 8GB → Qwen3.5-4B (MTP) as the fast primary', () => {
     const r = recommend({ totalRamGB: 6 });
     expect(r.tier).toBe('<8GB');
-    expect(r.model.id).toBe('gemma-4-e2b-it');
+    expect(r.model.id).toBe('qwen3.5-4b-mtp');
     expect(r.model.spec).toBe('mtp');
   });
 
@@ -83,7 +83,7 @@ describe('recommend (speed-optimized budget tiers)', () => {
   it('always includes the small utility slot with a rationale', () => {
     for (const ram of [8, 16, 24, 32, 48, 64, 96, 128]) {
       const r = recommend({ totalRamGB: ram });
-      expect(r.utilityModel.id).toBe('gemma-4-e2b-it');
+      expect(r.utilityModel.id).toBe('qwen3.5-4b-mtp');
       expect(r.utilityFile.quant).toBe('Q4_K_M');
       expect(r.rationale).toContain(String(ram));
     }
@@ -148,9 +148,9 @@ describe('resolveTierModels (per-hardware 3-tier resolution)', () => {
     }
   });
 
-  it('the dev M5 Pro 24GB resolves fast=e2b, balanced=gemma-12b (vision), intelligent=qwen3.6-27b', () => {
+  it('the dev M5 Pro 24GB resolves fast=qwen3.5-4b, balanced=gemma-12b (vision), intelligent=qwen3.6-27b', () => {
     const p = resolveTierModels({ totalRamGB: 24 });
-    expect(p.fast.model.id).toBe('gemma-4-e2b-it');
+    expect(p.fast.model.id).toBe('qwen3.5-4b-mtp');
     expect(p.fast.file.quant).toBe('Q4_K_M');
     expect(p.balanced.model.id).toBe('gemma-4-12b-it');
     expect(p.balanced.vision).toBe(true);
@@ -169,8 +169,8 @@ describe('resolveTierModels (per-hardware 3-tier resolution)', () => {
       };
     };
     expect(id(6)).toEqual({
-      fast: 'gemma-4-e2b-it',
-      balanced: 'gemma-4-e2b-it',
+      fast: 'qwen3.5-4b-mtp',
+      balanced: 'qwen3.5-4b-mtp',
       intel: 'gemma-4-e4b-it',
     });
     expect(id(8)).toEqual({
@@ -201,7 +201,7 @@ describe('resolveTierModels (per-hardware 3-tier resolution)', () => {
 
   it('a tiny machine dedups two tiers onto the same model id', () => {
     const p = resolveTierModels({ totalRamGB: 6 });
-    expect(p.fast.model.id).toBe(p.balanced.model.id); // both gemma-4-e2b-it at <8GB
+    expect(p.fast.model.id).toBe(p.balanced.model.id); // both qwen3.5-4b-mtp at <8GB
   });
 });
 

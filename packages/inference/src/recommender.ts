@@ -24,14 +24,14 @@
  * (1–3 clear picks) is produced for NON-POWER-USERS: the speed pick, a
  * vision-capable pick when it fits, and the lightweight helper.
  *
- * Every tier also gets a small utility-model slot (Gemma4 E2B Q4_K_M) for cheap
- * side-tasks (title generation, the rung-2 tool-call fixer, etc.). Pure function
- * — no I/O — so it unit-tests trivially across the tier boundaries.
+ * Every tier also gets a small utility-model slot (Qwen3.5-4B MTP Q4_K_M) for
+ * cheap side-tasks (title generation, the rung-2 tool-call fixer, etc.) — its
+ * hybrid linear attention makes it a fast, KV-cheap worker. Pure function — no
+ * I/O — so it unit-tests trivially across the tier boundaries.
  */
 import {
   type CatalogFile,
   type CatalogModel,
-  GEMMA4_E2B,
   getCatalogModel,
   type LaunchMode,
   type ModelTier,
@@ -91,7 +91,7 @@ function resolve(pick: Pick): { model: CatalogModel; file: CatalogFile } {
 }
 
 const UTILITY: Pick = {
-  modelId: GEMMA4_E2B.id,
+  modelId: 'qwen3.5-4b-mtp',
   quant: 'Q4_K_M',
   launchMode: 'fast-text',
 };
@@ -100,7 +100,7 @@ const UTILITY: Pick = {
 function primaryFor(tier: BudgetTier): Pick {
   switch (tier) {
     case '<8GB':
-      return { modelId: 'gemma-4-e2b-it', quant: 'Q4_K_M', launchMode: 'fast-text' };
+      return { modelId: 'qwen3.5-4b-mtp', quant: 'Q4_K_M', launchMode: 'fast-text' };
     case '8GB':
       return { modelId: 'qwen3.5-4b-mtp', quant: 'Q4_K_M', launchMode: 'fast-text' };
     case '16GB':
@@ -303,8 +303,8 @@ function tierTable(tier: BudgetTier): Record<ModelTier, { modelId: string; quant
   switch (tier) {
     case '<8GB':
       return {
-        fast: { modelId: 'gemma-4-e2b-it', quant: 'Q4_K_M' },
-        balanced: { modelId: 'gemma-4-e2b-it', quant: 'Q4_K_M' },
+        fast: { modelId: 'qwen3.5-4b-mtp', quant: 'Q4_K_M' },
+        balanced: { modelId: 'qwen3.5-4b-mtp', quant: 'Q4_K_M' },
         intelligent: { modelId: 'gemma-4-e4b-it', quant: 'Q4_K_M' },
       };
     case '8GB':
@@ -321,7 +321,7 @@ function tierTable(tier: BudgetTier): Record<ModelTier, { modelId: string; quant
       };
     case '24GB':
       return {
-        fast: { modelId: 'gemma-4-e2b-it', quant: 'Q4_K_M' },
+        fast: { modelId: 'qwen3.5-4b-mtp', quant: 'Q4_K_M' },
         balanced: { modelId: 'gemma-4-12b-it', quant: 'Q4_K_M' },
         intelligent: { modelId: 'qwen3.6-27b-mtp', quant: 'Q4_K_M' },
       };

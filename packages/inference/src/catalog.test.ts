@@ -212,11 +212,13 @@ describe('catalog', () => {
     expect(getCatalogModel('gemma-4-12b-it')?.baseRepo).toBe('google/gemma-4-12b-it');
     expect(getCatalogModel('gemma-4-26b-a4b-it')?.baseRepo).toBe('google/gemma-4-26B-A4B-it');
     expect(getCatalogModel('gemma-4-31b-it')?.baseRepo).toBe('google/gemma-4-31B-it');
-    // Every Gemma-4 entry declares one; non-Gemma entries do not (mechanism is
-    // general/opt-in, not Gemma-hardcoded).
+    // Every Gemma-4 entry declares one; the promoted Qwen3.5-4B default also
+    // declares its (non-gated) Qwen base for the same tool-call-parser routing.
+    // Other non-Gemma entries do not (mechanism is general/opt-in, not hardcoded).
     for (const m of CATALOG) {
       if (m.id.startsWith('gemma-4-')) expect(m.baseRepo).toMatch(/^google\/gemma-4-/);
     }
+    expect(getCatalogModel('qwen3.5-4b-mtp')?.baseRepo).toBe('Qwen/Qwen3.5-4B');
     expect(getCatalogModel('qwen3.6-27b-mtp')?.baseRepo).toBeUndefined();
     expect(getCatalogModel('nemotron-3-nano-30b-a3b')?.baseRepo).toBeUndefined();
   });

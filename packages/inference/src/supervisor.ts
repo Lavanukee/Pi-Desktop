@@ -91,12 +91,22 @@ export interface LaunchConfig {
 }
 
 /**
- * Build llama-server CLI args, enforcing the MTP⊥mmproj invariant.
- * Pure; throws on a contradictory request so app wiring fails loudly.
+ * Build llama-server CLI args, enforcing the lazy-mmproj invariant symmetrically.
+ * Pure; throws on a contradictory request so app wiring fails loudly:
+ *   - a `fast-text` (default/speed) launch must NEVER carry an mmproj — that is
+ *     the whole point of lazy loading, and `--mmproj` is mutually exclusive with
+ *     MTP/spec-decode anyway; and
+ *   - a `multimodal` (vision) launch must ALWAYS carry an mmproj — otherwise the
+ *     server comes up vision-blind while the app believes vision is on (launch
+ *     mode is sticky, so the on-demand trigger would no-op forever and every
+ *     image silently fail). See {@link mmprojFileFor} for the resolution seam.
  */
 export function assembleServerArgs(cfg: LaunchConfig): string[] {
   if (cfg.launchMode === 'fast-text' && cfg.mmprojPath !== undefined) {
     throw new Error('fast-text (MTP) mode is mutually exclusive with --mmproj');
+  }
+  if (cfg.launchMode === 'multimodal' && cfg.mmprojPath === undefined) {
+    throw new Error('multimodal (vision) mode requires an --mmproj projector path');
   }
   const args = ['-m', cfg.modelPath, '--host', cfg.host, '--port', String(cfg.port)];
   if (cfg.contextSize !== undefined) args.push('-c', String(cfg.contextSize));

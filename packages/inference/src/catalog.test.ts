@@ -11,6 +11,7 @@ import {
   modelEngine,
   RELIABLE_PUBLISHERS,
 } from './catalog.js';
+import { modelSupportsVision } from './mmproj.js';
 
 describe('catalog', () => {
   it('contains the required models (Gemma4 + Qwen3.6 MTP)', () => {
@@ -144,6 +145,18 @@ describe('catalog', () => {
       const m = getCatalogModel(id);
       expect(m?.input).toContain('image');
       expect(m?.mmproj?.name).toBe('mmproj-F16.gguf');
+    }
+  });
+
+  it('keeps the mmproj FIELD and image input in lockstep for every entry (lazy invariant)', () => {
+    // The lazy-mmproj policy relies on this biconditional: a model advertises
+    // image input IFF it ships an mmproj projector to lazily load. Neither can
+    // drift — an image model with no projector could never satisfy a vision turn,
+    // and a projector on a text-only model would be dead weight.
+    for (const m of CATALOG) {
+      const claimsImage = m.input.includes('image');
+      expect(modelSupportsVision(m)).toBe(claimsImage);
+      expect(m.mmproj !== undefined).toBe(claimsImage);
     }
   });
 

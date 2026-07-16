@@ -65,11 +65,24 @@ describe('recommend (speed-optimized budget tiers)', () => {
     }
   });
 
-  it('below 8GB → Qwen3.5-4B (MTP) as the fast primary', () => {
+  it('below 8GB → falls back to the effective-2B Gemma-4 E2B (never the 4B worker)', () => {
+    // A sub-8GB Mac can't run the 4B Qwen worker responsively, so the default
+    // recommendation drops to the lighter Gemma-4 E2B — the low-end user is
+    // never locked out. Still a real spec-decode (MTP) fast-text launch.
     const r = recommend({ totalRamGB: 6 });
     expect(r.tier).toBe('<8GB');
-    expect(r.model.id).toBe('qwen3.5-4b-mtp');
+    expect(r.model.id).toBe('gemma-4-e2b-it');
+    expect(r.model.id).not.toBe('qwen3.5-4b-mtp');
+    expect(r.file.quant).toBe('Q4_K_M');
+    expect(r.launchMode).toBe('fast-text');
     expect(r.model.spec).toBe('mtp');
+  });
+
+  it('8GB is the Qwen/Gemma capability floor: 7GB → Gemma E2B, 8GB → Qwen 4B', () => {
+    // The threshold is the <8GB / 8GB tier boundary: below it the machine is too
+    // weak for the 4B default; at 8GB+ Qwen3.5-4B (headroom: needs ~6GB) is back.
+    expect(recommend({ totalRamGB: 7 }).model.id).toBe('gemma-4-e2b-it');
+    expect(recommend({ totalRamGB: 8 }).model.id).toBe('qwen3.5-4b-mtp');
   });
 
   it('every primary pick runs a real spec-decode method', () => {

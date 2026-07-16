@@ -140,6 +140,27 @@ function contentToOAI(
   );
 }
 
+/**
+ * Whether a pi request context carries any image input — the provider-layer
+ * "vision needed" detector. Mirrors the composer's `messageNeedsVision` but
+ * reads the ACTUAL pi {@link Context}, so it also catches images that arrive via
+ * non-composer paths (browser / computer-use screenshots, folded attachments).
+ *
+ * Pure. The lazy-mmproj policy uses this signal: a caller that can reach the
+ * supervisor transitions the llama-server into an `--mmproj` launch BEFORE a
+ * vision turn is dispatched, while a pure-text context returns `false` — so a
+ * text-only session never triggers a projector load.
+ */
+export function contextHasImage(context: Context): boolean {
+  for (const msg of context.messages) {
+    if (msg.role !== 'user') continue;
+    const content = msg.content;
+    if (typeof content === 'string') continue;
+    if (content.some((part) => part.type === 'image')) return true;
+  }
+  return false;
+}
+
 /** Build the OpenAI chat/completions request body from pi's Context. Pure. */
 export function buildChatCompletionsRequest(
   model: Model<Api>,

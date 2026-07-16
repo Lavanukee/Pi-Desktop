@@ -8,6 +8,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildChatCompletionsRequest,
+  contextHasImage,
   createLlamaCppStream,
   type LlamaCppTimings,
   promptProgressFraction,
@@ -83,6 +84,37 @@ describe('buildChatCompletionsRequest', () => {
     }) as { return_progress?: boolean; stream_options?: { include_usage?: boolean } };
     expect(body.return_progress).toBe(true);
     expect(body.stream_options).toEqual({ include_usage: true });
+  });
+});
+
+describe('contextHasImage (provider-layer vision-need detector)', () => {
+  it('is false for a pure-text context (string or text-part content)', () => {
+    expect(contextHasImage({ messages: [{ role: 'user', content: 'hi', timestamp: 0 }] })).toBe(
+      false,
+    );
+    expect(
+      contextHasImage({
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }], timestamp: 0 }],
+      }),
+    ).toBe(false);
+  });
+
+  it('is true when any user message carries an image part', () => {
+    expect(
+      contextHasImage({
+        messages: [
+          { role: 'user', content: 'describe this', timestamp: 0 },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'look' },
+              { type: 'image', mimeType: 'image/png', data: 'AAAA' },
+            ],
+            timestamp: 1,
+          },
+        ],
+      }),
+    ).toBe(true);
   });
 });
 

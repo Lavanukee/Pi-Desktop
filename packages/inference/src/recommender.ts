@@ -3,8 +3,11 @@
  *
  * Round-11 Wave C: every tier's PRIMARY pick is a real speculative-decoding
  * variant (MTP embedded/sibling, or an EAGLE-3 draft pair) so consumers get the
- * fast path by default. Tiers span 8GB→128GB:
+ * fast path by default. Tiers span <8GB→128GB:
  *
+ *   -  <8GB → Gemma4-E2B  Q4_K_M   (MTP; effective-2B weakest-machine fallback —
+ *            the 4B Qwen worker is too heavy below 8GB, so a low-end user is
+ *            never locked out)
  *   -   8GB → Qwen3.5-4B  Q4_K_M   (MTP, embedded)
  *   -  16GB → Gemma4-12B  Q4_K_M   (MTP sibling; vision-capable)
  *   -  24GB → Qwen3.6-27B Q4_K_M   (MTP, embedded)
@@ -100,7 +103,14 @@ const UTILITY: Pick = {
 function primaryFor(tier: BudgetTier): Pick {
   switch (tier) {
     case '<8GB':
-      return { modelId: 'qwen3.5-4b-mtp', quant: 'Q4_K_M', launchMode: 'fast-text' };
+      // Weakest-machine FALLBACK. Qwen3.5-4B is the default worker from 8GB up,
+      // but a sub-8GB Mac lacks the memory/compute headroom to run a 4B
+      // responsively. Drop to Gemma-4 E2B — an effective-2B model (~half the
+      // active compute) at the same modest ~6GB floor — so a low-end user gets a
+      // working local model instead of a sluggish / OOM-prone 4B. (Task-type
+      // routing between the two is a later classifier concern; this is only the
+      // machine-capability floor.)
+      return { modelId: 'gemma-4-e2b-it', quant: 'Q4_K_M', launchMode: 'fast-text' };
     case '8GB':
       return { modelId: 'qwen3.5-4b-mtp', quant: 'Q4_K_M', launchMode: 'fast-text' };
     case '16GB':
@@ -237,8 +247,9 @@ export function recommend(hw: { totalRamGB: number }): Recommendation {
   const steppedDown = tier !== nominalTier;
   const rationale =
     tier === '<8GB'
-      ? `${ram}GB RAM is below the 8GB floor for a large model; running the ` +
-        `${model.displayName} (${file.quant})${specNote} as the fast primary.`
+      ? `${ram}GB RAM is below the 8GB floor where the 4B Qwen worker is the ` +
+        `default; falling back to the lighter effective-2B ${model.displayName} ` +
+        `(${file.quant})${specNote} so a low-end machine is never locked out.`
       : `${ram}GB RAM → ${model.displayName} ${file.quant} in ${primary.launchMode} ` +
         `mode${specNote} (needs ~${model.minRamGB}GB${
           steppedDown ? `; a lighter pick that keeps headroom on ${ram}GB` : ''

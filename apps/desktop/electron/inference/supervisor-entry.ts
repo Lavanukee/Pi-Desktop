@@ -37,6 +37,7 @@ import {
   type LaunchMode,
   LlamaServerSupervisor,
   listHfGgufFiles,
+  mmprojFileFor,
   modelDir,
   modelEngine,
   probeServerFeatures,
@@ -659,18 +660,22 @@ async function startServer(
   metrics = null;
   emitStatus();
 
-  // On-demand vision (round-12 ask #3): a multimodal launch needs the mmproj
-  // sibling. Fetch it if missing — the main GGUF is already present, so that
-  // part is a cached no-op. (mmproj ⊥ MTP is enforced in assembleServerArgs.)
+  // On-demand vision (LAZY mmproj): the projector is resolved ONLY for a
+  // multimodal launch, via the shared chokepoint {@link mmprojFileFor} — it
+  // returns undefined for every fast-text launch, so the default (text) path
+  // can never even name a projector to fetch or load. When vision IS requested
+  // we fetch the sibling if missing (the main GGUF is already present, so that
+  // part is a cached no-op). (mmproj ⊥ MTP is enforced in assembleServerArgs.)
+  const mmprojFile = mmprojFileFor(model, launchMode);
   let mmprojPath: string | undefined;
   if (launchMode === 'multimodal') {
-    if (model.mmproj === undefined) {
+    if (mmprojFile === undefined) {
       phase = 'error';
       lastError = `${model.displayName} has no vision projector`;
       emitStatus();
       return { success: false, error: lastError };
     }
-    mmprojPath = join(modelDir(model.id), model.mmproj.name);
+    mmprojPath = join(modelDir(model.id), mmprojFile.name);
     if (!existsSync(mmprojPath)) {
       phase = 'downloading';
       emitStatus();
@@ -737,7 +742,9 @@ async function startServer(
       modelPath,
       launchMode,
       contextSize: contextWindow,
-      mmprojPath: launchMode === 'multimodal' ? mmprojPath : undefined,
+      // Undefined for every fast-text launch (mmprojFileFor is the chokepoint),
+      // set only when vision was explicitly requested — the lazy guarantee.
+      mmprojPath,
       mtpSupported: features.mtp,
       mtpEmbedded: launchMode === 'fast-text' ? model.mtpEmbedded : undefined,
       mtpPath:

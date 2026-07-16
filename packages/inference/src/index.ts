@@ -14,6 +14,7 @@ export * from './hf-search.js';
 export * from './llamacpp-manager.js';
 export * from './llamacpp-manifest.js';
 export * from './mlx-manager.js';
+export * from './mmproj.js';
 export * from './model-downloader.js';
 export * from './models-json.js';
 export * from './paths.js';

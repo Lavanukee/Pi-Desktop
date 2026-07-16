@@ -123,6 +123,27 @@ describe('assembleServerArgs', () => {
       assembleServerArgs({ ...base, launchMode: 'fast-text', mmprojPath: '/x.gguf' }),
     ).toThrow(/mutually exclusive/);
   });
+
+  it('throws on a multimodal launch missing its mmproj (would be vision-blind)', () => {
+    // Symmetric invariant: a "vision" launch with no projector would come up
+    // vision-blind while the app believes vision is on — fail loudly instead.
+    expect(() => assembleServerArgs({ ...base, launchMode: 'multimodal' })).toThrow(
+      /requires an --mmproj/,
+    );
+  });
+
+  it('LAZY: a fast-text launch of a vision-capable model still emits no --mmproj', () => {
+    // The default (text) launch of a model that HAS a projector must never load
+    // it — full MTP speed, zero projector cost, even with the speed head present.
+    const args = assembleServerArgs({
+      ...base,
+      launchMode: 'fast-text',
+      mtpSupported: true,
+      mtpEmbedded: true,
+    });
+    expect(args).not.toContain('--mmproj');
+    expect(args).toContain('--spec-type');
+  });
 });
 
 describe('findFreePort', () => {

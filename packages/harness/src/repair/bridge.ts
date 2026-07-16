@@ -16,7 +16,7 @@
  * its live deps — again on every effort/config change.
  */
 
-import type { RepairRung, ToolCallFixer } from './types.js';
+import type { RepairRung, ToolCallFixer, ToolSchemaLike } from './types.js';
 
 /** Live repair wiring the harness pushes to the provider. Mirrors the provider's. */
 export interface LiveRepairDeps {
@@ -27,6 +27,13 @@ export interface LiveRepairDeps {
     readonly rung: number | undefined;
     readonly ok: boolean;
   }) => void;
+  /**
+   * Per-session RELAXED schema lookup (rung-4 relaxation). Returns the looser
+   * schema for a tool the harness relaxed this session, so the provider validates
+   * that tool's args against it instead of the strict schema and subsequent calls
+   * pass at rung 2 rather than re-escalating. Absent → the strict schema stands.
+   */
+  readonly relaxedSchemaFor?: (toolName: string) => ToolSchemaLike | undefined;
 }
 
 /** MUST equal the provider's `REPAIR_BRIDGE_READY`. */

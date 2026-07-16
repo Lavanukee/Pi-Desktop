@@ -10,6 +10,7 @@ import {
   CAPABILITY_PROMPT_MARKER,
   HARNESS_CONFIG_ENTRY,
   type StoredEntryLike,
+  type ToolSchemaLike,
   wireHarness,
 } from './index.js';
 
@@ -298,5 +299,55 @@ describe('/harness command protocol', () => {
     const { run, notify } = await setup();
     await run('');
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('Usage: /harness'));
+  });
+});
+
+describe('wireHarness — rung-4 schema relaxation wiring', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const strict: ToolSchemaLike = {
+    type: 'object',
+    properties: { path: { type: 'string' } },
+    required: ['path'],
+  };
+
+  it('rung 4 stores a relaxed schema that relaxedSchemaFor then returns', async () => {
+    const f = makeFakePi(['read']);
+    const handle = wireHarness(f.pi);
+    const deps = handle.buildRepairDeps();
+    expect(deps.relaxedSchemaFor?.('read')).toBeUndefined();
+
+    // Fire rung 4 (index 1 of [rung3, rung4, rung5]) with a schema-invalid arg set.
+    const rung4 = deps.extraRungs?.[1];
+    expect(rung4).toBeDefined();
+    const res = await rung4?.({
+      raw: '{"wrong":1}',
+      toolName: 'read',
+      schema: strict,
+      rung: 4,
+      current: { wrong: 1 },
+    });
+    expect(res?.ok).toBe(true);
+    // The tool's per-session schema is now relaxed to accept any object.
+    expect(deps.relaxedSchemaFor?.('read')).toEqual({ type: 'object', additionalProperties: true });
+  });
+
+  it('clears relaxed schemas on session_start (no leak across sessions)', async () => {
+    const f = makeFakePi(['read']);
+    const handle = wireHarness(f.pi);
+    const deps = handle.buildRepairDeps();
+    await deps.extraRungs?.[1]?.({
+      raw: '{"wrong":1}',
+      toolName: 'read',
+      schema: strict,
+      rung: 4,
+      current: { wrong: 1 },
+    });
+    expect(deps.relaxedSchemaFor?.('read')).toBeDefined();
+
+    const { ctx } = makeCtx(f.entries);
+    await f.fire('session_start', { type: 'session_start', reason: 'startup' }, ctx);
+    expect(deps.relaxedSchemaFor?.('read')).toBeUndefined();
   });
 });

@@ -1,6 +1,6 @@
-import { repairToolCallArguments } from '@pi-desktop/provider-llamacpp';
+import { repairToolCallArguments, validateAgainstSchema } from '@pi-desktop/provider-llamacpp';
 import { describe, expect, it, vi } from 'vitest';
-import { createHarnessExtraRungs, type HarnessRepairDeps } from './rungs.js';
+import { createHarnessExtraRungs, type HarnessRepairDeps, relaxToolSchema } from './rungs.js';
 import type { ToolSchemaLike } from './types.js';
 
 const SCHEMA: ToolSchemaLike = {
@@ -115,5 +115,25 @@ describe('repair ladder escalation (through the provider real repairToolCallArgu
     expect(result.ok).toBe(true);
     expect(result.rung).toBe(2);
     expect(deps.onRung).not.toHaveBeenCalled();
+  });
+
+  it('rung 4 hands relaxSchema the strict schema, from which relaxToolSchema builds a looser one', async () => {
+    let relaxedInput: ToolSchemaLike | undefined;
+    const deps = makeDeps({
+      relaxSchema: vi.fn((info) => {
+        relaxedInput = info.schema;
+      }),
+    });
+    await repairToolCallArguments('{"wrong":1}', {
+      toolName: 'read',
+      schema: SCHEMA,
+      extraRungs: createHarnessExtraRungs(deps),
+    });
+    // relaxSchema saw the strict schema; the looser one it derives (through the
+    // provider's real validator) accepts args the strict schema rejected.
+    expect(relaxedInput).toEqual(SCHEMA);
+    const relaxed = relaxToolSchema(relaxedInput);
+    expect(validateAgainstSchema({ wrong: 1 }, SCHEMA).valid).toBe(false);
+    expect(validateAgainstSchema({ wrong: 1 }, relaxed).valid).toBe(true);
   });
 });

@@ -24,7 +24,9 @@ import {
   type ToolCall,
 } from '@mariozechner/pi-ai';
 import {
+  fuzzyMatchToolName,
   type RepairRung,
+  reconstructToolCallFromContent,
   repairToolCallArguments,
   type ToolCallFixer,
   type ToolSchemaLike,
@@ -104,6 +106,14 @@ export interface LlamaCppStreamDeps {
         fixer?: ToolCallFixer;
         extraRungs?: readonly RepairRung[];
         onRepair?: (info: { toolName: string; rung: number | undefined; ok: boolean }) => void;
+        /**
+         * Per-session RELAXED schema lookup (rung-4 relaxation). When the harness
+         * has relaxed a tool's schema this session, it returns the looser schema
+         * here; the stream validates that tool's args against it instead of the
+         * strict `context.tools` schema, so subsequent calls pass at rung 2 rather
+         * than re-escalating. Absent / undefined → the strict schema is used.
+         */
+        relaxedSchemaFor?: (toolName: string) => ToolSchemaLike | undefined;
       }
     | undefined;
 }
@@ -302,7 +312,16 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
       let lastTimings: LlamaCppTimings | undefined;
       let finishReason: 'stop' | 'length' | 'toolUse' = 'stop';
 
+      // Resolve the live harness repair wiring once for this stream (fixer, rungs
+      // 3–5, telemetry, per-session relaxed schemas). Falls back to static deps.
+      const live = deps.repairProvider?.();
+      const registeredNames = context.tools?.map((t) => t.name) ?? [];
+
       const schemaFor = (name: string): ToolSchemaLike | undefined => {
+        // A per-session RELAXED schema (rung-4) wins over the strict one so a tool
+        // the harness relaxed this session validates cleanly on subsequent calls.
+        const relaxed = live?.relaxedSchemaFor?.(name);
+        if (relaxed !== undefined) return relaxed;
         const tool = context.tools?.find((t) => t.name === name);
         return tool?.parameters as ToolSchemaLike | undefined;
       };
@@ -456,9 +475,64 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
           });
         }
 
+        // --- RUNG 0: reconstruct a tool call written into the CONTENT ---------
+        // If the model emitted NO structured tool_calls frame but wrote a call as
+        // prose/markdown (a fenced JSON envelope, an XML/paren call, or "… call
+        // web_search with {…}"), reconstruct it into the SAME structured path the
+        // ladder consumes. Pure heuristics — guarded to a registered tool name +
+        // parseable args (see reconstructToolCallFromContent) so it never fires on
+        // prose that merely mentions a tool. The synthesized state then flows
+        // through the arg loop below (validate → fixer → rungs 3–5) unchanged.
+        if (toolStates.size === 0 && registeredNames.length > 0 && textIndex !== undefined) {
+          const textBlock = output.content[textIndex];
+          const assistantText = textBlock?.type === 'text' ? textBlock.text : '';
+          const reconstructed = reconstructToolCallFromContent(assistantText, registeredNames);
+          if (reconstructed !== undefined) {
+            const block: ToolCall = {
+              type: 'toolCall',
+              id: `call_rung0_${output.content.length}`,
+              name: reconstructed.toolName,
+              arguments: {},
+            };
+            output.content.push(block);
+            const contentIndex = output.content.length - 1;
+            toolStates.set(toolStates.size, {
+              contentIndex,
+              id: block.id,
+              name: reconstructed.toolName,
+              argStr: reconstructed.argsText,
+            });
+            stream.push({ type: 'toolcall_start', contentIndex, partial: output });
+            // Record the pre-ladder structural repair (rung 0).
+            (live?.onRepair ?? deps.onRepair)?.({
+              toolName: reconstructed.toolName,
+              rung: 0,
+              ok: true,
+            });
+          }
+        }
+
         for (const state of toolStates.values()) {
           const block = output.content[state.contentIndex];
           if (block?.type !== 'toolCall') continue;
+
+          // Fuzzy tool-name correction: an unknown/misspelled structured tool name
+          // maps to the nearest REGISTERED tool above the confidence threshold, so
+          // the correct schema resolves and the call executes; below the threshold
+          // the name is left for pi's existing "tool not found" path.
+          if (
+            state.name.length > 0 &&
+            registeredNames.length > 0 &&
+            !registeredNames.includes(state.name)
+          ) {
+            const match = fuzzyMatchToolName(state.name, registeredNames);
+            if (match !== undefined) {
+              state.name = match.name;
+              block.name = match.name;
+              (live?.onRepair ?? deps.onRepair)?.({ toolName: match.name, rung: 0, ok: true });
+            }
+          }
+
           const schema = schemaFor(state.name);
 
           // Parse first; a parse failure OR a syntactically-valid but
@@ -479,9 +553,8 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
 
           let finalArgs: Record<string, unknown>;
           if (!parseOk || schemaInvalid) {
-            // Resolve the live harness wiring (fixer + rungs 3–5 + telemetry),
-            // falling back to any static deps.
-            const live = deps.repairProvider?.();
+            // Use the live harness wiring (fixer + rungs 3–5 + telemetry) resolved
+            // once at stream start, falling back to any static deps.
             const result = await repairToolCallArguments(state.argStr, {
               toolName: state.name,
               schema,

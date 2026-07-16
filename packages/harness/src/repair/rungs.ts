@@ -37,6 +37,19 @@ export type {
   ToolSchemaLike,
 } from './types.js';
 
+/**
+ * Produce the maximally-permissive schema rung 4 relaxes a repeatedly-failing
+ * tool to: accepts ANY object (no `required`, no per-prop types/constraints,
+ * `additionalProperties` allowed). Stored per-session and handed to the provider
+ * (via the bridge's `relaxedSchemaFor`), so subsequent calls to that tool pass at
+ * rung 2 instead of re-escalating. Pure; mirrors the provider's `relaxToolSchema`
+ * (kept in sync deliberately, not imported — the harness must not depend on the
+ * provider build).
+ */
+export function relaxToolSchema(_schema: ToolSchemaLike | undefined): ToolSchemaLike {
+  return { type: 'object', additionalProperties: true };
+}
+
 export interface HarnessRepairDeps {
   /** Called each time any harness rung is entered (telemetry / appendEntry). */
   readonly onRung?: (info: {

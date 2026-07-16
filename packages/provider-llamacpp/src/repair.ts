@@ -18,11 +18,37 @@
  * rung 2 with full access to the raw string, tool name, and schema.
  */
 
-/** JSON-Schema-shaped view of a TypeBox tool parameter schema. */
+/**
+ * JSON-Schema-shaped view of a TypeBox tool parameter schema.
+ *
+ * Deliberately a *loose* structural mirror of the JSON Schema a TypeBox
+ * `Type.Object(...)` emits — enough for the dependency-free rung-2 validator
+ * ({@link validateAgainstSchema}) to check the constraints local models most
+ * often violate: required/typed props, unknown props under `additionalProperties:
+ * false`, nested object/array shape, enums (JSON-Schema `enum`, or TypeBox's
+ * `anyOf` of `const` for unions), and simple string/number/array bounds.
+ */
 export interface ToolSchemaLike {
   readonly type?: string;
-  readonly properties?: Record<string, { type?: string } | undefined>;
+  /** Nested schemas are recursive so object/array shape is validated deeply. */
+  readonly properties?: Record<string, ToolSchemaLike | undefined>;
   readonly required?: readonly string[];
+  /** JSON-Schema `additionalProperties: false` → unknown props are flagged. */
+  readonly additionalProperties?: boolean;
+  /** Element schema for `type: "array"`. */
+  readonly items?: ToolSchemaLike;
+  /** Allowed values (JSON-Schema enum). */
+  readonly enum?: readonly unknown[];
+  /** Union branches (TypeBox emits literal unions as `anyOf` of `const`). */
+  readonly anyOf?: readonly ToolSchemaLike[];
+  /** Single allowed literal (TypeBox `Type.Literal`). */
+  readonly const?: unknown;
+  readonly minItems?: number;
+  readonly maxItems?: number;
+  readonly minLength?: number;
+  readonly maxLength?: number;
+  readonly minimum?: number;
+  readonly maximum?: number;
 }
 
 export interface RepairContext {
@@ -163,36 +189,141 @@ const JSON_TYPE_OF = (v: unknown): string => {
   return typeof v;
 };
 
+/** integer satisfies number; number does not satisfy integer. */
+function typeMatches(actual: string, expected: string): boolean {
+  return (
+    actual === expected ||
+    (expected === 'number' && actual === 'integer') ||
+    (expected === 'integer' && actual === 'integer')
+  );
+}
+
+/** Structural equality good enough for enum/const literals (primitives + plain data). */
+function literalEquals(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Lightweight structural validation against a TypeBox/JSON-Schema-shaped tool
- * schema: presence of `required` props + a loose type check on declared props.
- * Dependency-free (no typebox runtime); sufficient for the rung-2 gate.
+ * Recursively validate a value against a {@link ToolSchemaLike}. `path` is the
+ * human-readable location for error messages (`''` at the root). Returns the list
+ * of constraint violations (empty ⇒ valid). Dependency-free — no typebox runtime.
+ */
+function validateValue(value: unknown, schema: ToolSchemaLike | undefined, path: string): string[] {
+  const errors: string[] = [];
+  if (schema === undefined) return errors;
+  const at = path === '' ? '' : `property "${path}": `;
+  const label = path === '' ? 'value' : `property "${path}"`;
+
+  // Union (TypeBox literal unions, or any `anyOf`): pass if ANY branch validates.
+  // TypeBox emits unions as anyOf-only schemas, so this is terminal for them.
+  if (schema.anyOf !== undefined && schema.anyOf.length > 0) {
+    const ok = schema.anyOf.some((branch) => validateValue(value, branch, path).length === 0);
+    if (!ok) errors.push(`${label} does not match any allowed variant`);
+    return errors;
+  }
+
+  // Single literal.
+  if (Object.hasOwn(schema, 'const') && !literalEquals(value, schema.const)) {
+    errors.push(`${label} must equal ${JSON.stringify(schema.const)}`);
+  }
+
+  // Enum membership.
+  if (schema.enum !== undefined && schema.enum.length > 0) {
+    if (!schema.enum.some((e) => literalEquals(e, value))) {
+      errors.push(
+        `${label} must be one of ${schema.enum.map((e) => JSON.stringify(e)).join(', ')}`,
+      );
+    }
+  }
+
+  const actual = JSON_TYPE_OF(value);
+  if (schema.type !== undefined && !typeMatches(actual, schema.type)) {
+    errors.push(`${label} should be ${schema.type} but is ${actual}`);
+    return errors; // wrong container type → deeper constraints are meaningless
+  }
+
+  // Object shape.
+  if (actual === 'object' && (schema.type === 'object' || schema.type === undefined)) {
+    const obj = value as Record<string, unknown>;
+    for (const key of schema.required ?? []) {
+      if (!(key in obj) || obj[key] === undefined) {
+        errors.push(`${at}missing required property "${key}"`);
+      }
+    }
+    if (schema.properties !== undefined) {
+      for (const [key, propSchema] of Object.entries(schema.properties)) {
+        if (propSchema === undefined || !(key in obj) || obj[key] === undefined) continue;
+        errors.push(...validateValue(obj[key], propSchema, path === '' ? key : `${path}.${key}`));
+      }
+      if (schema.additionalProperties === false) {
+        const allowed = new Set(Object.keys(schema.properties));
+        for (const key of Object.keys(obj)) {
+          if (!allowed.has(key)) errors.push(`${label} has unknown property "${key}"`);
+        }
+      }
+    }
+  }
+
+  // Array shape.
+  if (actual === 'array' && schema.type === 'array') {
+    const arr = value as unknown[];
+    if (schema.minItems !== undefined && arr.length < schema.minItems) {
+      errors.push(`${label} must have at least ${schema.minItems} item(s)`);
+    }
+    if (schema.maxItems !== undefined && arr.length > schema.maxItems) {
+      errors.push(`${label} must have at most ${schema.maxItems} item(s)`);
+    }
+    if (schema.items !== undefined) {
+      for (let i = 0; i < arr.length; i++) {
+        errors.push(...validateValue(arr[i], schema.items, `${path}[${i}]`));
+      }
+    }
+  }
+
+  // String bounds.
+  if (typeof value === 'string' && schema.type === 'string') {
+    if (schema.minLength !== undefined && value.length < schema.minLength) {
+      errors.push(`${label} must be at least ${schema.minLength} character(s)`);
+    }
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) {
+      errors.push(`${label} must be at most ${schema.maxLength} character(s)`);
+    }
+  }
+
+  // Numeric bounds.
+  if (typeof value === 'number' && (schema.type === 'number' || schema.type === 'integer')) {
+    if (schema.minimum !== undefined && value < schema.minimum) {
+      errors.push(`${label} must be >= ${schema.minimum}`);
+    }
+    if (schema.maximum !== undefined && value > schema.maximum) {
+      errors.push(`${label} must be <= ${schema.maximum}`);
+    }
+  }
+
+  return errors;
+}
+
+/**
+ * Validate repaired tool-call arguments against the tool's parameter schema.
+ *
+ * Deeper than a top-level presence/type check: it recurses into nested
+ * object/array shape, flags unknown props under `additionalProperties: false`,
+ * and checks enums (incl. TypeBox `anyOf`/`const` unions) and simple
+ * string/number/array bounds. Every violation is surfaced as an error string,
+ * which the rung-2 fixer path feeds verbatim to the utility model so it can
+ * correct the specific problem. Dependency-free (no typebox runtime).
  */
 export function validateAgainstSchema(
   value: Record<string, unknown>,
   schema: ToolSchemaLike | undefined,
 ): ValidationResult {
   if (schema === undefined) return { valid: true, errors: [] };
-  const errors: string[] = [];
-
-  for (const key of schema.required ?? []) {
-    if (!(key in value) || value[key] === undefined) {
-      errors.push(`missing required property "${key}"`);
-    }
-  }
-  if (schema.properties !== undefined) {
-    for (const [key, propSchema] of Object.entries(schema.properties)) {
-      if (propSchema?.type === undefined || !(key in value)) continue;
-      const actual = JSON_TYPE_OF(value[key]);
-      const expected = propSchema.type;
-      // integer satisfies number; number does not satisfy integer.
-      const ok =
-        actual === expected ||
-        (expected === 'number' && actual === 'integer') ||
-        (expected === 'integer' && actual === 'integer');
-      if (!ok) errors.push(`property "${key}" should be ${expected} but is ${actual}`);
-    }
-  }
+  const errors = validateValue(value, schema, '');
   return { valid: errors.length === 0, errors };
 }
 
@@ -260,4 +391,386 @@ export async function repairToolCallArguments(
     value: syntactic,
     error: syntactic === undefined ? 'unrecoverable tool-call JSON' : 'schema validation failed',
   };
+}
+
+// --- Fuzzy tool-name matching ----------------------------------------------
+
+/** Default normalized-similarity threshold above which a fuzzy name is accepted. */
+export const DEFAULT_TOOL_NAME_MATCH_THRESHOLD = 0.72;
+
+/** Canonicalize a tool name for comparison: lowercase, strip non-alphanumerics. */
+export function normalizeToolName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/** Levenshtein edit distance (iterative, single-row DP). */
+function editDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  let curr = new Array<number>(b.length + 1);
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        (prev[j] ?? 0) + 1, // deletion
+        (curr[j - 1] ?? 0) + 1, // insertion
+        (prev[j - 1] ?? 0) + cost, // substitution
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[b.length] ?? 0;
+}
+
+/**
+ * Normalized name similarity in [0, 1]: `1 - editDistance / maxLen` over the
+ * normalized names. 1 = identical after normalization (case/punctuation only).
+ */
+export function nameSimilarity(a: string, b: string): number {
+  const na = normalizeToolName(a);
+  const nb = normalizeToolName(b);
+  if (na.length === 0 || nb.length === 0) return 0;
+  if (na === nb) return 1;
+  return 1 - editDistance(na, nb) / Math.max(na.length, nb.length);
+}
+
+/**
+ * Map an unknown/misspelled tool name to the nearest REGISTERED tool by
+ * normalized edit-distance, but only when the best match clears `threshold`.
+ * Returns the registered name + its score, or undefined (→ leave the call to the
+ * existing "tool not found" path). A name that differs only in case/punctuation
+ * scores 1 and always matches.
+ */
+export function fuzzyMatchToolName(
+  name: string,
+  registered: readonly string[],
+  threshold: number = DEFAULT_TOOL_NAME_MATCH_THRESHOLD,
+): { name: string; score: number } | undefined {
+  let best: string | undefined;
+  let bestScore = -1;
+  for (const candidate of registered) {
+    const score = nameSimilarity(name, candidate);
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
+  }
+  return best !== undefined && bestScore >= threshold
+    ? { name: best, score: bestScore }
+    : undefined;
+}
+
+// --- Rung 4 support: per-session schema relaxation -------------------------
+
+/**
+ * Produce a maximally-permissive schema for a tool whose strict schema keeps
+ * rejecting otherwise-usable arguments. The relaxed schema accepts ANY object
+ * (no `required`, no per-prop types/constraints, `additionalProperties` allowed),
+ * so a later call the harness stores this against validates cleanly at rung 2.
+ * Pure — the harness owns WHEN to relax and WHERE to store the result.
+ */
+export function relaxToolSchema(_schema: ToolSchemaLike | undefined): ToolSchemaLike {
+  return { type: 'object', additionalProperties: true };
+}
+
+// --- RUNG 0: text-content tool-call reconstructor --------------------------
+
+/** How a reconstructed call was written in the assistant's content. */
+export type ReconstructedShape =
+  | 'envelope-json'
+  | 'function-tag'
+  | 'name-tag'
+  | 'paren-call'
+  | 'prose-json';
+
+export interface ReconstructedToolCall {
+  /** The REGISTERED tool name the written call resolved to. */
+  readonly toolName: string;
+  /** The name exactly as written in the content (may differ in case/punctuation). */
+  readonly rawName: string;
+  /** Raw argument text, fed to the repair ladder exactly like a malformed frame. */
+  readonly argsText: string;
+  /** Parsed arguments (the guard requires these to parse before reconstructing). */
+  readonly arguments: Record<string, unknown>;
+  readonly shape: ReconstructedShape;
+}
+
+/** Keys a text tool-call envelope uses to name the tool. */
+const ENVELOPE_NAME_KEYS = [
+  'name',
+  'tool',
+  'tool_name',
+  'toolName',
+  'function',
+  'function_name',
+  'recipient_name',
+];
+/** Keys a text tool-call envelope uses to carry the arguments. */
+const ENVELOPE_ARG_KEYS = [
+  'arguments',
+  'args',
+  'parameters',
+  'params',
+  'input',
+  'tool_input',
+  'function_arguments',
+];
+
+/** Scan text for every top-level balanced `{…}` object substring (string-aware). */
+function scanJsonObjects(text: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== '{') {
+      i++;
+      continue;
+    }
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let j = i;
+    let closed = false;
+    for (; j < text.length; j++) {
+      const ch = text[j];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') inString = true;
+      else if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          out.push(text.slice(i, j + 1));
+          closed = true;
+          break;
+        }
+      }
+    }
+    i = closed ? j + 1 : i + 1;
+  }
+  return out;
+}
+
+/** Coerce an envelope's arguments value (object or JSON string) into args. */
+function coerceArgs(
+  value: unknown,
+): { argsText: string; arguments: Record<string, unknown> } | undefined {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    return { argsText: JSON.stringify(value), arguments: value as Record<string, unknown> };
+  }
+  if (typeof value === 'string') {
+    const parsed = repairToolCallJson(value);
+    if (parsed !== undefined) return { argsText: value, arguments: parsed };
+  }
+  return undefined;
+}
+
+/** Resolve a written name to a registered tool by EXACT normalized match. */
+function resolveRegistered(rawName: string, registered: readonly string[]): string | undefined {
+  const norm = normalizeToolName(rawName);
+  if (norm.length === 0) return undefined;
+  return registered.find((r) => normalizeToolName(r) === norm);
+}
+
+/** Build a reconstructed call if the name resolves + args parse, else undefined. */
+function reconstruct(
+  rawName: string,
+  argsText: string | undefined,
+  parsedArgs: Record<string, unknown> | undefined,
+  registered: readonly string[],
+  shape: ReconstructedShape,
+): ReconstructedToolCall | undefined {
+  const toolName = resolveRegistered(rawName, registered);
+  if (toolName === undefined) return undefined;
+  if (parsedArgs !== undefined) {
+    return {
+      toolName,
+      rawName,
+      argsText: argsText ?? JSON.stringify(parsedArgs),
+      arguments: parsedArgs,
+      shape,
+    };
+  }
+  if (argsText === undefined) return undefined;
+  const parsed = repairToolCallJson(argsText);
+  if (parsed === undefined) return undefined;
+  return { toolName, rawName, argsText, arguments: parsed, shape };
+}
+
+/** Strategy A — a JSON envelope `{name|tool|function: …, arguments|args|…: {…}}`. */
+function fromEnvelope(
+  content: string,
+  registered: readonly string[],
+): ReconstructedToolCall | undefined {
+  for (const objText of scanJsonObjects(content)) {
+    const parsed = repairToolCallJson(objText);
+    if (parsed === undefined) continue;
+
+    let rawName: string | undefined;
+    let argsValue: unknown;
+    let hasArgKey = false;
+
+    // OpenAI-style nested `function: { name, arguments }`.
+    const fn = parsed.function;
+    if (fn !== null && typeof fn === 'object' && !Array.isArray(fn)) {
+      const f = fn as Record<string, unknown>;
+      if (typeof f.name === 'string') rawName = f.name;
+      if ('arguments' in f) {
+        argsValue = f.arguments;
+        hasArgKey = true;
+      }
+    }
+    if (rawName === undefined) {
+      for (const k of ENVELOPE_NAME_KEYS) {
+        if (typeof parsed[k] === 'string') {
+          rawName = parsed[k] as string;
+          break;
+        }
+      }
+    }
+    if (!hasArgKey) {
+      for (const k of ENVELOPE_ARG_KEYS) {
+        if (k in parsed) {
+          argsValue = parsed[k];
+          hasArgKey = true;
+          break;
+        }
+      }
+    }
+    if (rawName === undefined) continue;
+
+    let args: { argsText: string; arguments: Record<string, unknown> } | undefined;
+    if (hasArgKey) {
+      args = coerceArgs(argsValue);
+    } else if (Object.keys(parsed).every((k) => ENVELOPE_NAME_KEYS.includes(k))) {
+      // A bare call envelope like `{"name":"get_time"}` — no args key, and no
+      // stray data keys → treat as a no-argument call. Guards against arbitrary
+      // JSON that merely happens to carry a "name" field.
+      args = { argsText: '{}', arguments: {} };
+    }
+    if (args === undefined) continue;
+
+    const built = reconstruct(rawName, args.argsText, args.arguments, registered, 'envelope-json');
+    if (built !== undefined) return built;
+  }
+  return undefined;
+}
+
+/** Strategy B1 — `<function=NAME>{…}</function>` (Llama-style tag). */
+function fromFunctionTag(
+  content: string,
+  registered: readonly string[],
+): ReconstructedToolCall | undefined {
+  const re = /<function\s*=\s*["']?([a-zA-Z0-9_.-]+)["']?\s*>([\s\S]*?)<\/function>/g;
+  for (const m of content.matchAll(re)) {
+    const rawName = m[1];
+    const body = m[2];
+    if (rawName === undefined || body === undefined) continue;
+    const objText = scanJsonObjects(body)[0];
+    const built = reconstruct(
+      rawName,
+      objText ?? '{}',
+      objText === undefined ? {} : undefined,
+      registered,
+      'function-tag',
+    );
+    if (built !== undefined) return built;
+  }
+  return undefined;
+}
+
+/** Strategy B2 — `<NAME>{…}</NAME>` where NAME is a registered tool. */
+function fromNameTag(
+  content: string,
+  registered: readonly string[],
+): ReconstructedToolCall | undefined {
+  for (const tool of registered) {
+    const esc = tool.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`<${esc}\\s*>([\\s\\S]*?)</${esc}\\s*>`);
+    const m = re.exec(content);
+    if (m?.[1] === undefined) continue;
+    const objText = scanJsonObjects(m[1])[0];
+    if (objText === undefined) continue;
+    const built = reconstruct(tool, objText, undefined, registered, 'name-tag');
+    if (built !== undefined) return built;
+  }
+  return undefined;
+}
+
+/** Strategy C — `NAME({…})` or `NAME()` paren-style call. */
+function fromParenCall(
+  content: string,
+  registered: readonly string[],
+): ReconstructedToolCall | undefined {
+  const re = /([a-zA-Z_][a-zA-Z0-9_.-]*)\s*\(\s*(\{[\s\S]*?\})?\s*\)/g;
+  for (const m of content.matchAll(re)) {
+    const rawName = m[1];
+    if (rawName === undefined) continue;
+    const objText = m[2];
+    const built =
+      objText === undefined
+        ? reconstruct(rawName, '{}', {}, registered, 'paren-call')
+        : reconstruct(rawName, objText, undefined, registered, 'paren-call');
+    if (built !== undefined) return built;
+  }
+  return undefined;
+}
+
+/** Strategy D — prose: a registered NAME + a call connective + a JSON object. */
+function fromProse(
+  content: string,
+  registered: readonly string[],
+): ReconstructedToolCall | undefined {
+  for (const tool of registered) {
+    const esc = tool.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // NAME <connective> { … } — the connective (with/:/=/->/→) is what separates
+    // an actual call from prose that merely names the tool near some braces.
+    const re = new RegExp(`\\b${esc}\\b\\s*(?:with|:|=|->|→)\\s*(\\{)`, 'i');
+    const m = re.exec(content);
+    if (m?.index === undefined) continue;
+    const bracePos = content.indexOf('{', m.index);
+    if (bracePos === -1) continue;
+    const objText = scanJsonObjects(content.slice(bracePos))[0];
+    if (objText === undefined) continue;
+    const built = reconstruct(tool, objText, undefined, registered, 'prose-json');
+    if (built !== undefined) return built;
+  }
+  return undefined;
+}
+
+/**
+ * RUNG 0 — reconstruct a tool call the model wrote into its assistant CONTENT as
+ * prose/markdown instead of a structured `tool_calls` frame (the biggest gap in
+ * the ladder: such calls never entered it). Pure regex/heuristics, NO model call.
+ *
+ * Recognizes four written shapes, in order of reliability: a JSON envelope
+ * (`{"name":"web_search","arguments":{…}}`, incl. inside a ```json fence or a
+ * `<tool_call>` tag), an XML/tag call (`<function=NAME>…` or `<NAME>…</NAME>`), a
+ * paren call (`NAME({…})`), and a prose call (`… web_search with {…}`).
+ *
+ * FALSE-POSITIVE GUARD — reconstruction fires only when ALL hold:
+ *   1. a recognizable call SHAPE matched (envelope / tag / paren / connective+JSON),
+ *   2. the written name resolves to an EXACTLY REGISTERED tool (normalized), and
+ *   3. the arguments PARSE (via rung-1 recovery) to a JSON object.
+ * Prose that merely mentions a tool — no call shape, an unregistered name, or no
+ * parseable args — returns undefined and is left as plain content.
+ */
+export function reconstructToolCallFromContent(
+  content: string,
+  registeredToolNames: readonly string[],
+): ReconstructedToolCall | undefined {
+  if (content.length === 0 || registeredToolNames.length === 0) return undefined;
+  return (
+    fromEnvelope(content, registeredToolNames) ??
+    fromFunctionTag(content, registeredToolNames) ??
+    fromNameTag(content, registeredToolNames) ??
+    fromParenCall(content, registeredToolNames) ??
+    fromProse(content, registeredToolNames)
+  );
 }

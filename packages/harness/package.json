@@ -9,7 +9,8 @@
     "pi-package"
   ],
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./corp": "./src/corp/index.ts"
   },
   "pi": {
     "extensions": [

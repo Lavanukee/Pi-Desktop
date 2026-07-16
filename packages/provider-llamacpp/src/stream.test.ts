@@ -334,3 +334,152 @@ describe('createLlamaCppStream — tool-call repair', () => {
     expect(call?.type === 'toolCall' && call.arguments).toEqual({ path: '/live' });
   });
 });
+
+describe('createLlamaCppStream — rung 0 (text-content reconstruction)', () => {
+  const tools: Context['tools'] = [
+    { name: 'read', description: 'read a file', parameters: Type.Object({ path: Type.String() }) },
+  ];
+
+  it('reconstructs a tool call the model wrote as CONTENT prose (no tool_calls frame)', async () => {
+    // The model answers in prose with a JSON envelope instead of a structured call.
+    const { fetchImpl } = sseFetch([
+      {
+        choices: [
+          { delta: { content: 'Let me look:\n{"name":"read","arguments":{"path":"/etc/hosts"}}' } },
+        ],
+      },
+      { choices: [{ delta: {}, finish_reason: 'stop' }] },
+    ]);
+    const onRepair = vi.fn();
+    const stream = createLlamaCppStream({ fetchImpl, onRepair })(makeModel(), emptyContext(tools));
+    const { events, final } = await consume(stream);
+
+    // A structured tool call was synthesized from the prose and finalized.
+    expect(events.some((e) => e.type === 'toolcall_start')).toBe(true);
+    expect(events.some((e) => e.type === 'toolcall_end')).toBe(true);
+    const call = final.content.find((c) => c.type === 'toolCall');
+    expect(call?.type === 'toolCall' && call.name).toBe('read');
+    expect(call?.type === 'toolCall' && call.arguments).toEqual({ path: '/etc/hosts' });
+    expect(final.stopReason).toBe('toolUse');
+    // Recorded as a rung-0 structural repair.
+    expect(onRepair).toHaveBeenCalledWith({ toolName: 'read', rung: 0, ok: true });
+  });
+
+  it('does NOT reconstruct when the content only MENTIONS a tool', async () => {
+    const { fetchImpl } = sseFetch([
+      { choices: [{ delta: { content: 'You can use the read tool to open files.' } }] },
+      { choices: [{ delta: {}, finish_reason: 'stop' }] },
+    ]);
+    const onRepair = vi.fn();
+    const stream = createLlamaCppStream({ fetchImpl, onRepair })(makeModel(), emptyContext(tools));
+    const { events, final } = await consume(stream);
+    expect(events.some((e) => e.type === 'toolcall_end')).toBe(false);
+    expect(final.content.some((c) => c.type === 'toolCall')).toBe(false);
+    expect(final.stopReason).toBe('stop');
+    expect(onRepair).not.toHaveBeenCalled();
+  });
+
+  it('does NOT reconstruct when a structured tool call was already emitted', async () => {
+    const { fetchImpl } = sseFetch([
+      {
+        choices: [
+          {
+            delta: {
+              content: '{"name":"read","arguments":{"path":"/decoy"}}',
+              tool_calls: [
+                { index: 0, id: 't1', function: { name: 'read', arguments: '{"path":"/real"}' } },
+              ],
+            },
+          },
+        ],
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+    const stream = createLlamaCppStream({ fetchImpl })(makeModel(), emptyContext(tools));
+    const { final } = await consume(stream);
+    const calls = final.content.filter((c) => c.type === 'toolCall');
+    expect(calls).toHaveLength(1); // only the real structured one
+    expect(calls[0]?.type === 'toolCall' && calls[0].arguments).toEqual({ path: '/real' });
+  });
+});
+
+describe('createLlamaCppStream — fuzzy tool-name correction', () => {
+  const tools: Context['tools'] = [
+    { name: 'read', description: 'read a file', parameters: Type.Object({ path: Type.String() }) },
+  ];
+
+  it('renames an unknown/misspelled structured tool call to the nearest registered tool', async () => {
+    const { fetchImpl } = sseFetch([
+      {
+        choices: [{ delta: { tool_calls: [{ index: 0, id: 'x', function: { name: 'reed' } }] } }],
+      },
+      {
+        choices: [
+          { delta: { tool_calls: [{ index: 0, function: { arguments: '{"path":"/x"}' } }] } },
+        ],
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+    const onRepair = vi.fn();
+    const stream = createLlamaCppStream({ fetchImpl, onRepair })(makeModel(), emptyContext(tools));
+    const { final } = await consume(stream);
+    const call = final.content.find((c) => c.type === 'toolCall');
+    expect(call?.type === 'toolCall' && call.name).toBe('read'); // corrected
+    expect(call?.type === 'toolCall' && call.arguments).toEqual({ path: '/x' });
+    expect(onRepair).toHaveBeenCalledWith({ toolName: 'read', rung: 0, ok: true });
+  });
+
+  it('leaves a wildly-unknown name uncorrected (existing not-found path)', async () => {
+    const { fetchImpl } = sseFetch([
+      {
+        choices: [
+          { delta: { tool_calls: [{ index: 0, id: 'x', function: { name: 'zzz_nope' } }] } },
+        ],
+      },
+      {
+        choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{}' } }] } }],
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+    const stream = createLlamaCppStream({ fetchImpl })(makeModel(), emptyContext(tools));
+    const { final } = await consume(stream);
+    const call = final.content.find((c) => c.type === 'toolCall');
+    expect(call?.type === 'toolCall' && call.name).toBe('zzz_nope'); // unchanged
+  });
+});
+
+describe('createLlamaCppStream — per-session relaxed schema (rung 4)', () => {
+  const tools: Context['tools'] = [
+    { name: 'read', description: 'read a file', parameters: Type.Object({ path: Type.String() }) },
+  ];
+
+  it('validates against the relaxed schema so a previously-invalid call passes without repair', async () => {
+    // Missing the required "path" — normally schema-invalid → repair. But the
+    // harness relaxed this tool's schema, so it passes at rung 2 untouched.
+    const { fetchImpl } = sseFetch([
+      {
+        choices: [{ delta: { tool_calls: [{ index: 0, id: 'r', function: { name: 'read' } }] } }],
+      },
+      {
+        choices: [
+          { delta: { tool_calls: [{ index: 0, function: { arguments: '{"wrong":1}' } }] } },
+        ],
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+    const onRepair = vi.fn();
+    const stream = createLlamaCppStream({
+      fetchImpl,
+      onRepair,
+      repairProvider: () => ({
+        relaxedSchemaFor: (name) =>
+          name === 'read' ? { type: 'object', additionalProperties: true } : undefined,
+      }),
+    })(makeModel(), emptyContext(tools));
+    const { final } = await consume(stream);
+    // No repair fired — the relaxed schema accepted the args as-is.
+    expect(onRepair).not.toHaveBeenCalled();
+    const call = final.content.find((c) => c.type === 'toolCall');
+    expect(call?.type === 'toolCall' && call.arguments).toEqual({ wrong: 1 });
+  });
+});

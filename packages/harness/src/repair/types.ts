@@ -10,11 +10,26 @@
  * `repairToolCallArguments` to prove the structural match.
  */
 
-/** JSON-Schema-shaped view of a TypeBox tool parameter schema. */
+/**
+ * JSON-Schema-shaped view of a TypeBox tool parameter schema. Structurally
+ * identical to the provider's `ToolSchemaLike` (kept in sync deliberately, not
+ * imported) so the harness can build/relax schemas the provider then validates.
+ */
 export interface ToolSchemaLike {
   readonly type?: string;
-  readonly properties?: Record<string, { type?: string } | undefined>;
+  readonly properties?: Record<string, ToolSchemaLike | undefined>;
   readonly required?: readonly string[];
+  readonly additionalProperties?: boolean;
+  readonly items?: ToolSchemaLike;
+  readonly enum?: readonly unknown[];
+  readonly anyOf?: readonly ToolSchemaLike[];
+  readonly const?: unknown;
+  readonly minItems?: number;
+  readonly maxItems?: number;
+  readonly minLength?: number;
+  readonly maxLength?: number;
+  readonly minimum?: number;
+  readonly maximum?: number;
 }
 
 export interface RepairContext {

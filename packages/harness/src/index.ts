@@ -47,7 +47,12 @@ import { resolvePresetTools } from './presets/presets.js';
 import { augmentSystemPrompt } from './prompt/capability-prompt.js';
 import { connectRepairBridge, type LiveRepairDeps } from './repair/bridge.js';
 import { createToolCallFixer, withRepairAttempts } from './repair/fixer.js';
-import { createHarnessExtraRungs, type HarnessRepairDeps } from './repair/rungs.js';
+import {
+  createHarnessExtraRungs,
+  type HarnessRepairDeps,
+  relaxToolSchema,
+  type ToolSchemaLike,
+} from './repair/rungs.js';
 import { adversarialCheck, reviewOutput } from './review/review.js';
 import { registerSkillInstructions } from './skills/skill-instructions.js';
 import {
@@ -317,6 +322,12 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
   // rebuild the rung array / threshold, not the counts).
   const failureCounts = new Map<string, number>();
 
+  // Per-session RELAXED schemas (rung 4). When a tool's strict schema keeps
+  // rejecting otherwise-usable args, rung 4 stores a looser schema here; the
+  // provider reads it via `relaxedSchemaFor` so subsequent calls to that tool
+  // validate at rung 2 instead of re-escalating. Cleared on session_start.
+  const relaxedSchemas = new Map<string, ToolSchemaLike>();
+
   /**
    * Build the live repair deps the provider's stream ladder consumes: the
    * effort-bounded rung-2 fixer, rungs 3–5 (abort threshold from the effort
@@ -357,9 +368,13 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
           `${error} (attempt ${count}). Accept the arguments as-is?`,
         );
       },
-      relaxSchema: ({ toolName }) => {
-        // v1 records the relaxation (no `ok` → not a failure). Genuine same-name
-        // re-registration with a looser schema is tool-specific and deferred.
+      relaxSchema: ({ toolName, schema }) => {
+        // Re-register the tool under a looser per-session schema (same-name): store
+        // a maximally-permissive schema keyed by tool name, which the provider
+        // reads via `relaxedSchemaFor` (below) so this tool's subsequent calls
+        // validate at rung 2 instead of re-escalating through rungs 3–5. The tool's
+        // execution is untouched — only its per-session VALIDATION schema loosens.
+        relaxedSchemas.set(toolName, relaxToolSchema(schema));
         pi.appendEntry(HARNESS_REPAIR_ENTRY, { toolName, relaxed: true });
       },
       abort: ({ toolName, count }) => {
@@ -371,6 +386,9 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     return {
       fixer,
       extraRungs: createHarnessExtraRungs(harnessDeps),
+      // Per-session relaxed-schema lookup (rung 4). Closes over the live map, so a
+      // relaxation stored after this deps object was pushed is still seen.
+      relaxedSchemaFor: (toolName) => relaxedSchemas.get(toolName),
       // Authoritative per-call outcome — the only entry carrying `ok`.
       onRepair: (info) =>
         pi.appendEntry(HARNESS_REPAIR_ENTRY, {
@@ -743,6 +761,9 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     runtime.touchedFiles = [];
     runtime.verifyActive = false;
     runtime.verifyFixesRemaining = 0;
+    // A new/switched session must not inherit the previous session's relaxed
+    // tool schemas (a per-session weakening of validation must not leak).
+    relaxedSchemas.clear();
     // A new/switched session gets a fresh title (recomputed on its first turn).
     runtime.title = restoreTitle(getEntries(ctx));
     // Push repair deps now that the effort level is known (abortThreshold etc.).
@@ -1123,6 +1144,7 @@ export {
   type RepairContext,
   type RepairResult,
   type RepairRung,
+  relaxToolSchema,
   type ToolCallFixer,
   type ToolSchemaLike,
 } from './repair/rungs.js';

@@ -16,10 +16,11 @@
  */
 
 import { type CanvasTab, CanvasTabs, type NewTabKind, useCanvasTabs } from '@pi-desktop/canvas';
-import type { ArtifactRef, OrgNodeView } from '@pi-desktop/coordination';
+import type { ArtifactRef, OrgNodeView, ProductPeek } from '@pi-desktop/coordination';
 import { IconButton, IconClose } from '@pi-desktop/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useCanvasStore } from '../../state/canvas-store';
+import { peekCorpTask } from '../../state/corp-connect';
 import { useCorpStore } from '../../state/corp-store';
 import { usePiStore } from '../../state/pi-slice';
 import { artifactToPayload } from './artifacts';
@@ -36,6 +37,36 @@ import { useGen } from './useGen';
 /** E2E: probes open browser/terminal tabs through the shared controller. Gated
  * on the same `?piE2E=1` opt-in as `window.__pi_store` (see pi-connect.ts). */
 const IS_E2E = new URLSearchParams(window.location.search).has('piE2E');
+
+/** Escape a string for safe interpolation into the peek preview HTML. */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Render a {@link ProductPeek} (the REAL in-progress product tree) as a
+ * self-contained HTML page: a file list + each file's content. Falls back to an
+ * honest "nothing built yet" note when the peek is null/empty — never a mock stub.
+ */
+function renderPeekHtml(title: string, peek: ProductPeek | null): string {
+  const head = `<!doctype html><meta charset="utf-8"><body style="font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;padding:24px;color:#ddd;background:#1a1a1a">`;
+  if (peek === null || peek.files.length === 0) {
+    return `${head}<h2 style="font-family:system-ui">${escapeHtml(title)}</h2><p style="color:#999;font-family:system-ui">The build has no files yet — check back in a moment.</p></body>`;
+  }
+  const kb = (peek.totalBytes / 1024).toFixed(1);
+  const header = `<h2 style="font-family:system-ui;margin:0 0 4px">${escapeHtml(title)}</h2><p style="color:#999;font-family:system-ui;margin:0 0 20px">${peek.fileCount} file${peek.fileCount === 1 ? '' : 's'} · ${kb} KB — a snapshot of the build so far.</p>`;
+  const sections = peek.files
+    .map((f) => {
+      const body = escapeHtml(f.content) + (f.truncated ? '\n…(truncated)' : '');
+      return `<section style="margin-bottom:22px"><div style="color:#7dd3fc;font-family:system-ui;margin-bottom:6px">${escapeHtml(f.path)} <span style="color:#666">· ${f.bytes} B</span></div><pre style="margin:0;padding:14px;background:#0f0f0f;border:1px solid #2a2a2a;border-radius:6px;overflow-x:auto;white-space:pre-wrap;word-break:break-word">${body}</pre></section>`;
+    })
+    .join('');
+  return `${head}${header}${sections}</body>`;
+}
 
 export function CanvasTabsPanel() {
   const { controller, tabs, fullscreen } = useCanvasTabs();
@@ -231,22 +262,26 @@ export function CanvasTabsPanel() {
     [controller],
   );
 
-  // "Peek at the build": open the current best artifact in its own tab.
+  // "Peek at the build" (spec §11 safety valve): fetch the REAL in-progress product
+  // tree for the live task and open it in its own tab. DTO-only — the renderer never
+  // touches the engine; it reads the neutral ProductPeek over `corp:peek`.
   const onSituationPeek = useCallback(
     (_tabId: string, artifact: ArtifactRef) => {
-      controller.upsertTab(`situation-peek:${artifact.id}`, {
-        kind: 'html',
-        title: 'Build snapshot',
-        artifact: {
-          id: `peek-${artifact.id}`,
-          title: artifact.title,
-          content: {
-            kind: 'html',
-            text: `<!doctype html><meta charset="utf-8"><body style="font:14px/1.6 system-ui;padding:24px;color:#ddd;background:#1a1a1a"><h2>${artifact.title}</h2><p>A snapshot of the build so far.</p></body>`,
-          },
-        },
-      });
       setCanvasOpen(true);
+      const taskId = useCorpStore.getState().taskId;
+      const tabKey = `situation-peek:${taskId ?? artifact.id}`;
+      void (async () => {
+        const peek = taskId ? await peekCorpTask(taskId) : null;
+        controller.upsertTab(tabKey, {
+          kind: 'html',
+          title: 'Build snapshot',
+          artifact: {
+            id: `peek-${artifact.id}`,
+            title: artifact.title,
+            content: { kind: 'html', text: renderPeekHtml(artifact.title, peek) },
+          },
+        });
+      })();
     },
     [controller, setCanvasOpen],
   );

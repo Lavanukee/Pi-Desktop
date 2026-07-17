@@ -14,6 +14,7 @@
 import type {
   CoordinationEvent,
   OrgChartView,
+  ProductPeek,
   TaskContext,
   WorkerTranscriptView,
 } from '@pi-desktop/coordination';
@@ -45,6 +46,13 @@ export type CorpInvokeMap = {
     request: { taskId: string; nodeId: string };
     response: { transcript: WorkerTranscriptView | null };
   };
+  /** "Peek at what we have so far" (spec §11): a live snapshot of the in-progress
+   * product tree (real files), served on demand from the running task's workspace.
+   * `null` for an unknown/ended task; an empty file list means nothing built yet. */
+  'corp:peek': {
+    request: { taskId: string };
+    response: { peek: ProductPeek | null };
+  };
 };
 
 export const CORP_INVOKE_CHANNELS = [
@@ -54,6 +62,7 @@ export const CORP_INVOKE_CHANNELS = [
   'corp:respond-permission',
   'corp:get-org-chart',
   'corp:worker-transcript',
+  'corp:peek',
 ] as const satisfies readonly (keyof CorpInvokeMap)[];
 
 export type CorpEventMap = {

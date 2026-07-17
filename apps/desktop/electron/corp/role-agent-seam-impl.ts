@@ -551,6 +551,12 @@ export function createRunRoleAgent(config: RunRoleAgentConfig): RunRoleAgentFn {
         ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}),
         ...(bumpConfig !== undefined ? { bump: bumpConfig } : {}),
         ...(extensionFactories.length > 0 ? { extensionFactories } : {}),
+        // LIVE ACTIVITY (spec §11): forward the run's tool/turn events straight
+        // through to the CorpEngine's sink. The runtime reports each `file-write`
+        // path relative to the agent cwd (the isolated dir for an engineer, whose
+        // relative slot === the product-tree slot), so the file map lights up the
+        // right region mid-work — before the harvest at contract end.
+        ...(input.onActivity !== undefined ? { onActivity: input.onActivity } : {}),
         // NO maxSteps and NO per-agent timeout are forwarded: the role runs fully
         // autonomously until it submits / the global RunBudget. runRoleAgent keeps
         // only its internal per-CALL network abort.

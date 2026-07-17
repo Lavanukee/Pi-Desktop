@@ -198,6 +198,10 @@ const handlers: CorpHandlers = {
           : (task.engine.getWorkerTranscript(task.handle, req.nodeId) ?? null),
     };
   },
+  'corp:peek': (_wc, req) => {
+    const task = tasks.get(req.taskId);
+    return { peek: task === undefined ? null : (task.engine.peek(task.handle) ?? null) };
+  },
 };
 
 /** Register the corp channels (sender-aware + trusted-sender gated). Always

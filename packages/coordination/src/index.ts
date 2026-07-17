@@ -266,6 +266,42 @@ export interface ExerciseSessionView {
   readonly nodeId?: string;
 }
 
+/**
+ * One file in a {@link ProductPeek} — a slot in the in-progress product tree,
+ * with a bounded content preview so the situation room can render it inline.
+ */
+export interface ProductPeekFile {
+  /** Path relative to the workspace root (the contract slot, `/`-separated). */
+  readonly path: string;
+  /** UTF-8 byte length of the produced file. */
+  readonly bytes: number;
+  /** The file's UTF-8 content, truncated to a preview bound when large. */
+  readonly content: string;
+  /** True when {@link content} was clipped (the file is larger than the bound). */
+  readonly truncated: boolean;
+}
+
+/**
+ * A live snapshot of the in-progress product tree — the material behind "peek at
+ * what we have so far" (spec §11 the safety valve). Returned ON DEMAND while a task
+ * is still running (never a mock/stub): a neutral projection any engine with a
+ * workspace can produce by reading the current product tree. The situation room's
+ * peek affordance renders this so the user can SEE the build going, mid-flight, and
+ * steer. Empty {@link files} is honest — the product tree has nothing yet.
+ */
+export interface ProductPeek {
+  readonly taskId: string;
+  /** Every file currently in the product tree, path-sorted. */
+  readonly files: readonly ProductPeekFile[];
+  /** How many files the snapshot holds (may exceed the returned {@link files} when
+   * capped) — the honest count for the header. */
+  readonly fileCount: number;
+  /** Total UTF-8 bytes across the product tree. */
+  readonly totalBytes: number;
+  /** Epoch millis the snapshot was taken. */
+  readonly capturedAt: number;
+}
+
 /** A produced artifact — the "peek at what we have so far" material (spec §11). */
 export interface ArtifactRef {
   readonly id: string;

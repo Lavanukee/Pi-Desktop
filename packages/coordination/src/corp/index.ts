@@ -32,6 +32,7 @@ import {
   type Architecture,
   type Contract,
   type CorpChatFn,
+  type CorpChatMessage,
   type CorpChatRequest,
   type CorpChatResult,
   type CorpRunResult,
@@ -41,6 +42,9 @@ import {
   parseCreateHierarchyArgs,
   parseEngineerOutput,
   parseManagerContracts,
+  type RoleAgentActivity,
+  type RoleAgentRunInput,
+  type RoleAgentRunOutput,
   type RunRoleAgentFn,
   runCorp,
   type WorkspaceFs,
@@ -48,6 +52,7 @@ import {
 } from '@pi-desktop/harness/corp';
 import type {
   Activity,
+  ArtifactRef,
   ChecklistItem,
   ChecklistItemState,
   CoordinationEngine,
@@ -61,6 +66,8 @@ import type {
   OrgNodeRole,
   OrgNodeState,
   OrgNodeView,
+  ProductPeek,
+  ProductPeekFile,
   TaskContext,
   TaskHandle,
   TaskResult,
@@ -217,6 +224,11 @@ interface CorpRuntime {
   /** Manager attribution cursor (managers run one division at a time, in order). */
   mgrCursor: number;
   mgrRetryPending: boolean;
+  /** Paths already surfaced as an {@link ArtifactRef} (dedup — one artifact per
+   * distinct produced file, so the peek affordance points at each in turn). */
+  readonly liveWrittenPaths: Set<string>;
+  /** Monotonic counter for stable per-task artifact ids. */
+  artifactSeq: number;
   result?: CorpRunResult;
 }
 
@@ -339,6 +351,8 @@ export class CorpEngine implements CoordinationEngine {
       lines: new Map(),
       mgrCursor: 0,
       mgrRetryPending: false,
+      liveWrittenPaths: new Set(),
+      artifactSeq: 0,
     };
     this.tasks.set(taskId, rt);
 
@@ -355,7 +369,14 @@ export class CorpEngine implements CoordinationEngine {
     void runCorp({
       task: prompt,
       chat: this.observingChat(rt),
-      ...(this.opts.runRoleAgent !== undefined ? { runRoleAgent: this.opts.runRoleAgent } : {}),
+      // On the AGENT path the harness runs every role through the role-agent seam
+      // (chat is never called), so the engine WRAPS the seam to (a) drive the same
+      // org-chart/checklist state observePre/observePost build from a chat reply and
+      // (b) stream LIVE activity from each turn (spec §11) — a mid-work file-touch,
+      // a per-turn node pulse — as it happens, not only at contract termination.
+      ...(this.opts.runRoleAgent !== undefined
+        ? { runRoleAgent: this.observingRunRoleAgent(rt) }
+        : {}),
       fs: workspace.fs,
       readFs: workspace.readFs,
       workspace: workspace.workspace,
@@ -630,6 +651,191 @@ export class CorpEngine implements CoordinationEngine {
       }
     }
     return rt.contracts.find((c) => c.state !== 'done' && c.state !== 'in-review');
+  }
+
+  // --- Role-agent observation (the AGENT path — spec §11 live activity) --------
+
+  /**
+   * Wrap the injected role-agent seam so each role turn drives the SAME neutral
+   * state a chat reply would (promotion, architecture, contracts, engineer
+   * completion) AND streams LIVE activity as it happens. Only installed when a seam
+   * is injected (the desktop main process); the chat-fallback path is untouched.
+   */
+  private observingRunRoleAgent(rt: CorpRuntime): RunRoleAgentFn {
+    return (input: RoleAgentRunInput): Promise<RoleAgentRunOutput> =>
+      this.runRoleObserved(rt, input);
+  }
+
+  private async runRoleObserved(
+    rt: CorpRuntime,
+    input: RoleAgentRunInput,
+  ): Promise<RoleAgentRunOutput> {
+    const inner = this.opts.runRoleAgent;
+    // Aborted / finished (or, defensively, no seam): short-circuit to an empty
+    // recorded output WITHOUT calling the model — the same wind-down bound the
+    // observing chat seam applies, so a background run terminates cheaply.
+    if (inner === undefined || rt.aborted || rt.finished) {
+      return { filesWritten: [], finalText: '', toolCalls: [], terminatedReason: 'error' };
+    }
+
+    // A CHAT-shaped request so the EXISTING observePre attribution/state logic (which
+    // the agent path otherwise never reaches, chat being un-called there) drives the
+    // org chart. `userPrompt` carries the contract/slot text engineer attribution needs.
+    const messages: CorpChatMessage[] = [{ role: 'user', content: input.userPrompt }];
+    // A chat-shaped request the observer reads for `purpose` + `messages` only;
+    // thinking/maxTokens are unused here but the shape requires them.
+    const syntheticReq: CorpChatRequest = {
+      purpose: input.purpose,
+      messages,
+      thinking: input.thinking,
+      maxTokens: input.maxTokens ?? 0,
+    };
+    try {
+      this.observePre(rt, syntheticReq);
+      // A per-role-turn pulse: broadcast the chart so the just-activated node shows
+      // as `working` (the situation room pulses working nodes).
+      this.emit(rt, { type: 'org-chart', chart: this.buildChart(rt) });
+    } catch {
+      // observation must never break the run
+    }
+
+    // The chart node this run's live activity attributes to (undefined for a role
+    // with no node — e.g. an advisory reviewer; its tool steps still stream un-owned).
+    const liveNodeId = this.roleRunNodeId(rt, syntheticReq);
+    const onActivity = (record: RoleAgentActivity): void => {
+      try {
+        this.mapRoleActivity(rt, liveNodeId, record);
+      } catch {
+        // ditto
+      }
+    };
+
+    const out = await inner({ ...input, onActivity });
+
+    try {
+      if (input.purpose === 'engineer') {
+        this.observeEngineerAgentDone(rt, syntheticReq, out);
+      } else {
+        // Reuse observePost: a chat-shaped result carries the role's finalText as
+        // content plus its recorded tool calls, so promotion / architecture /
+        // manager-contracts parse identically to the chat path.
+        this.observePost(rt, syntheticReq, { content: out.finalText, toolCalls: out.toolCalls });
+      }
+    } catch {
+      // ditto
+    }
+    return out;
+  }
+
+  /** The chart node a role turn attributes its live activity to (mirrors the
+   * observePre attribution), or `undefined` for a role with no chart node. */
+  private roleRunNodeId(rt: CorpRuntime, req: CorpChatRequest): string | undefined {
+    switch (req.purpose) {
+      case 'vision':
+      case 'worker':
+        return rt.promoted ? CEO_NODE : SOLO_NODE;
+      case 'architect':
+        return ARCHITECT_NODE;
+      case 'manager':
+        return rt.divisions[rt.mgrCursor]?.id;
+      case 'engineer':
+        return this.attributeEngineer(rt, req)?.nodeId;
+      case 'ceo':
+      case 'revise':
+        return CEO_NODE;
+      case 'rescope':
+        return rt.divisions[Math.max(0, rt.mgrCursor - 1)]?.id;
+      default:
+        return undefined; // review / consult — no chart node
+    }
+  }
+
+  /** Map ONE live {@link RoleAgentActivity} record onto the neutral event stream:
+   * a mid-work file-touch (+ an artifact so peek enables) the instant a file is
+   * written; a light tool-step pulse; keep the node working across each turn. */
+  private mapRoleActivity(
+    rt: CorpRuntime,
+    nodeId: string | undefined,
+    record: RoleAgentActivity,
+  ): void {
+    if (rt.finished) return;
+    switch (record.kind) {
+      case 'file-write': {
+        if (record.path === undefined || record.path === '') return;
+        const rel = record.path;
+        // Light the map MID-work: an ACTIVE (phase 'progress') touch, so the region
+        // shows as being written NOW; the role's completion settles it to 'end'.
+        if (nodeId !== undefined) this.addLine(rt, nodeId, 'file-touch', `writing ${rel}`);
+        this.emit(rt, liveFileTouch(nodeId, rel, record.linesAdded));
+        // The first sight of a path becomes an artifact so the peek button enables
+        // and latestArtifact points at the newest file (peek() serves the real content).
+        this.surfaceArtifact(rt, nodeId, rel);
+        break;
+      }
+      case 'tool': {
+        if (nodeId === undefined) return;
+        this.emit(rt, activity(nodeId, 'tool-call', record.toolName ?? 'tool'));
+        break;
+      }
+      case 'turn-start': {
+        if (nodeId !== undefined) this.setNode(rt, nodeId, 'working');
+        break;
+      }
+      case 'turn-end':
+        break;
+    }
+  }
+
+  /** The AGENT engineer's completion (its files ARE its submission — there is no
+   * reply to parse, unlike the chat path's observePost). Mark the contract done and
+   * settle each produced file's touch to `phase: 'end'`. */
+  private observeEngineerAgentDone(
+    rt: CorpRuntime,
+    req: CorpChatRequest,
+    out: RoleAgentRunOutput,
+  ): void {
+    const c = this.attributeEngineer(rt, req);
+    if (c === undefined || out.filesWritten.length === 0) return; // no file → dispatch handles the gap
+    this.setNode(rt, c.nodeId, 'done');
+    c.state = 'in-review';
+    for (const f of out.filesWritten) {
+      this.addLine(rt, c.nodeId, 'message', `Wrote ${f.path} — in review.`);
+      this.emit(rt, endFileTouch(c.nodeId, f.path));
+      this.surfaceArtifact(rt, c.nodeId, f.path);
+    }
+    this.emitChecklist(rt);
+    this.emitEta(rt);
+    this.emit(rt, { type: 'org-chart', chart: this.buildChart(rt) });
+  }
+
+  /** Emit an {@link ArtifactEvent} for a produced path the first time it appears
+   * (deduped), so the situation room's "peek at what we have so far" affordance
+   * enables and points at the in-progress product. */
+  private surfaceArtifact(rt: CorpRuntime, nodeId: string | undefined, path: string): void {
+    if (rt.liveWrittenPaths.has(path)) return;
+    rt.liveWrittenPaths.add(path);
+    rt.artifactSeq += 1;
+    const artifact: ArtifactRef = {
+      id: `peek-${rt.taskId}-${rt.artifactSeq}`,
+      title: `Build so far — ${path}`,
+      kind: 'file',
+      path,
+      ...(nodeId !== undefined ? { nodeId } : {}),
+      timestamp: (this.opts.now ?? Date.now)(),
+    };
+    this.emit(rt, { type: 'artifact', artifact });
+  }
+
+  /**
+   * A live snapshot of the in-progress product tree — the REAL "peek at what we
+   * have so far" (spec §11), read on demand from the current workspace (never a
+   * mock). Returns `null` for an unknown task; an empty file list is honest (the
+   * product tree has nothing yet). The desktop host serves this over `corp:peek`.
+   */
+  peek(handle: TaskHandle): ProductPeek | null {
+    const rt = this.tasks.get(handle.taskId);
+    if (rt === undefined) return null;
+    return buildProductPeek(rt, (this.opts.now ?? Date.now)());
   }
 
   private applyArchitecture(rt: CorpRuntime, arch: Architecture): void {
@@ -924,4 +1130,106 @@ function fileTouch(nodeId: string, path: string, linesAdded: number): Coordinati
       timestamp: Date.now(),
     },
   };
+}
+
+/** A LIVE, mid-work file-touch (phase `progress`): the file map lights the region
+ * as being written NOW. `nodeId` may be absent (an un-owned role's write). */
+function liveFileTouch(
+  nodeId: string | undefined,
+  path: string,
+  linesAdded: number | undefined,
+): CoordinationEvent {
+  return {
+    type: 'activity',
+    activity: {
+      ...(nodeId !== undefined ? { nodeId } : {}),
+      kind: 'file-touch',
+      summary: `writing ${path}`,
+      path,
+      phase: 'progress',
+      ...(linesAdded !== undefined ? { linesAdded } : {}),
+      timestamp: Date.now(),
+    },
+  };
+}
+
+/** The terminal (phase `end`) file-touch for an AGENT engineer's produced file —
+ * settles the map region from "being written" to "written". */
+function endFileTouch(nodeId: string, path: string): CoordinationEvent {
+  return {
+    type: 'activity',
+    activity: {
+      nodeId,
+      kind: 'file-touch',
+      summary: `wrote ${path}`,
+      path,
+      phase: 'end',
+      timestamp: Date.now(),
+    },
+  };
+}
+
+/** Paths a product peek never reports (junk a stray bash step might create). */
+const PEEK_SKIP = /(?:^|\/)(?:node_modules|\.git|\.pi|\.cache|dist)(?:\/|$)/;
+/** Bound the peek: files returned, and per-file preview chars (a snapshot, not a
+ * full export — the whole tree can be large mid-build). */
+const PEEK_MAX_FILES = 200;
+const PEEK_MAX_FILE_CHARS = 64 * 1024;
+
+/** UTF-8 byte length of a produced file (no node:Buffer dependency). */
+function utf8Bytes(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/** A `/`-separated path relative to the workspace root (strips the root prefix). */
+function relativeTo(root: string, abs: string): string {
+  const normRoot = root.replace(/[/\\]+$/, '');
+  const normAbs = abs.replace(/\\/g, '/');
+  const normRootFwd = normRoot.replace(/\\/g, '/');
+  const rel = normAbs.startsWith(normRootFwd) ? normAbs.slice(normRootFwd.length) : normAbs;
+  return rel.replace(/^\/+/, '');
+}
+
+/**
+ * Read the CURRENT product tree out of a task's workspace into a neutral
+ * {@link ProductPeek} — the real in-progress files (path + size + a bounded content
+ * preview), sorted, junk-filtered, and capped. Pure aside from the injected read
+ * seam; never throws (a failed list/read simply contributes nothing).
+ */
+function buildProductPeek(rt: CorpRuntime, capturedAt: number): ProductPeek {
+  const root = rt.workspace.workspace;
+  let absPaths: readonly string[];
+  try {
+    absPaths = rt.workspace.readFs.listFiles(root);
+  } catch {
+    absPaths = [];
+  }
+  const entries = absPaths
+    .map((abs) => ({ abs, rel: relativeTo(root, abs) }))
+    .filter(({ rel }) => rel !== '' && !PEEK_SKIP.test(rel))
+    .sort((a, b) => a.rel.localeCompare(b.rel));
+
+  const files: ProductPeekFile[] = [];
+  let totalBytes = 0;
+  let fileCount = 0;
+  for (const { abs, rel } of entries) {
+    let content: string | undefined;
+    try {
+      content = rt.workspace.readFs.readFile(abs);
+    } catch {
+      content = undefined;
+    }
+    if (content === undefined) continue;
+    fileCount += 1;
+    totalBytes += utf8Bytes(content);
+    if (files.length >= PEEK_MAX_FILES) continue;
+    const truncated = content.length > PEEK_MAX_FILE_CHARS;
+    files.push({
+      path: rel,
+      bytes: utf8Bytes(content),
+      content: truncated ? content.slice(0, PEEK_MAX_FILE_CHARS) : content,
+      truncated,
+    });
+  }
+  return { taskId: rt.taskId, files, fileCount, totalBytes, capturedAt };
 }

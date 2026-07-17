@@ -62,6 +62,36 @@ export function samplingModeForPurpose(purpose: CorpTurnPurpose): SamplingMode {
   }
 }
 
+/**
+ * A LIVE activity record streamed DURING a role-agent run (spec §11 live
+ * situation room). Neutral + provider-agnostic: the app impl forwards the pi
+ * AgentSession's tool/turn events as these the MOMENT they happen — so the file
+ * map lights up WHILE an engineer writes, not only when the contract terminates.
+ * The CorpEngine maps them onto its neutral {@link CoordinationEvent} stream (a
+ * mid-work file-touch, a per-turn node pulse). Absent {@link
+ * RoleAgentRunInput.onActivity} → nothing streams and the run returns its terminal
+ * {@link RoleAgentRunOutput} exactly as before (the driver / unit tests).
+ */
+export interface RoleAgentActivity {
+  /**
+   * What happened. `file-write` = a `write`/`edit` tool finished and its target
+   * now exists (the moment to light the file map); `tool` = any other tool ran;
+   * `turn-start`/`turn-end` = one model turn's boundaries (the node pulse).
+   */
+  readonly kind: 'file-write' | 'tool' | 'turn-start' | 'turn-end';
+  /** The tool that ran (`tool` / `file-write`). */
+  readonly toolName?: string;
+  /** The file a `file-write` touched — as the model addressed it (relative to the
+   * run cwd when relative), so it maps 1:1 onto the product-tree slot. */
+  readonly path?: string;
+  /** UTF-8 byte length of the produced file, when known (`file-write`). */
+  readonly bytes?: number;
+  /** Lines the write added, when known (the live +N readout). */
+  readonly linesAdded?: number;
+  /** The model turn index (`turn-start`/`turn-end`). */
+  readonly turnIndex?: number;
+}
+
 /** One file a role-agent wrote to its workspace (a `write`/`edit` whose target
  * now exists). Structurally identical to the dispatcher's `WrittenFile`. */
 export interface RoleAgentWrittenFile {
@@ -239,6 +269,17 @@ export interface RoleAgentRunInput {
    * → consults run uncharged (tests). Supplied by the harness, which owns the budget.
    */
   readonly onConsult?: () => boolean;
+  /**
+   * LIVE ACTIVITY sink (spec §11). When set, the app impl forwards each of this
+   * run's tool/turn events as a {@link RoleAgentActivity} the MOMENT it happens,
+   * so the situation room lights up MID-work (a file-touch the instant an engineer
+   * writes, a pulse per model turn) rather than only at contract termination.
+   * Supplied by the CorpEngine, which maps the records onto its neutral
+   * CoordinationEvent stream; absent (tests / driver) → the run streams nothing and
+   * returns its terminal output unchanged. Best-effort: a throwing sink must never
+   * break the run.
+   */
+  readonly onActivity?: (record: RoleAgentActivity) => void;
   // NOTE: there is deliberately NO per-agent step cap and NO per-agent total
   // timeout on this seam. A role runs FULLY AUTONOMOUSLY — any tools, as much as it
   // wants, for as long as it wants — until IT submits (its submit tool) or the

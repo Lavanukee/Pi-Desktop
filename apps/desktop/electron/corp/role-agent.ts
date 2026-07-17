@@ -42,10 +42,14 @@ import {
   SettingsManager,
   type ToolCallEvent,
   type ToolDefinition,
+  type ToolResultEvent,
+  type TurnEndEvent,
+  type TurnStartEvent,
 } from '@mariozechner/pi-coding-agent';
-// Type-only: the corp turn taxonomy (stripped at runtime, so no cross-package
-// value import — keeps this file loadable under Node TS type-stripping).
-import type { CorpTurnPurpose } from '@pi-desktop/harness/corp';
+// Type-only: the corp turn taxonomy + the neutral live-activity record (both
+// stripped at runtime, so no cross-package value import — keeps this file loadable
+// under Node TS type-stripping).
+import type { CorpTurnPurpose, RoleAgentActivity } from '@pi-desktop/harness/corp';
 
 // ---------------------------------------------------------------------------
 // Sampling modes — the owner's qwen params, keyed by role behaviour.
@@ -267,6 +271,50 @@ export function collectFilesWritten(
   return [...byPath.entries()].map(([p, bytes]) => ({ path: p, bytes }));
 }
 
+/**
+ * Build a LIVE {@link RoleAgentActivity} `file-write` record from a finished
+ * `write`/`edit` tool execution — the moment the file exists, so the situation
+ * room can light the map MID-work. Returns `undefined` for a non-file tool or a
+ * call with no target path. Pure aside from the injected `statBytes` (so it is
+ * unit-testable from mock events): the path is reported AS the model addressed it
+ * (relative to `cwd` when relative — that IS the product-tree slot), the byte
+ * size is stat'd off `cwd`, and `linesAdded` is counted from the write content
+ * when present. Never throws.
+ */
+export function fileWriteActivity(
+  toolName: string,
+  args: unknown,
+  cwd: string,
+  statBytes: (absPath: string) => number | undefined,
+): RoleAgentActivity | undefined {
+  if (toolName !== 'write' && toolName !== 'edit') return undefined;
+  const rec = argsRecord(args as RoleAgentToolCall['arguments']);
+  const rel = toolCallPath(args as RoleAgentToolCall['arguments']);
+  if (rel === undefined) return undefined;
+  const abs = path.isAbsolute(rel) ? rel : path.join(cwd, rel);
+  const bytes = statBytes(abs);
+  // The new file body, when the write tool carried it (write: `content`; edit:
+  // the replacement text) — used only for the live +N line readout.
+  const body =
+    rec !== undefined
+      ? typeof rec.content === 'string'
+        ? rec.content
+        : typeof rec.new_text === 'string'
+          ? rec.new_text
+          : typeof rec.text === 'string'
+            ? rec.text
+            : undefined
+      : undefined;
+  const linesAdded = body !== undefined ? body.split('\n').length : undefined;
+  return {
+    kind: 'file-write',
+    toolName,
+    path: rel,
+    ...(bytes !== undefined ? { bytes } : {}),
+    ...(linesAdded !== undefined ? { linesAdded } : {}),
+  };
+}
+
 /** Why the role-agent run ended. */
 export type RoleTerminatedReason = 'stop' | 'step-cap' | 'timeout' | 'error';
 
@@ -434,6 +482,14 @@ export interface RoleAgentConfig {
    * a role without them in its allowlist can never call them. Absent → just corpExt.
    */
   readonly extensionFactories?: ExtensionFactory[];
+  /**
+   * LIVE ACTIVITY sink (spec §11). When set, `corpExt` forwards this run's pi
+   * lifecycle events as neutral {@link RoleAgentActivity} records the MOMENT they
+   * happen: `turn-start`/`turn-end` (the per-turn node pulse) and, on each finished
+   * `write`/`edit`, a `file-write` (the mid-work file-touch). Best-effort — a
+   * throwing sink is swallowed so it can never break the run. Absent → nothing
+   * streams (unchanged behaviour). */
+  readonly onActivity?: (record: RoleAgentActivity) => void;
 }
 
 /** The BUMP-TO-CONTINUE policy for a run (see {@link RoleAgentConfig.bump}). */
@@ -555,6 +611,36 @@ export async function runRoleAgent(
       toolCalls.push({ name: e.toolName, arguments: e.input });
       return stepCap?.charge();
     });
+
+    // LIVE ACTIVITY (spec §11) — forward the run's tool/turn lifecycle the MOMENT
+    // it happens so the situation room lights up mid-work. Best-effort: a throwing
+    // sink must never break the run. Absent sink → these are cheap no-ops.
+    const onActivity = config.onActivity;
+    if (onActivity !== undefined) {
+      const emit = (record: RoleAgentActivity): void => {
+        try {
+          onActivity(record);
+        } catch {
+          // a misbehaving sink can never break the agent loop
+        }
+      };
+      pi.on('turn_start', (e: TurnStartEvent) => {
+        emit({ kind: 'turn-start', turnIndex: e.turnIndex });
+      });
+      pi.on('turn_end', (e: TurnEndEvent) => {
+        emit({ kind: 'turn-end', turnIndex: e.turnIndex });
+      });
+      // A finished write/edit → the file now exists → a file-touch record. Other
+      // successful tools → a plain `tool` record (a live step signal). Errors are
+      // not forwarded (no file to light, no completed step to show). `tool_result`
+      // fires after execution and carries the tool args (`input`) + `isError`.
+      pi.on('tool_result', (e: ToolResultEvent) => {
+        if (e.isError) return undefined;
+        const fileWrite = fileWriteActivity(e.toolName, e.input, config.cwd, safeStatBytes);
+        emit(fileWrite ?? { kind: 'tool', toolName: e.toolName });
+        return undefined;
+      });
+    }
   };
 
   const settings = SettingsManager.inMemory();

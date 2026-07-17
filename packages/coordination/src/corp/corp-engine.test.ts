@@ -1,4 +1,12 @@
-import type { CorpChatFn, CorpChatRequest, CorpChatResult } from '@pi-desktop/harness/corp';
+import type {
+  CorpChatFn,
+  CorpChatRequest,
+  CorpChatResult,
+  RoleAgentRunInput,
+  RoleAgentRunOutput,
+  RunRoleAgentFn,
+} from '@pi-desktop/harness/corp';
+import { slotPath } from '@pi-desktop/harness/corp';
 import { describe, expect, it } from 'vitest';
 import {
   type CoordinationEvent,
@@ -7,7 +15,7 @@ import {
   isTerminalEvent,
   type TaskHandle,
 } from '../index.js';
-import { CorpEngine } from './index.js';
+import { CorpEngine, type CorpWorkspace, createMemoryWorkspace } from './index.js';
 
 /** Drain a handle's event stream to completion (each run ends in `done`). */
 async function collect(handle: TaskHandle): Promise<CoordinationEvent[]> {
@@ -199,5 +207,149 @@ describe('CorpEngine implements CoordinationEngine', () => {
 
     expect(terminal(events).result.outcome).toBe('aborted');
     expect(events.filter(isTerminalEvent)).toHaveLength(1);
+  });
+});
+
+/**
+ * A promoting corp run driven through the ROLE-AGENT seam (the desktop/agent
+ * path — where the chat seam is never called). Engineers "write" their slot into a
+ * shared workspace store and stream LIVE activity via `onActivity`. Deterministic —
+ * no model, no network.
+ */
+function promotingRoleAgent(workspace: CorpWorkspace): RunRoleAgentFn {
+  const root = workspace.workspace;
+  const knownSlots = ['src/api/core.ts', 'src/ui/core.tsx'];
+  return (input: RoleAgentRunInput): Promise<RoleAgentRunOutput> => {
+    const emit = input.onActivity;
+    const stop = (partial: Partial<RoleAgentRunOutput>): RoleAgentRunOutput => ({
+      filesWritten: [],
+      finalText: '',
+      toolCalls: [],
+      terminatedReason: 'stop',
+      ...partial,
+    });
+    switch (input.purpose) {
+      case 'vision':
+        return Promise.resolve(
+          stop({ finalText: 'Build a small dashboard with a UI and an API.' }),
+        );
+      case 'worker':
+        emit?.({ kind: 'turn-start', turnIndex: 0 });
+        return Promise.resolve(stop({ finalText: PROMOTION }));
+      case 'architect':
+        return Promise.resolve(stop({ finalText: ARCHITECTURE }));
+      case 'manager':
+        return Promise.resolve(
+          stop({
+            finalText: input.userPrompt.includes('Backend')
+              ? contractsFor('Backend', 'src/api/core.ts')
+              : contractsFor('Frontend', 'src/ui/core.tsx'),
+          }),
+        );
+      case 'engineer': {
+        // The slot this engineer builds (its prompt names it); write a valid,
+        // balanced file to the SHARED store FIRST so a peek triggered by the live
+        // file-touch already sees it, then stream the mid-work write.
+        const slot = knownSlots.find((s) => input.userPrompt.includes(s)) ?? 'src/ui/core.tsx';
+        const content = 'export const core = () => 42;\n';
+        const bytes = new TextEncoder().encode(content).length;
+        workspace.fs.writeFile(slotPath(root, slot), content);
+        emit?.({ kind: 'turn-start', turnIndex: 0 });
+        emit?.({ kind: 'file-write', toolName: 'write', path: slot, bytes, linesAdded: 1 });
+        return Promise.resolve(
+          stop({ finalText: 'wrote it', filesWritten: [{ path: slot, bytes }] }),
+        );
+      }
+      case 'review':
+        // A measured, no-findings review (submit_findings with an empty list) — no
+        // blocking finding, so no bounded revision loop.
+        return Promise.resolve(
+          stop({ toolCalls: [{ name: 'submit_findings', arguments: { findings: [] } }] }),
+        );
+      case 'ceo':
+      case 'revise':
+        return Promise.resolve(
+          stop({ finalText: JSON.stringify({ decision: 'approve', notes: 'Looks complete.' }) }),
+        );
+      default:
+        return Promise.resolve(stop({}));
+    }
+  };
+}
+
+describe('CorpEngine — agent-path LIVE activity + peek (spec §11)', () => {
+  it('streams a mid-work file-touch + artifact, grows the chart, and peeks the real product', async () => {
+    const workspace = createMemoryWorkspace('/corp-peek');
+    const engine = new CorpEngine({
+      chat: () => {
+        throw new Error('chat must not be called on the agent path');
+      },
+      runRoleAgent: promotingRoleAgent(workspace),
+      workspaceFor: () => workspace,
+      limit: 1, // one engineer is enough to prove the live path
+      maxRevisions: 0,
+    });
+    const handle = engine.startTask('Build me a dashboard app');
+
+    // Drain; the first live file-touch (phase 'progress') fires WHILE the contract
+    // is still in-progress — capture a peek AT that moment (real, non-empty).
+    const events: CoordinationEvent[] = [];
+    let midRunPeekFiles = 0;
+    let sawProgressBeforeDone = false;
+    for await (const event of handle.events) {
+      if (
+        event.type === 'activity' &&
+        event.activity.kind === 'file-touch' &&
+        event.activity.phase === 'progress'
+      ) {
+        sawProgressBeforeDone = true;
+        midRunPeekFiles = engine.peek(handle)?.files.length ?? 0;
+      }
+      events.push(event);
+    }
+
+    expect(terminal(events).result.outcome).toBe('completed');
+
+    // A LIVE, mid-work file-touch arrived before the terminal done (not only at
+    // contract end), attributed to an engineer node, lighting the file map.
+    const progress = events.filter(
+      (e): e is Extract<CoordinationEvent, { type: 'activity' }> =>
+        e.type === 'activity' &&
+        e.activity.kind === 'file-touch' &&
+        e.activity.phase === 'progress',
+    );
+    expect(sawProgressBeforeDone).toBe(true);
+    expect(progress.length).toBeGreaterThan(0);
+    expect(progress[0]?.activity.path).toBeDefined();
+    expect(progress[0]?.activity.nodeId?.startsWith('eng-')).toBe(true);
+
+    // An artifact surfaced (the peek affordance enables) pointing at the file.
+    const artifacts = events.filter((e) => e.type === 'artifact');
+    expect(artifacts.length).toBeGreaterThan(0);
+
+    // The chart grew from role-agent turns (chat never ran): CEO + divisions +
+    // an engineer node — and multiple org-chart pulses landed during the run.
+    const charts = events.filter((e) => e.type === 'org-chart');
+    expect(charts.length).toBeGreaterThan(1);
+    const richest = charts.at(-1);
+    if (richest?.type === 'org-chart') {
+      const roles = richest.chart.nodes.map((n) => n.role);
+      expect(roles).toContain('ceo');
+      expect(roles).toContain('engineer');
+    }
+
+    // A peek taken DURING the run returned the REAL in-progress product (non-empty).
+    expect(midRunPeekFiles).toBeGreaterThan(0);
+
+    // And a peek after the run reflects the written slot (real content, not a stub).
+    const peek = engine.peek(handle);
+    expect(peek?.files.length).toBeGreaterThan(0);
+    expect(peek?.files.some((f) => f.content.includes('export const core'))).toBe(true);
+    expect(peek?.totalBytes).toBeGreaterThan(0);
+  });
+
+  it('peek returns null for an unknown task', () => {
+    const engine = new CorpEngine({ chat: promotingChat() });
+    expect(engine.peek({ taskId: 'nope', events: (async function* () {})() })).toBeNull();
   });
 });

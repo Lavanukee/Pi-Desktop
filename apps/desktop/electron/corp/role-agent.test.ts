@@ -5,6 +5,7 @@ import {
   countAssistantTurns,
   createStepCapCounter,
   deriveTerminatedReason,
+  fileWriteActivity,
   maxTurnOutputTokens,
   type RoleAgentToolCall,
   SAMPLING_MODES,
@@ -235,6 +236,70 @@ describe('collectFilesWritten — result shaping from mock write/edit tool event
       { name: 'write', arguments: { content: 'no path' } },
     ];
     expect(collectFilesWritten(calls, bytesFor, cwd)).toEqual([{ path: 'aliased.ts', bytes: 7 }]);
+  });
+});
+
+describe('fileWriteActivity — a LIVE file-write record from a finished tool event', () => {
+  const cwd = '/ws';
+  const statBytes = (abs: string): number | undefined =>
+    abs === '/ws/src/ui/app.tsx' ? 340 : abs === '/abs/x.ts' ? 12 : undefined;
+
+  it('maps a finished write to a file-write record — rel path, stat bytes, +lines', () => {
+    const rec = fileWriteActivity(
+      'write',
+      { path: 'src/ui/app.tsx', content: 'a\nb\nc' },
+      cwd,
+      statBytes,
+    );
+    expect(rec).toEqual({
+      kind: 'file-write',
+      toolName: 'write',
+      path: 'src/ui/app.tsx',
+      bytes: 340,
+      linesAdded: 3,
+    });
+  });
+
+  it('counts edit replacement text via new_text', () => {
+    const rec = fileWriteActivity(
+      'edit',
+      { path: 'src/ui/app.tsx', oldText: 'x', new_text: 'one\ntwo' },
+      cwd,
+      statBytes,
+    );
+    expect(rec?.kind).toBe('file-write');
+    expect(rec?.linesAdded).toBe(2);
+  });
+
+  it('honours an absolute path and omits bytes when the file cannot be stat’d', () => {
+    expect(fileWriteActivity('write', { path: '/abs/x.ts', content: 'x' }, cwd, statBytes)).toEqual(
+      {
+        kind: 'file-write',
+        toolName: 'write',
+        path: '/abs/x.ts',
+        bytes: 12,
+        linesAdded: 1,
+      },
+    );
+    // Missing stat → no bytes field (still a valid file-write record).
+    const noStat = fileWriteActivity(
+      'write',
+      { path: 'src/gone.ts', content: 'y' },
+      cwd,
+      () => undefined,
+    );
+    expect(noStat).toEqual({
+      kind: 'file-write',
+      toolName: 'write',
+      path: 'src/gone.ts',
+      linesAdded: 1,
+    });
+  });
+
+  it('returns undefined for a non-file tool or a pathless call (→ the caller emits a plain tool step)', () => {
+    expect(fileWriteActivity('bash', { command: 'ls' }, cwd, statBytes)).toBeUndefined();
+    expect(fileWriteActivity('read', { path: 'src/ui/app.tsx' }, cwd, statBytes)).toBeUndefined();
+    expect(fileWriteActivity('write', { content: 'no path' }, cwd, statBytes)).toBeUndefined();
   });
 });
 

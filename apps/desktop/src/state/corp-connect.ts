@@ -12,6 +12,7 @@
 import type {
   CoordinationEvent,
   OrgChartView,
+  ProductPeek,
   TaskContext,
   WorkerTranscriptView,
 } from '@pi-desktop/coordination';
@@ -154,4 +155,11 @@ export async function fetchWorkerTranscript(
     .invoke('corp:worker-transcript', { taskId, nodeId })
     .catch(() => ({ transcript: null }));
   return res.transcript;
+}
+
+/** "Peek at what we have so far" — a live snapshot of the in-progress product tree
+ * (real files), or null when the task is unknown/ended. */
+export async function peekCorpTask(taskId: string): Promise<ProductPeek | null> {
+  const res = await window.piDesktop.invoke('corp:peek', { taskId }).catch(() => ({ peek: null }));
+  return res.peek;
 }

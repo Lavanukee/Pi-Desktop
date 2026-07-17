@@ -58,6 +58,7 @@ import type {
   LlmTierPick,
 } from '../ipc-contract';
 import { DownloadCancellation, discardPartials, partialPaths } from './download-cancellation';
+import { fastTextSlotLaunch } from './parallel-launch';
 import type {
   HfListFilesReply,
   HfRegisterReply,
@@ -643,6 +644,7 @@ async function startServer(
   modelId: string,
   quant?: string,
   launchMode: LaunchMode = 'fast-text',
+  parallel?: number,
 ): Promise<{ success: boolean; baseUrl?: string; error?: string }> {
   const model = getModel(modelId);
   if (model === undefined) return { success: false, error: `unknown model: ${modelId}` };
@@ -714,7 +716,16 @@ async function startServer(
     }
     const install = await ensureLlamaCpp();
     const features = await probeServerFeatures(install.serverPath);
+    // Per-slot context (the reported/gauge value): a single request/slot sees this.
     const contextWindow = Math.min(model.contextWindow, CONTEXT_CAP);
+    // OOM-safe fan-out: for a K-slot fast-text launch the server `-c` must be
+    // perSlot × K (llama.cpp splits `-c` across `--parallel` slots) so each slot
+    // still gets the full `contextWindow`. K defaults to 1 (single slot, `-c` =
+    // contextWindow — unchanged). Multimodal keeps its single-slot budget.
+    const launch =
+      launchMode === 'fast-text'
+        ? fastTextSlotLaunch(contextWindow, parallel)
+        : { parallel: 1, contextSize: contextWindow };
 
     // Resolve the speed-decode sibling for a FAST-TEXT launch (a multimodal
     // launch drops MTP/EAGLE — they are mutually exclusive with --mmproj):
@@ -741,7 +752,9 @@ async function startServer(
       serverPath: install.serverPath,
       modelPath,
       launchMode,
-      contextSize: contextWindow,
+      contextSize: launch.contextSize,
+      // `--parallel N`: N fast-text slots (default 1), or 1 for multimodal.
+      parallel: launch.parallel,
       // Undefined for every fast-text launch (mmprojFileFor is the chokepoint),
       // set only when vision was explicitly requested — the lazy guarantee.
       mmprojPath,
@@ -829,7 +842,7 @@ async function handle(req: LlmRequest): Promise<unknown> {
     case 'verify-model':
       return verifyModel(req.modelId, req.quant);
     case 'start-server':
-      return startServer(req.modelId, req.quant, req.launchMode);
+      return startServer(req.modelId, req.quant, req.launchMode, req.parallel);
     case 'stop-server':
       return stopServer();
     case 'hf-search':

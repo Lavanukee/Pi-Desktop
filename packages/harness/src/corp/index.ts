@@ -32,6 +32,7 @@ export * from './promotion.js';
 export * from './prompts.js';
 export * from './retry.js';
 export * from './revise.js';
+export * from './role-agent-seam.js';
 export * from './run.js';
 export * from './sanitize.js';
 export * from './verify.js';

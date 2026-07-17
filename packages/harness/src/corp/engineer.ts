@@ -229,6 +229,116 @@ export function buildEngineerPrompt(
   return lines.join('\n');
 }
 
+/** The built-in tool allowlist an engineer AgentSession may hold. */
+export const ENGINEER_BUILTIN_TOOLS = [
+  'read',
+  'write',
+  'edit',
+  'bash',
+  'grep',
+  'find',
+  'ls',
+] as const;
+
+/**
+ * Map a contract's declared `available.tools` to the built-in agent allowlist.
+ * `available.tools` is advisory prose today (often empty/sparse), so the DEFAULT
+ * is the full agentic toolset; a genuinely-declared subset is honored but always
+ * augmented with `read` + `write` (an engineer must read its deps and write its
+ * slot). Pure + deterministic.
+ */
+export function engineerToolAllowlist(declared: readonly string[]): string[] {
+  const builtin = new Set<string>(ENGINEER_BUILTIN_TOOLS);
+  const known = declared.map((t) => t.toLowerCase().trim()).filter((t) => builtin.has(t));
+  // Sparse/advisory (fewer than 3 recognized) → the full agentic toolset.
+  if (known.length < 3) return [...ENGINEER_BUILTIN_TOOLS];
+  const set = new Set(known);
+  set.add('read');
+  set.add('write');
+  return ENGINEER_BUILTIN_TOOLS.filter((t) => set.has(t));
+}
+
+/**
+ * The TOOL-WRITING addendum appended to the engineer's system prompt on the AGENT
+ * path. It RETIRES the {@link ENGINEER_SYSTEM_PROMPT} "your entire reply is written
+ * verbatim to your slot" instruction: on the agent path the files the engineer
+ * WRITES are its submission, not its reply text.
+ */
+export const AGENT_ENGINEER_ADDENDUM = `You have real tools. Read any dependency files you need with the read tool. Write the file for your contract's slot at its exact path using the write tool; you MAY create small supporting files within your own region. Run a quick \`bash\` typecheck/compile sanity check to verify before finishing. Do NOT print the file as text — the files you write ARE your submission. Stop when the slot file satisfies the contract.`;
+
+/**
+ * Build the engineer's USER turn for the AGENT path — the contract framing of
+ * {@link buildEngineerPrompt} MINUS the "output the whole file as text" bits.
+ * Dependencies are given as SLOT PATHS (with the exact relative import specifier)
+ * and the engineer is told to READ them with its tools, rather than having their
+ * produced content inlined (the agent reads real files from the shared workspace).
+ * An optional CEO revision note is appended when re-dispatching a flagged contract.
+ * Pure string composition; deterministic.
+ */
+export function buildAgentEngineerPrompt(
+  contract: Contract,
+  depContext: readonly DependencyContext[],
+  architectureRegion?: string,
+  extraNotes?: string,
+): string {
+  const tools =
+    contract.available.tools.length > 0 ? contract.available.tools.join(', ') : '(none declared)';
+  const imports =
+    contract.available.imports.length > 0 ? contract.available.imports.join(', ') : '(none)';
+
+  const lines: string[] = [
+    'Build the file for your contract by WRITING it into the workspace with your tools.',
+    '',
+    'YOUR CONTRACT',
+    `- Title: ${contract.title}`,
+    `- Slot (write your file to THIS exact path): ${contract.slot}`,
+    `- Input: ${contract.input}`,
+    `- Output (what you must produce): ${contract.output}`,
+    `- Advisory tools: ${tools}`,
+    `- Available imports (build only against these): ${imports}`,
+    `- Review rubric (your work is checked against this): ${contract.reviewRubric}`,
+  ];
+
+  const notes = contract.notes?.trim();
+  if (notes !== undefined && notes !== '') lines.push(`- Notes: ${notes}`);
+
+  const region = architectureRegion?.trim();
+  if (region !== undefined && region !== '') {
+    lines.push(
+      '',
+      'YOUR MODULE REGION (where this file sits in the shared architecture — stay inside it):',
+      region,
+    );
+  }
+
+  if (depContext.length > 0) {
+    lines.push(
+      '',
+      'DEPENDENCIES — already written to the workspace by prior contracts. READ these files with your `read` tool and integrate against their ACTUAL types/names/signatures:',
+    );
+    for (const dep of depContext) {
+      lines.push(
+        '',
+        `--- ${dep.title} (${dep.contractId})`,
+        `Read file: ${dep.slot}`,
+        `Provides: ${dep.output}`,
+        `Import from '${relativeImportSpecifier(contract.slot, dep.slot)}' (use exactly this specifier).`,
+      );
+    }
+  }
+
+  const extra = extraNotes?.trim();
+  if (extra !== undefined && extra !== '') {
+    lines.push('', 'CEO REVISION NOTES (address these specifically):', extra);
+  }
+
+  lines.push(
+    '',
+    `Write the complete file to ${contract.slot}, then run a quick bash sanity check. Stop once the slot file satisfies the contract.`,
+  );
+  return lines.join('\n');
+}
+
 /**
  * The model-free self-review bounce (spec §7 submission interceptor): auto-generated
  * from the contract, it asks the engineer to re-read its contract and the file it

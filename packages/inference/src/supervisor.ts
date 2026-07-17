@@ -5,8 +5,9 @@
  *
  * Launch modes encode the MTP exclusivity invariant that the later app-wiring
  * lane must respect:
- *   - 'fast-text'  → single slot (`--parallel 1`) + speculative decoding when the
- *                    build supports it, one of:
+ *   - 'fast-text'  → `--parallel N` (default 1 slot; the OOM-aware corp launcher
+ *                    may request N>1, each slot getting the full `-c / N`) +
+ *                    speculative decoding when the build supports it, one of:
  *                      · MTP     — `--spec-type draft-mtp --spec-draft-n-max N`
  *                        (embedded head, or a sibling head via `--model-draft`).
  *                      · EAGLE-3 — `--spec-type draft-eagle3 --model-draft <draft>
@@ -112,8 +113,10 @@ export function assembleServerArgs(cfg: LaunchConfig): string[] {
   if (cfg.contextSize !== undefined) args.push('-c', String(cfg.contextSize));
 
   if (cfg.launchMode === 'fast-text') {
-    // Speculative decoding requires a single slot.
-    args.push('--parallel', '1');
+    // Single slot by default; the OOM-aware corp launcher may request K slots
+    // (each getting the full `-c / K` context — the caller sizes `-c` to
+    // perSlot × K), while KEEPING speculative decoding on across the slots.
+    args.push('--parallel', String(cfg.parallel ?? 1));
     if ((cfg.specType ?? 'draft-mtp') === 'draft-eagle3') {
       // EAGLE-3 always needs a separate draft model.
       if (cfg.eagle3Supported === true && cfg.draftPath !== undefined) {

@@ -73,24 +73,44 @@ export type CorpInferenceResult =
 
 /**
  * Ensure a local model server is up for the coordination harness. When a server
- * is already running it is reused as-is; otherwise the recommended sub-12B Q8 qwen
+ * is already running it is reused AS-IS; otherwise the recommended sub-12B Q8 qwen
  * ({@link CORP_MODEL_ID} `Q8_0`) is started via the SAME supervisor path the Model
- * Manager uses. Context size is auto-capped to 16384 by the supervisor
- * (CONTEXT_CAP), so the corp turns run with `-c 16384` without a knob here.
+ * Manager uses.
+ *
+ * `parallel` (K) requests K fast-text slots: the server comes up with
+ * `--parallel K` and `-c = 16384 × K`, so concurrency is REAL and each of the K
+ * engineer turns still gets the full 16384-token context (default K = 1 → the
+ * unchanged single-slot `-c 16384` launch).
+ *
+ * REUSE CAVEAT: if a server is ALREADY up (possibly with a different slot count)
+ * it is reused as-is — we log the requested K but do not restart to re-slot it.
+ * A fresh corp run (no server yet) is the common path and gets exactly K slots.
  *
  * Never throws: a model that cannot be found/started resolves to an `ok:false`
  * result carrying the model id + error, so the caller surfaces it (a missing
  * model is a loud, honest terminal state — never a silent degrade to a stub).
  */
-export async function ensureCorpInferenceServer(): Promise<CorpInferenceResult> {
+export async function ensureCorpInferenceServer(
+  opts: { parallel?: number } = {},
+): Promise<CorpInferenceResult> {
+  const parallel = opts.parallel;
   const existing = getInferenceUtility();
-  if (existing !== null) return { ok: true, ...existing };
+  if (existing !== null) {
+    if (parallel !== undefined && parallel > 1) {
+      log.info('ensureCorpInferenceServer: reusing running server as-is', {
+        requestedParallel: parallel,
+        note: 'existing server kept; its slot count is not changed for this run',
+      });
+    }
+    return { ok: true, ...existing };
+  }
   try {
     const res = await request<{ success: boolean; baseUrl?: string; error?: string }>({
       type: 'start-server',
       modelId: CORP_MODEL_ID,
       quant: 'Q8_0',
       launchMode: 'fast-text',
+      ...(parallel !== undefined ? { parallel } : {}),
     });
     if (res.success && res.baseUrl !== undefined && res.baseUrl.length > 0) {
       return { ok: true, baseUrl: res.baseUrl, model: CORP_MODEL_ID };

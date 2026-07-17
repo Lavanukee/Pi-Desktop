@@ -105,6 +105,7 @@ const {
   // Still used directly by the offline --dry-run fixture below.
   edgesFromContracts,
   dispatchContracts,
+  writeSlot,
   buildProductManifest,
   verifyProduct,
   buildCeoReviewPrompt,
@@ -203,6 +204,9 @@ async function runDryRun() {
 
   let reviewTurns = 0;
   const calls = [];
+  // The engineer SEAM writes its slot file (the write moved out of dispatch) and
+  // returns the WrittenFile(s); dispatch reads the slot back for dependents.
+  const nodeFs = makeNodeWorkspaceFs();
   const mockEngineer = (request) => {
     const isReview = request.review !== undefined;
     if (isReview) reviewTurns++;
@@ -212,13 +216,15 @@ async function runDryRun() {
       depIds: request.depContext.map((d) => d.contractId),
       depContent: request.depContext.map((d) => d.content),
     });
-    return `// file for ${request.contract.id}${isReview ? ' (reviewed)' : ''}\nexport const ${request.contract.id} = 'ok';\n`;
+    const body = `// file for ${request.contract.id}${isReview ? ' (reviewed)' : ''}\nexport const ${request.contract.id} = 'ok';\n`;
+    const path = writeSlot(workspace, request.contract.slot, body, nodeFs);
+    return [{ path, bytes: Buffer.byteLength(body, 'utf8') }];
   };
 
   const report = await dispatchContracts({
     orgChart: chart,
     runEngineer: mockEngineer,
-    fs: makeNodeWorkspaceFs(),
+    readFs: makeNodeWorkspaceReadFs(),
     workspace,
     // Fix 3: measure the interceptor — capture draft vs reviewed per contract.
     captureReviews: true,

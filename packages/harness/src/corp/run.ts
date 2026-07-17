@@ -54,8 +54,16 @@ import {
   dispatchContracts,
   type EngineerRequest,
   type RunEngineer,
+  type WrittenFile,
 } from './dispatch.js';
-import { buildEngineerPrompt, ENGINEER_SYSTEM_PROMPT, parseEngineerOutput } from './engineer.js';
+import {
+  AGENT_ENGINEER_ADDENDUM,
+  buildAgentEngineerPrompt,
+  buildEngineerPrompt,
+  ENGINEER_SYSTEM_PROMPT,
+  engineerToolAllowlist,
+  parseEngineerOutput,
+} from './engineer.js';
 import { buildManagerRescopePrompt, escalateContract, runBoundedEscalation } from './escalate.js';
 import { type DivisionContracts, resolveInterfaceHandles } from './integrate.js';
 import type { Contract, ContractStatus, OrgChart } from './org-chart.js';
@@ -70,11 +78,18 @@ import {
   PROMOTION_SYSTEM_PROMPT,
   parseCreateHierarchyArgs,
 } from './promotion.js';
-import { getRolePrompt, roleThinkingEnabled } from './prompts.js';
+import {
+  composeNodePrompt,
+  ENGINEERING_HANDBOOK,
+  getPromptById,
+  getRolePrompt,
+  roleThinkingEnabled,
+} from './prompts.js';
 import { isBlankFile, MANAGER_EMPTY_RETRY_NUDGE, withRetryOnEmpty } from './retry.js';
 import { type ReviseOutcome, runBoundedRevise } from './revise.js';
+import { type RunRoleAgentFn, samplingModeForPurpose } from './role-agent-seam.js';
 import { type FileCheck, type VerifyResult, verifyProduct } from './verify.js';
-import type { WorkspaceFs, WorkspaceReadFs } from './workspace.js';
+import { type WorkspaceFs, type WorkspaceReadFs, writeSlot } from './workspace.js';
 
 // --- The model seam ----------------------------------------------------------
 
@@ -134,7 +149,15 @@ export interface RunCorpOptions {
   readonly task: string;
   /** The model seam (streaming provider call in the driver; a mock in tests). */
   readonly chat: CorpChatFn;
-  /** Workspace write seam (engineer files land here). */
+  /**
+   * The role-agent seam (pi-agnostic, injected by the app). When present, the
+   * ENGINEER role runs as a real agentic loop (writing its slot file with tools +
+   * a bash self-check) instead of a bare chat completion. When ABSENT (driver /
+   * tests), the engineer falls back to the chat-based seam. Phase-2 wires the
+   * engineer role only; the judgment/structured roles follow in the next stage.
+   */
+  readonly runRoleAgent?: RunRoleAgentFn;
+  /** Workspace write seam (the chat-fallback engineer + assembly write here). */
   readonly fs: WorkspaceFs;
   /** Workspace read seam (assemble + verify read produced files back). */
   readonly readFs: WorkspaceReadFs;
@@ -142,6 +165,9 @@ export interface RunCorpOptions {
   readonly workspace: string;
   /** Dispatch at most this many engineers (a subset); default: all ready ones. */
   readonly limit?: number;
+  /** Run up to this many engineer jobs concurrently, bounded by the contract DAG
+   * (dispatch.ts). Default 1 = the sequential walk, byte-for-byte. */
+  readonly concurrency?: number;
   /** Cap on CEO revise cycles (revise.ts); default 1. */
   readonly maxRevisions?: number;
   /** Base generation cap for judgment turns (default 8192); manager + engineer
@@ -251,6 +277,11 @@ function preview(text: string, max = 2000): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
+/** UTF-8 byte length of a produced file (no node:Buffer dependency). */
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
 /** Extract the first balanced `{…}` JSON object from `text` (string-aware scan). */
 function firstJsonObject(text: string | undefined): Record<string, unknown> | undefined {
   if (typeof text !== 'string') return undefined;
@@ -326,6 +357,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
   const baseMaxTokens = options.maxTokens ?? 8192;
   const genMaxTokens = Math.max(baseMaxTokens, 16000);
   const limit = options.limit;
+  const concurrency = options.concurrency;
   const log = options.log ?? (() => {});
   const engineerThinking = roleThinkingEnabled('engineer');
 
@@ -350,14 +382,19 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
     }
   };
 
+  const useAgentEngineer = options.runRoleAgent !== undefined;
   let engineerEmptyAfterRetry = 0;
-  // The engineer seam used inside dispatch. Charges every model call (draft +
-  // self-review + a retry). A budget refusal throws — dispatch catches it as a
-  // FAILED contract (finite), and we record the terminate reason. A model error
-  // propagates too, so dispatch marks the contract failed rather than aborting.
-  const makeRunEngineer =
+
+  // The CHAT-FALLBACK engineer seam (no role-agent injected): a bare completion
+  // whose reply IS the file. Charges every model call (draft + self-review +
+  // retry); WRITES the parsed file to the slot itself and returns the written
+  // file, so dispatch just records it (the write moved out of dispatch). A budget
+  // refusal throws — dispatch catches it as a FAILED contract (finite) and we
+  // record the terminate reason; a model error propagates too, so dispatch marks
+  // the contract failed rather than aborting.
+  const makeChatEngineer =
     (extraNotes?: string): RunEngineer =>
-    async (request: EngineerRequest) => {
+    async (request: EngineerRequest): Promise<readonly WrittenFile[]> => {
       const result = await withRetryOnEmpty({
         isEmpty: isBlankFile,
         run: async ({ isRetry }) => {
@@ -397,8 +434,57 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         engineerEmptyAfterRetry += 1;
         throw new Error(`engineer produced empty content for ${request.contract.id} after retry`);
       }
-      return result.value;
+      const path = writeSlot(options.workspace, request.contract.slot, result.value, options.fs);
+      return [{ path, bytes: byteLength(result.value) }];
     };
+
+  // The AGENT engineer seam (role-agent injected): the engineer runs as a real
+  // scoped AgentSession rooted at the shared workspace, READING its dependency
+  // files and WRITING its slot file (plus small supporting files) with tools, then
+  // a bash self-check — the files it writes ARE its submission. One agent run is
+  // charged as ONE engineer turn against the global budget (its internal steps are
+  // bounded by the seam's own step-cap + timeout, not the run budget). A budget
+  // refusal throws (dispatch → FAILED, finite). The dep files are already in the
+  // workspace (serial dispatch, no clobber), so the agent reads real code.
+  const runRoleAgent = options.runRoleAgent;
+  const makeAgentEngineer =
+    (extraNotes?: string): RunEngineer =>
+    async (request: EngineerRequest): Promise<readonly WrittenFile[]> => {
+      if (runRoleAgent === undefined) return [];
+      if (!chargeTurn(budget)) {
+        terminatedReason ??= 'budget-exceeded';
+        throw new BudgetExhausted();
+      }
+      turnsByPurpose.engineer += 1;
+      const base = getPromptById(request.promptId ?? 'engineer') ?? getRolePrompt('engineer');
+      const systemPrompt = `${composeNodePrompt(base, request.promptExtension)}\n\n${ENGINEERING_HANDBOOK}\n\n${AGENT_ENGINEER_ADDENDUM}`;
+      const userPrompt = buildAgentEngineerPrompt(
+        request.contract,
+        request.depContext,
+        request.architectureRegion,
+        extraNotes,
+      );
+      const out = await runRoleAgent({
+        purpose: 'engineer',
+        systemPrompt,
+        userPrompt,
+        tools: engineerToolAllowlist(request.contract.available.tools),
+        cwd: options.workspace,
+        thinking: engineerThinking,
+        samplingMode: samplingModeForPurpose('engineer'),
+        maxTokens: genMaxTokens,
+        maxSteps: 24,
+        timeoutMs: 5 * 60 * 1000,
+      });
+      return out.filesWritten.map((f) => ({ path: f.path, bytes: f.bytes }));
+    };
+
+  // The engineer seam dispatch uses. The agent path relies on its in-harness bash
+  // self-check as the first-order review, so it does NOT run the model-free
+  // submission bounce (dispatch's captureReviews); the chat-fallback path keeps
+  // the self-review quality gate.
+  const makeEngineerSeam = (extraNotes?: string): RunEngineer =>
+    useAgentEngineer ? makeAgentEngineer(extraNotes) : makeChatEngineer(extraNotes);
 
   let promoted = false;
   let promotionArgs: CreateHierarchyArgs | undefined;
@@ -512,11 +598,14 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
       log(`dispatching (limit=${limit ?? 'all'})`);
       dispatchReport = await dispatchContracts({
         orgChart: chart,
-        runEngineer: makeRunEngineer(),
-        fs: options.fs,
+        runEngineer: makeEngineerSeam(),
+        readFs: options.readFs,
         workspace: options.workspace,
-        captureReviews: true,
+        // Chat-fallback path runs the model-free self-review bounce; the agent
+        // path self-checks in-harness (bash) instead, so no bounce there.
+        ...(useAgentEngineer ? {} : { captureReviews: true }),
         ...(limit !== undefined ? { limit } : {}),
+        ...(concurrency !== undefined ? { concurrency } : {}),
       });
       chart = dispatchReport.chart;
     }
@@ -607,10 +696,11 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
             };
             const rework = await dispatchContracts({
               orgChart: reworkChart,
-              runEngineer: makeRunEngineer(notes),
-              fs: options.fs,
+              runEngineer: makeEngineerSeam(notes),
+              readFs: options.readFs,
               workspace: options.workspace,
-              captureReviews: true,
+              ...(useAgentEngineer ? {} : { captureReviews: true }),
+              ...(concurrency !== undefined ? { concurrency } : {}),
             });
             const newlyDone = new Set(rework.done);
             chart = {

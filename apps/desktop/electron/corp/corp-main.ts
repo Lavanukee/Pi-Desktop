@@ -23,9 +23,11 @@ import { app, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electro
 import { ensureCorpInferenceServer } from '../inference/llm-main';
 import type { AppEventMap } from '../ipc-contract';
 import { isTrustedIpcEvent } from '../trusted-senders';
+import { corpConcurrencyForHost } from './concurrency';
 import { createLlamaCorpChat } from './corp-chat';
 import type { CorpInvokeMap } from './corp-contract';
 import { CORP_INVOKE_CHANNELS } from './corp-contract';
+import { createRunRoleAgent } from './role-agent-seam-impl';
 
 const log = createLogger('desktop:corp');
 const events = createIpcEventSender<AppEventMap>();
@@ -52,16 +54,23 @@ function corpWorkspaceRoot(): string {
  * stub that appears to work but does nothing (a silent config-failure).
  */
 type ResolvedCorpChat =
-  | { readonly ok: true; readonly chat: CorpChatFn }
+  | {
+      readonly ok: true;
+      readonly chat: CorpChatFn;
+      readonly baseUrl: string;
+      readonly model: string;
+    }
   | { readonly ok: false; readonly message: string };
 
-async function resolveCorpChat(): Promise<ResolvedCorpChat> {
-  const utility = await ensureCorpInferenceServer();
+async function resolveCorpChat(parallel: number): Promise<ResolvedCorpChat> {
+  const utility = await ensureCorpInferenceServer({ parallel });
   if (utility.ok) {
     log.info('corp chat bound to local server', { baseUrl: utility.baseUrl, model: utility.model });
     return {
       ok: true,
       chat: createLlamaCorpChat({ baseUrl: utility.baseUrl, model: utility.model }),
+      baseUrl: utility.baseUrl,
+      model: utility.model,
     };
   }
   log.warn('corp: no local model available — surfacing to the situation room', {
@@ -82,11 +91,38 @@ async function handleStart(
   wc: WebContents,
   req: CorpInvokeMap['corp:start']['request'],
 ): Promise<CorpInvokeMap['corp:start']['response']> {
-  const resolved = await resolveCorpChat();
+  // Fan-out width. EMPIRICAL DEFAULT = SEQUENTIAL (K=1). On a single Apple GPU the
+  // --parallel slots share one GPU, so concurrent engineers buy ~no aggregate
+  // throughput (benchmarked ~72 tok/s single vs ~76 tok/s 3-concurrent) AND make each
+  // turn ~3x slower. The OOM-safe RAM-fitted width (corpConcurrencyForHost) and the
+  // whole parallel dispatch path stay tested for hardware where batching actually pays
+  // (multi-GPU / servers); opt in with PI_DESKTOP_CORP_CONCURRENCY=<N> (OOM-capped).
+  // KNOWN LIMITATION: the K>1 path currently has an unresolved hang in the engineer
+  // seam under real concurrent model calls — diagnose before enabling in production.
+  const basis = corpConcurrencyForHost();
+  const requested = Number(process.env.PI_DESKTOP_CORP_CONCURRENCY);
+  const parallelOptIn = Number.isFinite(requested) && requested >= 1;
+  const concurrency = parallelOptIn ? Math.min(Math.floor(requested), basis.concurrency) : 1;
+  log.info('corp concurrency selected', {
+    concurrency,
+    parallelOptIn,
+    ramFittedMax: basis.concurrency,
+    totalRamBytes: basis.totalRamBytes,
+    perSlotKvBytes: basis.perSlotKvBytes,
+  });
+  const resolved = await resolveCorpChat(concurrency);
+  // The ENGINEER role runs as a real agentic loop (file + bash tools) via the
+  // role-agent seam, bound to the SAME resolved server the chat seam uses. Absent
+  // on the unavailable path (the engine terminates without running the harness).
+  const runRoleAgent = resolved.ok
+    ? createRunRoleAgent({ baseUrl: resolved.baseUrl, model: resolved.model })
+    : undefined;
   const engine = new CorpEngine({
     // Unused on the unavailable path (startUnavailable never calls the model).
     chat: resolved.ok ? resolved.chat : noopCorpChat,
+    ...(runRoleAgent !== undefined ? { runRoleAgent } : {}),
     workspaceFor: createNodeWorkspaceFactory(corpWorkspaceRoot()),
+    concurrency,
   });
   const handle = resolved.ok
     ? engine.startTask(req.prompt, req.ctx)

@@ -3,11 +3,15 @@
  * DAG, §0.6 "robustness is external").
  *
  * Once planning (slice 2/3) has produced an acyclic {@link OrgChart} queue, this
- * module hands each contract to an engineer, IN DEPENDENCY ORDER, and lands the
- * produced file in the workspace. It is pure orchestration behind two injected
- * seams — {@link RunEngineer} (the engineer turn) and {@link WorkspaceFs} (the
- * file write) — so the whole loop is unit-testable with a mock engineer and an
- * in-memory fs, no model and no disk.
+ * module hands each contract to an engineer, IN DEPENDENCY ORDER. The engineer
+ * seam WRITES its slot file to the workspace (the chat/fallback seam parses its
+ * reply and `writeSlot`s it; the agent seam writes via tools) and returns the
+ * {@link WrittenFile}s; the dispatcher RECORDS them and reads the slot file back
+ * (via {@link WorkspaceReadFs}) to confirm it exists, size it, and forward its
+ * content to dependents. It is pure orchestration behind two injected seams —
+ * {@link RunEngineer} (the engineer turn) and {@link WorkspaceReadFs} (reading
+ * produced files back) — so the whole loop is unit-testable with a mock engineer
+ * and an in-memory store, no model and no disk.
  *
  * Ordering + failure policy:
  *  - A contract is READY only when every id in its `dependsOn` is DONE. The loop
@@ -19,8 +23,12 @@
  *    run. Its dependents (transitively) are SKIPPED and recorded; independent
  *    work still runs. This is the "robustness is external" principle: one bad
  *    contract loses its subtree, never the whole corporation.
- *  - Sequential for now; parallel `-np` width is a later optimization (spec §6 —
- *    correctness never depends on parallelism, only speed does).
+ *  - BOUNDED CONCURRENCY (spec §6): up to `concurrency` engineer jobs run at once,
+ *    still respecting the DAG (a job starts only once every dep is DONE). The
+ *    default width 1 is byte-for-byte the original sequential walk. Correctness
+ *    never depends on the width — only speed does — so the report is EMITTED in
+ *    topological `order` (per-id outcomes collected into maps), identical however
+ *    the pool happened to schedule the jobs.
  *
  * The submission interceptor (spec §7, MODEL-FREE) is a thin wrapper
  * ({@link withSubmissionReview}) around the engineer seam, so the dispatch loop
@@ -29,10 +37,19 @@
 
 import { edgesFromContracts, topologicalOrder } from './dag.js';
 import { buildSelfReviewPrompt, type DependencyContext } from './engineer.js';
-import type { Contract, ContractStatus, OrgChart } from './org-chart.js';
-import { type WorkspaceFs, writeSlot } from './workspace.js';
+import type { Contract, ContractStatus, OrgChart, OrgNode } from './org-chart.js';
+import { slotPath, type WorkspaceReadFs } from './workspace.js';
 
 // --- The engineer seam -------------------------------------------------------
+
+/** One file the engineer wrote to the workspace (the slot file, plus any small
+ * supporting files an agent engineer creates within its region). */
+export interface WrittenFile {
+  /** Absolute path written. */
+  readonly path: string;
+  /** UTF-8 byte length of the produced file. */
+  readonly bytes: number;
+}
 
 /**
  * The self-review bounce state carried on a review turn (spec §7). Present only
@@ -55,16 +72,29 @@ export interface EngineerRequest {
   readonly depContext: readonly DependencyContext[];
   /** The module region this file lives in (from the shared architecture), if any. */
   readonly architectureRegion?: string;
+  /** The owning {@link OrgNode}'s library prompt id (for the agent path's composed
+   * system prompt); absent when the owner node is not in the chart (defaults to
+   * `'engineer'`). */
+  readonly promptId?: string;
+  /** The owning node's light prompt extension (division flavor), when present. */
+  readonly promptExtension?: string;
   /** Set on the self-review bounce; absent on the first draft turn. */
   readonly review?: EngineerReview;
 }
 
 /**
- * The engineer turn as a seam: given a request, return the FILE CONTENT for the
- * contract's slot (raw text — the dispatcher writes it). Sync or async; a mock in
- * tests, the model-backed impl in the driver.
+ * The engineer turn as a seam: given a request, WRITE the file(s) for the
+ * contract's slot into the workspace and return the {@link WrittenFile}s written.
+ * BOTH engineer paths conform: the chat/fallback seam parses the reply text and
+ * `writeSlot`s it itself (returning `[{path,bytes}]`); the AGENT seam has already
+ * written via tools (returning `result.filesWritten`). The dispatcher no longer
+ * writes — it RECORDS what the seam wrote and reads the slot file back for the
+ * dependents' context. Sync or async; a mock in tests, the model-backed impl in
+ * the driver.
  */
-export type RunEngineer = (request: EngineerRequest) => Promise<string> | string;
+export type RunEngineer = (
+  request: EngineerRequest,
+) => Promise<readonly WrittenFile[]> | readonly WrittenFile[];
 
 /** A transform over the engineer seam (e.g. {@link withSubmissionReview}). */
 export type EngineerInterceptor = (run: RunEngineer) => RunEngineer;
@@ -117,6 +147,7 @@ export type ReviewSink = (record: ReviewRecord) => void;
  */
 export function withSubmissionReview(
   run: RunEngineer,
+  readSlot: (request: EngineerRequest) => string | undefined,
   capture?: ReviewSink,
   includeBodies = false,
 ): RunEngineer {
@@ -126,21 +157,27 @@ export function withSubmissionReview(
     // Already bounced once (or a pre-formed review turn) → accept without re-review.
     if (request.review !== undefined || reviewed.has(id)) return run(request);
     reviewed.add(id);
-    const draft = await run(request); // first submit
-    const finalFile = await run({
+    // FILE MODEL: each seam call WRITES the slot; the draft/reviewed CONTENT is
+    // read back from disk (not returned), so the interceptor measures the real
+    // on-disk quality delta. The draft content is fed back as the review turn's
+    // prior submission.
+    await run(request); // first submit → writes the slot
+    const draft = readSlot(request) ?? '';
+    const finalFiles = await run({
       ...request,
       review: { priorSubmission: draft, prompt: buildSelfReviewPrompt(request.contract) },
-    });
+    }); // review turn → rewrites the slot
+    const reviewedContent = readSlot(request) ?? '';
     if (capture !== undefined) {
       capture({
         contractId: id,
         draftBytes: byteLength(draft),
-        reviewedBytes: byteLength(finalFile),
-        changed: draft !== finalFile,
-        ...(includeBodies ? { draft, reviewed: finalFile } : {}),
+        reviewedBytes: byteLength(reviewedContent),
+        changed: draft !== reviewedContent,
+        ...(includeBodies ? { draft, reviewed: reviewedContent } : {}),
       });
     }
-    return finalFile;
+    return finalFiles;
   };
 }
 
@@ -148,14 +185,6 @@ export function withSubmissionReview(
 
 /** Outcome of dispatching one contract. */
 export type DispatchStatus = 'done' | 'failed' | 'skipped';
-
-/** One file the dispatcher wrote to the workspace. */
-export interface WrittenFile {
-  /** Absolute path written. */
-  readonly path: string;
-  /** UTF-8 byte length of the produced file. */
-  readonly bytes: number;
-}
 
 /** Per-contract dispatch result. */
 export interface ContractDispatchResult {
@@ -200,11 +229,14 @@ export interface DispatchReport {
 export interface DispatchOptions {
   /** The planned, acyclic chart (contracts + queue + optional architecture). */
   readonly orgChart: OrgChart;
-  /** The engineer seam (mock in tests, model-backed in the driver). */
+  /** The engineer seam (mock in tests, model-backed in the driver). The seam
+   * WRITES the file(s); dispatch records them and reads the slot back. */
   readonly runEngineer: RunEngineer;
-  /** The workspace fs seam (in-memory in tests, node:fs in the driver). */
-  readonly fs: WorkspaceFs;
-  /** The per-task workspace root; files land at `<workspace>/<slot>`. */
+  /** The workspace READ seam (in-memory in tests, node:fs in the driver). Dispatch
+   * reads each contract's produced slot file back — to confirm it exists (→ done),
+   * to size it, and to forward its content to dependents. Writing is the seam's job. */
+  readonly readFs: WorkspaceReadFs;
+  /** The per-task workspace root; the seam writes files at `<workspace>/<slot>`. */
   readonly workspace: string;
   /** Optional engineer-seam transform (e.g. {@link withSubmissionReview}). */
   readonly interceptor?: EngineerInterceptor;
@@ -221,6 +253,14 @@ export interface DispatchOptions {
   readonly includeReviewBodies?: boolean;
   /** Dispatch at most this many engineers (a SUBSET); default: all ready ones. */
   readonly limit?: number;
+  /**
+   * Run up to this many engineer jobs CONCURRENTLY (bounded by the DAG — a job
+   * still starts only once every dep is DONE). Default 1 = the original sequential
+   * walk, byte-for-byte. Values < 1 are clamped to 1. At most `concurrency` model
+   * turns are ever in flight (each job runs engineer→review sequentially WITHIN
+   * itself), so this is the OOM-safe knob for finishing a large plan in-budget.
+   */
+  readonly concurrency?: number;
 }
 
 /** True when `slot` lives inside `regionPath` (equal, or under it as a directory). */
@@ -260,25 +300,67 @@ function byteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
+/** Resolve a seam-reported path to an absolute workspace path: an already-absolute
+ * path is kept; a relative one (an agent addressing files under its cwd) is placed
+ * beneath the workspace root (via {@link slotPath}, which also sanitizes it). */
+function absoluteInWorkspace(workspace: string, filePath: string): string {
+  const isAbsolute = filePath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(filePath);
+  return isAbsolute ? filePath : slotPath(workspace, filePath);
+}
+
+/** The settled result of ONE engineer job — the SAME per-contract work as the
+ * serial loop, done off in a promise so the pool can run up to `concurrency` at
+ * once. `ok: true` carries the produced file + write; `ok: false` carries the
+ * engineer error (a job NEVER throws — it captures the failure, exactly as the
+ * serial try/catch did). */
+type JobOutcome =
+  | {
+      readonly id: string;
+      readonly ok: true;
+      /** The produced slot-file content, read back from the workspace (forwarded
+       * to dependents' depContext). */
+      readonly slotContent: string;
+      /** The absolute slot path + its size (the per-contract result). */
+      readonly path: string;
+      readonly bytes: number;
+      /** Every file the seam wrote for this contract (slot + supporting files). */
+      readonly files: readonly WrittenFile[];
+    }
+  | { readonly id: string; readonly ok: false; readonly error: string };
+
 /**
  * Dispatch the chart's contracts to engineers in DEPENDENCY order, writing each
  * produced file to `<workspace>/<slot>`. See the module doc for the ordering +
- * failure policy. Sequential; pure orchestration behind the injected engineer +
- * fs seams. Never mutates the input chart; never throws (an engineer error is
- * captured as a FAILED result). Returns a {@link DispatchReport}.
+ * failure policy. A BOUNDED-CONCURRENCY DAG walk (default width 1 = sequential,
+ * byte-for-byte); pure orchestration behind the injected engineer + fs seams.
+ * Never mutates the input chart; never throws (an engineer error is captured as a
+ * FAILED result). The report is emitted in topological `order`, so it is identical
+ * however the pool scheduled the jobs. Returns a {@link DispatchReport}.
  */
 export async function dispatchContracts(options: DispatchOptions): Promise<DispatchReport> {
-  const { orgChart, fs, workspace } = options;
+  const { orgChart, readFs, workspace } = options;
   const limit = options.limit ?? Number.POSITIVE_INFINITY;
+  // Bounded concurrency width — default 1 (the original sequential walk); < 1 is
+  // meaningless (it could never start a job) so clamp up to 1.
+  const concurrency = Math.max(1, options.concurrency ?? 1);
+
+  // Read a contract's produced slot file back from the workspace (the seam wrote
+  // it there). Used to forward dep content, size the primary file, decide
+  // done/failed, and measure the submission review.
+  const readSlot = (request: EngineerRequest): string | undefined =>
+    readFs.readFile(slotPath(workspace, request.contract.slot));
 
   // Fix 3: when measuring the interceptor, dispatch owns the capturing review
   // (it IS the interceptor); otherwise honor a caller-supplied interceptor.
-  const reviews: ReviewRecord[] = [];
+  // Captured records go into a per-id map so the report can emit them in
+  // topological order (deterministic regardless of completion order).
+  const reviewById = new Map<string, ReviewRecord>();
   let run: RunEngineer;
   if (options.captureReviews === true) {
     run = withSubmissionReview(
       options.runEngineer,
-      (record) => reviews.push(record),
+      readSlot,
+      (record) => reviewById.set(record.contractId, record),
       options.includeReviewBodies === true,
     );
   } else if (options.interceptor !== undefined) {
@@ -289,6 +371,7 @@ export async function dispatchContracts(options: DispatchOptions): Promise<Dispa
 
   const contracts = orgChart.contracts;
   const byId = new Map(contracts.map((c) => [c.id, c] as const));
+  const nodeById = new Map<string, OrgNode>(orgChart.nodes.map((n) => [n.id, n] as const));
   const ids = contracts.map((c) => c.id);
   const edges = orgChart.queue.length > 0 ? orgChart.queue : edgesFromContracts(contracts);
   // The planned chart is acyclic by construction; fall back to input order if a
@@ -300,62 +383,190 @@ export async function dispatchContracts(options: DispatchOptions): Promise<Dispa
   const failedSet = new Set<string>();
   const skippedSet = new Set<string>();
   const statusById = new Map<string, ContractStatus>();
-  const results: ContractDispatchResult[] = [];
-  const filesWritten: WrittenFile[] = [];
-  let ran = 0;
+  // Per-id outcome maps — the report EMITS every field in topological `order`
+  // (below), never completion order, so a run's report is identical no matter how
+  // the pool scheduled the jobs.
+  const resultById = new Map<string, ContractDispatchResult>();
+  // A contract can write more than one file on the agent path (slot + small
+  // supporting files); the report flattens these per id in topological order.
+  const filesById = new Map<string, WrittenFile[]>();
 
-  for (const id of order) {
-    if (ran >= limit) break;
-    const contract = byId.get(id);
-    if (contract === undefined) continue;
+  const isTerminal = (id: string): boolean =>
+    doneSet.has(id) || failedSet.has(id) || skippedSet.has(id);
 
-    const blockedBy = contract.dependsOn.filter((d) => failedSet.has(d) || skippedSet.has(d));
-    if (blockedBy.length > 0) {
-      skippedSet.add(id);
-      results.push({
-        contractId: id,
-        title: contract.title,
-        slot: contract.slot,
-        status: 'skipped',
-        skippedBecause: blockedBy,
-      });
-      continue;
-    }
+  const inFlight = new Map<string, Promise<JobOutcome>>();
+  let started = 0; // counts STARTED jobs (skips do NOT count) — mirrors serial `ran`.
 
+  // Start one engineer job: the SAME per-contract work as the serial loop. Its
+  // depContext is built from the deps' PRODUCED files HERE, at start time — a job
+  // only ever starts once every dep is DONE, so those files are present. The job
+  // never throws; it settles to a {@link JobOutcome} the pool applies below.
+  const startJob = (contract: Contract): void => {
+    const id = contract.id;
     const depContext = contract.dependsOn
       .map((d) => makeDepContext(byId.get(d), produced.get(d)))
       .filter((c): c is DependencyContext => c !== undefined);
     const architectureRegion = moduleRegionForSlot(orgChart, contract.slot);
+    // Thread the owning node's library prompt id / light extension so the agent
+    // path can compose the engineer's system prompt (missing node → defaults).
+    const node = nodeById.get(contract.ownerNodeId);
+    const primaryPath = slotPath(workspace, contract.slot);
+    started += 1;
+    inFlight.set(
+      id,
+      (async (): Promise<JobOutcome> => {
+        try {
+          const files = await run({
+            contract,
+            depContext,
+            ...(architectureRegion !== undefined ? { architectureRegion } : {}),
+            ...(node?.promptId !== undefined ? { promptId: node.promptId } : {}),
+            ...(node?.promptExtension !== undefined
+              ? { promptExtension: node.promptExtension }
+              : {}),
+          });
+          // The seam WROTE the file(s). Read the slot back: present ⇒ done (its
+          // content forwards to dependents); ABSENT ⇒ the contract failed (the
+          // engineer never produced its slot file).
+          const slotContent = readSlot({ contract, depContext });
+          if (slotContent === undefined) {
+            return {
+              id,
+              ok: false,
+              error: `engineer did not write the slot file ${contract.slot}`,
+            };
+          }
+          return {
+            id,
+            ok: true,
+            slotContent,
+            path: primaryPath,
+            bytes: byteLength(slotContent),
+            files: [...files],
+          };
+        } catch (err) {
+          return { id, ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+      })(),
+    );
+  };
 
-    try {
-      const fileText = await run({ contract, depContext, architectureRegion });
-      const path = writeSlot(workspace, contract.slot, fileText, fs);
-      const bytes = byteLength(fileText);
-      produced.set(id, fileText);
-      doneSet.add(id);
-      statusById.set(id, 'in-review');
-      filesWritten.push({ path, bytes });
-      results.push({
-        contractId: id,
+  // Fold one settled job into the shared sets (done → produced/doneSet/in-review +
+  // a written file + a done result; failed → failedSet/unfulfillable + a failed
+  // result). Same records the serial loop wrote, keyed by id for ordered emit.
+  const applyOutcome = (outcome: JobOutcome, contract: Contract): void => {
+    if (outcome.ok) {
+      produced.set(outcome.id, outcome.slotContent);
+      doneSet.add(outcome.id);
+      statusById.set(outcome.id, 'in-review');
+      // Record every file the seam wrote (slot + any supporting files), deduped by
+      // absolute path, with the primary slot file guaranteed present. Relative
+      // paths (an agent addressing files under its cwd) resolve against the
+      // workspace so the report is a set of real, distinct paths.
+      const byPath = new Map<string, WrittenFile>();
+      for (const f of outcome.files) {
+        const abs = absoluteInWorkspace(workspace, f.path);
+        byPath.set(abs, { path: abs, bytes: f.bytes });
+      }
+      byPath.set(outcome.path, { path: outcome.path, bytes: outcome.bytes });
+      filesById.set(outcome.id, [...byPath.values()]);
+      resultById.set(outcome.id, {
+        contractId: outcome.id,
         title: contract.title,
         slot: contract.slot,
         status: 'done',
-        path,
-        bytes,
+        path: outcome.path,
+        bytes: outcome.bytes,
       });
-    } catch (err) {
-      failedSet.add(id);
-      statusById.set(id, 'unfulfillable');
-      results.push({
-        contractId: id,
+    } else {
+      failedSet.add(outcome.id);
+      statusById.set(outcome.id, 'unfulfillable');
+      resultById.set(outcome.id, {
+        contractId: outcome.id,
         title: contract.title,
         slot: contract.slot,
         status: 'failed',
-        error: err instanceof Error ? err.message : String(err),
+        error: outcome.error,
       });
     }
-    ran += 1;
+  };
+
+  const recordSkip = (contract: Contract, blockedBy: readonly string[]): void => {
+    skippedSet.add(contract.id);
+    resultById.set(contract.id, {
+      contractId: contract.id,
+      title: contract.title,
+      slot: contract.slot,
+      status: 'skipped',
+      skippedBecause: blockedBy,
+    });
+  };
+
+  // --- BOUNDED-CONCURRENCY DAG WALK ------------------------------------------
+  // Each outer turn: (1) walk `order` once and, for every not-yet-terminal /
+  // not-in-flight contract, either SKIP it (a dep failed/was skipped — cascade),
+  // START it (all deps done, and both the `limit` and `concurrency` gates allow),
+  // or leave it (a dep is still pending). Then, if nothing is in flight, terminate;
+  // otherwise AWAIT the next job to settle (never busy-spin) and repeat — a newly
+  // failed/skipped contract cascades to its dependents on the next walk. The
+  // `started >= limit` break mirrors the serial loop's `if (ran >= limit) break`,
+  // so at concurrency 1 this is byte-for-byte the old sequential behavior.
+  for (;;) {
+    for (const id of order) {
+      const contract = byId.get(id);
+      if (contract === undefined) continue;
+      if (isTerminal(id) || inFlight.has(id)) continue;
+      // Once `limit` STARTED jobs is reached, start nothing further and evaluate
+      // nothing further this walk (exactly the serial break) — let in-flight finish.
+      if (started >= limit) break;
+      const blockedBy = contract.dependsOn.filter((d) => failedSet.has(d) || skippedSet.has(d));
+      if (blockedBy.length > 0) {
+        recordSkip(contract, blockedBy);
+        continue;
+      }
+      const ready = contract.dependsOn.every((d) => doneSet.has(d));
+      // Ready + a free concurrency slot → start it. Not ready (a dep is in flight /
+      // unstarted) or the pool is full → leave it for a later walk.
+      if (ready && inFlight.size < concurrency) startJob(contract);
+    }
+
+    if (inFlight.size === 0) {
+      // Nothing running. Either everything is terminal, the `limit` cut us off
+      // (remaining contracts stay unreached, exactly as the serial break), or the
+      // graph is stuck — only reachable on the CYCLIC fallback `order`, since a
+      // valid DAG always has an actionable source when nothing is in flight. Skip
+      // whatever remains with its unmet deps so a bad chart can never hang.
+      const allTerminal = order.every((id) => byId.get(id) === undefined || isTerminal(id));
+      if (allTerminal || started >= limit) break;
+      for (const id of order) {
+        const contract = byId.get(id);
+        if (contract === undefined || isTerminal(id)) continue;
+        recordSkip(
+          contract,
+          contract.dependsOn.filter((d) => !doneSet.has(d)),
+        );
+      }
+      break;
+    }
+
+    const outcome = await Promise.race(inFlight.values());
+    inFlight.delete(outcome.id);
+    const settled = byId.get(outcome.id);
+    if (settled !== undefined) applyOutcome(outcome, settled);
   }
+
+  // DETERMINISTIC EMIT: every list is built in topological `order`, so the report
+  // is identical regardless of the (nondeterministic) completion order.
+  const results = order
+    .map((id) => resultById.get(id))
+    .filter((r): r is ContractDispatchResult => r !== undefined);
+  const filesWritten = order.flatMap((id) => filesById.get(id) ?? []);
+  const reviews = order
+    .map((id) => reviewById.get(id))
+    .filter((r): r is ReviewRecord => r !== undefined);
+  const done = order.filter((id) => doneSet.has(id));
+  const failed = order.filter((id) => failedSet.has(id));
+  const skipped = order.filter((id) => skippedSet.has(id));
 
   const updatedContracts = contracts.map((c) => {
     const status = statusById.get(c.id);
@@ -365,9 +576,9 @@ export async function dispatchContracts(options: DispatchOptions): Promise<Dispa
 
   return {
     results,
-    done: [...doneSet],
-    failed: [...failedSet],
-    skipped: [...skippedSet],
+    done,
+    failed,
+    skipped,
     filesWritten,
     reviews,
     interceptorChangedCount: reviews.filter((r) => r.changed).length,

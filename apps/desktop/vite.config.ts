@@ -29,6 +29,21 @@ function csp(dev: boolean): string {
   ].join('; ');
 }
 
+/**
+ * Externals for the ELECTRON MAIN bundle (never the renderer):
+ *  - `node-pty` — a native `.node` addon required at runtime.
+ *  - `@mariozechner/pi-coding-agent` — the FULL pi agent runtime (pulls in every
+ *    provider SDK, e.g. mistralai → an uninstalled optional `@opentelemetry/api`
+ *    peer dep rolldown cannot bundle). The engine runs pi as a forked subprocess
+ *    (its `dist/cli.js`); the corp role-agent runtime (electron/corp/role-agent.ts)
+ *    value-imports it directly in main, so keep the whole SDK external — it
+ *    resolves from node_modules at runtime, exactly like the engine's usage.
+ * A function matches both the bare specifier and the resolved workspace/.pnpm path.
+ */
+function electronMainExternal(source: string): boolean {
+  return source === 'node-pty' || source.includes('@mariozechner/pi-coding-agent');
+}
+
 function cspPlugin(): PluginOption {
   let dev = false;
   return {
@@ -71,9 +86,23 @@ export default defineConfig({
         // must never be bundled. Left external so the CJS `require('node-pty')`
         // in electron/terminal/pty-manager.ts resolves from node_modules (and
         // asarUnpack keeps its binary loadable in the packaged app).
+        //
+        // @mariozechner/pi-coding-agent is the FULL pi agent runtime (it pulls in
+        // every provider SDK — mistralai, opentelemetry, …). The engine runs it as
+        // a forked subprocess (its bundled dist/cli.js), never bundled into main.
+        // The corp role-agent runtime (electron/corp/role-agent.ts) value-imports
+        // it directly in main, so keep the WHOLE SDK external — it resolves from
+        // node_modules at runtime, exactly like the engine's usage, instead of
+        // rolldown trying (and failing) to bundle its optional peer deps.
+        // NB: vite-plugin-electron reads `build.rolldownOptions` on Vite 8+ (and
+        // `build.rollupOptions` on Vite < 8) — set both so the external applies
+        // regardless. A FUNCTION external matches BOTH the bare specifier (kept as
+        // a runtime require) AND the resolved workspace/.pnpm path (Vite resolves
+        // the workspace import before a string-external check would fire).
         vite: {
           build: {
-            rollupOptions: { external: ['node-pty'] },
+            rollupOptions: { external: electronMainExternal },
+            rolldownOptions: { external: electronMainExternal },
           },
         },
       },

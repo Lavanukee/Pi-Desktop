@@ -41,6 +41,7 @@ import {
   parseCreateHierarchyArgs,
   parseEngineerOutput,
   parseManagerContracts,
+  type RunRoleAgentFn,
   runCorp,
   type WorkspaceFs,
   type WorkspaceReadFs,
@@ -150,10 +151,20 @@ export function createNodeWorkspaceFactory(root: string): (taskId: string) => Co
 export interface CorpEngineOptions {
   /** The injected model seam — a real llama-server client, or a mock. */
   readonly chat: CorpChatFn;
+  /**
+   * The role-agent seam (pi-agnostic). When provided (the desktop main process
+   * adapts `electron/corp/role-agent.ts`), the ENGINEER role runs as a real
+   * agentic loop with file + bash tools; when omitted, engineers fall back to the
+   * chat seam. Passed straight through to {@link runCorp}.
+   */
+  readonly runRoleAgent?: RunRoleAgentFn;
   /** Per-task fs seams (defaults to an in-memory workspace when omitted). */
   readonly workspaceFor?: (taskId: string) => CorpWorkspace;
   /** Dispatch at most this many engineers (passed to runCorp). */
   readonly limit?: number;
+  /** Run up to this many engineer jobs concurrently, bounded by the contract DAG
+   * (passed to runCorp; default 1 = sequential). */
+  readonly concurrency?: number;
   /** CEO revise cycle cap (passed to runCorp; default 1). */
   readonly maxRevisions?: number;
   /** Base generation cap for judgment turns (passed to runCorp). */
@@ -344,10 +355,12 @@ export class CorpEngine implements CoordinationEngine {
     void runCorp({
       task: prompt,
       chat: this.observingChat(rt),
+      ...(this.opts.runRoleAgent !== undefined ? { runRoleAgent: this.opts.runRoleAgent } : {}),
       fs: workspace.fs,
       readFs: workspace.readFs,
       workspace: workspace.workspace,
       ...(this.opts.limit !== undefined ? { limit: this.opts.limit } : {}),
+      ...(this.opts.concurrency !== undefined ? { concurrency: this.opts.concurrency } : {}),
       ...(this.opts.maxRevisions !== undefined ? { maxRevisions: this.opts.maxRevisions } : {}),
       ...(this.opts.maxTokens !== undefined ? { maxTokens: this.opts.maxTokens } : {}),
       ...(this.opts.maxTurns !== undefined ? { maxTurns: this.opts.maxTurns } : {}),

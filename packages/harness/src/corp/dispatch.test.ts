@@ -5,12 +5,15 @@ import {
   dispatchContracts,
   type EngineerRequest,
   type RunEngineer,
+  type WrittenFile,
   withSubmissionReview,
 } from './dispatch.js';
 import type { Contract, OrgChart } from './org-chart.js';
-import type { WorkspaceFs } from './workspace.js';
+import { slotPath, type WorkspaceReadFs } from './workspace.js';
 
 // --- fixtures ----------------------------------------------------------------
+
+const WS = '/ws';
 
 function contract(id: string, slot: string, dependsOn: readonly string[] = []): Contract {
   return {
@@ -43,19 +46,46 @@ function chartOf(
   };
 }
 
-/** In-memory workspace fs — path → content. */
-function memFs(): { fs: WorkspaceFs; files: Map<string, string> } {
+/**
+ * In-memory workspace — the engineer SEAM writes files here; dispatch reads them
+ * back (the write moved out of dispatch). `writeSlotFile` is the seam's write for
+ * mocks: it places `<WS>/<slot>` and returns the {@link WrittenFile} the seam
+ * reports.
+ */
+function memWorkspace(): {
+  readFs: WorkspaceReadFs;
+  files: Map<string, string>;
+  writeSlotFile: (slot: string, content: string) => WrittenFile;
+  readSlot: (request: EngineerRequest) => string | undefined;
+} {
   const files = new Map<string, string>();
-  return { files, fs: { writeFile: (p, c) => void files.set(p, c) } };
+  const readFs: WorkspaceReadFs = {
+    readFile: (p) => files.get(p),
+    listFiles: (root) => [...files.keys()].filter((p) => p === root || p.startsWith(`${root}/`)),
+  };
+  return {
+    files,
+    readFs,
+    writeSlotFile: (slot, content) => {
+      const path = slotPath(WS, slot);
+      files.set(path, content);
+      return { path, bytes: new TextEncoder().encode(content).length };
+    },
+    readSlot: (request) => readFs.readFile(slotPath(WS, request.contract.slot)),
+  };
 }
 
-/** A mock engineer that records every request and returns a per-contract file. */
-function recordingEngineer(): { run: RunEngineer; calls: EngineerRequest[] } {
+/** A mock engineer that WRITES `FILE(<id>)` to its slot, records every request,
+ * and returns the written file(s) — the shape the real seam conforms to. */
+function recordingEngineer(writeSlotFile: (slot: string, content: string) => WrittenFile): {
+  run: RunEngineer;
+  calls: EngineerRequest[];
+} {
   const calls: EngineerRequest[] = [];
   const run: RunEngineer = (request) => {
     calls.push(request);
     const tag = request.review !== undefined ? ':reviewed' : '';
-    return `FILE(${request.contract.id})${tag}`;
+    return [writeSlotFile(request.contract.slot, `FILE(${request.contract.id})${tag}`)];
   };
   return { run, calls };
 }
@@ -71,19 +101,19 @@ function byId(results: readonly ContractDispatchResult[], id: string): ContractD
 describe('dispatchContracts — DAG ordering', () => {
   it('dispatches a dependency before its dependent, passing the real produced file forward', async () => {
     // a → b, a → c (b and c both depend on a). a must run first, and b/c must
-    // receive a's ACTUAL produced content in their depContext.
+    // receive a's ACTUAL produced content (read back from the workspace).
     const contracts = [
       contract('a', 'src/a.ts'),
       contract('b', 'src/b.ts', ['a']),
       contract('c', 'src/c.ts', ['a']),
     ];
-    const { run, calls } = recordingEngineer();
-    const { fs, files } = memFs();
+    const { readFs, files, writeSlotFile } = memWorkspace();
+    const { run, calls } = recordingEngineer(writeSlotFile);
     const report = await dispatchContracts({
       orgChart: chartOf(contracts),
       runEngineer: run,
-      fs,
-      workspace: '/ws',
+      readFs,
+      workspace: WS,
     });
 
     expect(report.done).toEqual(['a', 'b', 'c']);
@@ -96,7 +126,7 @@ describe('dispatchContracts — DAG ordering', () => {
     expect(firstCall('a')).toBeLessThan(firstCall('b'));
     expect(firstCall('a')).toBeLessThan(firstCall('c'));
 
-    // b's depContext carries a's real produced file, not merely its description.
+    // b's depContext carries a's real produced file (read back), not its description.
     const bCall = calls.find((r) => r.contract.id === 'b');
     expect(bCall?.depContext).toHaveLength(1);
     expect(bCall?.depContext[0]?.contractId).toBe('a');
@@ -110,15 +140,37 @@ describe('dispatchContracts — DAG ordering', () => {
       moduleMap: [{ path: 'src/ui/', owner: 'Frontend', purpose: 'the UI shell' }],
       interfaces: [],
     };
-    const { run, calls } = recordingEngineer();
-    const { fs } = memFs();
+    const { readFs, writeSlotFile } = memWorkspace();
+    const { run, calls } = recordingEngineer(writeSlotFile);
     await dispatchContracts({
       orgChart: chartOf(contracts, architecture),
       runEngineer: run,
-      fs,
-      workspace: '/ws',
+      readFs,
+      workspace: WS,
     });
     expect(calls[0]?.architectureRegion).toContain('src/ui/ (owner Frontend): the UI shell');
+  });
+
+  it('threads the owning node prompt id + extension onto the request', async () => {
+    const contracts = [contract('a', 'src/a.ts')];
+    // The contract's ownerNodeId matches a real node carrying a promptId + extension.
+    const chart: OrgChart = {
+      ...chartOf(contracts),
+      nodes: [
+        {
+          id: 'a-eng',
+          role: 'engineer',
+          name: 'Eng A',
+          promptId: 'frontend-dev',
+          promptExtension: 'extra flavor',
+        },
+      ],
+    };
+    const { readFs, writeSlotFile } = memWorkspace();
+    const { run, calls } = recordingEngineer(writeSlotFile);
+    await dispatchContracts({ orgChart: chart, runEngineer: run, readFs, workspace: WS });
+    expect(calls[0]?.promptId).toBe('frontend-dev');
+    expect(calls[0]?.promptExtension).toBe('extra flavor');
   });
 });
 
@@ -131,13 +183,13 @@ describe('dispatchContracts — all-independent contracts', () => {
       contract('b', 'src/b.ts'),
       contract('c', 'src/c.ts'),
     ];
-    const { run } = recordingEngineer();
-    const { fs, files } = memFs();
+    const { readFs, files, writeSlotFile } = memWorkspace();
+    const { run } = recordingEngineer(writeSlotFile);
     const report = await dispatchContracts({
       orgChart: chartOf(contracts),
       runEngineer: run,
-      fs,
-      workspace: '/ws',
+      readFs,
+      workspace: WS,
     });
     expect(new Set(report.done)).toEqual(new Set(['a', 'b', 'c']));
     expect(report.filesWritten).toHaveLength(3);
@@ -150,13 +202,13 @@ describe('dispatchContracts — all-independent contracts', () => {
       contract('b', 'src/b.ts'),
       contract('c', 'src/c.ts'),
     ];
-    const { run, calls } = recordingEngineer();
-    const { fs } = memFs();
+    const { readFs, writeSlotFile } = memWorkspace();
+    const { run, calls } = recordingEngineer(writeSlotFile);
     const report = await dispatchContracts({
       orgChart: chartOf(contracts),
       runEngineer: run,
-      fs,
-      workspace: '/ws',
+      readFs,
+      workspace: WS,
       limit: 2,
     });
     expect(report.done).toHaveLength(2);
@@ -175,16 +227,16 @@ describe('dispatchContracts — failure isolation', () => {
       contract('d', 'src/d.ts', ['b']),
       contract('c', 'src/c.ts'),
     ];
+    const { readFs, files, writeSlotFile } = memWorkspace();
     const run: RunEngineer = (request) => {
       if (request.contract.id === 'b') throw new Error('boom');
-      return `FILE(${request.contract.id})`;
+      return [writeSlotFile(request.contract.slot, `FILE(${request.contract.id})`)];
     };
-    const { fs, files } = memFs();
     const report = await dispatchContracts({
       orgChart: chartOf(contracts),
       runEngineer: run,
-      fs,
-      workspace: '/ws',
+      readFs,
+      workspace: WS,
     });
 
     expect(new Set(report.done)).toEqual(new Set(['a', 'c'])); // a and c produced
@@ -202,12 +254,27 @@ describe('dispatchContracts — failure isolation', () => {
     expect(status('d')).toBe('queued'); // skipped stays queued
   });
 
+  it('marks a contract FAILED when the seam wrote no slot file', async () => {
+    // The seam returns without writing the slot (a runaway that produced nothing).
+    const contracts = [contract('a', 'src/a.ts')];
+    const { readFs } = memWorkspace();
+    const run: RunEngineer = () => []; // wrote nothing
+    const report = await dispatchContracts({
+      orgChart: chartOf(contracts),
+      runEngineer: run,
+      readFs,
+      workspace: WS,
+    });
+    expect(report.failed).toEqual(['a']);
+    expect(byId(report.results, 'a').error).toContain('did not write the slot file');
+  });
+
   it('never mutates the input chart', async () => {
     const contracts = [contract('a', 'src/a.ts')];
     const input = chartOf(contracts);
-    const { run } = recordingEngineer();
-    const { fs } = memFs();
-    await dispatchContracts({ orgChart: input, runEngineer: run, fs, workspace: '/ws' });
+    const { readFs, writeSlotFile } = memWorkspace();
+    const { run } = recordingEngineer(writeSlotFile);
+    await dispatchContracts({ orgChart: input, runEngineer: run, readFs, workspace: WS });
     expect(input.contracts[0]?.status).toBe('queued');
   });
 });
@@ -216,6 +283,7 @@ describe('dispatchContracts — failure isolation', () => {
 
 describe('withSubmissionReview (model-free submission interceptor)', () => {
   it('bounces the first submission once, accepts the second, and fires once per contract', async () => {
+    const { writeSlotFile, readSlot, files } = memWorkspace();
     const calls: { id: string; review: boolean; prompt?: string }[] = [];
     const inner: RunEngineer = (request) => {
       calls.push({
@@ -223,14 +291,18 @@ describe('withSubmissionReview (model-free submission interceptor)', () => {
         review: request.review !== undefined,
         prompt: request.review?.prompt,
       });
-      return request.review !== undefined ? 'final' : 'draft';
+      // The review turn writes the REVIEWED content over the slot.
+      return [
+        writeSlotFile(request.contract.slot, request.review !== undefined ? 'final' : 'draft'),
+      ];
     };
-    const wrapped = withSubmissionReview(inner);
+    const wrapped = withSubmissionReview(inner, readSlot);
     const c = contract('x', 'src/x.ts');
 
     const out = await wrapped({ contract: c, depContext: [] });
-    // First submit → review bounce → the reviewed result is accepted.
-    expect(out).toBe('final');
+    // First submit → review bounce → the reviewed file is what remains on disk.
+    expect(files.get(slotPath(WS, 'src/x.ts'))).toBe('final');
+    expect(out.map((f) => f.path)).toEqual([slotPath(WS, 'src/x.ts')]);
     expect(calls).toHaveLength(2);
     expect(calls[0]).toMatchObject({ id: 'x', review: false });
     expect(calls[1]?.review).toBe(true);
@@ -239,32 +311,32 @@ describe('withSubmissionReview (model-free submission interceptor)', () => {
     expect(calls[1]?.prompt?.toLowerCase()).toContain('review');
 
     // Dispatching the SAME contract again is accepted directly — no second bounce.
-    const out2 = await wrapped({ contract: c, depContext: [] });
-    expect(out2).toBe('draft');
+    await wrapped({ contract: c, depContext: [] });
     expect(calls).toHaveLength(3);
     expect(calls[2]).toMatchObject({ id: 'x', review: false });
   });
 
   it('fires exactly once per contract across a dispatch run', async () => {
     const contracts = [contract('a', 'src/a.ts'), contract('b', 'src/b.ts', ['a'])];
+    const { readFs, files, writeSlotFile } = memWorkspace();
     let reviewTurns = 0;
     const run: RunEngineer = (request) => {
       if (request.review !== undefined) reviewTurns += 1;
-      return `FILE(${request.contract.id})${request.review !== undefined ? ':reviewed' : ''}`;
+      const tag = request.review !== undefined ? ':reviewed' : '';
+      return [writeSlotFile(request.contract.slot, `FILE(${request.contract.id})${tag}`)];
     };
-    const { fs, files } = memFs();
     const report = await dispatchContracts({
       orgChart: chartOf(contracts),
       runEngineer: run,
-      fs,
-      workspace: '/ws',
-      interceptor: withSubmissionReview,
+      readFs,
+      workspace: WS,
+      captureReviews: true,
     });
 
     expect(report.done).toEqual(['a', 'b']);
     expect(reviewTurns).toBe(2); // exactly one review per contract
     // The REVIEWED file is what lands, and what propagates forward as depContext.
-    expect(files.get('/ws/src/a.ts')).toBe('FILE(a):reviewed');
+    expect(files.get(slotPath(WS, 'src/a.ts'))).toBe('FILE(a):reviewed');
   });
 });
 
@@ -274,17 +346,18 @@ describe('dispatchContracts — captureReviews (draft vs reviewed)', () => {
   it('records draft/reviewed sizes + changed per contract and counts changes', async () => {
     // a's reviewed file differs from its draft; b's reviewed file is identical.
     const contracts = [contract('a', 'src/a.ts'), contract('b', 'src/b.ts')];
+    const { readFs, writeSlotFile } = memWorkspace();
     const run: RunEngineer = (request) => {
       const reviewed = request.review !== undefined;
-      if (request.contract.id === 'a') return reviewed ? 'FILE(a) revised longer' : 'FILE(a)';
-      return 'FILE(b)'; // unchanged by review
+      const body =
+        request.contract.id === 'a' ? (reviewed ? 'FILE(a) revised longer' : 'FILE(a)') : 'FILE(b)'; // unchanged by review
+      return [writeSlotFile(request.contract.slot, body)];
     };
-    const { fs } = memFs();
     const report = await dispatchContracts({
       orgChart: chartOf(contracts),
       runEngineer: run,
-      fs,
-      workspace: '/ws',
+      readFs,
+      workspace: WS,
       captureReviews: true,
     });
 
@@ -305,14 +378,18 @@ describe('dispatchContracts — captureReviews (draft vs reviewed)', () => {
 
   it('keeps draft + reviewed bodies when includeReviewBodies is set', async () => {
     const contracts = [contract('a', 'src/a.ts')];
-    const run: RunEngineer = (request) =>
-      request.review !== undefined ? 'reviewed-body' : 'draft-body';
-    const { fs } = memFs();
+    const { readFs, writeSlotFile } = memWorkspace();
+    const run: RunEngineer = (request) => [
+      writeSlotFile(
+        request.contract.slot,
+        request.review !== undefined ? 'reviewed-body' : 'draft-body',
+      ),
+    ];
     const report = await dispatchContracts({
       orgChart: chartOf(contracts),
       runEngineer: run,
-      fs,
-      workspace: '/ws',
+      readFs,
+      workspace: WS,
       captureReviews: true,
       includeReviewBodies: true,
     });
@@ -324,15 +401,290 @@ describe('dispatchContracts — captureReviews (draft vs reviewed)', () => {
 
   it('leaves reviews empty and changed-count 0 when capture is off', async () => {
     const contracts = [contract('a', 'src/a.ts')];
-    const { run } = recordingEngineer();
-    const { fs } = memFs();
+    const { readFs, writeSlotFile } = memWorkspace();
+    const { run } = recordingEngineer(writeSlotFile);
     const report = await dispatchContracts({
       orgChart: chartOf(contracts),
       runEngineer: run,
-      fs,
-      workspace: '/ws',
+      readFs,
+      workspace: WS,
     });
     expect(report.reviews).toEqual([]);
     expect(report.interceptorChangedCount).toBe(0);
+  });
+});
+
+// --- multiple files per contract (agent path) --------------------------------
+
+describe('dispatchContracts — records every file the seam wrote', () => {
+  it('collects the slot file plus supporting files, deduped, primary guaranteed', async () => {
+    const contracts = [contract('a', 'src/a.ts')];
+    const { readFs, writeSlotFile } = memWorkspace();
+    // The agent writes the slot + a small supporting file within its region.
+    const run: RunEngineer = (request) => {
+      const slotFile = writeSlotFile(request.contract.slot, 'FILE(a)');
+      const helper = writeSlotFile('src/a.helper.ts', 'HELPER');
+      return [slotFile, helper];
+    };
+    const report = await dispatchContracts({
+      orgChart: chartOf(contracts),
+      runEngineer: run,
+      readFs,
+      workspace: WS,
+    });
+    expect(report.done).toEqual(['a']);
+    expect(new Set(report.filesWritten.map((f) => f.path))).toEqual(
+      new Set([slotPath(WS, 'src/a.ts'), slotPath(WS, 'src/a.helper.ts')]),
+    );
+    // The per-contract result points at the primary slot file.
+    expect(byId(report.results, 'a').path).toBe(slotPath(WS, 'src/a.ts'));
+  });
+});
+
+// --- bounded concurrency -----------------------------------------------------
+// The concurrent path is proved DETERMINISTICALLY (no real time): engineer mocks
+// are gated by manual-resolve deferreds and/or a live in-flight counter, and
+// `flush` drains the microtask queue via a single macrotask tick.
+
+/** A promise whose settlement the test controls. */
+interface Deferred {
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+}
+function deferred(): Deferred {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+/** Drain all currently-pending microtasks (job continuations + pool re-walks). */
+const flush = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
+
+describe('dispatchContracts — bounded concurrency (parallel dispatch)', () => {
+  it('runs up to `concurrency` jobs at once and never more', async () => {
+    // Six INDEPENDENT contracts, width 3 → at most three engineers ever in flight.
+    const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
+    const contracts = ids.map((id) => contract(id, `src/${id}.ts`));
+    const gates = new Map(ids.map((id) => [id, deferred()] as const));
+    let live = 0;
+    let peak = 0;
+    const started: string[] = [];
+    const { readFs, files, writeSlotFile } = memWorkspace();
+    const run: RunEngineer = async (req) => {
+      const id = req.contract.id;
+      started.push(id);
+      const file = writeSlotFile(req.contract.slot, `FILE(${id})`);
+      live += 1;
+      peak = Math.max(peak, live);
+      await gates.get(id)?.promise;
+      live -= 1;
+      return [file];
+    };
+    const done = dispatchContracts({
+      orgChart: chartOf(contracts),
+      runEngineer: run,
+      readFs,
+      workspace: WS,
+      concurrency: 3,
+    });
+
+    await flush();
+    // Exactly three started (in topological order); the other three wait behind
+    // the bound — the live counter peaks at 3, never 4.
+    expect(started).toEqual(['a', 'b', 'c']);
+    expect(live).toBe(3);
+    expect(peak).toBe(3);
+
+    // Finish one → the fourth starts, the pool is still full at 3, never 4.
+    gates.get('a')?.resolve();
+    await flush();
+    expect(started).toEqual(['a', 'b', 'c', 'd']);
+    expect(live).toBe(3);
+    expect(peak).toBe(3);
+
+    // Drain the rest; the peak held at exactly the bound throughout.
+    for (const g of gates.values()) g.resolve();
+    const report = await done;
+    expect(peak).toBe(3);
+    expect(new Set(report.done)).toEqual(new Set(ids));
+    expect(files.size).toBe(6);
+  });
+
+  it('never starts a dependent before its dependency has finished, even with spare width', async () => {
+    // A a→b→c chain with width 3: the DAG, not the width, gates each start.
+    const ids = ['a', 'b', 'c'];
+    const contracts = [
+      contract('a', 'src/a.ts'),
+      contract('b', 'src/b.ts', ['a']),
+      contract('c', 'src/c.ts', ['b']),
+    ];
+    const gates = new Map(ids.map((id) => [id, deferred()] as const));
+    const events: string[] = [];
+    const { readFs, writeSlotFile } = memWorkspace();
+    const run: RunEngineer = async (req) => {
+      const id = req.contract.id;
+      events.push(`start:${id}`);
+      const file = writeSlotFile(req.contract.slot, `FILE(${id})`);
+      await gates.get(id)?.promise;
+      events.push(`finish:${id}`);
+      return [file];
+    };
+    const done = dispatchContracts({
+      orgChart: chartOf(contracts),
+      runEngineer: run,
+      readFs,
+      workspace: WS,
+      concurrency: 3,
+    });
+
+    await flush();
+    expect(events).toEqual(['start:a']); // only a may start — b/c wait on the DAG
+    gates.get('a')?.resolve();
+    await flush();
+    expect(events).toEqual(['start:a', 'finish:a', 'start:b']);
+    gates.get('b')?.resolve();
+    await flush();
+    expect(events).toEqual(['start:a', 'finish:a', 'start:b', 'finish:b', 'start:c']);
+    gates.get('c')?.resolve();
+    const report = await done;
+
+    expect(report.done).toEqual(['a', 'b', 'c']);
+    // Each dependent's START strictly follows its dependency's FINISH.
+    expect(events.indexOf('start:b')).toBeGreaterThan(events.indexOf('finish:a'));
+    expect(events.indexOf('start:c')).toBeGreaterThan(events.indexOf('finish:b'));
+  });
+
+  it('cascades skips to transitive dependents when a contract fails, under concurrency', async () => {
+    // a → b → c (a fails); e independent still runs. Width 3.
+    const contracts = [
+      contract('a', 'src/a.ts'),
+      contract('b', 'src/b.ts', ['a']),
+      contract('c', 'src/c.ts', ['b']),
+      contract('e', 'src/e.ts'),
+    ];
+    const { readFs, files, writeSlotFile } = memWorkspace();
+    const run: RunEngineer = (req) => {
+      if (req.contract.id === 'a') throw new Error('boom-a');
+      return [writeSlotFile(req.contract.slot, `FILE(${req.contract.id})`)];
+    };
+    const report = await dispatchContracts({
+      orgChart: chartOf(contracts),
+      runEngineer: run,
+      readFs,
+      workspace: WS,
+      concurrency: 3,
+    });
+
+    expect(report.failed).toEqual(['a']);
+    expect(report.skipped).toEqual(['b', 'c']); // b directly, c transitively
+    expect(new Set(report.done)).toEqual(new Set(['e']));
+    expect(byId(report.results, 'b').skippedBecause).toEqual(['a']);
+    expect(byId(report.results, 'c').skippedBecause).toEqual(['b']);
+    expect(files.size).toBe(1); // only e's file landed
+  });
+
+  it('emits an identical report for concurrency 1, 3, and 5 (topological, schedule-independent)', async () => {
+    // A mixed DAG with a mid-graph failure so done/skip/cascade are all exercised.
+    const contracts = [
+      contract('a', 'src/a.ts'),
+      contract('b', 'src/b.ts', ['a']),
+      contract('c', 'src/c.ts', ['a']),
+      contract('d', 'src/d.ts', ['b', 'c']),
+      contract('x', 'src/x.ts'),
+      contract('y', 'src/y.ts', ['x']),
+      contract('z', 'src/z.ts', ['y']),
+    ];
+    const runOnce = (concurrency: number) => {
+      const { readFs, writeSlotFile } = memWorkspace();
+      const run: RunEngineer = (req) => {
+        if (req.contract.id === 'y') throw new Error('boom-y');
+        return [writeSlotFile(req.contract.slot, `FILE(${req.contract.id})`)];
+      };
+      return dispatchContracts({
+        orgChart: chartOf(contracts),
+        runEngineer: run,
+        readFs,
+        workspace: WS,
+        concurrency,
+      });
+    };
+
+    const r1 = await runOnce(1);
+    const r3 = await runOnce(3);
+    const r5 = await runOnce(5);
+    // Byte-for-byte identical report across scheduling widths.
+    expect(r3).toEqual(r1);
+    expect(r5).toEqual(r1);
+    // And the content is the expected topological outcome (cascade from y → z).
+    expect(r1.done).toEqual(['a', 'b', 'c', 'd', 'x']);
+    expect(r1.failed).toEqual(['y']);
+    expect(r1.skipped).toEqual(['z']);
+    expect(r1.results.map((r) => r.contractId)).toEqual(['a', 'b', 'c', 'd', 'x', 'y', 'z']);
+    expect(r1.filesWritten.map((f) => f.path)).toEqual([
+      slotPath(WS, 'src/a.ts'),
+      slotPath(WS, 'src/b.ts'),
+      slotPath(WS, 'src/c.ts'),
+      slotPath(WS, 'src/d.ts'),
+      slotPath(WS, 'src/x.ts'),
+    ]);
+  });
+
+  it('is byte-for-byte the serial behavior when concurrency is 1 (and when unset)', async () => {
+    // The existing failure-isolation fixture: a → b → d ; c independent; b fails.
+    const contracts = [
+      contract('a', 'src/a.ts'),
+      contract('b', 'src/b.ts', ['a']),
+      contract('d', 'src/d.ts', ['b']),
+      contract('c', 'src/c.ts'),
+    ];
+    const runWith = (opts: { concurrency?: number }) => {
+      const { readFs, writeSlotFile } = memWorkspace();
+      const run: RunEngineer = (req) => {
+        if (req.contract.id === 'b') throw new Error('boom');
+        return [writeSlotFile(req.contract.slot, `FILE(${req.contract.id})`)];
+      };
+      return dispatchContracts({
+        orgChart: chartOf(contracts),
+        runEngineer: run,
+        readFs,
+        workspace: WS,
+        ...opts,
+      });
+    };
+
+    const unset = await runWith({});
+    const one = await runWith({ concurrency: 1 });
+    expect(one).toEqual(unset);
+    // The exact serial expectations the rest of the suite relies on.
+    expect(new Set(unset.done)).toEqual(new Set(['a', 'c']));
+    expect(unset.failed).toEqual(['b']);
+    expect(unset.skipped).toEqual(['d']);
+    expect(byId(unset.results, 'd').skippedBecause).toEqual(['b']);
+    expect(unset.results.map((r) => r.contractId)).toEqual(['a', 'b', 'd', 'c']);
+  });
+
+  it('never starts more than `limit` jobs, regardless of concurrency width', async () => {
+    const ids = ['a', 'b', 'c', 'd', 'e'];
+    const contracts = ids.map((id) => contract(id, `src/${id}.ts`)); // independent
+    let starts = 0;
+    const { readFs, files, writeSlotFile } = memWorkspace();
+    const run: RunEngineer = (req) => {
+      starts += 1;
+      return [writeSlotFile(req.contract.slot, `FILE(${req.contract.id})`)];
+    };
+    const report = await dispatchContracts({
+      orgChart: chartOf(contracts),
+      runEngineer: run,
+      readFs,
+      workspace: WS,
+      limit: 2,
+      concurrency: 5,
+    });
+
+    expect(starts).toBe(2); // at most `limit` engineers ever begin
+    expect(report.done).toEqual(['a', 'b']); // the first two in topological order
+    expect(files.size).toBe(2);
   });
 });

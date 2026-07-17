@@ -26,6 +26,9 @@ export type LlmRequestBody =
       modelId: string;
       quant?: string;
       launchMode?: 'fast-text' | 'multimodal';
+      /** Fast-text slot count (`--parallel`). The server is launched with
+       * `-c = perSlot × parallel` so each slot keeps the full context. Default 1. */
+      parallel?: number;
     }
   | { type: 'stop-server' }
   | {

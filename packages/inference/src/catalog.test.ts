@@ -23,14 +23,45 @@ describe('catalog', () => {
     expect(ids).toContain('qwen3.6-35b-a3b-mtp');
   });
 
-  it('has an exact, verified Gemma4 E2B entry (the integration model)', () => {
+  it('has an exact, verified Gemma4 E2B entry (the integration model), Q8_0 default', () => {
     const m = getCatalogModel('gemma-4-e2b-it');
     expect(m).toBe(GEMMA4_E2B);
     expect(m?.verified).toBe(true);
     expect(m?.hfRepo).toBe('unsloth/gemma-4-E2B-it-GGUF');
-    const q4 = getCatalogFile(GEMMA4_E2B, 'Q4_K_M');
-    expect(q4?.name).toBe('gemma-4-E2B-it-Q4_K_M.gguf');
-    expect(q4?.bytes).toBe(3_106_736_256);
+    // Sub-12B quant policy: Q8_0 default + UD-Q6_K_XL dynamic floor, no Q4.
+    const q8 = getCatalogFile(GEMMA4_E2B, 'Q8_0');
+    expect(q8?.name).toBe('gemma-4-E2B-it-Q8_0.gguf');
+    expect(q8?.bytes).toBe(5_048_350_848);
+    expect(getCatalogFile(GEMMA4_E2B, 'UD-Q6_K_XL')?.bytes).toBe(4_710_086_784);
+    expect(getCatalogFile(GEMMA4_E2B, 'Q4_K_M')).toBeUndefined();
+  });
+
+  it('sub-12B llama.cpp models default to Q8_0 with a dynamic Q6 floor — never Q4', () => {
+    // Under 12B params: Q4 adds too much quality uncertainty, so the curated
+    // ladder is Q8_0 (default) + a dynamic Q6 (UD-Q6_K_XL, else Q6_K) floor, and
+    // NO Q4. Q8_0 is always the first (default) file.
+    const sub12b = [
+      'gemma-4-e2b-it',
+      'gemma-4-e4b-it',
+      'qwen3.5-0.8b-mtp',
+      'qwen3.5-2b-mtp',
+      'qwen3.5-4b-mtp',
+      'qwen3.5-9b-mtp',
+    ];
+    for (const id of sub12b) {
+      const m = getCatalogModel(id);
+      expect(m, id).toBeDefined();
+      const quants = (m?.files ?? []).map((f) => f.quant);
+      expect(quants[0], `${id} default quant`).toBe('Q8_0');
+      expect(
+        quants.some((q) => q === 'UD-Q6_K_XL' || q === 'Q6_K'),
+        `${id} has a Q6 floor`,
+      ).toBe(true);
+      expect(quants, `${id} has no Q4`).not.toContain('Q4_K_M');
+      expect(quants, `${id} has no Q4`).not.toContain('Q4_K_S');
+    }
+    // Gemma-4-12B is exactly 12B (NOT "under 12B") → keeps its Q4_K_M ladder.
+    expect(getCatalogModel('gemma-4-12b-it')?.files.map((f) => f.quant)).toContain('Q4_K_M');
   });
 
   it('points Qwen3.6-27B at the MTP repo with an embedded MTP head', () => {

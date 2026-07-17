@@ -3,11 +3,12 @@ import { getCatalogModel, MODEL_TIERS } from './catalog.js';
 import { recommend, resolveTierModels, tierDisplayName } from './recommender.js';
 
 describe('recommend (speed-optimized budget tiers)', () => {
-  it('8GB → Qwen3.5-4B MTP, fast-text', () => {
+  it('8GB → Qwen3.5-4B MTP, fast-text, Q8_0 (sub-12B never Q4)', () => {
     const r = recommend({ totalRamGB: 8 });
     expect(r.tier).toBe('8GB');
     expect(r.model.id).toBe('qwen3.5-4b-mtp');
-    expect(r.file.quant).toBe('Q4_K_M');
+    // Sub-12B quant policy: Q8_0 default (4B ≈ 4.3GB fits 8GB with headroom).
+    expect(r.file.quant).toBe('Q8_0');
     expect(r.launchMode).toBe('fast-text');
     expect(r.model.spec).toBe('mtp');
   });
@@ -73,7 +74,9 @@ describe('recommend (speed-optimized budget tiers)', () => {
     expect(r.tier).toBe('<8GB');
     expect(r.model.id).toBe('gemma-4-e2b-it');
     expect(r.model.id).not.toBe('qwen3.5-4b-mtp');
-    expect(r.file.quant).toBe('Q4_K_M');
+    // Sub-12B never Q4: Q8 (~5GB) will not fit a <8GB machine, so the recommender
+    // drops to the dynamic Q6 floor (UD-Q6_K_XL), not Q4.
+    expect(r.file.quant).toBe('UD-Q6_K_XL');
     expect(r.launchMode).toBe('fast-text');
     expect(r.model.spec).toBe('mtp');
   });
@@ -97,7 +100,8 @@ describe('recommend (speed-optimized budget tiers)', () => {
     for (const ram of [8, 16, 24, 32, 48, 64, 96, 128]) {
       const r = recommend({ totalRamGB: ram });
       expect(r.utilityModel.id).toBe('qwen3.5-4b-mtp');
-      expect(r.utilityFile.quant).toBe('Q4_K_M');
+      // Sub-12B utility slot: Q8_0 default (never Q4); ram≥8 always leaves headroom.
+      expect(r.utilityFile.quant).toBe('Q8_0');
       expect(r.rationale).toContain(String(ram));
     }
   });
@@ -164,7 +168,8 @@ describe('resolveTierModels (per-hardware 3-tier resolution)', () => {
   it('the dev M5 Pro 24GB resolves fast=qwen3.5-4b, balanced=gemma-12b (vision), intelligent=qwen3.6-27b', () => {
     const p = resolveTierModels({ totalRamGB: 24 });
     expect(p.fast.model.id).toBe('qwen3.5-4b-mtp');
-    expect(p.fast.file.quant).toBe('Q4_K_M');
+    // Sub-12B fast pick: Q8_0 default (fits 24GB easily); >=12B tiers keep Q4_K_M.
+    expect(p.fast.file.quant).toBe('Q8_0');
     expect(p.balanced.model.id).toBe('gemma-4-12b-it');
     expect(p.balanced.vision).toBe(true);
     expect(p.intelligent.model.id).toBe('qwen3.6-27b-mtp');

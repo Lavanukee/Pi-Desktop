@@ -25,6 +25,15 @@
  *   - Every entry now carries an `engine` (llamacpp default; MLX foundation is a
  *     later wave), a `publisher` (HF handle + reliable-allowlist flag), a coarse
  *     `tier` hint, and the available speed `variants`.
+ *
+ * SUB-12B QUANT POLICY (round-17): every llama.cpp entry UNDER 12B params curates
+ * a two-rung ladder — `Q8_0` (the default) + a dynamic `UD-Q6_K_XL` (the hard
+ * floor) — and NO `Q4_K_M`. A small model at Q4 adds too much quality uncertainty
+ * (a 4B loses more, proportionally, than a 27B), so Q8 is the default and the
+ * Unsloth-Dynamic Q6 is the lowest we drop to when RAM is snug. Models >=12B keep
+ * their existing Q4/Q6/UD ladder. The recommender (`sub12bQuant`) does the RAM-
+ * tier pick. Q8_0 4B ≈ 4.3GB vs the old Q4_K_M ≈ 2.6GB; UD-Q6_K_XL 4B ≈ 4.0GB.
+ * File bytes below are HF-verified live 2026-07-16 (`tree/main` `lfs.oid`/`size`).
  */
 
 /** Inference engine backing a catalog entry. MLX is Apple-Silicon-only and is
@@ -173,12 +182,22 @@ export const GEMMA4_E2B: CatalogModel = {
   displayName: 'Gemma 4 E2B Instruct',
   hfRepo: 'unsloth/gemma-4-E2B-it-GGUF',
   baseRepo: 'google/gemma-4-E2B-it',
+  // SUB-12B QUANT POLICY: a model under 12B params never ships a Q4 default — a
+  // small model at Q4 adds too much quality uncertainty. Q8_0 is the default; the
+  // dynamic Q6 floor (Unsloth `UD-Q6_K_XL`) is the hard floor the recommender
+  // drops to only when RAM is snug (see `sub12bQuant` in recommender.ts).
   files: [
     {
-      name: 'gemma-4-E2B-it-Q4_K_M.gguf',
-      bytes: 3_106_736_256,
-      quant: 'Q4_K_M',
-      sha256: '9378bc471710229ef165709b62e34bfb62231420ddaf6d729e727305b5b8672d',
+      name: 'gemma-4-E2B-it-Q8_0.gguf',
+      bytes: 5_048_350_848,
+      quant: 'Q8_0',
+      sha256: '0a8488b149e1f700712c35d5bf0a3795f9dcc2563b4944d5ef2fb89375f9483e',
+    },
+    {
+      name: 'gemma-4-E2B-it-UD-Q6_K_XL.gguf',
+      bytes: 4_710_086_784,
+      quant: 'UD-Q6_K_XL',
+      sha256: '23b9129abcd9db1df6e35aafeb3e43c65448dac7f114aa02b30fdf29b9db303d',
     },
   ],
   // E2B DOES ship vision (mmproj-F16, 985,654,080 B ≈ 0.918 GiB); sha not
@@ -213,12 +232,19 @@ const GEMMA4_E4B: CatalogModel = {
   displayName: 'Gemma 4 E4B Instruct',
   hfRepo: 'unsloth/gemma-4-E4B-it-GGUF',
   baseRepo: 'google/gemma-4-E4B-it',
+  // Sub-12B quant policy (see GEMMA4_E2B): Q8_0 default, UD-Q6_K_XL dynamic floor.
   files: [
     {
-      name: 'gemma-4-E4B-it-Q4_K_M.gguf',
-      bytes: 4_977_169_568,
-      quant: 'Q4_K_M',
-      sha256: '519b9793ed6ce0ff530f1b7c96e848e08e49e7af4d57bb97f76215963a54146d',
+      name: 'gemma-4-E4B-it-Q8_0.gguf',
+      bytes: 8_192_951_456,
+      quant: 'Q8_0',
+      sha256: 'a2232a649523c36bf530f1dc3614eb8c800645c4227390381c8b05d4d6eee05a',
+    },
+    {
+      name: 'gemma-4-E4B-it-UD-Q6_K_XL.gguf',
+      bytes: 7_457_760_416,
+      quant: 'UD-Q6_K_XL',
+      sha256: '718b86f1d3e2928df914e7abf83a5342ef752fb7a7e900d5ff036952709ea72f',
     },
   ],
   mmproj: {
@@ -406,9 +432,11 @@ const QWEN35_0_8B_MTP: CatalogModel = {
   id: 'qwen3.5-0.8b-mtp',
   displayName: 'Qwen3.5 0.8B (MTP)',
   hfRepo: 'unsloth/Qwen3.5-0.8B-MTP-GGUF',
+  // Sub-12B quant policy (see GEMMA4_E2B): Q8_0 default, UD-Q6_K_XL dynamic floor.
+  // Reserved entry — bytes:0 / verified:false (repo ships both; not HEAD-verified).
   files: [
-    { name: 'Qwen3.5-0.8B-Q4_K_M.gguf', bytes: 0, quant: 'Q4_K_M' },
-    { name: 'Qwen3.5-0.8B-Q6_K.gguf', bytes: 0, quant: 'Q6_K' },
+    { name: 'Qwen3.5-0.8B-Q8_0.gguf', bytes: 0, quant: 'Q8_0' },
+    { name: 'Qwen3.5-0.8B-UD-Q6_K_XL.gguf', bytes: 0, quant: 'UD-Q6_K_XL' },
   ],
   mmproj: { name: 'mmproj-F16.gguf', bytes: 0, quant: 'F16' },
   mtpEmbedded: true,
@@ -431,9 +459,11 @@ const QWEN35_2B_MTP: CatalogModel = {
   id: 'qwen3.5-2b-mtp',
   displayName: 'Qwen3.5 2B (MTP)',
   hfRepo: 'unsloth/Qwen3.5-2B-MTP-GGUF',
+  // Sub-12B quant policy (see GEMMA4_E2B): Q8_0 default, UD-Q6_K_XL dynamic floor.
+  // Reserved entry — bytes:0 / verified:false (repo ships both; not HEAD-verified).
   files: [
-    { name: 'Qwen3.5-2B-Q4_K_M.gguf', bytes: 0, quant: 'Q4_K_M' },
-    { name: 'Qwen3.5-2B-Q6_K.gguf', bytes: 0, quant: 'Q6_K' },
+    { name: 'Qwen3.5-2B-Q8_0.gguf', bytes: 0, quant: 'Q8_0' },
+    { name: 'Qwen3.5-2B-UD-Q6_K_XL.gguf', bytes: 0, quant: 'UD-Q6_K_XL' },
   ],
   mmproj: { name: 'mmproj-F16.gguf', bytes: 0, quant: 'F16' },
   mtpEmbedded: true,
@@ -466,18 +496,21 @@ const QWEN35_4B_MTP: CatalogModel = {
   displayName: 'Qwen3.5 4B (MTP)',
   hfRepo: 'unsloth/Qwen3.5-4B-MTP-GGUF',
   baseRepo: 'Qwen/Qwen3.5-4B',
+  // Sub-12B quant policy (see GEMMA4_E2B): Q8_0 (~4.3GB) is the DEFAULT worker
+  // quant — no Q4 for the 4B (too much quality uncertainty for the utility/
+  // classifier roles). UD-Q6_K_XL (~4.0GB) is the dynamic floor when RAM is snug.
   files: [
     {
-      name: 'Qwen3.5-4B-Q4_K_M.gguf',
-      bytes: 2_834_975_040,
-      quant: 'Q4_K_M',
-      sha256: '3874209241c9a397e2f62cd3f70f80fd2dfbf0dfccb6838416bdb48a714e8630',
+      name: 'Qwen3.5-4B-Q8_0.gguf',
+      bytes: 4_610_580_800,
+      quant: 'Q8_0',
+      sha256: '4f40ff26e3b6e23888e520e9c33d9a309d919b940cd1375b421710c6cb6cc8dd',
     },
     {
-      name: 'Qwen3.5-4B-Q6_K.gguf',
-      bytes: 3_639_654_720,
-      quant: 'Q6_K',
-      sha256: 'd8fe325a6184ac489529bb2286e879865d02acdd710ac0a54a0afa3e66051b87',
+      name: 'Qwen3.5-4B-UD-Q6_K_XL.gguf',
+      bytes: 4_261_908_800,
+      quant: 'UD-Q6_K_XL',
+      sha256: '28bedf3269ebb40444dab71cf884d85ad639fd57cfc30757a62b7929d4e316de',
     },
   ],
   mmproj: { name: 'mmproj-F16.gguf', bytes: 0, quant: 'F16' },
@@ -504,18 +537,19 @@ const QWEN35_9B_MTP: CatalogModel = {
   id: 'qwen3.5-9b-mtp',
   displayName: 'Qwen3.5 9B (MTP)',
   hfRepo: 'unsloth/Qwen3.5-9B-MTP-GGUF',
+  // Sub-12B quant policy (see GEMMA4_E2B): Q8_0 default, UD-Q6_K_XL dynamic floor.
   files: [
     {
-      name: 'Qwen3.5-9B-Q4_K_M.gguf',
-      bytes: 5_868_826_976,
-      quant: 'Q4_K_M',
-      sha256: 'e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe',
+      name: 'Qwen3.5-9B-Q8_0.gguf',
+      bytes: 9_786_061_152,
+      quant: 'Q8_0',
+      sha256: '107125cda29dc42d62f5ba8ffac8817d21a9d7bd06c1b35860491a00a170ad4e',
     },
     {
-      name: 'Qwen3.5-9B-Q6_K.gguf',
-      bytes: 7_684_551_008,
-      quant: 'Q6_K',
-      sha256: '8ae8fd04e30c5a4af3ef72654729fb0d7f33615cac1ba335dd88084a56287934',
+      name: 'Qwen3.5-9B-UD-Q6_K_XL.gguf',
+      bytes: 8_987_439_456,
+      quant: 'UD-Q6_K_XL',
+      sha256: 'a6d6c0ace780ea91d59a3ef5050a96b6ebbf416d94e6b23c191d1f492a6276f0',
     },
   ],
   mmproj: { name: 'mmproj-F16.gguf', bytes: 0, quant: 'F16' },

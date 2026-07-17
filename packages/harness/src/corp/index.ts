@@ -36,4 +36,5 @@ export * from './role-agent-seam.js';
 export * from './run.js';
 export * from './sanitize.js';
 export * from './verify.js';
+export * from './vision.js';
 export * from './workspace.js';

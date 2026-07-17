@@ -23,6 +23,7 @@ function memWorkspace(): { fs: WorkspaceFs; readFs: WorkspaceReadFs } {
 type Misbehavior = 'valid' | 'empty' | 'error';
 
 interface MockConfig {
+  readonly vision?: Misbehavior;
   readonly worker?: Misbehavior;
   readonly architect?: Misbehavior;
   readonly manager?: Misbehavior;
@@ -43,6 +44,8 @@ const PROMOTION = {
 const ENGINEER_FILE = 'export const value = 1;\nexport function ok() {\n  return value;\n}\n';
 const CEO_APPROVE = 'APPROVE — the product meets the vision.';
 const CEO_REVISE = 'REVISE\nThe data layer is missing; wire it up before shipping.';
+const VISION_BRIEF =
+  'VISION BRIEF: Build a focused, well-scoped thing. Deliverables: a working core.';
 
 interface Mock {
   readonly chat: CorpChatFn;
@@ -51,6 +54,7 @@ interface Mock {
 
 function makeMock(config: MockConfig = {}): Mock {
   const callsByPurpose: Record<CorpTurnPurpose, number> = {
+    vision: 0,
     worker: 0,
     architect: 0,
     manager: 0,
@@ -85,6 +89,8 @@ function makeMock(config: MockConfig = {}): Mock {
 
   const behaviorFor = (purpose: CorpTurnPurpose): Misbehavior => {
     switch (purpose) {
+      case 'vision':
+        return config.vision ?? 'valid';
       case 'worker':
         return config.worker ?? 'valid';
       case 'architect':
@@ -102,6 +108,8 @@ function makeMock(config: MockConfig = {}): Mock {
 
   const validFor = (purpose: CorpTurnPurpose): CorpChatResult => {
     switch (purpose) {
+      case 'vision':
+        return { content: VISION_BRIEF };
       case 'worker':
         return {
           content: '',
@@ -331,6 +339,14 @@ function makeAgentMock(
     calls.push(input);
     const base = { filesWritten: [], toolCalls: [], terminatedReason: 'stop' } as const;
     switch (input.purpose) {
+      case 'vision':
+        // The CEO submits its vision via the submit_vision tool (finalText fallback
+        // is exercised by the chat mock); the harness parses the brief off the call.
+        return Promise.resolve({
+          ...base,
+          finalText: '',
+          toolCalls: [{ name: 'submit_vision', arguments: { brief: VISION_BRIEF } }],
+        });
       case 'worker':
         return Promise.resolve({
           ...base,
@@ -393,11 +409,39 @@ describe('runCorp — every role runs harnessed through the role-agent seam', ()
     // ONE dispatch turn per contract — the §164 self-review bounce lives INSIDE that
     // one agent run, in the submit_contract tool, not as a second dispatch turn).
     const purposes = mock.calls.map((c) => c.purpose);
+    expect(purposes.filter((p) => p === 'vision')).toHaveLength(1); // the FIRST turn
     expect(purposes.filter((p) => p === 'worker')).toHaveLength(1);
     expect(purposes.filter((p) => p === 'architect')).toHaveLength(1);
     expect(purposes.filter((p) => p === 'manager')).toHaveLength(2);
     expect(purposes.filter((p) => p === 'engineer')).toHaveLength(4);
     expect(purposes.filter((p) => p === 'ceo')).toHaveLength(1);
+    // The CEO VISION turn ran FIRST (spec §4), before promotion.
+    expect(purposes[0]).toBe('vision');
+
+    // Vision (spec §4): thinking ON, thinking-general; harnessed with read/write/bash
+    // to draft a mockup + web_search/web_fetch to research + submit_vision to finalize
+    // (its name ALSO in the allowlist — the SDK gate). It runs in a SCRATCH isolated
+    // workspace (harvest OFF) so the mockup never enters the product tree. NO per-agent
+    // caps — it runs until it submits / the global RunBudget.
+    const vision = mock.calls.find((c) => c.purpose === 'vision');
+    expect(vision?.thinking).toBe(true);
+    expect(vision?.samplingMode).toBe('thinking-general');
+    expect(vision?.tools).toEqual(
+      expect.arrayContaining(['read', 'write', 'bash', 'web_search', 'web_fetch', 'submit_vision']),
+    );
+    expect(vision?.customTools?.map((t) => t.name)).toContain('submit_vision');
+    expect(vision?.isolation).toBeDefined();
+    expect(vision?.isolation?.harvest).toBe(false); // scratch — not harvested to product
+    expect('maxSteps' in (vision ?? {})).toBe(false);
+    expect('timeoutMs' in (vision ?? {})).toBe(false);
+    // Completeness BUMP (not a per-agent cap): re-prompt to finalize if it stops
+    // without submitting; submit_vision is a TERMINAL tool so the bump then stops.
+    expect(vision?.bump?.maxBumps).toBe(2);
+    expect(vision?.customTools?.find((t) => t.name === 'submit_vision')?.terminal).toBe(true);
+    // The vision brief the CEO formed is recorded and seeded the build.
+    expect(result.vision?.brief).toBe(VISION_BRIEF);
+    expect(result.vision?.usedRawTask).toBe(false);
+    expect(result.vision?.toolsUsed).toContain('submit_vision');
 
     // Worker: promotion tool as a custom tool, thinking ON, thinking-general sampling.
     // The promotion tool name MUST also be in the allowlist (`tools`) — the SDK gates
@@ -408,21 +452,26 @@ describe('runCorp — every role runs harnessed through the role-agent seam', ()
     expect(worker?.thinking).toBe(true);
     expect(worker?.samplingMode).toBe('thinking-general');
 
-    // Architect + manager: thinking OFF, instruct-general (structured JSON).
+    // Architect + manager: thinking OFF, instruct-general (structured JSON). They are
+    // seeded with the CEO's VISION BRIEF (spec §4), NOT the raw user task.
     const architect = mock.calls.find((c) => c.purpose === 'architect');
     expect(architect?.thinking).toBe(false);
     expect(architect?.samplingMode).toBe('instruct-general');
+    expect(architect?.userPrompt).toContain(VISION_BRIEF); // built against the vision
     const manager = mock.calls.find((c) => c.purpose === 'manager');
     expect(manager?.thinking).toBe(false);
     expect(manager?.samplingMode).toBe('instruct-general');
+    expect(manager?.userPrompt).toContain(VISION_BRIEF); // built against the vision
 
     // CEO: thinking ON, read + bash tools, thinking-general — and the FALSE-COMPLETION
-    // cure preserved: the user turn is vision-only, never the engineer file body.
+    // cure preserved: the user turn is the standard (original task + the vision the CEO
+    // formed) + manifest + verify, NEVER the build transcript / engineer file body.
     const ceo = mock.calls.find((c) => c.purpose === 'ceo');
     expect(ceo?.thinking).toBe(true);
     expect(ceo?.tools).toEqual(expect.arrayContaining(['read', 'bash']));
     expect(ceo?.samplingMode).toBe('thinking-general');
     expect(ceo?.userPrompt).toContain('Build a thing'); // the original task (the standard)
+    expect(ceo?.userPrompt).toContain(VISION_BRIEF); // + the vision it judges against (§8)
     expect(ceo?.userPrompt).not.toContain('export const value'); // NOT the build/file body
 
     // Engineer system prompt is SELF-CONTAINED (spec §91): a module-builder framing
@@ -541,6 +590,7 @@ const RESCOPED_JSON = JSON.stringify([
  */
 function makeEscalationMock(mode: 'recover' | 'gap'): Mock {
   const callsByPurpose: Record<CorpTurnPurpose, number> = {
+    vision: 0,
     worker: 0,
     architect: 0,
     manager: 0,
@@ -553,6 +603,8 @@ function makeEscalationMock(mode: 'recover' | 'gap'): Mock {
   const chat: CorpChatFn = (request) => {
     callsByPurpose[request.purpose] += 1;
     switch (request.purpose) {
+      case 'vision':
+        return { content: VISION_BRIEF };
       case 'worker':
         return {
           content: '',

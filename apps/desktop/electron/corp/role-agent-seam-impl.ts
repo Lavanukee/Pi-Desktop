@@ -35,7 +35,11 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AgentToolResult, ToolDefinition } from '@mariozechner/pi-coding-agent';
+import type {
+  AgentToolResult,
+  ExtensionFactory,
+  ToolDefinition,
+} from '@mariozechner/pi-coding-agent';
 import type {
   RoleAgentCustomTool,
   RoleAgentRunInput,
@@ -44,6 +48,15 @@ import type {
   RunRoleAgentFn,
 } from '@pi-desktop/harness/corp';
 import { createCorpModelProvider, runRoleAgent, type SamplingMode } from './role-agent';
+
+/** The web-research tool names a role's allowlist may request (the CEO vision
+ * turn). When any is present AND a {@link RunRoleAgentConfig.webResearchFactory} is
+ * injected, that factory is installed for the run so the tools exist; the allowlist
+ * still gates which of them the role may call. The names are kept local (not
+ * imported from @pi-desktop/web-tools) so this module carries NO dependency on the
+ * web-tools package — the APP injects the concrete registrar, keeping the seam impl
+ * loadable everywhere (incl. the Node type-stripping e2e drivers). */
+const WEB_TOOL_NAMES: ReadonlySet<string> = new Set(['web_search', 'web_fetch']);
 
 // --- small fs helpers --------------------------------------------------------
 
@@ -250,19 +263,31 @@ const UNFULFILLABLE_RE = /unfulfillable[,:]?\s+because/i;
 
 /**
  * The BUMP-TO-CONTINUE decision (spec "Run safety & budgets" — the completeness
- * backstop), pure + testable. Given the terminal state of an engineer run, return
- * the continue prompt to RE-PROMPT the same session, or `undefined` to STOP. It
- * stops when the deliverable is present (the submit finalized OR the slot file
- * exists) or the engineer declared the contract unfulfillable; otherwise (a
- * premature stop — quit with no file and no decision) it returns the continue prompt.
+ * backstop), pure + testable. Given the terminal state of a role-agent run, return
+ * the continue prompt to RE-PROMPT the same session, or `undefined` to STOP.
+ *
+ * It STOPS when the deliverable is present:
+ *  - ENGINEER: the submit finalized OR the slot file exists;
+ *  - a TERMINAL custom tool was called (the CEO vision turn's `submit_vision`);
+ *  - `textIsDeliverable` (a role whose OUTPUT is its assistant text, e.g. vision)
+ *    AND the final text is non-empty;
+ *  - the engineer declared the contract "unfulfillable, because …".
+ * Otherwise (a premature stop — quit with no deliverable) it returns the continue
+ * prompt. The extra fields default off, so the engineer's behaviour is unchanged.
  */
 export function bumpDecision(args: {
   readonly finalized: boolean;
   readonly slotExists: boolean;
   readonly finalText: string;
   readonly continuePrompt: string;
+  /** A `terminal` custom tool was called (submit_vision) — the turn is finished. */
+  readonly terminalCalled?: boolean;
+  /** This role's deliverable IS its assistant text (vision), so non-empty text stops. */
+  readonly textIsDeliverable?: boolean;
 }): string | undefined {
-  if (args.finalized || args.slotExists) return undefined; // deliverable present
+  if (args.finalized || args.slotExists) return undefined; // deliverable present (engineer)
+  if (args.terminalCalled === true) return undefined; // a terminal tool call (submit_vision)
+  if (args.textIsDeliverable === true && args.finalText.trim() !== '') return undefined; // text IS the deliverable
   if (UNFULFILLABLE_RE.test(args.finalText)) return undefined; // terminal decision
   return args.continuePrompt; // premature stop → bump
 }
@@ -285,13 +310,16 @@ export function bumpDecision(args: {
  *    and returns its prose. Charged via {@link ConsultRunner.onConsult}; declines
  *    with {@link CONSULT_DECLINED} when the budget is spent.
  *  - neither (e.g. the promotion tool): a no-op ack — the CALL itself is the signal
- *    (captured via the runtime's `tool_call` event into `toolCalls`).
+ *    (captured via the runtime's `tool_call` event into `toolCalls`). When the tool
+ *    is marked `terminal` (the vision turn's `submit_vision`), the ack also flips
+ *    `onTerminal` so the completeness bump knows the turn finished.
  */
 export function toToolDefinition(
   tool: RoleAgentCustomTool,
   cwd: string,
   capture?: SubmitReviewCapture,
   consultRunner?: ConsultRunner,
+  onTerminal?: () => void,
 ): ToolDefinition {
   const base = {
     name: tool.name,
@@ -355,10 +383,18 @@ export function toToolDefinition(
   }
   return {
     ...base,
-    execute: async (): Promise<AgentToolResult<unknown>> => ({
-      content: [{ type: 'text', text: `${tool.name} recorded.` }],
-      details: undefined,
-    }),
+    execute: async (): Promise<AgentToolResult<unknown>> => {
+      // A TERMINAL no-op tool (submit_vision): flip the flag so the bump stops, and
+      // ack decisively so the model does not keep calling tools.
+      if (tool.terminal === true) {
+        onTerminal?.();
+        return {
+          content: [{ type: 'text', text: `${tool.name} recorded — you are done. Stop here.` }],
+          details: undefined,
+        };
+      }
+      return { content: [{ type: 'text', text: `${tool.name} recorded.` }], details: undefined };
+    },
   };
 }
 
@@ -368,6 +404,16 @@ export interface RunRoleAgentConfig {
   readonly baseUrl: string;
   /** The served model id. */
   readonly model: string;
+  /**
+   * The web-research registrar (spec §4 — the CEO vision turn researches
+   * references). INJECTED by the app (corp-main.ts passes
+   * `(pi) => registerWebTools(pi)` from @pi-desktop/web-tools) so this seam carries
+   * NO dependency on the web-tools package and stays loadable everywhere. Installed
+   * ONLY for a run whose allowlist requests a web tool ({@link WEB_TOOL_NAMES}); the
+   * allowlist still gates which tools the role may call. Absent → the vision turn
+   * runs WITHOUT web research (it still has read/write/bash to draft its mockup).
+   */
+  readonly webResearchFactory?: ExtensionFactory;
 }
 
 /**
@@ -381,6 +427,7 @@ export interface RunRoleAgentConfig {
  */
 export function createRunRoleAgent(config: RunRoleAgentConfig): RunRoleAgentFn {
   const handle = createCorpModelProvider({ baseUrl: config.baseUrl, model: config.model });
+  const webResearchFactory = config.webResearchFactory;
 
   return async (input: RoleAgentRunInput): Promise<RoleAgentRunOutput> => {
     // ISOLATED WORKSPACE (spec §91): seed a fresh dir with the engineer's deps and
@@ -430,10 +477,26 @@ export function createRunRoleAgent(config: RunRoleAgentConfig): RunRoleAgentFn {
       ...(input.onConsult !== undefined ? { onConsult: input.onConsult } : {}),
     };
 
+    // A `terminal` custom tool (submit_vision) flips this so the completeness bump
+    // knows the turn finished (there is no submit gate / slot file to detect).
+    let terminalCalled = false;
     const customTools =
       input.customTools !== undefined && input.customTools.length > 0
-        ? input.customTools.map((t) => toToolDefinition(t, agentCwd, capture, consultRunner))
+        ? input.customTools.map((t) =>
+            toToolDefinition(t, agentCwd, capture, consultRunner, () => {
+              terminalCalled = true;
+            }),
+          )
         : undefined;
+
+    // WEB-RESEARCH (spec §4 CEO research): when the run's allowlist requests
+    // web_search / web_fetch (the CEO vision turn) AND the app injected a
+    // webResearchFactory, install it so those tools exist. The allowlist still gates
+    // which of them the role may call, so no other role is affected. Absent factory
+    // → the vision turn simply runs without web research.
+    const wantsWebTools = input.tools.some((t) => WEB_TOOL_NAMES.has(t));
+    const extensionFactories: ExtensionFactory[] =
+      wantsWebTools && webResearchFactory !== undefined ? [webResearchFactory] : [];
 
     // BUMP-TO-CONTINUE (spec "Run safety & budgets"): after the session's loop ends,
     // if the engineer did NOT finalize AND its slot file is absent AND it did not
@@ -446,9 +509,15 @@ export function createRunRoleAgent(config: RunRoleAgentConfig): RunRoleAgentFn {
           ? bumpSlot
           : path.join(agentCwd, relClean(bumpSlot))
         : undefined;
+    // A run WITHOUT a submit gate (the vision turn — no submit_contract) has no slot
+    // file; its deliverable is the `terminal` tool call (submit_vision) or its final
+    // assistant text. A run WITH a submit gate (the engineer) keeps the file-based
+    // semantics (text is NOT its deliverable).
+    const hasSubmitGate = submitTool !== undefined;
     const deliverablePresent = (): boolean =>
       capture?.finalized === true ||
-      (bumpSlotAbs !== undefined && readIfExists(bumpSlotAbs) !== undefined);
+      (bumpSlotAbs !== undefined && readIfExists(bumpSlotAbs) !== undefined) ||
+      terminalCalled;
     const bumpInput = input.bump;
     const bumpConfig =
       bumpInput !== undefined
@@ -458,6 +527,8 @@ export function createRunRoleAgent(config: RunRoleAgentConfig): RunRoleAgentFn {
               bumpDecision({
                 finalized: capture?.finalized === true,
                 slotExists: bumpSlotAbs !== undefined && readIfExists(bumpSlotAbs) !== undefined,
+                terminalCalled,
+                textIsDeliverable: !hasSubmitGate,
                 finalText,
                 continuePrompt: bumpInput.continuePrompt,
               }),
@@ -479,6 +550,7 @@ export function createRunRoleAgent(config: RunRoleAgentConfig): RunRoleAgentFn {
         ...(customTools !== undefined ? { customTools } : {}),
         ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}),
         ...(bumpConfig !== undefined ? { bump: bumpConfig } : {}),
+        ...(extensionFactories.length > 0 ? { extensionFactories } : {}),
         // NO maxSteps and NO per-agent timeout are forwarded: the role runs fully
         // autonomously until it submits / the global RunBudget. runRoleAgent keeps
         // only its internal per-CALL network abort.
@@ -494,10 +566,17 @@ export function createRunRoleAgent(config: RunRoleAgentConfig): RunRoleAgentFn {
       !deliverablePresent() && UNFULFILLABLE_RE.test(result.finalText ?? '');
 
     // HARVEST the engineer's own files into the shared product tree (isolated only);
-    // else the files it wrote directly in `input.cwd` are already in place.
+    // else the files it wrote directly in `input.cwd` are already in place. A
+    // SCRATCH isolation (harvest === false — the CEO vision turn's mockup) is NOT
+    // copied back: it must never enter the product tree the verify pass scans. Its
+    // written files are still REPORTED (from the scratch dir, before dispose) so the
+    // run can note "the CEO wrote a mockup" without polluting the product.
+    const harvestBack = iso !== undefined && input.isolation?.harvest !== false;
     const filesWritten =
       iso !== undefined
-        ? iso.harvest(input.cwd)
+        ? harvestBack
+          ? iso.harvest(input.cwd)
+          : result.filesWritten.map((f) => ({ path: f.path, bytes: f.bytes }))
         : result.filesWritten.map((f) => ({ path: f.path, bytes: f.bytes }));
     if (iso !== undefined) iso.dispose();
 

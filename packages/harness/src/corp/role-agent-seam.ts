@@ -37,7 +37,7 @@ export type SamplingMode =
  * runs harnessed through this seam:
  *
  *  - engineer            → `thinking-coding`   (code: low temp, no presence penalty)
- *  - worker / ceo        → `thinking-general`  (judgment: promote-or-not, final review)
+ *  - vision / worker / ceo → `thinking-general` (judgment: form the vision, promote-or-not, final review)
  *  - manager / architect → `instruct-general`  (structured JSON, thinking OFF)
  *  - rescope             → `instruct-general`  (manager-authored, like the manager)
  *  - revise              → `thinking-general`  (a CEO judgment turn)
@@ -46,6 +46,7 @@ export function samplingModeForPurpose(purpose: CorpTurnPurpose): SamplingMode {
   switch (purpose) {
     case 'engineer':
       return 'thinking-coding';
+    case 'vision':
     case 'worker':
     case 'ceo':
     case 'revise':
@@ -107,6 +108,15 @@ export interface RoleAgentCustomTool {
     readonly reviewPrompt: string;
   };
   /**
+   * TERMINAL MARKER — calling this tool is a TERMINAL decision (the CEO vision
+   * turn's `submit_vision`). It has no `submitReview` gate and no `slot`, so the
+   * §backstop bump can't detect a file; this flag tells the app impl that a call to
+   * this tool means the role finished, so the completeness bump STOPS re-prompting
+   * (the run's terminal signal is the tool CALL, parsed from `toolCalls`). Left
+   * unset (the promotion tool) the call is a plain no-op ack with no bump effect.
+   */
+  readonly terminal?: boolean;
+  /**
    * THE CONSULT MARKER (spec §7 peer/specialist consults, §12-Q11 advice-only).
    * When set, the app impl wires an `execute` that spawns a CLEAN-CONTEXT advisor
    * role-agent (a peer of the engineer's own division, or an advisory specialist)
@@ -162,6 +172,15 @@ export interface RoleAgentSeedFile {
  */
 export interface RoleAgentIsolation {
   readonly seed: readonly RoleAgentSeedFile[];
+  /**
+   * Whether to HARVEST the agent's writes back into `cwd` after the run (default
+   * TRUE — the engineer's produced files ARE the product). Set FALSE for a pure
+   * SCRATCH workspace whose files must NOT enter the product tree — the CEO
+   * vision turn drafts a throwaway mockup here and the vision brief (text) is what
+   * carries forward, so nothing lands where the assemble/verify pass would scan it
+   * (verify.ts lists the whole tree). The scratch dir is still disposed after.
+   */
+  readonly harvest?: boolean;
 }
 
 /**

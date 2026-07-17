@@ -426,6 +426,14 @@ export interface RoleAgentConfig {
    * (an engineer that quit without producing its deliverable); it is NOT a per-agent
    * work cap. Absent → the session runs once, exactly as before. */
   readonly bump?: BumpConfig;
+  /**
+   * Extra pi extension factories to install alongside the built-in `corpExt`
+   * (sampling + thinking-strip + tool capture). The seam uses this to register the
+   * web-tools extension (web_search / web_fetch) for the CEO vision turn — the
+   * tools still only fire when their names are in {@link RoleAgentConfig.tools}, so
+   * a role without them in its allowlist can never call them. Absent → just corpExt.
+   */
+  readonly extensionFactories?: ExtensionFactory[];
 }
 
 /** The BUMP-TO-CONTINUE policy for a run (see {@link RoleAgentConfig.bump}). */
@@ -559,7 +567,10 @@ export async function runRoleAgent(
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
-    extensionFactories: [corpExt],
+    // corpExt first (sampling + thinking-strip + tool capture), then any extra
+    // factories the seam supplies (e.g. web-tools for the CEO vision turn). Extra
+    // tools still only fire when their name is in `config.tools` (the allowlist).
+    extensionFactories: [corpExt, ...(config.extensionFactories ?? [])],
   });
   await loader.reload();
 

@@ -194,6 +194,38 @@ describe('bumpDecision — the completeness backstop condition (pure)', () => {
   it('BUMPS (returns the continue prompt) on a premature stop — no file, no decision', () => {
     expect(bumpDecision({ ...base, finalized: false, slotExists: false })).toBe(CONTINUE);
   });
+
+  // The CEO vision turn: no slot/submit-gate — its deliverable is the terminal
+  // submit_vision call OR its final assistant text.
+  it('STOPS (no bump) when a TERMINAL tool was called (submit_vision)', () => {
+    expect(
+      bumpDecision({ ...base, finalized: false, slotExists: false, terminalCalled: true }),
+    ).toBeUndefined();
+  });
+
+  it('STOPS (no bump) when text IS the deliverable and it is non-empty (vision brief stated)', () => {
+    expect(
+      bumpDecision({
+        finalized: false,
+        slotExists: false,
+        textIsDeliverable: true,
+        finalText: 'VISION: a calm pomodoro timer …',
+        continuePrompt: CONTINUE,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('BUMPS a vision turn that stopped with no submit and no text', () => {
+    expect(
+      bumpDecision({
+        ...base,
+        finalized: false,
+        slotExists: false,
+        terminalCalled: false,
+        textIsDeliverable: true,
+      }),
+    ).toBe(CONTINUE);
+  });
 });
 
 describe('toToolDefinition — consult tools spawn a clean-context advisor (advice-only)', () => {

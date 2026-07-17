@@ -19,6 +19,7 @@ import type { CoordinationEvent, TaskHandle } from '@pi-desktop/coordination';
 import { CorpEngine, createNodeWorkspaceFactory } from '@pi-desktop/coordination/corp';
 import type { CorpChatFn } from '@pi-desktop/harness/corp';
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
+import { registerWebTools } from '@pi-desktop/web-tools';
 import { app, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
 import { ensureCorpInferenceServer } from '../inference/llm-main';
 import type { AppEventMap } from '../ipc-contract';
@@ -115,7 +116,14 @@ async function handleStart(
   // role-agent seam, bound to the SAME resolved server the chat seam uses. Absent
   // on the unavailable path (the engine terminates without running the harness).
   const runRoleAgent = resolved.ok
-    ? createRunRoleAgent({ baseUrl: resolved.baseUrl, model: resolved.model })
+    ? createRunRoleAgent({
+        baseUrl: resolved.baseUrl,
+        model: resolved.model,
+        // The CEO vision turn (spec §4) researches references — inject the web-tools
+        // registrar so web_search / web_fetch exist for the runs whose allowlist
+        // requests them (the seam gates by name; no other role is affected).
+        webResearchFactory: (pi) => registerWebTools(pi),
+      })
     : undefined;
   const engine = new CorpEngine({
     // Unused on the unavailable path (startUnavailable never calls the model).

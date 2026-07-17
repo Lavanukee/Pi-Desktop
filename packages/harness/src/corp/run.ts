@@ -98,12 +98,22 @@ import {
   samplingModeForPurpose,
 } from './role-agent-seam.js';
 import { type FileCheck, type VerifyResult, verifyProduct } from './verify.js';
+import {
+  buildCeoVisionPrompt,
+  CEO_VISION_PROMPT,
+  MAX_VISION_BUMPS,
+  parseVisionBrief,
+  SUBMIT_VISION,
+  SUBMIT_VISION_TOOL,
+  VISION_BUMP_PROMPT,
+} from './vision.js';
 import { type WorkspaceFs, type WorkspaceReadFs, writeSlot } from './workspace.js';
 
 // --- The model seam ----------------------------------------------------------
 
 /** The kind of model turn — every turn the budget charges is one of these. */
 export type CorpTurnPurpose =
+  | 'vision'
   | 'worker'
   | 'architect'
   | 'manager'
@@ -241,6 +251,24 @@ export interface ReviseSummary {
   readonly stoppedForBudget: boolean;
 }
 
+/** The CEO vision-forming turn's summary for the result (spec §4). */
+export interface VisionSummary {
+  /** The synthesized vision brief that seeded the build (empty when the turn
+   * produced nothing usable and the raw task was used instead). */
+  readonly brief: string;
+  /** True when the vision turn yielded no usable brief, so the RAW task was used
+   * downstream (the vision can never silently blank the build). */
+  readonly usedRawTask: boolean;
+  /** Distinct tool names the CEO used while forming the vision (agent path only;
+   * empty on the chat-fallback path, which has no tools). */
+  readonly toolsUsed: readonly string[];
+  /** How many scratch files (e.g. a mockup) the CEO wrote (agent path; the files
+   * live in a disposed scratch dir and never enter the product tree). */
+  readonly filesWritten: number;
+  /** How many assistant turns the vision agent ran, when reported by the seam. */
+  readonly turns?: number;
+}
+
 /** The budget's final state for the result. */
 export interface BudgetSummary {
   readonly maxTurns: number;
@@ -254,6 +282,8 @@ export interface CorpRunResult {
   readonly task: string;
   readonly promoted: boolean;
   readonly terminatedReason: TerminatedReason;
+  /** The CEO vision-forming turn that ran FIRST and seeded the build (spec §4). */
+  readonly vision?: VisionSummary;
   readonly promotionReason?: string;
   readonly divisions: readonly string[];
   /** The solo (unpromoted) direct answer preview, when the worker stayed solo. */
@@ -353,6 +383,7 @@ function detectPromotion(msg: CorpChatResult): CreateHierarchyArgs | undefined {
 }
 
 const zeroTurns = (): Record<CorpTurnPurpose, number> => ({
+  vision: 0,
   worker: 0,
   architect: 0,
   manager: 0,
@@ -702,8 +733,78 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
   let chart: OrgChart | undefined;
   let dispatchReport: DispatchReport | undefined;
   let directAnswerPreview: string | undefined;
+  // The VISION BRIEF the CEO forms in turn 0 (spec §4). It REPLACES the raw task
+  // for everything downstream (promotion, architect, managers); an empty brief
+  // means the turn produced nothing usable, so the raw task is used instead.
+  let visionBrief = '';
+  let visionSummary: VisionSummary | undefined;
 
   try {
+    // 0. CEO VISION → the FIRST turn (spec §4): synthesize the user's intent into a
+    // clear vision brief the whole corporation builds against. Harnessed with tools
+    // (research / draft a throwaway mockup / iterate, then submit_vision) — a BARE
+    // CEO overthinks. Thinking ON (the synthesis is the value). NO per-agent caps —
+    // it runs until it submits; only the global RunBudget applies. On the agent path
+    // it runs in an ISOLATED SCRATCH workspace (harvest OFF) so its mockup never
+    // enters the product tree; on the chat-fallback path it is a plain completion
+    // whose text IS the brief. A blank/failed turn falls back to the raw task.
+    log('CEO vision turn');
+    if (runRoleAgent !== undefined) {
+      const out = await agentRoleTurn({
+        purpose: 'vision',
+        systemPrompt: CEO_VISION_PROMPT,
+        userPrompt: buildCeoVisionPrompt(options.task),
+        // read/write/bash to draft + preview a mockup; web_search/web_fetch to
+        // research references (the app registers them when listed; the seam gates by
+        // name). submit_vision's NAME must be in the allowlist or it is never offered.
+        tools: ['read', 'write', 'bash', 'web_search', 'web_fetch', SUBMIT_VISION],
+        customTools: [SUBMIT_VISION_TOOL],
+        cwd: options.workspace,
+        // Scratch-only isolation: the CEO's mockup lands in a fresh temp dir that is
+        // NOT harvested back (verify.ts scans the whole product tree — a mockup must
+        // not pollute it); the brief text is what carries forward.
+        isolation: { seed: [], harvest: false },
+        thinking: roleThinkingEnabled('ceo'),
+        samplingMode: samplingModeForPurpose('vision'),
+        maxTokens: baseMaxTokens,
+        // COMPLETENESS BUMP (spec §4; like the engineer's bump-to-continue): a real
+        // 4B often researches then stops WITHOUT submitting — re-prompt the SAME
+        // session (its research preserved) to finalize the brief. NOT a per-agent
+        // work cap; it only prevents a premature stop. Terminal when submit_vision
+        // is called (SUBMIT_VISION_TOOL.terminal) or the CEO states the brief.
+        bump: { maxBumps: MAX_VISION_BUMPS, continuePrompt: VISION_BUMP_PROMPT },
+      });
+      visionBrief = parseVisionBrief(out.toolCalls, out.finalText);
+      visionSummary = {
+        brief: visionBrief,
+        usedRawTask: visionBrief === '',
+        toolsUsed: [...new Set(out.toolCalls.map((c) => c.name))],
+        filesWritten: out.filesWritten.length,
+        ...(out.turns !== undefined ? { turns: out.turns } : {}),
+      };
+    } else {
+      const res = await workTurn({
+        purpose: 'vision',
+        messages: [
+          { role: 'system', content: CEO_VISION_PROMPT },
+          { role: 'user', content: buildCeoVisionPrompt(options.task) },
+        ],
+        thinking: roleThinkingEnabled('ceo'),
+        maxTokens: baseMaxTokens,
+      });
+      visionBrief = parseVisionBrief(res.toolCalls ?? [], res.content ?? '');
+      visionSummary = {
+        brief: visionBrief,
+        usedRawTask: visionBrief === '',
+        toolsUsed: [],
+        filesWritten: 0,
+      };
+    }
+    // The working task the corporation builds against: the CEO's vision brief when
+    // it produced one, else the raw user task (never a silent blank — §0.6).
+    const workingTask = visionBrief !== '' ? visionBrief : options.task;
+    log(visionBrief !== '' ? 'vision formed' : 'vision empty — using raw task');
+
     // 1. WORKER → promote-or-not. Thinking ON — the promote-or-not judgment is the
     // value. On the agent path the promotion tool is a CUSTOM tool, so calling it
     // surfaces in toolCalls (detectPromotion reads it; falls back to finalText).
@@ -713,7 +814,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
       const out = await agentRoleTurn({
         purpose: 'worker',
         systemPrompt: PROMOTION_SYSTEM_PROMPT,
-        userPrompt: options.task,
+        userPrompt: workingTask,
         // The tool allowlist gates CUSTOM tools too (createAgentSession maps `tools`
         // → allowedToolNames), so the promotion tool's NAME must be listed here or
         // it is never offered to the model. No builtin file tools — a pure judgment
@@ -733,7 +834,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         purpose: 'worker',
         messages: [
           { role: 'system', content: PROMOTION_SYSTEM_PROMPT },
-          { role: 'user', content: options.task },
+          { role: 'user', content: workingTask },
         ],
         thinking: true,
         maxTokens: baseMaxTokens,
@@ -760,7 +861,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         const out = await agentRoleTurn({
           purpose: 'architect',
           systemPrompt: ARCHITECT_PROMPT,
-          userPrompt: buildArchitectPrompt(options.task, divisions),
+          userPrompt: buildArchitectPrompt(workingTask, divisions),
           tools: ['read'],
           cwd: options.workspace,
           thinking: architectThinking,
@@ -774,7 +875,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
           purpose: 'architect',
           messages: [
             { role: 'system', content: ARCHITECT_PROMPT },
-            { role: 'user', content: buildArchitectPrompt(options.task, divisions) },
+            { role: 'user', content: buildArchitectPrompt(workingTask, divisions) },
           ],
           thinking: architectThinking,
           maxTokens: genMaxTokens,
@@ -797,7 +898,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         const managerResult = await withRetryOnEmpty({
           isEmpty: (contracts: readonly Contract[]) => contracts.length === 0,
           run: async ({ isRetry }) => {
-            const basePrompt = buildManagerContractPrompt(division, options.task, architecture);
+            const basePrompt = buildManagerContractPrompt(division, workingTask, architecture);
             const userContent = isRetry
               ? `${basePrompt}\n\n${MANAGER_EMPTY_RETRY_NUDGE}`
               : basePrompt;
@@ -912,6 +1013,15 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
       chart ??
       applyCreateHierarchy(null, { reason: promotionArgs.reason, divisions }, options.projectId);
 
+    // The STANDARD the CEO judges against: the original task AND the vision brief
+    // the CEO itself formed in turn 0 (spec §8 — the vision is what it later judges
+    // the product against). Still transcript-free: buildCeoReviewPrompt has no
+    // build-transcript field, so the false-completion cure is preserved by SHAPE.
+    const reviewStandard =
+      visionBrief !== ''
+        ? `${options.task.trim()}\n\nVISION BRIEF you formed as the standard for this build:\n${visionBrief}`
+        : options.task;
+
     // The terminal CEO sign-off turn — charged for accounting but NEVER gated by a
     // refusal: the run must always end with an honest verdict over the final
     // product, so this one turn is allowed past the work-turn cap. A CEO error /
@@ -922,12 +1032,12 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
       verifyResult = verifyProduct(options.workspace, options.readFs, options.fileCheck);
       chargeTurn(budget);
       turnsByPurpose[purpose] += 1;
-      // VISION-ONLY user turn (original task + product manifest + verify evidence) —
-      // NEVER the build transcript. The false-completion cure is enforced by
-      // buildCeoReviewPrompt's SHAPE (it has no transcript field) and is preserved
-      // identically on BOTH the agent and the chat path.
+      // VISION-ONLY user turn (original task + the vision brief + product manifest +
+      // verify evidence) — NEVER the build transcript. The false-completion cure is
+      // enforced by buildCeoReviewPrompt's SHAPE (it has no transcript field) and is
+      // preserved identically on BOTH the agent and the chat path.
       const userContent = buildCeoReviewPrompt({
-        originalTask: options.task,
+        originalTask: reviewStandard,
         manifest,
         verifyResult,
       });
@@ -1121,6 +1231,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
     task: options.task,
     promoted,
     terminatedReason,
+    ...(visionSummary !== undefined ? { vision: visionSummary } : {}),
     ...(promotionArgs !== undefined ? { promotionReason: promotionArgs.reason } : {}),
     divisions: divisions.map((d) => d.name),
     ...(directAnswerPreview !== undefined ? { directAnswerPreview } : {}),

@@ -17,6 +17,7 @@
 
 export * from './architect.js';
 export * from './assemble.js';
+export * from './budget.js';
 export * from './ceo.js';
 export * from './contracts.js';
 export * from './dag.js';
@@ -30,6 +31,8 @@ export * from './plan.js';
 export * from './promotion.js';
 export * from './prompts.js';
 export * from './retry.js';
+export * from './revise.js';
+export * from './run.js';
 export * from './sanitize.js';
 export * from './verify.js';
 export * from './workspace.js';

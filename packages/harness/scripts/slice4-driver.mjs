@@ -47,22 +47,23 @@
  *   --task        <prompt>    the user task to route                  (required)
  *   --model       <id>        model id sent in the body    (default "local-model")
  *   --limit       <n>         dispatch at most N engineers (subset)   (default 6)
- *   --max-tokens  <n>         generous cap (default 8192; the generation-heavy
- *                             manager AND engineer turns floor at 16k)
+ *   --max-tokens  <n>         judgment-turn cap (default 8192; the generation-heavy
+ *                             architect/manager/engineer turns floor at 16k inside runCorp)
+ *   --max-revisions <n>       cap on CEO revise cycles (default 1, inside runCorp)
  *   --temperature <t>         sampling temperature                   (default 0.7)
  *   --timeout-ms  <ms>        per-call abort (local thinking is slow) (default 600000)
  *   (the temp workspace is always left on disk so you can inspect the files)
  *
- * Emits a single structured JSON report to STDOUT (progress goes to STDERR):
- *   { task, promoted, divisions, totalContracts, contractsDispatched, workspace,
- *     filesWritten:[{path,bytes,sample}], interceptorFired, interceptorReviewTurns,
- *     interceptorChangedCount, reviews:[{contractId,draftBytes,reviewedBytes,changed}],
- *     emptyAfterRetryDivisions, engineerEmptyAfterRetry,
- *     failures, skips, dispatchResults,
- *     manifest:{divisions,fileCount,totalBytes,interfaceCount,contractStatusSummary},
- *     verify:{ok,errorCount,errorsPreview}, ceoDecision:{decision,notesPreview},
- *     escalations:[{contractId,ownerManager,reason,acceptedGap,rescopePreview}],
- *     ...planningPreviews }
+ * The LIVE flow is delegated to the shared orchestrator {@link runCorp} (corp/run.ts),
+ * which threads the global RunBudget (corp/budget.ts) through EVERY model turn and the
+ * bounded CEO revise loop (corp/revise.ts) through completion — so a misbehaving /
+ * endless-looped model is caught and the run terminates with a recorded terminal state
+ * (never a hang). The driver just supplies a streaming model seam + node fs seams and
+ * prints runCorp's terminal state as JSON:
+ *   { task, promoted, terminatedReason, divisions, totalContracts, contractsDispatched,
+ *     workspace, manifest, verify, initialCeoDecision, ceoDecision, revise,
+ *     escalations, failures, budget:{maxTurns,maxWallClockMs,turnsUsed,exceeded},
+ *     turnsByPurpose, errors }
  */
 
 import { mkdtempSync, readFileSync } from 'node:fs';
@@ -92,38 +93,20 @@ register(`data:text/javascript,${encodeURIComponent(tsResolveHook)}`);
 
 const corpUrl = new URL('../src/corp/index.ts', import.meta.url).href;
 const {
-  PROMOTION_SYSTEM_PROMPT,
-  CREATE_PRODUCTION_HIERARCHY,
-  CREATE_PRODUCTION_HIERARCHY_TOOL,
-  parseCreateHierarchyArgs,
-  ARCHITECT_PROMPT,
-  buildArchitectPrompt,
-  parseArchitecture,
-  buildManagerContractPrompt,
-  parseManagerContracts,
-  getRolePrompt,
-  roleThinkingEnabled,
-  applyCreateHierarchy,
-  buildOrgChartQueueWithReport,
-  resolveInterfaceHandles,
-  countCrossDivisionEdges,
-  topologicalOrder,
-  edgesFromContracts,
-  // slice 4:
-  ENGINEER_SYSTEM_PROMPT,
-  buildEngineerPrompt,
-  parseEngineerOutput,
-  dispatchContracts,
+  // The whole LIVE flow runs through the shared orchestrator, which threads the
+  // global RunBudget (budget.ts) through EVERY model turn and the bounded CEO
+  // revise loop (revise.ts) through completion — so an endless-looped / misbehaving
+  // model is caught and the run terminates gracefully (spec §0.6 "robustness is
+  // external"). The driver is now a thin streaming seam over it.
+  runCorp,
+  // Node fs seams for the real workspace.
   makeNodeWorkspaceFs,
-  // robustness backstops (spec §0.6):
-  withRetryOnEmpty,
-  isBlankFile,
-  MANAGER_EMPTY_RETRY_NUDGE,
-  // slice 5 (completion — assemble → verify → CEO sign-off → escalation):
   makeNodeWorkspaceReadFs,
+  // Still used directly by the offline --dry-run fixture below.
+  edgesFromContracts,
+  dispatchContracts,
   buildProductManifest,
   verifyProduct,
-  CEO_REVIEW_PROMPT,
   buildCeoReviewPrompt,
   parseCeoDecision,
   escalateContract,
@@ -156,21 +139,22 @@ const task = typeof args.task === 'string' ? args.task : undefined;
 const model = typeof args.model === 'string' ? args.model : 'local-model';
 const maxTokens = Number.isFinite(Number(args['max-tokens'])) ? Number(args['max-tokens']) : 8192;
 // Generation-heavy role turns (the manager writing contract JSON, the engineer
-// writing a whole file) need more room than the judgment turns. A too-tight cap
-// silently TRUNCATES — for the manager it lost an entire division (slice 3); for
-// the engineer it would truncate the file mid-body. Floor both at ~16k, while a
-// user-supplied higher --max-tokens still wins. ("Robustness is external", §0.6.)
-const managerMaxTokens = Math.max(maxTokens, 16000);
-const engineerMaxTokens = Math.max(maxTokens, 16000);
+// writing a whole file) need more room than the judgment turns and are floored at
+// ~16k INSIDE runCorp — a too-tight cap silently TRUNCATES (a whole division lost
+// in slice 3), so the base --max-tokens here only sets the judgment-turn cap.
+// ("Robustness is external", §0.6.)
 const temperature = Number.isFinite(Number(args.temperature)) ? Number(args.temperature) : 0.7;
 const timeoutMs = Number.isFinite(Number(args['timeout-ms'])) ? Number(args['timeout-ms']) : 600000;
 const limit = Number.isFinite(Number(args.limit)) ? Number(args.limit) : 6;
+// Cap on CEO revise cycles (revise.ts); the default (1) applies inside runCorp.
+const maxRevisions = Number.isFinite(Number(args['max-revisions']))
+  ? Number(args['max-revisions'])
+  : undefined;
 
 const log = (...m) => console.error('[slice4]', ...m);
 const preview = (s, n = 800) =>
   typeof s === 'string' ? (s.length > n ? `${s.slice(0, n)}…` : s) : undefined;
 
-const TOPO_PREVIEW_LIMIT = 20;
 const SAMPLE_LEN = 240;
 
 // --- Dry-run fixture + assertions --------------------------------------------
@@ -506,378 +490,61 @@ async function accumulateStream(stream) {
   return msg;
 }
 
-function firstJsonObject(text) {
-  if (typeof text !== 'string') return undefined;
-  const start = text.indexOf('{');
-  if (start === -1) return undefined;
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (ch === '\\') esc = true;
-      else if (ch === '"') inStr = false;
-      continue;
-    }
-    if (ch === '"') inStr = true;
-    else if (ch === '{') depth++;
-    else if (ch === '}' && --depth === 0) {
-      try {
-        return JSON.parse(text.slice(start, i + 1));
-      } catch {
-        return undefined;
-      }
-    }
-  }
-  return undefined;
-}
-
-function safeParse(s) {
-  try {
-    return JSON.parse(s);
-  } catch {
-    return undefined;
-  }
-}
-
-function detectPromotion(message) {
-  const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
-  for (const call of calls) {
-    if (call?.function?.name !== CREATE_PRODUCTION_HIERARCHY) continue;
-    const rawArgs = call.function.arguments;
-    const decoded =
-      typeof rawArgs === 'string' ? (firstJsonObject(rawArgs) ?? safeParse(rawArgs)) : rawArgs;
-    const parsed = parseCreateHierarchyArgs(decoded);
-    if (parsed !== undefined) return { args: parsed, raw: call };
-  }
-  const inText = parseCreateHierarchyArgs(firstJsonObject(message.content));
-  if (inText !== undefined)
-    return { args: inText, raw: { source: 'content', text: message.content } };
-  return undefined;
-}
-
-// --- Run ---------------------------------------------------------------------
-const report = { task, promoted: false, limit };
-
-try {
-  log(`worker turn → ${baseUrl} (max_tokens=${maxTokens}, timeout=${timeoutMs}ms)`);
-  const workerMsg = await chat({
-    messages: [
-      { role: 'system', content: PROMOTION_SYSTEM_PROMPT },
-      { role: 'user', content: task },
-    ],
-    tools: [CREATE_PRODUCTION_HIERARCHY_TOOL],
-    tool_choice: 'auto',
+// --- Model seam for runCorp --------------------------------------------------
+// Bridge the provider-agnostic CorpChatRequest (run.ts) to the live streaming
+// call: apply the llama.cpp thinking switch (`chat_template_kwargs` + a `/no_think`
+// tag on the last user turn) from `req.thinking`, pass the worker's promotion tool
+// through when present, and surface any tool calls back to the orchestrator. All
+// prompt composition, budget charging, and the bounded revise loop live inside
+// runCorp — this closure is the only live-model-specific glue.
+const corpChat = async (req) => {
+  const lastUserIdx = req.messages.map((m) => m.role).lastIndexOf('user');
+  const messages = req.messages.map((m, i) => ({
+    role: m.role,
+    content: i === lastUserIdx ? withThinkTag(m.content, req.thinking) : m.content,
+  }));
+  const msg = await chat({
+    messages,
+    ...(req.tools !== undefined ? { tools: req.tools, tool_choice: 'auto' } : {}),
     temperature,
-    max_tokens: maxTokens,
-    ...thinkingBody(true),
+    max_tokens: req.maxTokens,
+    ...thinkingBody(req.thinking),
   });
+  const toolCalls = Array.isArray(msg.tool_calls)
+    ? msg.tool_calls
+        .filter(Boolean)
+        .map((tc) => ({ name: tc.function?.name ?? '', arguments: tc.function?.arguments ?? '' }))
+    : [];
+  return { content: msg.content ?? '', ...(toolCalls.length > 0 ? { toolCalls } : {}) };
+};
 
-  const promotion = detectPromotion(workerMsg);
-  if (promotion === undefined) {
-    report.promoted = false;
-    report.directAnswerPreview = preview(workerMsg.content, 2000);
-    log('result: stayed solo (no create_production_hierarchy call)');
-  } else {
-    report.promoted = true;
-    report.promotionReason = promotion.args.reason;
-    const { divisions } = promotion.args;
-    report.divisions = divisions.map((d) => d.name);
-    log(
-      `result: PROMOTED — ${divisions.length} division(s): ${divisions.map((d) => d.name).join(', ')}`,
-    );
+// --- Run (delegated to the shared orchestrator) ------------------------------
+// runCorp threads the RunBudget (budget.ts) through EVERY model turn and the
+// bounded CEO revise loop (revise.ts) through completion, and NEVER throws or
+// hangs — a misbehaving / endless-looped model is caught by the per-turn
+// backstops and the global budget, and the run terminates with a recorded
+// terminal state (spec §0.6). The driver just emits that terminal state.
+const workspace = mkdtempSync(join(tmpdir(), 'slice4-ws-'));
+log(`worker turn → ${baseUrl} (max_tokens=${maxTokens}, timeout=${timeoutMs}ms)`);
 
-    // --- architect turn -----------------------------------------------------
-    const architectThinking = roleThinkingEnabled('architect');
-    log(`architect turn → shared architecture (thinking=${architectThinking})`);
-    const architectMsg = await chat({
-      messages: [
-        { role: 'system', content: ARCHITECT_PROMPT },
-        {
-          role: 'user',
-          content: withThinkTag(buildArchitectPrompt(task, divisions), architectThinking),
-        },
-      ],
-      temperature,
-      max_tokens: maxTokens,
-      ...thinkingBody(architectThinking),
-    });
-    const architecture = parseArchitecture(architectMsg.content ?? '');
-    log(
-      `  architecture: ${architecture.moduleMap.length} region(s), ${architecture.interfaces.length} interface(s)`,
-    );
+const result = await runCorp({
+  task,
+  chat: corpChat,
+  fs: makeNodeWorkspaceFs(),
+  readFs: makeNodeWorkspaceReadFs(),
+  workspace,
+  limit,
+  maxTokens,
+  ...(maxRevisions !== undefined ? { maxRevisions } : {}),
+  log: (m) => log(m),
+});
 
-    // --- manager turns (seeded) ---------------------------------------------
-    const managerBase = getRolePrompt('manager').prompt;
-    const managerThinking = roleThinkingEnabled('manager');
-    const contractsByDivision = [];
-    const emptyAfterRetryDivisions = [];
-    for (const division of divisions) {
-      log(
-        `manager turn → contracts for "${division.name}" (thinking=${managerThinking}, max_tokens=${managerMaxTokens})`,
-      );
-      // Fix 2: retry-on-empty. A manager that parses 0 contracts silently loses a
-      // whole division — retry ONCE with a nudge; if still 0, record it, never drop.
-      const managerResult = await withRetryOnEmpty({
-        isEmpty: (contracts) => contracts.length === 0,
-        run: async ({ isRetry }) => {
-          if (isRetry) log(`  0 contracts for "${division.name}" — retrying once with a nudge`);
-          const base = withThinkTag(
-            buildManagerContractPrompt(division, task, architecture),
-            managerThinking,
-          );
-          const managerMsg = await chat({
-            messages: [
-              { role: 'system', content: managerBase },
-              { role: 'user', content: isRetry ? `${base}\n\n${MANAGER_EMPTY_RETRY_NUDGE}` : base },
-            ],
-            temperature,
-            max_tokens: managerMaxTokens,
-            ...thinkingBody(managerThinking),
-          });
-          return parseManagerContracts(managerMsg.content ?? '');
-        },
-      });
-      const contracts = managerResult.value;
-      contractsByDivision.push(contracts);
-      if (managerResult.emptyAfterRetry) {
-        emptyAfterRetryDivisions.push(division.name);
-        log(`  division "${division.name}" produced 0 contracts AFTER retry — recorded`);
-      }
-      log(
-        `  parsed ${contracts.length} contract(s) for "${division.name}"${managerResult.retried ? ' (after retry)' : ''}`,
-      );
-    }
-    report.emptyAfterRetryDivisions = emptyAfterRetryDivisions;
+log(
+  `run terminated: ${result.terminatedReason} — ` +
+    `${result.contractsDispatched} contract(s) dispatched, ` +
+    `CEO ${result.ceoDecision?.decision ?? '(none)'}, ` +
+    `turns ${result.budget.turnsUsed}/${result.budget.maxTurns}` +
+    `${result.budget.exceeded ? ' (BUDGET EXCEEDED)' : ''}`,
+);
 
-    // --- resolve handles + build the queued chart ---------------------------
-    const byDivision = divisions.map((d, i) => ({
-      division: d.name,
-      contracts: contractsByDivision[i] ?? [],
-    }));
-    const divisionByContractId = new Map();
-    for (const g of byDivision)
-      for (const c of g.contracts) divisionByContractId.set(c.id, g.division);
-    const { contracts: resolvedContracts, report: integrate } = resolveInterfaceHandles(
-      byDivision,
-      architecture,
-    );
-    const base = applyCreateHierarchy(null, { reason: promotion.args.reason, divisions });
-    const { chart, report: queueReport } = buildOrgChartQueueWithReport({
-      ...base,
-      contracts: resolvedContracts,
-      architecture,
-    });
-
-    report.totalContracts = chart.contracts.length;
-    report.queueEdgeCount = chart.queue.length;
-    report.crossDivisionEdgeCount = countCrossDivisionEdges(chart.queue, divisionByContractId);
-    report.resolvedHandleCount = integrate.resolved.length;
-    report.dagAcyclic = queueReport.acyclic;
-    const topo = topologicalOrder(
-      chart.contracts.map((c) => c.id),
-      chart.queue,
-    );
-    report.topoOrderPreview = topo === null ? null : topo.slice(0, TOPO_PREVIEW_LIMIT);
-
-    // --- DISPATCH a subset --------------------------------------------------
-    const workspace = mkdtempSync(join(tmpdir(), 'slice4-ws-'));
-    report.workspace = workspace;
-    const engineerThinking = roleThinkingEnabled('engineer');
-    let interceptorReviewTurns = 0;
-    let engineerEmptyAfterRetry = 0;
-
-    const runEngineer = async (request) => {
-      const { contract, depContext, architectureRegion, review } = request;
-      // Count the review request once, not once per retry attempt.
-      if (review !== undefined) interceptorReviewTurns++;
-      // Fix 2: retry-on-empty. A runaway think can starve the file body → empty.
-      // Retry ONCE, and on the retry flip thinking OFF so the file can't be starved
-      // again. If STILL empty, throw → dispatch marks the contract FAILED (recorded)
-      // rather than writing an empty file to the slot.
-      const engineerResult = await withRetryOnEmpty({
-        isEmpty: isBlankFile,
-        run: async ({ isRetry }) => {
-          const thinking = isRetry ? false : engineerThinking;
-          if (isRetry) log(`  empty engineer reply for ${contract.id} — retry with thinking OFF`);
-          const messages = [
-            { role: 'system', content: ENGINEER_SYSTEM_PROMPT },
-            {
-              role: 'user',
-              content: withThinkTag(
-                buildEngineerPrompt(contract, depContext, architectureRegion),
-                thinking,
-              ),
-            },
-          ];
-          if (review !== undefined) {
-            messages.push({ role: 'assistant', content: review.priorSubmission });
-            messages.push({ role: 'user', content: withThinkTag(review.prompt, thinking) });
-          }
-          const msg = await chat({
-            messages,
-            temperature,
-            max_tokens: engineerMaxTokens,
-            ...thinkingBody(thinking),
-          });
-          return parseEngineerOutput(msg.content ?? '');
-        },
-      });
-      if (engineerResult.emptyAfterRetry) {
-        engineerEmptyAfterRetry++;
-        throw new Error(
-          `engineer produced empty content for ${contract.id} after retry (thinking-off fallback)`,
-        );
-      }
-      return engineerResult.value;
-    };
-
-    log(
-      `dispatching a subset of up to ${limit} contract(s) → ${workspace} (engineer thinking=${engineerThinking}, max_tokens=${engineerMaxTokens})`,
-    );
-    const dispatch = await dispatchContracts({
-      orgChart: chart,
-      runEngineer,
-      fs: makeNodeWorkspaceFs(),
-      workspace,
-      // Fix 3: measure the interceptor — capture draft vs reviewed per contract.
-      captureReviews: true,
-      includeReviewBodies: true,
-      limit,
-    });
-
-    report.contractsDispatched = dispatch.done.length + dispatch.failed.length;
-    report.engineerEmptyAfterRetry = engineerEmptyAfterRetry;
-    report.filesWritten = dispatch.filesWritten.map((f) => ({
-      path: f.path,
-      bytes: f.bytes,
-      sample: preview(readFileSync(f.path, 'utf8'), SAMPLE_LEN),
-    }));
-    report.interceptorFired = interceptorReviewTurns > 0;
-    report.interceptorReviewTurns = interceptorReviewTurns;
-    report.interceptorChangedCount = dispatch.interceptorChangedCount;
-    report.reviews = dispatch.reviews.map((r) => ({
-      contractId: r.contractId,
-      draftBytes: r.draftBytes,
-      reviewedBytes: r.reviewedBytes,
-      changed: r.changed,
-    }));
-    report.failures = dispatch.results
-      .filter((r) => r.status === 'failed')
-      .map((r) => ({ contractId: r.contractId, error: r.error }));
-    report.skips = dispatch.results
-      .filter((r) => r.status === 'skipped')
-      .map((r) => ({ contractId: r.contractId, skippedBecause: r.skippedBecause }));
-    report.dispatchResults = dispatch.results.map((r) => ({
-      contractId: r.contractId,
-      slot: r.slot,
-      status: r.status,
-    }));
-
-    log(
-      `dispatch done: ${dispatch.done.length} file(s) written, ${dispatch.failed.length} failed, ` +
-        `${dispatch.skipped.length} skipped, interceptor fired ${interceptorReviewTurns} time(s)`,
-    );
-
-    // --- slice 5: assemble → verify → CEO sign-off → escalation -------------
-    const readFs = makeNodeWorkspaceReadFs();
-    const manifest = buildProductManifest(dispatch.chart, workspace, readFs);
-    const verifyResult = verifyProduct(workspace, readFs);
-    report.manifest = {
-      divisions: manifest.divisions.map((d) => d.name),
-      fileCount: manifest.files.length,
-      totalBytes: manifest.totalBytes,
-      interfaceCount: manifest.interfaces.length,
-      contractStatusSummary: manifest.contractStatusSummary,
-    };
-    report.verify = {
-      ok: verifyResult.ok,
-      errorCount: verifyResult.errors.length,
-      errorsPreview: verifyResult.errors
-        .slice(0, 10)
-        .map((e) => ({ file: e.file, message: e.message })),
-    };
-    log(
-      `verify: ${verifyResult.ok ? 'PASS' : 'FAIL'} (${verifyResult.filesChecked} checked, ${verifyResult.errors.length} error(s))`,
-    );
-
-    // CEO final review — CLEAN, vision-only context: ONLY the original task, the
-    // product manifest, and the verify evidence (never the build transcript).
-    const ceoThinking = roleThinkingEnabled('ceo');
-    log(`CEO review turn (intelligent tier, thinking=${ceoThinking})`);
-    const ceoMsg = await chat({
-      messages: [
-        { role: 'system', content: CEO_REVIEW_PROMPT },
-        {
-          role: 'user',
-          content: withThinkTag(
-            buildCeoReviewPrompt({ originalTask: task, manifest, verifyResult }),
-            ceoThinking,
-          ),
-        },
-      ],
-      temperature,
-      max_tokens: maxTokens,
-      ...thinkingBody(ceoThinking),
-    });
-    const ceoDecision = parseCeoDecision(ceoMsg.content ?? '');
-    report.ceoDecision = {
-      decision: ceoDecision.decision,
-      notesPreview: preview(ceoDecision.notes, 600),
-    };
-    log(`CEO decision: ${ceoDecision.decision.toUpperCase()}`);
-
-    // Bounded escalation: each failed contract routes ONE level up to its manager
-    // for a single re-scope turn; this slice does not re-dispatch, so the bounded
-    // attempt records an accepted gap — never a deadlock (spec §9).
-    const managerThinkingForRescope = roleThinkingEnabled('manager');
-    const escalations = [];
-    for (const failed of dispatch.results.filter((r) => r.status === 'failed')) {
-      const contract = dispatch.chart.contracts.find((c) => c.id === failed.contractId);
-      if (contract === undefined) continue;
-      const record = escalateContract(dispatch.chart, failed.contractId, failed.error);
-      log(`escalating ${failed.contractId} → manager ${record.ownerManager}`);
-      let rescopePreview;
-      const outcome = await runBoundedEscalation({
-        record,
-        attemptRescope: async () => {
-          const rescopeMsg = await chat({
-            messages: [
-              { role: 'system', content: getRolePrompt('manager').prompt },
-              {
-                role: 'user',
-                content: withThinkTag(
-                  buildManagerRescopePrompt(contract, record.reason),
-                  managerThinkingForRescope,
-                ),
-              },
-            ],
-            temperature,
-            max_tokens: managerMaxTokens,
-            ...thinkingBody(managerThinkingForRescope),
-          });
-          rescopePreview = preview(rescopeMsg.content ?? '', 600);
-          return false; // bounded: no re-dispatch this slice → accept the gap
-        },
-      });
-      escalations.push({
-        contractId: record.contractId,
-        ownerManager: record.ownerManager,
-        reason: record.reason,
-        acceptedGap: outcome.acceptedGap,
-        rescopePreview,
-      });
-    }
-    report.escalations = escalations;
-    if (escalations.length > 0) {
-      log(`escalated ${escalations.length} failed contract(s) — bounded, all accepted gaps`);
-    }
-  }
-} catch (err) {
-  report.error = err instanceof Error ? err.message : String(err);
-  log('ERROR:', report.error);
-}
-
-process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

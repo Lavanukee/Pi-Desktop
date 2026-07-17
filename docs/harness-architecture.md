@@ -185,6 +185,55 @@ The metric the whole layer exists to raise is the **cross-division edge count** 
 
 ---
 
+## Run safety & budgets — config can't stall a run
+
+The corporation must hold up **autonomously, with no collapse**: an endless-looped model must get caught, and **no config or cascade can make a run take "a year."** The flow is *mostly* bounded by construction — a model turn is one call capped by `max_tokens`; retry-on-empty is bounded to one; escalation is bounded to one; dispatch is a finite DAG walk — but "mostly bounded pieces" is not "the whole run is bounded." These rules close that gap. They are the "robustness is external" principle (§0.6) applied to *config and control-flow*: the harness guarantees termination, rather than trusting the model not to loop.
+
+### The global backstop — the `RunBudget` (the final net)
+
+`corp/budget.ts` is a global cap on **both** the number of model turns **and** wall-clock time, threaded through the orchestrator (`corp/run.ts`) so that **every** model turn — worker, architect, manager, engineer, re-scope, revise — calls `chargeTurn` *before* it runs. When the budget is spent, the run **terminates gracefully**: it stops starting new turns, assembles whatever product exists, records `terminatedReason: 'budget-exceeded'`, and *still* runs the terminal CEO review over the partial product so the run ends with an honest verdict.
+
+- **`maxTurns`** — floored at a value that comfortably covers a normal small run's whole flow, and grown to fit the discovered plan (`≈ 3 × (contract count + divisions)` via `fitBudgetToPlan`, never below the floor). Tuned so a **normal run never hits it** but a pathological cascade (a manager that keeps re-scoping, a CEO that always revises with the cap disabled) does.
+- **`maxWallClockMs`** — 90 minutes by default. This is the **hard net no plan size can widen**: even if the discovered plan legitimately raises `maxTurns`, the wall-clock cap still bounds the run, so nothing can make it run "for a year." (A per-call abort timeout — the driver's `--timeout-ms`, default 10 min — sits under this: a hung or slow call is aborted and **degraded to empty**, never crashing or stalling the run, and the empty is then handled by the same retry/parse backstops.)
+- **The one deliberate exception:** the *terminal* CEO sign-off is charged for accounting but **not gated by a refusal** — the run must always end with an honest verdict over the final product, even after a budget stop. It is the run's accounting turn, not new work.
+
+### Every loop is bounded
+
+| Loop | Bound | Where |
+|---|---|---|
+| Retry-on-empty (manager 0-contracts, engineer blank file) | exactly **1** retry, then recorded (never silently dropped) | `corp/retry.ts` |
+| Escalation of a stuck/failed contract | exactly **1** re-scope attempt, then an accepted gap (never a deadlock) | `corp/escalate.ts` |
+| CEO **revise** loop | `maxRevisions` (default **1**), then the honest final state stands — a never-satisfied CEO terminates at the cap | `corp/revise.ts` |
+| Contract dispatch | a finite topological DAG walk; one bad contract loses its subtree, never the run | `corp/dispatch.ts` |
+| Promotion / architect / manager / engineer / CEO turns | single calls, each `max_tokens`-capped | `corp/run.ts` |
+| **The whole run** | the `RunBudget` (turns **or** wall-clock) | `corp/budget.ts` + `corp/run.ts` |
+
+A CEO that *always* revises stops at `maxRevisions`; with the cap effectively disabled it still stops at the `RunBudget`. This is proven at the harness level by `corp/run.test.ts`: the full flow is run against a deliberately misbehaving mock model — (A) always empty, (B) CEO always REVISE, (C) always errors — and in **every** case the run terminates within the budget with a recorded terminal state, with no unbounded recursion in retry / escalation / revise.
+
+### Per-role token budgets (too-tight → silent truncation)
+
+A too-tight `max_tokens` does not error — it **silently truncates**. In one real qwen run a manager's reply was cut off *before its first contract object even closed*, so the parser recovered **zero** contracts and an entire division vanished from the plan with no signal. So **every generation-heavy role is floored at ≥16k**, well above the judgment turns' cap:
+
+| Role | Budget | Kind |
+|---|---|---|
+| **manager** (a division's contract JSON), **engineer** (a whole file), **architect** (the Architecture JSON) | **floored at ≥16k** | generation-heavy — truncation loses a whole unit of work |
+| **worker** (promote-or-not), **CEO** (final review) | base cap (default 8k) | judgment — short, decisive output |
+
+A user-supplied higher `--max-tokens` raises the base; the 16k floor for generation-heavy roles still applies regardless.
+
+### Thinking on/off by turn kind (too-loose/thinking-on → runaway)
+
+The other config failure is a **runaway `<think>`**: a thinking model reasoning inside `<think>…</think>` that never closes it, starving the actual output. This splits cleanly by turn kind (`ROLE_THINKING` in `corp/prompts.ts`):
+
+- **Structured-output roles run thinking-OFF** — `manager`, `division-head`, `architect` emit parse-critical JSON (a contract array / an Architecture object). A runaway think would starve the JSON to a 0-result, so these run thinking-off (llama.cpp `enable_thinking:false` + a `/no_think` tag, belt-and-suspenders).
+- **Judgment roles run thinking-ON** — the solo/promotion worker, `ceo`, `engineer`, and the advisory specialists: their reasoning *is* the value. The `engineer` emits a free-form file (not parse-critical JSON) and streams reasoning on a separate channel, so a long think costs tokens, not the artifact; it is validated safe at 16k (real-qwen, 0/8 turns ran away), with the retry-on-empty backstop covering the residual open-ended-slot risk — *not* thinking-off.
+
+### The rule
+
+**Config cannot stall a run.** Every loop is bounded; every generation-heavy role has an adequate (≥16k) budget so nothing truncates silently; structured-output roles run thinking-off so nothing runs away; a hung call is aborted and degraded; and under all of it the global `RunBudget` (turns **or** wall-clock) is the final net that guarantees termination. When any of these fire, the run ends **gracefully** with a recorded `terminatedReason` and an honest CEO verdict over whatever was produced — never a hang, never a crash, never a year.
+
+---
+
 ## 10. Repair robustness (hardened — no second model)
 
 The tool-call repair ladder must be *incredibly robust*, especially for weak-formatting models. Beyond today's rungs 1–5 (which cover malformed argument JSON well), we add — **without any model-based checking**:

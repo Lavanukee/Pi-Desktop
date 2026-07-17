@@ -66,7 +66,7 @@ import {
 } from './engineer.js';
 import { buildManagerRescopePrompt, escalateContract, runBoundedEscalation } from './escalate.js';
 import { type DivisionContracts, resolveInterfaceHandles } from './integrate.js';
-import type { Contract, ContractStatus, OrgChart } from './org-chart.js';
+import type { Contract, ContractStatus, OrgChart, OrgNode } from './org-chart.js';
 import { buildOrgChartQueueWithReport } from './plan.js';
 import {
   applyCreateHierarchy,
@@ -87,7 +87,13 @@ import {
 } from './prompts.js';
 import { isBlankFile, MANAGER_EMPTY_RETRY_NUDGE, withRetryOnEmpty } from './retry.js';
 import { type ReviseOutcome, runBoundedRevise } from './revise.js';
-import { type RunRoleAgentFn, samplingModeForPurpose } from './role-agent-seam.js';
+import {
+  type RoleAgentCustomTool,
+  type RoleAgentRunInput,
+  type RoleAgentRunOutput,
+  type RunRoleAgentFn,
+  samplingModeForPurpose,
+} from './role-agent-seam.js';
 import { type FileCheck, type VerifyResult, verifyProduct } from './verify.js';
 import { type WorkspaceFs, type WorkspaceReadFs, writeSlot } from './workspace.js';
 
@@ -150,11 +156,15 @@ export interface RunCorpOptions {
   /** The model seam (streaming provider call in the driver; a mock in tests). */
   readonly chat: CorpChatFn;
   /**
-   * The role-agent seam (pi-agnostic, injected by the app). When present, the
-   * ENGINEER role runs as a real agentic loop (writing its slot file with tools +
-   * a bash self-check) instead of a bare chat completion. When ABSENT (driver /
-   * tests), the engineer falls back to the chat-based seam. Phase-2 wires the
-   * engineer role only; the judgment/structured roles follow in the next stage.
+   * The role-agent seam (pi-agnostic, injected by the app). When present, EVERY
+   * corp role runs as a real agentic loop instead of a bare chat completion: the
+   * engineer writes its slot file with tools + a bash self-check; the worker calls
+   * the promotion tool; the architect + managers emit their structured JSON with
+   * thinking off; and the CEO reviews the product with read + bash. The EXISTING
+   * parsers still parse each role's output (the agent framing + thinking-off +
+   * owner-tuned sampling is what curbs the runaway). When ABSENT (driver / tests),
+   * every role falls back to the chat-based seam — so all existing flows keep
+   * working with zero server.
    */
   readonly runRoleAgent?: RunRoleAgentFn;
   /** Workspace write seam (the chat-fallback engineer + assembly write here). */
@@ -337,6 +347,67 @@ const zeroTurns = (): Record<CorpTurnPurpose, number> => ({
   revise: 0,
 });
 
+/**
+ * Map a division to a prompt-library archetype id so the engineer's composed
+ * system prompt is DIVISION-SPECIFIC (frontend-dev / backend-dev good practice),
+ * else the generic `engineer` base. Heuristic over the division name + purpose; a
+ * misclassification only swaps which good-practice base seeds the prompt (the
+ * typed contract still governs the work), so it is safe. Returns a valid
+ * {@link getPromptById}-resolvable id.
+ */
+function archetypeForDivision(division: HierarchyDivisionSpec): string {
+  const hay = `${division.name} ${division.purpose}`.toLowerCase();
+  const frontend =
+    /\b(front[\s-]?end|ui|ux|client|view|css|html|react|vue|svelte|component|menu|hud|visual|render(?:er|ing)?|graphics?|scene|sprite|animation|3d|three|webgl|canvas|gameplay|level)\b/;
+  const backend =
+    /\b(back[\s-]?end|api|server|database|db|persistence|storage|auth|network|service|scor(?:e|ing)|state|engine|logic|physics|sound|audio|simulation|data|pipeline)\b/;
+  if (frontend.test(hay)) return 'frontend-dev';
+  if (backend.test(hay)) return 'backend-dev';
+  return 'engineer';
+}
+
+/**
+ * Materialize an engineer {@link OrgNode} per distinct contract owner so the
+ * dispatcher composes each engineer's system prompt DIVISION-SPECIFICALLY. Today a
+ * contract's `ownerNodeId` names a node that was never created, so the dispatcher
+ * finds no node, `promptId` falls back to the generic `engineer`, and the
+ * division's flavor is lost. Here each division's engineers get a node whose
+ * `promptId` is the division archetype ({@link archetypeForDivision}) and whose
+ * `promptExtension` is the division purpose — so the dispatcher's `composeNodePrompt`
+ * resolves the right base + extension. Robust: a blank owner id, or one that
+ * already exists (a permanent role), is skipped; a blank extension still composes.
+ */
+function buildEngineerNodes(
+  base: OrgChart,
+  divisions: readonly HierarchyDivisionSpec[],
+  contractsByDivision: readonly (readonly Contract[])[],
+): OrgNode[] {
+  const divisionNodeIdByName = new Map<string, string>();
+  for (const n of base.nodes) {
+    if (n.role === 'division') divisionNodeIdByName.set(n.name.trim().toLowerCase(), n.id);
+  }
+  const taken = new Set(base.nodes.map((n) => n.id));
+  const nodes: OrgNode[] = [];
+  divisions.forEach((division, i) => {
+    const promptId = archetypeForDivision(division);
+    const parentId = divisionNodeIdByName.get(division.name.trim().toLowerCase());
+    for (const contract of contractsByDivision[i] ?? []) {
+      const ownerId = contract.ownerNodeId.trim();
+      if (ownerId === '' || taken.has(ownerId)) continue;
+      taken.add(ownerId);
+      nodes.push({
+        id: ownerId,
+        role: 'engineer',
+        name: ownerId,
+        ...(parentId !== undefined ? { parentId } : {}),
+        promptId,
+        promptExtension: division.purpose,
+      });
+    }
+  });
+  return nodes;
+}
+
 // --- The orchestrator --------------------------------------------------------
 
 /**
@@ -447,6 +518,40 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
   // refusal throws (dispatch → FAILED, finite). The dep files are already in the
   // workspace (serial dispatch, no clobber), so the agent reads real code.
   const runRoleAgent = options.runRoleAgent;
+
+  // A judgment/structured role run as an AGENT (worker / architect / manager):
+  // charge ONE turn (a refusal STOPS the run, exactly like a work turn), record it,
+  // and call the injected seam. The seam never throws per its contract; a
+  // seam-level throw is degraded to an empty recorded output + a surfaced error, so
+  // the downstream parser handles the empty reply rather than crashing the run.
+  // NOT used for the CEO, whose terminal turn is charged-but-never-gated (it must
+  // always deliver an honest verdict) — see the completion pass below.
+  const agentRoleTurn = async (input: RoleAgentRunInput): Promise<RoleAgentRunOutput> => {
+    if (runRoleAgent === undefined) {
+      throw new Error('agentRoleTurn requires an injected runRoleAgent');
+    }
+    if (!chargeTurn(budget)) {
+      terminatedReason ??= 'budget-exceeded';
+      throw new BudgetExhausted();
+    }
+    turnsByPurpose[input.purpose] += 1;
+    try {
+      return await runRoleAgent(input);
+    } catch (err) {
+      errors.push({ purpose: input.purpose, message: errorMessage(err) });
+      return { filesWritten: [], finalText: '', toolCalls: [], terminatedReason: 'error' };
+    }
+  };
+
+  // The worker's promotion tool as a neutral custom-tool spec: calling it IS the
+  // promotion signal, and detectPromotion parses the args off the recorded tool
+  // call (falling back to the finalText JSON, the same detector the chat path uses).
+  const promotionCustomTool: RoleAgentCustomTool = {
+    name: CREATE_PRODUCTION_HIERARCHY_TOOL.function.name,
+    description: CREATE_PRODUCTION_HIERARCHY_TOOL.function.description,
+    parameters: CREATE_PRODUCTION_HIERARCHY_TOOL.function.parameters,
+  };
+
   const makeAgentEngineer =
     (extraNotes?: string): RunEngineer =>
     async (request: EngineerRequest): Promise<readonly WrittenFile[]> => {
@@ -499,18 +604,42 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
   let directAnswerPreview: string | undefined;
 
   try {
-    // 1. WORKER → promote-or-not.
+    // 1. WORKER → promote-or-not. Thinking ON — the promote-or-not judgment is the
+    // value. On the agent path the promotion tool is a CUSTOM tool, so calling it
+    // surfaces in toolCalls (detectPromotion reads it; falls back to finalText).
     log('worker turn');
-    const workerRes = await workTurn({
-      purpose: 'worker',
-      messages: [
-        { role: 'system', content: PROMOTION_SYSTEM_PROMPT },
-        { role: 'user', content: options.task },
-      ],
-      thinking: true,
-      maxTokens: baseMaxTokens,
-      tools: [CREATE_PRODUCTION_HIERARCHY_TOOL],
-    });
+    let workerRes: CorpChatResult;
+    if (runRoleAgent !== undefined) {
+      const out = await agentRoleTurn({
+        purpose: 'worker',
+        systemPrompt: PROMOTION_SYSTEM_PROMPT,
+        userPrompt: options.task,
+        // The tool allowlist gates CUSTOM tools too (createAgentSession maps `tools`
+        // → allowedToolNames), so the promotion tool's NAME must be listed here or
+        // it is never offered to the model. No builtin file tools — a pure judgment
+        // turn: promote (call the tool) or answer directly (stay solo).
+        tools: [CREATE_PRODUCTION_HIERARCHY],
+        customTools: [promotionCustomTool],
+        cwd: options.workspace,
+        thinking: true,
+        samplingMode: samplingModeForPurpose('worker'),
+        maxTokens: baseMaxTokens,
+        maxSteps: 6,
+        timeoutMs: 3 * 60 * 1000,
+      });
+      workerRes = { content: out.finalText, toolCalls: out.toolCalls };
+    } else {
+      workerRes = await workTurn({
+        purpose: 'worker',
+        messages: [
+          { role: 'system', content: PROMOTION_SYSTEM_PROMPT },
+          { role: 'user', content: options.task },
+        ],
+        thinking: true,
+        maxTokens: baseMaxTokens,
+        tools: [CREATE_PRODUCTION_HIERARCHY_TOOL],
+      });
+    }
     promotionArgs = detectPromotion(workerRes);
 
     if (promotionArgs === undefined) {
@@ -522,26 +651,47 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
       divisions = promotionArgs.divisions;
       log(`promoted — ${divisions.length} division(s)`);
 
-      // 2. ARCHITECT → shared architecture.
+      // 2. ARCHITECT → shared architecture. Thinking OFF (structured JSON); read
+      // tool on the agent path. Generation-heavy structured-output role — floor at
+      // 16k like the manager so the Architecture JSON can never silently truncate.
       const architectThinking = roleThinkingEnabled('architect');
-      const architectRes = await workTurn({
-        purpose: 'architect',
-        messages: [
-          { role: 'system', content: ARCHITECT_PROMPT },
-          { role: 'user', content: buildArchitectPrompt(options.task, divisions) },
-        ],
-        thinking: architectThinking,
-        // Generation-heavy structured-output role — floor at 16k like the manager
-        // so the Architecture JSON can never silently truncate (config robustness).
-        maxTokens: genMaxTokens,
-      });
-      const architecture = parseArchitecture(architectRes.content ?? '');
+      let architectContent: string;
+      if (runRoleAgent !== undefined) {
+        const out = await agentRoleTurn({
+          purpose: 'architect',
+          systemPrompt: ARCHITECT_PROMPT,
+          userPrompt: buildArchitectPrompt(options.task, divisions),
+          tools: ['read'],
+          cwd: options.workspace,
+          thinking: architectThinking,
+          samplingMode: samplingModeForPurpose('architect'),
+          maxTokens: genMaxTokens,
+          maxSteps: 6,
+          timeoutMs: 5 * 60 * 1000,
+        });
+        architectContent = out.finalText;
+      } else {
+        const architectRes = await workTurn({
+          purpose: 'architect',
+          messages: [
+            { role: 'system', content: ARCHITECT_PROMPT },
+            { role: 'user', content: buildArchitectPrompt(options.task, divisions) },
+          ],
+          thinking: architectThinking,
+          maxTokens: genMaxTokens,
+        });
+        architectContent = architectRes.content ?? '';
+      }
+      const architecture = parseArchitecture(architectContent);
       architectureModuleCount = architecture.moduleMap.length;
       architectureInterfaceCount = architecture.interfaces.length;
       hasArchitecture = true;
 
-      // 3. MANAGERS (one seeded turn per division, retry-on-empty).
-      const managerBase = getRolePrompt('manager').prompt;
+      // 3. MANAGERS (one seeded turn per division, retry-on-empty). Thinking OFF —
+      // it emits a parse-critical JSON contract array. On the agent path the system
+      // prompt is DIVISION-SPECIFIC (manager base + the division's purpose
+      // extension) and the read tool is available.
+      const managerRolePrompt = getRolePrompt('manager');
       const managerThinking = roleThinkingEnabled('manager');
       const contractsByDivision: Contract[][] = [];
       for (const division of divisions) {
@@ -552,16 +702,34 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
             const userContent = isRetry
               ? `${basePrompt}\n\n${MANAGER_EMPTY_RETRY_NUDGE}`
               : basePrompt;
-            const res = await workTurn({
-              purpose: 'manager',
-              messages: [
-                { role: 'system', content: managerBase },
-                { role: 'user', content: userContent },
-              ],
-              thinking: managerThinking,
-              maxTokens: genMaxTokens,
-            });
-            return parseManagerContracts(res.content ?? '');
+            let content: string;
+            if (runRoleAgent !== undefined) {
+              const out = await agentRoleTurn({
+                purpose: 'manager',
+                systemPrompt: composeNodePrompt(managerRolePrompt, division.purpose),
+                userPrompt: userContent,
+                tools: ['read'],
+                cwd: options.workspace,
+                thinking: managerThinking,
+                samplingMode: samplingModeForPurpose('manager'),
+                maxTokens: genMaxTokens,
+                maxSteps: 6,
+                timeoutMs: 5 * 60 * 1000,
+              });
+              content = out.finalText;
+            } else {
+              const res = await workTurn({
+                purpose: 'manager',
+                messages: [
+                  { role: 'system', content: managerRolePrompt.prompt },
+                  { role: 'user', content: userContent },
+                ],
+                thinking: managerThinking,
+                maxTokens: genMaxTokens,
+              });
+              content = res.content ?? '';
+            }
+            return parseManagerContracts(content);
           },
         });
         contractsByDivision.push(managerResult.value);
@@ -574,13 +742,25 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         contracts: contractsByDivision[i] ?? [],
       }));
       const { contracts: resolvedContracts } = resolveInterfaceHandles(byDivision, architecture);
-      const base = applyCreateHierarchy(
+      const baseChart = applyCreateHierarchy(
         null,
         { reason: promotionArgs.reason, divisions },
         options.projectId,
       );
+      // Materialize an engineer node per contract owner so the dispatcher composes
+      // each engineer's system prompt division-specifically (archetype base + the
+      // division purpose extension) instead of falling back to the generic base.
+      const engineerNodes = buildEngineerNodes(baseChart, divisions, contractsByDivision);
+      const withEngineers: OrgChart = {
+        ...baseChart,
+        nodes: [...baseChart.nodes, ...engineerNodes],
+        nodeStatus: {
+          ...baseChart.nodeStatus,
+          ...Object.fromEntries(engineerNodes.map((n) => [n.id, 'idle' as const])),
+        },
+      };
       const { chart: queued } = buildOrgChartQueueWithReport({
-        ...base,
+        ...withEngineers,
         contracts: resolvedContracts,
         architecture,
       });
@@ -644,19 +824,41 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
       verifyResult = verifyProduct(options.workspace, options.readFs, options.fileCheck);
       chargeTurn(budget);
       turnsByPurpose[purpose] += 1;
+      // VISION-ONLY user turn (original task + product manifest + verify evidence) —
+      // NEVER the build transcript. The false-completion cure is enforced by
+      // buildCeoReviewPrompt's SHAPE (it has no transcript field) and is preserved
+      // identically on BOTH the agent and the chat path.
+      const userContent = buildCeoReviewPrompt({
+        originalTask: options.task,
+        manifest,
+        verifyResult,
+      });
       try {
+        if (runRoleAgent !== undefined) {
+          // Harnessed review: the CEO gets read + bash so it can INSPECT the
+          // produced product and run a quick compile/typecheck sanity check — but
+          // its context is still the vision + the finished artifact, never the
+          // build. Bounded tightly (maxSteps 10) — it reviews, it does not build.
+          // Thinking ON — the CEO's reasoning is the value.
+          const out = await runRoleAgent({
+            purpose,
+            systemPrompt: getRolePrompt('ceo').prompt,
+            userPrompt: userContent,
+            tools: ['read', 'bash'],
+            cwd: options.workspace,
+            thinking: roleThinkingEnabled('ceo'),
+            samplingMode: samplingModeForPurpose(purpose),
+            maxTokens: baseMaxTokens,
+            maxSteps: 10,
+            timeoutMs: 5 * 60 * 1000,
+          });
+          return parseCeoDecision(out.finalText);
+        }
         const res = await options.chat({
           purpose,
           messages: [
             { role: 'system', content: CEO_REVIEW_PROMPT },
-            {
-              role: 'user',
-              content: buildCeoReviewPrompt({
-                originalTask: options.task,
-                manifest,
-                verifyResult,
-              }),
-            },
+            { role: 'user', content: userContent },
           ],
           thinking: roleThinkingEnabled('ceo'),
           maxTokens: baseMaxTokens,

@@ -9,10 +9,13 @@
  * orchestrator falls back to the chat-based engineer seam — so every existing
  * flow keeps working with zero server.
  *
- * Phase-2 wires the ENGINEER role onto this seam first (an engineer writes its
- * slot file with the `write` tool and self-checks with `bash`, rather than
- * emitting the file as parseable text). The judgment / structured roles map onto
- * it in a later stage (see {@link samplingModeForPurpose}).
+ * Phase-2 wires EVERY corp role onto this seam: the engineer writes its slot file
+ * with the `write` tool and self-checks with `bash`; and the judgment / structured
+ * roles (worker/promotion, architect, manager, CEO) run harnessed too — the
+ * agent framing + thinking-off + owner-tuned sampling curbs the runaway a bare
+ * completion allows, while the EXISTING structured parsers still parse the role's
+ * `finalText` (or, for the worker, its promotion tool call). See
+ * {@link samplingModeForPurpose} for the per-role sampling profiles.
  */
 
 import type { CorpTurnPurpose } from './run.js';
@@ -30,12 +33,10 @@ export type SamplingMode =
   | 'instruct-reasoning';
 
 /**
- * The corp turn → sampling profile map (spec §3 "hands vs brain"). Only
- * `engineer` is WIRED this stage (Phase-2 engineers-first); the rest are the
- * INTENDED mappings for the next stage (judgment/structured roles as agents),
- * documented here so the table is ready when those roles move onto the seam:
+ * The corp turn → sampling profile map (spec §3 "hands vs brain"). EVERY role now
+ * runs harnessed through this seam:
  *
- *  - engineer            → `thinking-coding`   (code: low temp, no presence penalty) ← wired
+ *  - engineer            → `thinking-coding`   (code: low temp, no presence penalty)
  *  - worker / ceo        → `thinking-general`  (judgment: promote-or-not, final review)
  *  - manager / architect → `instruct-general`  (structured JSON, thinking OFF)
  *  - rescope             → `instruct-general`  (manager-authored, like the manager)
@@ -74,6 +75,23 @@ export interface RoleAgentSeamToolCall {
 }
 
 /**
+ * A neutral custom-tool spec a role-agent may be given (the worker's promotion
+ * tool). Structurally the `function` half of an OpenAI function-tool schema
+ * (promotion.ts's {@link OpenAiFunctionTool}), kept provider-agnostic here: the
+ * app impl converts it to a pi `ToolDefinition` whose invocation is recorded, so
+ * the call surfaces in {@link RoleAgentRunOutput.toolCalls} for the harness to
+ * parse (e.g. `create_production_hierarchy` → the promotion decision).
+ */
+export interface RoleAgentCustomTool {
+  /** The tool name the model calls (e.g. `create_production_hierarchy`). */
+  readonly name: string;
+  /** Description handed to the model. */
+  readonly description: string;
+  /** JSON Schema for the arguments object (serialized to the LLM tool schema). */
+  readonly parameters: Record<string, unknown>;
+}
+
+/**
  * The inputs to one role-agent run — provider-agnostic (no `/no_think` tag, no
  * `chat_template_kwargs`; the app's impl applies provider specifics from
  * `thinking` + `samplingMode`).
@@ -87,6 +105,9 @@ export interface RoleAgentRunInput {
   readonly userPrompt: string;
   /** Built-in tool allowlist (e.g. `['read','write','edit','bash','grep','find','ls']`). */
   readonly tools: readonly string[];
+  /** Extra custom tools to register for this run (e.g. the worker's promotion
+   * tool). Their invocations surface in {@link RoleAgentRunOutput.toolCalls}. */
+  readonly customTools?: readonly RoleAgentCustomTool[];
   /** The per-run workspace root (produced files land beneath here). */
   readonly cwd: string;
   /** Whether the role runs with model "thinking" on. */

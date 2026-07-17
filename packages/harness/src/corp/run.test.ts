@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { newRunBudget } from './budget.js';
 import { CREATE_PRODUCTION_HIERARCHY } from './promotion.js';
+import type { RoleAgentRunInput, RunRoleAgentFn } from './role-agent-seam.js';
 import { type CorpChatFn, type CorpChatResult, type CorpTurnPurpose, runCorp } from './run.js';
-import type { WorkspaceFs, WorkspaceReadFs } from './workspace.js';
+import { type WorkspaceFs, type WorkspaceReadFs, writeSlot } from './workspace.js';
 
 // --- In-memory workspace (no node:fs) ----------------------------------------
 
@@ -290,6 +291,162 @@ describe('runCorp — misbehaving models always terminate (the endless-loop catc
     expect(errResult.promoted).toBe(false);
     expect(errResult.terminatedReason).toBe('solo');
     expect(errResult.errors.length).toBeGreaterThan(0);
+  });
+});
+
+// --- Every role runs HARNESSED through the injected role-agent seam ----------
+
+/** A purpose-aware mock role-agent seam: the worker calls the promotion tool, the
+ * architect + managers emit their structured JSON as finalText, each engineer
+ * WRITES its slot file (so dispatch reads it back), and the CEO approves. Records
+ * every {@link RoleAgentRunInput} so a test can assert the per-role framing. */
+function makeAgentMock(
+  fs: WorkspaceFs,
+  workspace: string,
+): { runRoleAgent: RunRoleAgentFn; calls: RoleAgentRunInput[] } {
+  const calls: RoleAgentRunInput[] = [];
+  let contractCounter = 0;
+  const contractsFor = (division: string): string => {
+    const slug = division.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const arr = [0, 1].map(() => {
+      contractCounter += 1;
+      const n = contractCounter;
+      return {
+        id: `c${n}`,
+        title: `Contract ${n}`,
+        ownerNodeId: `${slug}-eng-${n}`,
+        input: `input ${n}`,
+        output: `output ${n}`,
+        slot: `src/${slug}/c${n}.ts`,
+        available: { tools: ['write'], imports: [] },
+        reviewRubric: `rubric ${n}`,
+        dependsOn: [],
+        status: 'queued',
+      };
+    });
+    return JSON.stringify(arr);
+  };
+  const runRoleAgent: RunRoleAgentFn = (input) => {
+    calls.push(input);
+    const base = { filesWritten: [], toolCalls: [], terminatedReason: 'stop' } as const;
+    switch (input.purpose) {
+      case 'worker':
+        return Promise.resolve({
+          ...base,
+          finalText: '',
+          toolCalls: [{ name: CREATE_PRODUCTION_HIERARCHY, arguments: JSON.stringify(PROMOTION) }],
+        });
+      case 'architect':
+        return Promise.resolve({
+          ...base,
+          finalText: JSON.stringify({ moduleMap: [], interfaces: [] }),
+        });
+      case 'manager': {
+        const division = /Division:\s*(.+)/.exec(input.userPrompt)?.[1]?.trim() ?? 'X';
+        return Promise.resolve({ ...base, finalText: contractsFor(division) });
+      }
+      case 'engineer': {
+        const slot = /THIS exact path\):\s*(\S+)/.exec(input.userPrompt)?.[1] ?? 'src/x.ts';
+        const path = writeSlot(workspace, slot, ENGINEER_FILE, fs);
+        return Promise.resolve({
+          ...base,
+          finalText: '',
+          filesWritten: [{ path, bytes: ENGINEER_FILE.length }],
+        });
+      }
+      default: // ceo + revise
+        return Promise.resolve({ ...base, finalText: CEO_APPROVE });
+    }
+  };
+  return { runRoleAgent, calls };
+}
+
+describe('runCorp — every role runs harnessed through the role-agent seam', () => {
+  it('routes worker/architect/managers/engineers/CEO through the agent, and completes', async () => {
+    const { fs, readFs } = memWorkspace();
+    const mock = makeAgentMock(fs, '/ws');
+    // A chat seam is present but must NEVER be called when the role-agent is injected.
+    let chatCalls = 0;
+    const chat: CorpChatFn = () => {
+      chatCalls += 1;
+      return { content: '' };
+    };
+    const result = await runCorp({
+      task: 'Build a thing',
+      chat,
+      runRoleAgent: mock.runRoleAgent,
+      fs,
+      readFs,
+      workspace: '/ws',
+    });
+
+    expect(result.promoted).toBe(true);
+    expect(result.terminatedReason).toBe('completed');
+    expect(result.divisions).toEqual(['Frontend', 'Backend']);
+    expect(result.totalContracts).toBe(4);
+    expect(result.manifest?.fileCount).toBe(4); // engineers WROTE via the seam
+    expect(result.ceoDecision?.decision).toBe('approve');
+    expect(chatCalls).toBe(0); // no role ran bare on the chat seam
+
+    // Each role ran through the seam exactly as expected (agent engineer path runs
+    // ONE turn per contract — no self-review bounce).
+    const purposes = mock.calls.map((c) => c.purpose);
+    expect(purposes.filter((p) => p === 'worker')).toHaveLength(1);
+    expect(purposes.filter((p) => p === 'architect')).toHaveLength(1);
+    expect(purposes.filter((p) => p === 'manager')).toHaveLength(2);
+    expect(purposes.filter((p) => p === 'engineer')).toHaveLength(4);
+    expect(purposes.filter((p) => p === 'ceo')).toHaveLength(1);
+
+    // Worker: promotion tool as a custom tool, thinking ON, thinking-general sampling.
+    // The promotion tool name MUST also be in the allowlist (`tools`) — the SDK gates
+    // custom tools against it, so an empty allowlist would silently hide the tool.
+    const worker = mock.calls.find((c) => c.purpose === 'worker');
+    expect(worker?.customTools?.map((t) => t.name)).toContain(CREATE_PRODUCTION_HIERARCHY);
+    expect(worker?.tools).toContain(CREATE_PRODUCTION_HIERARCHY);
+    expect(worker?.thinking).toBe(true);
+    expect(worker?.samplingMode).toBe('thinking-general');
+
+    // Architect + manager: thinking OFF, instruct-general (structured JSON).
+    const architect = mock.calls.find((c) => c.purpose === 'architect');
+    expect(architect?.thinking).toBe(false);
+    expect(architect?.samplingMode).toBe('instruct-general');
+    const manager = mock.calls.find((c) => c.purpose === 'manager');
+    expect(manager?.thinking).toBe(false);
+    expect(manager?.samplingMode).toBe('instruct-general');
+
+    // CEO: thinking ON, read + bash tools, thinking-general — and the FALSE-COMPLETION
+    // cure preserved: the user turn is vision-only, never the engineer file body.
+    const ceo = mock.calls.find((c) => c.purpose === 'ceo');
+    expect(ceo?.thinking).toBe(true);
+    expect(ceo?.tools).toEqual(expect.arrayContaining(['read', 'bash']));
+    expect(ceo?.samplingMode).toBe('thinking-general');
+    expect(ceo?.userPrompt).toContain('Build a thing'); // the original task (the standard)
+    expect(ceo?.userPrompt).not.toContain('export const value'); // NOT the build/file body
+
+    // Engineer system prompt is DIVISION-SPECIFIC (materialized node → composed
+    // archetype base + the division purpose extension).
+    const engineer = mock.calls.find((c) => c.purpose === 'engineer');
+    expect(engineer?.systemPrompt).toContain('frontend engineer division'); // archetype base
+    expect(engineer?.systemPrompt).toContain('the UI'); // division purpose extension
+  });
+
+  it('falls back to the chat seam for every role when no role-agent is injected', async () => {
+    const { fs, readFs } = memWorkspace();
+    const mock = makeMock();
+    const result = await runCorp({
+      task: 'Build a thing',
+      chat: mock.chat,
+      fs,
+      readFs,
+      workspace: '/ws',
+    });
+    // The pre-existing chat pipeline is byte-for-byte unchanged (the slice4 driver
+    // chat-fallback contract): promoted, dispatched, verified, approved.
+    expect(result.promoted).toBe(true);
+    expect(result.terminatedReason).toBe('completed');
+    expect(result.ceoDecision?.decision).toBe('approve');
+    expect(mock.callsByPurpose.worker).toBe(1);
+    expect(mock.callsByPurpose.engineer).toBe(8); // draft + review per contract × 4
   });
 });
 

@@ -14,12 +14,37 @@
  * unit-testable and loadable from the real-server validation script.
  */
 
+import type { AgentToolResult, ToolDefinition } from '@mariozechner/pi-coding-agent';
 import type {
+  RoleAgentCustomTool,
   RoleAgentRunInput,
   RoleAgentRunOutput,
   RunRoleAgentFn,
 } from '@pi-desktop/harness/corp';
 import { createCorpModelProvider, runRoleAgent, type SamplingMode } from './role-agent';
+
+/**
+ * Convert a harness-neutral {@link RoleAgentCustomTool} (the `function` half of an
+ * OpenAI function-tool) into a pi {@link ToolDefinition}. The `parameters` are a
+ * plain JSON Schema; the SDK serializes them to the LLM tool schema and does NOT
+ * TypeBox-validate custom-tool arguments before dispatch, so a plain object is
+ * safe here — the single cast is confined to this seam boundary. The `execute`
+ * body is a no-op ack: the CALL itself is the signal (captured via the runtime's
+ * `tool_call` event into `toolCalls`); the harness parses the arguments, so the
+ * tool never needs to DO anything.
+ */
+function toToolDefinition(tool: RoleAgentCustomTool): ToolDefinition {
+  return {
+    name: tool.name,
+    label: tool.name,
+    description: tool.description,
+    parameters: tool.parameters as unknown as ToolDefinition['parameters'],
+    execute: async (): Promise<AgentToolResult<unknown>> => ({
+      content: [{ type: 'text', text: `${tool.name} recorded.` }],
+      details: undefined,
+    }),
+  };
+}
 
 /** The resolved corp server the role-agents talk to (same baseUrl/model as chat). */
 export interface RunRoleAgentConfig {
@@ -50,6 +75,9 @@ export function createRunRoleAgent(config: RunRoleAgentConfig): RunRoleAgentFn {
       // The harness SamplingMode and the runtime's SamplingMode are the same
       // string union; keep the narrow cast at the single seam boundary.
       samplingMode: input.samplingMode as SamplingMode,
+      ...(input.customTools !== undefined && input.customTools.length > 0
+        ? { customTools: input.customTools.map(toToolDefinition) }
+        : {}),
       ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}),
       ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),

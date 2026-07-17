@@ -15,7 +15,9 @@ import { resolveBundledPackageAsset } from '../app-paths';
 import { getInferenceUtility } from '../inference/llm-main';
 import type { AppEventMap } from '../ipc-contract';
 import { resolveSessionCwd } from '../sandbox';
+import { generationExperimentEnabled } from '../settings/settings-main';
 import { isTrustedIpcEvent } from '../trusted-senders';
+import { extensionPackageDirs } from './extension-dirs';
 import { createPiSessions, type PiSessionHandlers } from './pi-sessions';
 import { installPiQuitHold } from './quit-hold';
 
@@ -23,45 +25,22 @@ const log = createLogger('desktop:pi');
 const events = createIpcEventSender<AppEventMap>();
 
 /**
- * The bundled pi extension packages, loaded via repeated `-e` flags.
- * provider-llamacpp routes local models through its streamSimple provider
- * (llamacpp-stream api); provider-afm does the same for the Apple on-device
- * model (afm-stream api, helper path injected via PI_AFM_HELPER_PATH env, set by
- * afm-main.ts before the first spawn); harness (W5) and web-tools (W6) add
- * tools/commands. Each is resolved to its `<pkg>/src/index.ts` — repo-relative
- * in dev, bundle-relative (inside the asar) when packaged — via the shared
- * app-paths resolver, and only those that actually `export default` an activate
- * are included, so an absent/placeholder extension is tolerated and lands
- * automatically once its workstream ships. provider-afm registers a harmless
- * no-op handler off-platform (no afm block in models.json → never invoked).
+ * The bundled pi extension packages, loaded via repeated `-e` flags. The list is
+ * built by the pure {@link extensionPackageDirs} helper: always-on providers +
+ * tools (provider-llamacpp/afm/mlx, harness, web-tools, browser-use,
+ * mac-connectors, mac-computer-use, mcp-lite), PLUS the `gen-tools` generation
+ * tools ONLY when the EXPERIMENTAL generation flag / `PI_DESKTOP_GEN=1` is on —
+ * so a default build never exposes the generation tools. Each dir is resolved to
+ * its `<pkg>/src/index.ts` — repo-relative in dev, bundle-relative (in the asar)
+ * when packaged — and only those that actually `export default` an activate are
+ * included, so an absent/placeholder extension is tolerated and lands
+ * automatically once its workstream ships.
+ *
+ * The flag is read once at module load (whenReady). A mid-session toggle applies
+ * on the NEXT app launch — matching how an experimental extension-loading flag
+ * behaves (the dev `PI_DESKTOP_GEN=1` override is the immediate path).
  */
-const EXTENSION_PACKAGE_DIRS = [
-  'provider-llamacpp',
-  'provider-afm',
-  // provider-mlx (round-12 foundation) routes Apple-Silicon MLX models through
-  // its streamSimple (mlx-stream api). Loaded always, like provider-afm — it
-  // registers a harmless handler that is never invoked unless an MLX model is
-  // live (no mlx-stream block in models.json otherwise).
-  'provider-mlx',
-  'harness',
-  'web-tools',
-  // browser-use drives the canvas browser via the browser-agent socket bridge;
-  // mac-connectors (built by a parallel workstream) is referenced by dir even if
-  // not shipped yet — an absent/placeholder extension is tolerated by the
-  // export-default probe below, so both land automatically once present.
-  'browser-use',
-  'mac-connectors',
-  // mac-computer-use drives ANY Mac app via the pi-mac Accessibility/CGEvent
-  // helper over the mac-agent socket bridge (PI_MAC_SOCK/_TOKEN, published by
-  // mac-agent.ts before spawn). Its src/index.ts export-defaults an activate, so
-  // the probe below picks it up automatically.
-  'mac-computer-use',
-  // mcp-lite (W8): connects the user's ~/.pi/desktop/mcp-connectors.json servers
-  // and exposes them to the model per the configured mode (lite proxy / native /
-  // bash-cli). Its src/index.ts re-exports the extension's default so the
-  // export-default probe below picks it up.
-  'mcp-lite',
-] as const;
+const EXTENSION_PACKAGE_DIRS = extensionPackageDirs(generationExperimentEnabled());
 
 function resolveExtensionPaths(): string[] {
   const out: string[] = [];

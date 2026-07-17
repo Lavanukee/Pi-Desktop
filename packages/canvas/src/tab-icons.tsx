@@ -200,6 +200,16 @@ export function IconFolders(props: IconProps) {
   );
 }
 
+/** 3D object (isometric cube) — the TRELLIS 3D workspace tab. */
+export function IconCube(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 2l5 2.75v6.5L8 14l-5-2.75v-6.5L8 2z" />
+      <path d="M3 4.75 8 7.5l5-2.75M8 7.5V14" />
+    </Icon>
+  );
+}
+
 /** Org chart — the situation room tab (a root node fanning out to reports). */
 export function IconSituation(props: IconProps) {
   return (

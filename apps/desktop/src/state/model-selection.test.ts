@@ -30,6 +30,7 @@ const base: DesktopSettings = {
   modelEffortDefaults: {},
   hfToken: '',
   experimentalProductionHarness: false,
+  experimentalGeneration: false,
 };
 
 describe('autoEffortForTier', () => {

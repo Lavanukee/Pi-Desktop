@@ -17,7 +17,15 @@ export type CanvasTabKind =
   | 'html'
   | 'svg'
   | 'image'
+  // A live GENERATION image surface (candidate grid + step progress + model
+  // footnote): artifact-backed like `image`, but rendered by the gen-canvas
+  // surface (registered additively) so it streams candidates as a job runs.
+  | 'gen-image'
   | 'video'
+  // The 3D workspace surface (generate → preview → export GLB). Placeholder kind
+  // for the TRELLIS 3D pillar; no surface is registered for it yet, so a `3d`
+  // tab renders the "no surface" state until that workspace lands.
+  | '3d'
   | 'pdf'
   | 'subagent'
   | 'situation'

@@ -2,6 +2,7 @@
 @import "@pi-desktop/themes/themes.css";
 @import "@pi-desktop/ui/styles.css";
 @import "@pi-desktop/canvas/styles.css";
+@import "@pi-desktop/gen-canvas/styles.css";
 
 /*
  * Tailwind consumes only `--pd-*` tokens: the default color palette is

@@ -27,14 +27,18 @@ import {
 import { registerConnectorsIpc } from './connectors/connectors-main';
 import { registerCorpIpc } from './corp/corp-main';
 import { fsHandlers } from './fs-handlers';
-import { registerGenCatalogIpc } from './gen/gen-manager';
+import { disposeGen, registerGenCatalogIpc, registerGenIpc } from './gen/gen-manager';
 import { registerImportIpc } from './import/import-main';
 import { registerLlmIpc, shutdownInference } from './inference/llm-main';
 import type { AppEventMap, CoreInvokeMap, FsInvokeMap } from './ipc-contract';
 import { disposeMacAgent, registerMacAgentIpc } from './mac/mac-agent';
 import { registerPiIpc } from './pi/pi-main';
 import { registerProjectIpc } from './project/project-main';
-import { applySettingsEnvFromDisk, registerSettingsIpc } from './settings/settings-main';
+import {
+  applySettingsEnvFromDisk,
+  generationExperimentEnabled,
+  registerSettingsIpc,
+} from './settings/settings-main';
 import { registerSkillsIpc } from './skills/skills-main';
 import { disposeAllPtys, registerPtyIpc } from './terminal/pty-manager';
 import {
@@ -184,11 +188,15 @@ function createMainWindow(): BrowserWindow {
     events.send(win.webContents, 'app:boot', { sentAt: Date.now() });
   });
 
-  // Dev override for the experimental production coordination harness: with
-  // `PI_DESKTOP_CORP=1` set, surface a `?corp=1` query param the renderer reads
-  // (settings-store `productionHarnessEnabled`) so a dev launch drives the corp
-  // flow without toggling the persisted setting. No env ⇒ no param ⇒ default app.
-  loadRenderer(win, process.env.PI_DESKTOP_CORP === '1' ? { corp: '1' } : undefined);
+  // Dev overrides for the experimental features: `PI_DESKTOP_CORP=1` surfaces a
+  // `?corp=1` param (settings-store `productionHarnessEnabled`) so a dev launch
+  // drives the corp flow, and `PI_DESKTOP_GEN=1` surfaces `?gen=1`
+  // (`generationEnabled`) so a dev launch mounts the live gen surface + hook —
+  // both without toggling the persisted settings. No env ⇒ no param ⇒ default app.
+  const devQuery: Record<string, string> = {};
+  if (process.env.PI_DESKTOP_CORP === '1') devQuery.corp = '1';
+  if (process.env.PI_DESKTOP_GEN === '1') devQuery.gen = '1';
+  loadRenderer(win, Object.keys(devQuery).length > 0 ? devQuery : undefined);
 
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null;
@@ -309,6 +317,8 @@ async function reapChildProcesses(): Promise<void> {
     shutdownInference(),
     (async () => disposeMacAgent())(),
     (async () => disposeAllPtys())(),
+    // Close the gen bridge socket server if the experimental stack stood it up.
+    (async () => disposeGen())(),
   ]);
 }
 
@@ -342,8 +352,31 @@ function registerAppIpc(): void {
 
   // Generation modality catalog → renderer DTOs (gen:modality-catalog). Read-only
   // surfacing of the vetted image/audio/video/3d models the model browser lists;
-  // the full generation socket bridge (registerGenIpc) lands with gen-as-tools.
+  // always registered (harmless read-only enumeration).
   registerGenCatalogIpc(ipcMain, allowSender);
+
+  // EXPERIMENTAL generation stack (default OFF). The full generation socket
+  // bridge (`generate_image` / `generate_video` → JobQueue → mflux/MLX/ComfyUI,
+  // progress streamed to the gen-image canvas surface) stands up ONLY when the
+  // `experimentalGeneration` flag / `PI_DESKTOP_GEN=1` gate is on — so a signed
+  // /Applications build with the flag off is byte-for-byte its current self (no
+  // gen socket, no gen env published, and pi-main omits the `gen-tools`
+  // extension too). Sibling to the corp gate. Standing this up BEFORE the first
+  // pi spawn publishes PI_GEN_SOCK/PI_GEN_TOKEN for the gen-tools extension.
+  // NEXT (video pillar): pass `comfyInstall` (a real ComfyInstallManager whose
+  // `emit` → `events.send('gen:comfy-install')`) to answer the modular-download
+  // UI + drive the download-then-continue gate end-to-end.
+  if (generationExperimentEnabled()) {
+    registerGenIpc({
+      getWindow: () => (mainWindow !== null ? mainWindow.webContents : null),
+      // gen event channels are a subset of AppEventMap; forward through the
+      // app-wide sender (the cast only bridges the two generic key domains).
+      sendEvent: (wc, channel, payload) =>
+        events.send(wc, channel as keyof AppEventMap & string, payload as never),
+      isTrusted: (event) => isTrustedIpcEvent(event),
+    });
+    log.info('experimental generation stack wired (gen bridge live)');
+  }
 
   // Apple Foundation Models (on-device) capability gate + set-active. Also
   // publishes PI_AFM_HELPER_PATH so the pi child's provider-afm finds the helper.

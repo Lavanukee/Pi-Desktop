@@ -44,6 +44,9 @@ importers:
       '@pi-desktop/engine':
         specifier: workspace:*
         version: link:../../packages/engine
+      '@pi-desktop/gen-canvas':
+        specifier: workspace:*
+        version: link:../../packages/gen-canvas
       '@pi-desktop/gen-service':
         specifier: workspace:*
         version: link:../../packages/gen-service

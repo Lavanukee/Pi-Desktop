@@ -44,6 +44,7 @@ const DEFAULTS: DesktopSettings = {
   modelEffortDefaults: {},
   hfToken: '',
   experimentalProductionHarness: false,
+  experimentalGeneration: false,
 };
 
 function prefersDark(): boolean {
@@ -280,6 +281,49 @@ export function productionHarnessEnabled(): boolean {
   return (
     corpEnvOverrideEnabled() || useSettingsStore.getState().settings.experimentalProductionHarness
   );
+}
+
+/**
+ * Experimental generation-stack flag (default FALSE) — the sibling of
+ * {@link selectExperimentalProductionHarness} that gates ALL live generation
+ * wiring (gen bridge / gen tools / gen-image surface). When false the app is
+ * byte-for-byte its current self. Follows the same selector/hook/setter shape.
+ */
+export const selectExperimentalGeneration = (state: SettingsStoreState): boolean =>
+  state.settings.experimentalGeneration;
+
+/** Reactive hook: the persisted experimental generation setting. */
+export function useExperimentalGeneration(): boolean {
+  return useSettingsStore(selectExperimentalGeneration);
+}
+
+/** Persist the experimental generation flag. */
+export async function setExperimentalGeneration(enabled: boolean): Promise<void> {
+  await useSettingsStore.getState().update({ experimentalGeneration: enabled });
+}
+
+/**
+ * The DEV env override (`PI_DESKTOP_GEN=1`), surfaced by main.ts as a `?gen=1`
+ * query param on the main window. Resolved lazily + cached (a launch-time flag),
+ * guarded so importing this module in a non-DOM (test) context is safe. Mirrors
+ * {@link corpEnvOverrideEnabled}.
+ */
+let genEnvOverride: boolean | undefined;
+function genEnvOverrideEnabled(): boolean {
+  if (genEnvOverride === undefined) {
+    genEnvOverride =
+      typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('gen');
+  }
+  return genEnvOverride;
+}
+
+/**
+ * The EFFECTIVE generation-stack state: the persisted setting OR the dev env
+ * override. Consulted by the renderer's `useGen` hook + surface registration so
+ * nothing generation-related mounts unless the flag / override is on.
+ */
+export function generationEnabled(): boolean {
+  return genEnvOverrideEnabled() || useSettingsStore.getState().settings.experimentalGeneration;
 }
 
 /** Star / unstar a model id, persisting the whole favorites list. */

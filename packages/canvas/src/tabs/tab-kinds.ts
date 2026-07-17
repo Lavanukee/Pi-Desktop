@@ -1,7 +1,15 @@
-import { IconFile, IconGlobe, IconImage, type IconProps, IconTerminal } from '@pi-desktop/ui';
+import {
+  IconFile,
+  IconGlobe,
+  IconImage,
+  type IconProps,
+  IconSparkles,
+  IconTerminal,
+} from '@pi-desktop/ui';
 import type { ComponentType } from 'react';
 import {
   IconCode,
+  IconCube,
   IconFilm,
   IconFolder,
   IconMarkup,
@@ -47,6 +55,20 @@ export const CANVAS_TAB_KINDS: Record<CanvasTabKind, CanvasTabKindMeta> = {
   html: { kind: 'html', label: 'Preview', icon: IconMarkup, live: false, opensInCanvas: false },
   svg: { kind: 'svg', label: 'SVG', icon: IconMarkup, live: false, opensInCanvas: false },
   image: { kind: 'image', label: 'Image', icon: IconImage, live: false, opensInCanvas: true },
+  // A generation image surface — artifact-backed like `image`, but streams
+  // candidates as the job runs (the gen-canvas surface handles `canStream`). The
+  // sparkle glyph marks it as model-generated in the tab bar.
+  'gen-image': {
+    kind: 'gen-image',
+    label: 'Generation',
+    icon: IconSparkles,
+    live: false,
+    opensInCanvas: true,
+  },
+  // The 3D workspace (TRELLIS pillar): generate → preview → export GLB. No
+  // surface is registered for it yet; a `3d` tab renders the "no surface" state
+  // until that workspace canvas lands.
+  '3d': { kind: '3d', label: '3D', icon: IconCube, live: true, opensInCanvas: true },
   // One video surface carries generated MP4s, HyperFrames output, ffmpeg edits,
   // and burned perception overlays — all via MediaPreviewSurface's <video> branch.
   video: { kind: 'video', label: 'Video', icon: IconFilm, live: false, opensInCanvas: true },

@@ -134,6 +134,16 @@ export interface DesktopSettings {
    * to the renderer as a `?corp=1` query param). Gates ALL corp wiring.
    */
   experimentalProductionHarness: boolean;
+  /**
+   * EXPERIMENTAL (default FALSE): wire the on-device GENERATION stack live — the
+   * generation socket bridge (`registerGenIpc`), the `generate_image` /
+   * `generate_video` pi tools, and the live gen-image canvas surface. Off = the
+   * app is byte-for-byte its current self (no gen bridge, no gen tools, no gen
+   * surface), so a signed /Applications build stays clean. Also force-enabled for
+   * a dev launch via `PI_DESKTOP_GEN=1` (surfaced to the renderer as a `?gen=1`
+   * query param). Sibling to {@link experimentalProductionHarness}.
+   */
+  experimentalGeneration: boolean;
 }
 
 /** A partial patch merged over the current document (one level deep on the
@@ -161,6 +171,8 @@ export interface DesktopSettingsPatch {
   hfToken?: string;
   /** Experimental production-harness toggle (default FALSE). */
   experimentalProductionHarness?: boolean;
+  /** Experimental generation-stack toggle (default FALSE). */
+  experimentalGeneration?: boolean;
 }
 
 /** Icon-stroke bounds — mirrors the IconStrokeControl slider range. */

@@ -31,6 +31,7 @@ import { createCanvasDragResize } from './resize-collapse';
 import { useSubagentCanvasRouting } from './subagent-routing';
 import { useArtifactCanvasRouting } from './tabs-routing';
 import { useBashTerminalCanvasRouting } from './terminal-routing';
+import { useGen } from './useGen';
 
 /** E2E: probes open browser/terminal tabs through the shared controller. Gated
  * on the same `?piE2E=1` opt-in as `window.__pi_store` (see pi-connect.ts). */
@@ -58,6 +59,9 @@ export function CanvasTabsPanel() {
   // browser-use: open/focus + register the agent browser tab on request from
   // the main-process bridge, and reflect its "driving" chrome.
   useBrowserAgent(controller);
+  // generation (experimental): stream `generate_image`/`generate_video` jobs into
+  // a live gen-image canvas tab. Inert unless the generation flag / `?gen=1` is on.
+  useGen(controller);
   // Canvas-awareness: report a compact snapshot of what's on the canvas to main
   // on every surface / active-tab change, so the model's `context` hook always
   // knows what the user is looking at (jedd's gotcha).

@@ -126,6 +126,18 @@ export function applySettingsEnvFromDisk(): void {
   applySearchEnv(readSettings());
 }
 
+/**
+ * Main-side twin of the renderer's `generationEnabled()`: whether the
+ * EXPERIMENTAL generation stack is on. True when the dev env override
+ * `PI_DESKTOP_GEN=1` is set OR the persisted `experimentalGeneration` flag is
+ * true. Read at main startup to gate `registerGenIpc` (main.ts) and the
+ * `gen-tools` pi extension (pi-main.ts), so an untoggled build stays clean.
+ */
+export function generationExperimentEnabled(): boolean {
+  if (process.env.PI_DESKTOP_GEN === '1') return true;
+  return readSettings().experimentalGeneration;
+}
+
 const handlers: IpcHandlers<SettingsInvokeMap> = {
   'settings:get': () => readSettings(),
   'settings:set': (req) => {

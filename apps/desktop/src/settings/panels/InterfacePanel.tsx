@@ -22,6 +22,7 @@ export function InterfacePanel({
   const menuScale = useSettingsStore((s) => s.settings.menuScale);
   const flavor = useSettingsStore((s) => s.settings.theme.flavor);
   const productionHarness = useSettingsStore((s) => s.settings.experimentalProductionHarness);
+  const generation = useSettingsStore((s) => s.settings.experimentalGeneration);
   const update = useSettingsStore((s) => s.update);
 
   return (
@@ -167,6 +168,21 @@ export function InterfacePanel({
             data-testid="settings-production-harness"
             value={productionHarness ? 'on' : 'off'}
             onValueChange={(v) => void update({ experimentalProductionHarness: v === 'on' })}
+            options={[
+              { value: 'off', label: 'Off' },
+              { value: 'on', label: 'On' },
+            ]}
+          />
+        </SettingRow>
+        <SettingRow
+          label="On-device generation"
+          hint="Give the assistant on-device image/video generation tools (Apple-Silicon MLX/mflux; ComfyUI for video) that stream results onto the canvas. Downloads models on first use. Restart to apply. Experimental."
+        >
+          <SegmentedControl
+            aria-label="On-device generation"
+            data-testid="settings-experimental-generation"
+            value={generation ? 'on' : 'off'}
+            onValueChange={(v) => void update({ experimentalGeneration: v === 'on' })}
             options={[
               { value: 'off', label: 'Off' },
               { value: 'on', label: 'On' },

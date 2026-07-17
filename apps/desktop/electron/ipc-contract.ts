@@ -22,7 +22,13 @@ import {
   type ConnectorsInvokeMap,
 } from './connectors/connectors-contract';
 import { CORP_INVOKE_CHANNELS, type CorpEventMap, type CorpInvokeMap } from './corp/corp-contract';
-import { GEN_CATALOG_INVOKE_CHANNELS, type GenCatalogInvokeMap } from './gen/gen-ipc-contract';
+import {
+  GEN_CATALOG_INVOKE_CHANNELS,
+  GEN_INVOKE_CHANNELS,
+  type GenCatalogInvokeMap,
+  type GenEventMap,
+  type GenInvokeMap,
+} from './gen/gen-ipc-contract';
 import { IMPORT_INVOKE_CHANNELS, type ImportInvokeMap } from './import/import-contract';
 import { PI_INVOKE_CHANNELS, type PiEventMap, type PiInvokeMap } from './pi/contract';
 import { PROJECT_INVOKE_CHANNELS, type ProjectInvokeMap } from './project/project-contract';
@@ -463,6 +469,7 @@ export type AppInvokeMap = CoreInvokeMap &
   SkillsInvokeMap &
   ImportInvokeMap &
   GenCatalogInvokeMap &
+  GenInvokeMap &
   BrowserInvokeMap &
   BrowserAgentInvokeMap &
   PtyInvokeMap &
@@ -486,6 +493,7 @@ export const APP_INVOKE_CHANNELS = [
   ...SKILLS_INVOKE_CHANNELS,
   ...IMPORT_INVOKE_CHANNELS,
   ...GEN_CATALOG_INVOKE_CHANNELS,
+  ...GEN_INVOKE_CHANNELS,
   ...BROWSER_INVOKE_CHANNELS,
   ...BROWSER_AGENT_INVOKE_CHANNELS,
   ...PTY_INVOKE_CHANNELS,
@@ -521,6 +529,7 @@ export type AppEventMap = {
   BrowserAgentEventMap &
   PtyEventMap &
   CorpEventMap &
+  GenEventMap &
   PiEventMap;
 
 /** Shape of `window.piDesktop` as exposed by the preload script. */

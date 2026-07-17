@@ -58,8 +58,20 @@ import {
 } from '@pi-desktop/gen-tools/contract';
 import { createLogger, registerIpcHandlers } from '@pi-desktop/shared';
 import { type IpcMain, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
+import {
+  type AssetConsent,
+  type EnsureAssetFn,
+  type GenAssetNeed,
+  makeComfyAssetGate,
+} from './asset-gate';
+import { type ComfyInstallManager, GPL_CONSENT_DISCLOSURE } from './comfy-install';
 import { surfaceModalityCatalog } from './gen-catalog-dto';
-import type { GenCatalogInvokeMap, GenEventMap, GenSurfacePayload } from './gen-ipc-contract';
+import type {
+  GenCatalogInvokeMap,
+  GenEventMap,
+  GenInvokeMap,
+  GenSurfacePayload,
+} from './gen-ipc-contract';
 import {
   buildVideoJob,
   defaultExtractPosterFrame,
@@ -101,6 +113,38 @@ export interface GenManagerOptions {
   readonly hyperFramesRender?: HyperFramesRender;
   /** Poster-frame extractor for video self-critique. Default: ffmpeg best-effort. */
   readonly extractPosterFrame?: FrameExtractor;
+  /**
+   * Download-then-CONTINUE gate: awaited before a job is enqueued so a job whose
+   * model/pack is missing PROMPTS the user, downloads on accept, then continues
+   * the SAME job (see asset-gate.ts). Throws to abort (declined / failed).
+   * Default: none (assets assumed present). When {@link comfyInstall} is given
+   * and this is omitted, a ComfyUI gate is derived from it automatically.
+   */
+  readonly ensureAsset?: EnsureAssetFn;
+  /**
+   * The ComfyUI install-manager (comfy-install.ts). When provided, the
+   * `gen:comfy-status` / `gen:comfy-consent` / `gen:comfy-start` invokes answer
+   * from it (the modular-download UI), and — unless {@link ensureAsset} is set —
+   * a download-then-continue gate for `comfyui`-backed jobs is built from it.
+   */
+  readonly comfyInstall?: Pick<ComfyInstallManager, 'status' | 'recordConsent' | 'run'>;
+}
+
+/**
+ * The download need for a model, or `undefined` when nothing must be fetched
+ * up-front. Only `comfyui`-backed entries (LTX / Wan video, advanced ComfyUI
+ * image/music) carry a downloadable pack — mflux image auto-fetches on the
+ * worker, and HyperFrames is pure-CPU — so only they gate. The pack id matches
+ * the catalog id (comfy-install keeps them in sync).
+ */
+function needForModel(model: ModalityModel): GenAssetNeed | undefined {
+  if (model.backend !== 'comfyui') return undefined;
+  return {
+    kind: 'pack',
+    id: model.id,
+    label: model.label,
+    approxSizeGB: model.approxSizeGB,
+  };
 }
 
 let server: net.Server | null = null;
@@ -163,6 +207,25 @@ export function registerGenIpc(opts: GenManagerOptions): void {
     const wc = opts.getWindow();
     if (wc !== null && !wc.isDestroyed()) opts.sendEvent(wc, channel, payload);
   };
+
+  // ── download-then-continue gate (asset-gate.ts) ─────────────────────────────
+  // A job whose ComfyUI pack is missing PROMPTS the user, downloads on accept,
+  // then continues the SAME job. Explicit `ensureAsset` wins (tests); otherwise a
+  // ComfyUI gate is derived from the injected install-manager. A single-flight
+  // pending consent is resolved by the `gen:comfy-start` invoke (renderer Accept).
+  let pendingConsent: ((consent: AssetConsent) => void) | null = null;
+  const awaitConsent = (_need: GenAssetNeed): Promise<AssetConsent> => {
+    // Surface the one-time GPL disclosure; the modular-download UI drives Accept.
+    send('gen:comfy-install', { kind: 'consent-required', disclosure: GPL_CONSENT_DISCLOSURE });
+    return new Promise<AssetConsent>((resolve) => {
+      pendingConsent = resolve;
+    });
+  };
+  const ensureAsset: EnsureAssetFn | undefined =
+    opts.ensureAsset ??
+    (opts.comfyInstall !== undefined
+      ? makeComfyAssetGate(opts.comfyInstall, { awaitConsent })
+      : undefined);
 
   async function handleGenerate(raw: GenerateImageParams): Promise<GenerateImageResult> {
     const model = getModel(raw.model ?? defaultImageModel().id);
@@ -244,6 +307,10 @@ export function registerGenIpc(opts: GenManagerOptions): void {
     };
 
     try {
+      // Download-then-continue: an mflux image needs no up-front pack, so this is
+      // a no-op here; the seam is uniform so a future comfyui-backed image gates too.
+      const need = needForModel(model);
+      if (need !== undefined && ensureAsset !== undefined) await ensureAsset(need);
       const outputs = await jobQueue.enqueue(job, {
         heavy: model.heavy,
         onEvent,
@@ -320,6 +387,10 @@ export function registerGenIpc(opts: GenManagerOptions): void {
     };
 
     try {
+      // Download-then-continue: a comfyui-backed video (LTX / Wan) whose weights
+      // pack is missing PROMPTS the user, downloads on accept, then continues here.
+      const need = needForModel(model);
+      if (need !== undefined && ensureAsset !== undefined) await ensureAsset(need);
       const outputs = await jobQueue.enqueue(job, { heavy: model.heavy, onEvent }).result;
       progress = undefined;
       send('gen:update', { tabId, payload: payload('done') });
@@ -425,6 +496,41 @@ export function registerGenIpc(opts: GenManagerOptions): void {
     guard(event, 'gen:register');
     return { ok: true };
   });
+
+  // ComfyUI modular-download install manager (comfy-install.ts). Registered only
+  // when a manager is injected, so the model-browser install UI + the
+  // download-then-continue gate answer from the SAME manager. The manager streams
+  // its own progress via its `emit` dep (main wires it to `send('gen:comfy-install')`).
+  const installer = opts.comfyInstall;
+  if (installer !== undefined) {
+    ipcMain.handle(
+      'gen:comfy-status',
+      async (event, req: GenInvokeMap['gen:comfy-status']['request']) => {
+        guard(event, 'gen:comfy-status');
+        return { state: await installer.status(req?.acceptedLicenses) };
+      },
+    );
+    ipcMain.handle('gen:comfy-consent', async (event) => {
+      guard(event, 'gen:comfy-consent');
+      await installer.recordConsent();
+      return { ok: true };
+    });
+    ipcMain.handle(
+      'gen:comfy-start',
+      async (event, req: GenInvokeMap['gen:comfy-start']['request']) => {
+        guard(event, 'gen:comfy-start');
+        // A pending download-then-continue gate takes precedence: Accept resolves
+        // it (the gate runs the install + continues the job); don't double-run here.
+        if (pendingConsent !== null) {
+          const resolve = pendingConsent;
+          pendingConsent = null;
+          resolve({ accepted: true, acceptedLicenses: req.acceptedLicenses });
+          return { state: await installer.status(req.acceptedLicenses) };
+        }
+        return { state: await installer.run(req.packIds, req.acceptedLicenses) };
+      },
+    );
+  }
 }
 
 /**

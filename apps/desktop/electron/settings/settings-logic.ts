@@ -73,6 +73,7 @@ export const DEFAULT_SETTINGS: DesktopSettings = {
   modelEffortDefaults: {},
   hfToken: '',
   experimentalProductionHarness: false,
+  experimentalGeneration: false,
 };
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
@@ -162,6 +163,7 @@ export function clampSettings(raw: unknown): DesktopSettings {
       o.experimentalProductionHarness,
       d.experimentalProductionHarness,
     ),
+    experimentalGeneration: bool(o.experimentalGeneration, d.experimentalGeneration),
   };
 }
 

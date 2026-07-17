@@ -17,7 +17,7 @@
 import path from 'node:path';
 import type { CoordinationEvent, TaskHandle } from '@pi-desktop/coordination';
 import { CorpEngine, createNodeWorkspaceFactory } from '@pi-desktop/coordination/corp';
-import type { CorpChatFn, CorpChatRequest, CorpChatResult } from '@pi-desktop/harness/corp';
+import type { CorpChatFn } from '@pi-desktop/harness/corp';
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
 import { app, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
 import { ensureCorpInferenceServer } from '../inference/llm-main';
@@ -47,42 +47,50 @@ function corpWorkspaceRoot(): string {
 
 /**
  * The model seam for a run: the running local server, ensured to the recommended
- * Q8 qwen (`-c 16384`). When no server can be brought up, a graceful stub keeps
- * the harness from hanging — the worker turn stays solo with an honest note.
+ * Q8 qwen (`-c 16384`). A model that cannot be found/started is SURFACED, not
+ * hidden — the run terminates with an honest error rather than degrading to a
+ * stub that appears to work but does nothing (a silent config-failure).
  */
-async function resolveCorpChat(): Promise<CorpChatFn> {
-  const utility = await ensureCorpInferenceServer();
-  if (utility !== null) {
-    log.info('corp chat bound to local server', { baseUrl: utility.baseUrl, model: utility.model });
-    return createLlamaCorpChat({ baseUrl: utility.baseUrl, model: utility.model });
-  }
-  log.warn('corp chat: no local model server available; using degraded stub');
-  return degradedChat;
-}
+type ResolvedCorpChat =
+  | { readonly ok: true; readonly chat: CorpChatFn }
+  | { readonly ok: false; readonly message: string };
 
-/** No-server fallback: the worker stays solo with an explanatory reply; every
- * other turn returns empty so runCorp terminates immediately. Never throws. */
-const degradedChat: CorpChatFn = (request: CorpChatRequest): CorpChatResult => {
-  if (request.purpose === 'worker') {
+async function resolveCorpChat(): Promise<ResolvedCorpChat> {
+  const utility = await ensureCorpInferenceServer();
+  if (utility.ok) {
+    log.info('corp chat bound to local server', { baseUrl: utility.baseUrl, model: utility.model });
     return {
-      content:
-        'No local model is running, so the coordination harness cannot start. ' +
-        'Download and start a model in Settings → Models, then try again.',
+      ok: true,
+      chat: createLlamaCorpChat({ baseUrl: utility.baseUrl, model: utility.model }),
     };
   }
-  return { content: '' };
-};
+  log.warn('corp: no local model available — surfacing to the situation room', {
+    modelId: utility.modelId,
+    error: utility.error,
+  });
+  return {
+    ok: false,
+    message: `The model isn't available. Download ${utility.modelId} in Settings → Models to run the production harness.`,
+  };
+}
+
+/** Placeholder model seam for the unavailable path — never invoked, because the
+ * engine terminates via `startUnavailable` without running the harness. */
+const noopCorpChat: CorpChatFn = () => ({ content: '' });
 
 async function handleStart(
   wc: WebContents,
   req: CorpInvokeMap['corp:start']['request'],
 ): Promise<CorpInvokeMap['corp:start']['response']> {
-  const chat = await resolveCorpChat();
+  const resolved = await resolveCorpChat();
   const engine = new CorpEngine({
-    chat,
+    // Unused on the unavailable path (startUnavailable never calls the model).
+    chat: resolved.ok ? resolved.chat : noopCorpChat,
     workspaceFor: createNodeWorkspaceFactory(corpWorkspaceRoot()),
   });
-  const handle = engine.startTask(req.prompt, req.ctx);
+  const handle = resolved.ok
+    ? engine.startTask(req.prompt, req.ctx)
+    : engine.startUnavailable(req.prompt, resolved.message, req.ctx);
   tasks.set(handle.taskId, { engine, handle, wc });
 
   // Forward the task's events to the requesting window until the terminal `done`.

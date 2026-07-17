@@ -57,38 +57,55 @@ export function getInferenceUtility(): { baseUrl: string; model: string } | null
   return { baseUrl: lastStatus.baseUrl, model: lastStatus.model?.id ?? 'utility' };
 }
 
+/** The model the coordination harness starts when none is already running (the
+ * utility/fast pick — sub-12B Q8 qwen). Named so a missing-model message can
+ * point the user at the exact id to download. */
+export const CORP_MODEL_ID = 'qwen3.5-4b-mtp';
+
 /**
- * Ensure a local model server is up for the coordination harness, returning its
- * OpenAI-compatible endpoint (or null if one could not be started). When a server
- * is already running it is reused as-is; otherwise the recommended sub-12B Q8 qwen
- * (the utility/fast pick — `qwen3.5-4b-mtp` `Q8_0`) is started via the SAME
- * supervisor path the Model Manager uses. Context size is auto-capped to 16384 by
- * the supervisor (CONTEXT_CAP), so the corp turns run with `-c 16384` without a
- * knob here. Best-effort: a failed start resolves to whatever `getInferenceUtility`
- * reports, so callers degrade gracefully (never throws).
+ * The outcome of {@link ensureCorpInferenceServer}: either a running endpoint,
+ * or an honest failure carrying the model id + reason so the caller can SURFACE
+ * a user-meaningful "model isn't available" instead of degrading silently.
  */
-export async function ensureCorpInferenceServer(): Promise<{
-  baseUrl: string;
-  model: string;
-} | null> {
+export type CorpInferenceResult =
+  | { readonly ok: true; readonly baseUrl: string; readonly model: string }
+  | { readonly ok: false; readonly modelId: string; readonly error: string };
+
+/**
+ * Ensure a local model server is up for the coordination harness. When a server
+ * is already running it is reused as-is; otherwise the recommended sub-12B Q8 qwen
+ * ({@link CORP_MODEL_ID} `Q8_0`) is started via the SAME supervisor path the Model
+ * Manager uses. Context size is auto-capped to 16384 by the supervisor
+ * (CONTEXT_CAP), so the corp turns run with `-c 16384` without a knob here.
+ *
+ * Never throws: a model that cannot be found/started resolves to an `ok:false`
+ * result carrying the model id + error, so the caller surfaces it (a missing
+ * model is a loud, honest terminal state — never a silent degrade to a stub).
+ */
+export async function ensureCorpInferenceServer(): Promise<CorpInferenceResult> {
   const existing = getInferenceUtility();
-  if (existing !== null) return existing;
+  if (existing !== null) return { ok: true, ...existing };
   try {
     const res = await request<{ success: boolean; baseUrl?: string; error?: string }>({
       type: 'start-server',
-      modelId: 'qwen3.5-4b-mtp',
+      modelId: CORP_MODEL_ID,
       quant: 'Q8_0',
       launchMode: 'fast-text',
     });
     if (res.success && res.baseUrl !== undefined && res.baseUrl.length > 0) {
-      return { baseUrl: res.baseUrl, model: 'qwen3.5-4b-mtp' };
+      return { ok: true, baseUrl: res.baseUrl, model: CORP_MODEL_ID };
     }
+    // A server may have raced up during the start attempt — reuse it if so.
+    const late = getInferenceUtility();
+    if (late !== null) return { ok: true, ...late };
+    return { ok: false, modelId: CORP_MODEL_ID, error: res.error ?? 'model not available' };
   } catch (err) {
-    log.warn('ensureCorpInferenceServer: start-server failed', {
-      error: err instanceof Error ? err.message : String(err),
-    });
+    const error = err instanceof Error ? err.message : String(err);
+    log.warn('ensureCorpInferenceServer: start-server failed', { error });
+    const late = getInferenceUtility();
+    if (late !== null) return { ok: true, ...late };
+    return { ok: false, modelId: CORP_MODEL_ID, error };
   }
-  return getInferenceUtility();
 }
 
 function broadcast<K extends keyof AppEventMap & string>(

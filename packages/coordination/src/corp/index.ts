@@ -362,6 +362,29 @@ export class CorpEngine implements CoordinationEngine {
     return { taskId, events: rt.stream };
   }
 
+  /**
+   * Start a task that terminates IMMEDIATELY because no model is available —
+   * WITHOUT running the harness (no fake progress, no hollow run). Emits a clear
+   * terminal state: a retired solo chart, a `status: 'error'`, and a `done`
+   * carrying `message` as the user-meaningful error, so the situation room shows
+   * an honest "the model isn't available" instead of a run that does nothing.
+   *
+   * The desktop host uses this when it cannot find or start a local model server
+   * (a missing model is a loud, honest failure — never a silent degrade).
+   */
+  startUnavailable(_prompt: string, message: string, _ctx?: TaskContext): TaskHandle {
+    const taskId = nextTaskId();
+    const stream = new PushStream<CoordinationEvent>();
+    const result: TaskResult = { outcome: 'failed', summary: message, error: message };
+    // Buffered before the caller subscribes; delivered in order on iteration,
+    // then the stream ends. No runCorp is ever invoked.
+    stream.push({ type: 'org-chart', chart: { taskId, nodes: [soloNode('retired')], edges: [] } });
+    stream.push({ type: 'status', status: 'error', detail: message });
+    stream.push({ type: 'done', result });
+    stream.end();
+    return { taskId, events: stream };
+  }
+
   steer(handle: TaskHandle, text: string): void {
     const rt = this.tasks.get(handle.taskId);
     if (!rt || rt.finished) return;

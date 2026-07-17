@@ -165,8 +165,13 @@ try {
   await page.locator('.pd-sitroom-node[data-role="division"]').first().click();
   await page.waitForSelector('[data-testid="task-briefing"]', { timeout: 5000 });
   await sleep(4200); // let the stream reveal a few entries
+  // The worker pane: the live app mounts CorpWorkerPane (`corp-worker-pane`);
+  // this demo route mounts its model-free twin WorkerStreamPane (`worker-pane`).
+  // Both render chat rows as `.pd-msg`, so accept either pane's messages.
   assert(
-    (await page.locator('[data-testid="worker-pane"] .pd-msg').count()) >= 1,
+    (await page
+      .locator('[data-testid="corp-worker-pane"] .pd-msg, [data-testid="worker-pane"] .pd-msg')
+      .count()) >= 1,
     'expected chat-rendered stream entries in the left area',
   );
   assert(

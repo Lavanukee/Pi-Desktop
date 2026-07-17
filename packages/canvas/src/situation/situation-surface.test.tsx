@@ -59,6 +59,40 @@ describe('SituationRoomSurface', () => {
     await later.unmount();
   });
 
+  it('highlights exactly one node when a root-parented division is selected', async () => {
+    // The real corp engine parents divisions straight to the CEO. A division
+    // must render in ONE tier only — selecting it may not light up two copies.
+    const chartEvent: CoordinationEvent = {
+      type: 'org-chart',
+      chart: {
+        taskId: 't1',
+        nodes: [
+          { id: 'ceo', role: 'ceo', name: 'Pi', state: 'working' },
+          {
+            id: 'architect',
+            role: 'specialist',
+            name: 'Architecture',
+            parentId: 'ceo',
+            state: 'done',
+          },
+          { id: 'div-fe', role: 'division', name: 'Frontend', parentId: 'ceo', state: 'working' },
+          { id: 'div-be', role: 'division', name: 'Backend', parentId: 'ceo', state: 'idle' },
+        ],
+        edges: [
+          { from: 'ceo', to: 'architect' },
+          { from: 'ceo', to: 'div-fe' },
+          { from: 'ceo', to: 'div-be' },
+        ],
+      },
+    };
+    const state = reduceSituation(initialSituation('t1'), chartEvent);
+    const { container, unmount } = await render(
+      <SituationRoomSurface state={state} selectedNodeId="div-fe" onSelectNode={() => {}} />,
+    );
+    expect(container.querySelectorAll('.pd-sitroom-node[data-selected]').length).toBe(1);
+    await unmount();
+  });
+
   it('settles into the shipped pose on done', async () => {
     const { container, unmount } = await render(
       <SituationRoomSurface state={foldTo(Number.POSITIVE_INFINITY)} />,

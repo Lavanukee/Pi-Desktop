@@ -162,6 +162,35 @@ describe('CorpEngine implements CoordinationEngine', () => {
     expect(chart.nodes[0]?.state).toBe('done');
   });
 
+  it('startUnavailable surfaces a missing model as an honest error — never runs', async () => {
+    let called = false;
+    const engine = new CorpEngine({
+      chat: () => {
+        called = true;
+        return { content: 'should never be asked' };
+      },
+    });
+    const message =
+      "The model isn't available. Download qwen3.5-4b-mtp in Settings → Models to run the production harness.";
+    const handle = engine.startUnavailable('Build me a dashboard app', message);
+    const events = await collect(handle);
+
+    // The harness never ran — the injected model seam was never invoked.
+    expect(called).toBe(false);
+    // A clear terminal state carrying the user-meaningful error.
+    expect(events.some((e) => e.type === 'status' && e.status === 'error')).toBe(true);
+    const done = terminal(events);
+    expect(done.result.outcome).toBe('failed');
+    expect(done.result.error).toBe(message);
+    // No hollow run: no planning/working status, no invented checklist of tasks.
+    expect(
+      events.some(
+        (e) => e.type === 'status' && (e.status === 'planning' || e.status === 'working'),
+      ),
+    ).toBe(false);
+    expect(events.some((e) => e.type === 'checklist')).toBe(false);
+  });
+
   it('abort ends the stream with an aborted done event', async () => {
     const engine = new CorpEngine({ chat: promotingChat() });
     const handle = engine.startTask('Long running task');

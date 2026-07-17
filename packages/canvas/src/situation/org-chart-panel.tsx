@@ -128,10 +128,15 @@ export function SituationOrgChart({
   const root = nodes.find(
     (n) => n.parentId === undefined && (n.role === 'ceo' || n.role === 'solo'),
   );
+  // The middle tier is the plan/structure row (managers + specialists) — never
+  // a division: divisions own the tier below, so including them here (some
+  // engines parent divisions straight to the root) would render each division
+  // TWICE and, when selected, light up both copies (double `data-selected`).
   const midRow = nodes.filter(
     (n) =>
-      (root !== undefined && n.parentId === root.id) ||
-      (n.role === 'specialist' && n.parentId !== undefined && n.parentId !== root?.id),
+      n.role !== 'division' &&
+      ((root !== undefined && n.parentId === root.id) ||
+        (n.role === 'specialist' && n.parentId !== undefined && n.parentId !== root?.id)),
   );
   const divisions = nodes.filter((n) => n.role === 'division');
   const engineersOf = (divisionId: string) =>

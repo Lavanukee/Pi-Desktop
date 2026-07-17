@@ -50,6 +50,14 @@ import {
 // stripped at runtime, so no cross-package value import — keeps this file loadable
 // under Node TS type-stripping).
 import type { CorpTurnPurpose, RoleAgentActivity } from '@pi-desktop/harness/corp';
+// The rule-based scary-bash DENYLIST — the SAME deterministic checker the SOLO
+// agent registers (harness permissions/rules.ts). Value-imported from the
+// STANDALONE `./permissions` subpath, which resolves to the zero-dependency
+// rules module: it stays loadable under the smoke's Node TS type-stripping AND
+// can never drag in the LLM flagger (flag-bash.ts) or the mode wiring. Spec §9:
+// the permissions default is a static denylist flagged BY RULE — no LLM reviewer
+// in the loop.
+import { checkScaryBash } from '@pi-desktop/harness/permissions';
 
 // ---------------------------------------------------------------------------
 // Sampling modes — the owner's qwen params, keyed by role behaviour.
@@ -210,6 +218,32 @@ export function createStepCapCounter(maxSteps = 20): StepCapCounter {
       return hit;
     },
   };
+}
+
+/**
+ * The rule-based bash DENYLIST gate (spec §9). Returns a {@link StepCapBlock}
+ * REFUSAL when a `bash` tool call's command matches the shared scary-bash
+ * denylist ({@link checkScaryBash} — the SAME deterministic regex/substring rules
+ * the solo agent uses, with NO LLM reviewer anywhere in the path), or `undefined`
+ * to allow the call through untouched. Non-`bash` tools always pass. The `command`
+ * is read from the bash tool's args (`input.command`); a missing/non-string
+ * command degrades to the empty string (which the denylist treats as safe).
+ *
+ * Pure + synchronous (there is no model call — a returned decision is proof the
+ * gate is rule-based) and unit-tested. Wired into `corpExt`'s `tool_call` handler
+ * so EVERY corp role-agent that has `bash` (engineers, reviewers, CEO, consults)
+ * is gated the same way, and the flagged command NEVER executes.
+ */
+export function bashDenylistGate(toolName: string, input: unknown): StepCapBlock | undefined {
+  if (toolName !== 'bash') return undefined;
+  const command =
+    input !== null &&
+    typeof input === 'object' &&
+    typeof (input as { command?: unknown }).command === 'string'
+      ? (input as { command: string }).command
+      : '';
+  const reason = checkScaryBash(command);
+  return reason !== null ? { block: true, reason: `blocked by denylist: ${reason}` } : undefined;
 }
 
 /** One captured tool call the model made (esp. custom-tool / promotion calls). */
@@ -606,9 +640,17 @@ export async function runRoleAgent(
       return { messages: messages as unknown as ContextEvent['messages'] };
     });
 
-    // Capture calls + enforce the step-cap ONLY when one was explicitly requested.
+    // Capture calls, enforce the rule-based bash DENYLIST (spec §9 — a
+    // known-dangerous shell command is refused deterministically, NO LLM in the
+    // loop, so the agent gets a refusal it can adapt to and the command NEVER
+    // runs), then the step-cap ONLY when one was explicitly requested. This is the
+    // SAME `tool_call` handler the live-activity forwarding and submit gates
+    // compose around — the denylist gate slots in without clobbering the capture
+    // sink or the step-cap.
     pi.on('tool_call', (e: ToolCallEvent) => {
       toolCalls.push({ name: e.toolName, arguments: e.input });
+      const denied = bashDenylistGate(e.toolName, e.input);
+      if (denied !== undefined) return denied;
       return stepCap?.charge();
     });
 

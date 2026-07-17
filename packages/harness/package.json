@@ -10,7 +10,8 @@
   ],
   "exports": {
     ".": "./src/index.ts",
-    "./corp": "./src/corp/index.ts"
+    "./corp": "./src/corp/index.ts",
+    "./permissions": "./src/permissions/rules.ts"
   },
   "pi": {
     "extensions": [

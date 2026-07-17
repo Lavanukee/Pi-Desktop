@@ -44,8 +44,10 @@ Your job is one judgment: does this finished product meet the standard the origi
   - APPROVE — the product meets the standard; it ships.
   - REVISE — it does not yet. Follow the word with specific, actionable notes addressed to the exact gap (which deliverable, what is wrong, what "done" looks like). Vague dissatisfaction is not a note.`;
 
-/** The three (and only three) inputs to a CEO review — the clean artifact, never
- * the build transcript. The absence of any transcript field IS the §8 guardrail. */
+/** The (at most four) inputs to a CEO review — the clean artifact, never the build
+ * transcript. The absence of any transcript field IS the §8 guardrail; the optional
+ * specialist FINDINGS summary is MEASURED evidence (spec §8 review-at-merge), not a
+ * transcript, so it preserves the clean-context isolation by shape. */
 export interface CeoReviewInput {
   /** The ORIGINAL user task — the standard the CEO set and judges against. */
   readonly originalTask: string;
@@ -53,6 +55,9 @@ export interface CeoReviewInput {
   readonly manifest: ProductManifest;
   /** The objective verification evidence (verify.ts). */
   readonly verifyResult: VerifyResult;
+  /** The advisory specialists' transcript-free FINDINGS summary (review.ts), when a
+   * review-at-merge phase ran before the CEO (spec §8). Measured findings only. */
+  readonly reviewFindings?: string;
 }
 
 /** Format the product manifest as the reviewer-facing block. */
@@ -100,6 +105,7 @@ function verifyLines(verify: VerifyResult): string[] {
  * cannot carry one). Pure string composition; deterministic.
  */
 export function buildCeoReviewPrompt(input: CeoReviewInput): string {
+  const findings = input.reviewFindings?.trim();
   return [
     'Review the finished product and give your sign-off.',
     '',
@@ -109,6 +115,7 @@ export function buildCeoReviewPrompt(input: CeoReviewInput): string {
     ...manifestLines(input.manifest),
     '',
     ...verifyLines(input.verifyResult),
+    ...(findings !== undefined && findings !== '' ? ['', findings] : []),
     '',
     'Does this finished product meet the standard the original task set? Begin your reply with APPROVE or REVISE on its own line; if REVISE, add specific notes addressed to the exact gap.',
   ].join('\n');

@@ -38,6 +38,7 @@ export type SamplingMode =
  *
  *  - engineer            → `thinking-coding`   (code: low temp, no presence penalty)
  *  - vision / worker / ceo → `thinking-general` (judgment: form the vision, promote-or-not, final review)
+ *  - review              → `thinking-general`  (the advisory specialists' evidence-grounded findings)
  *  - manager / architect → `instruct-general`  (structured JSON, thinking OFF)
  *  - rescope             → `instruct-general`  (manager-authored, like the manager)
  *  - revise              → `thinking-general`  (a CEO judgment turn)
@@ -50,6 +51,7 @@ export function samplingModeForPurpose(purpose: CorpTurnPurpose): SamplingMode {
     case 'worker':
     case 'ceo':
     case 'revise':
+    case 'review':
       return 'thinking-general';
     case 'manager':
     case 'architect':

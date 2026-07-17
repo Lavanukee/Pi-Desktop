@@ -89,6 +89,12 @@ import {
 } from './promotion.js';
 import { composeNodePrompt, getRolePrompt, roleThinkingEnabled } from './prompts.js';
 import { isBlankFile, MANAGER_EMPTY_RETRY_NUDGE, withRetryOnEmpty } from './retry.js';
+import {
+  type ReviewPhaseSummary,
+  type RunReviewAgentFn,
+  runReviewPhase,
+  selectReviewLenses,
+} from './review.js';
 import { type ReviseOutcome, runBoundedRevise } from './revise.js';
 import {
   type RoleAgentCustomTool,
@@ -121,6 +127,7 @@ export type CorpTurnPurpose =
   | 'ceo'
   | 'rescope'
   | 'revise'
+  | 'review'
   | 'consult';
 
 /** One chat message handed to the seam (provider-agnostic: no `/no_think` tag,
@@ -300,6 +307,9 @@ export interface CorpRunResult {
     readonly errorCount: number;
     readonly filesChecked: number;
   };
+  /** The advisory-specialist REVIEW-AT-MERGE phase that ran before the CEO sign-off
+   * (spec §8; agent path only — the specialists MEASURE via bash). */
+  readonly review?: ReviewPhaseSummary;
   /** The CEO's first verdict, before any revision. */
   readonly initialCeoDecision?: CeoDecision;
   /** The delivered CEO verdict, after the bounded revise loop. */
@@ -391,6 +401,7 @@ const zeroTurns = (): Record<CorpTurnPurpose, number> => ({
   ceo: 0,
   rescope: 0,
   revise: 0,
+  review: 0,
   consult: 0,
 });
 
@@ -1005,6 +1016,10 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
   let finalCeoDecision: CeoDecision | undefined;
   let reviseSummary: ReviseSummary | undefined;
   let escalations: EscalationSummary[] = [];
+  // The REVIEW-AT-MERGE phase (spec §8): the advisory specialists' summary for the
+  // result, and the transcript-free FINDINGS summary threaded into the CEO turn.
+  let reviewSummary: ReviewPhaseSummary | undefined;
+  let reviewFindingsSummary: string | undefined;
 
   if (promoted && promotionArgs !== undefined) {
     // A chart always exists to review: the dispatched one, or (if the budget cut
@@ -1040,6 +1055,10 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         originalTask: reviewStandard,
         manifest,
         verifyResult,
+        // The advisory specialists' transcript-free FINDINGS summary (spec §8 — the
+        // CEO judges the product WITH the measured evidence, never the build
+        // transcript). Absent when no review phase ran (chat-fallback path).
+        ...(reviewFindingsSummary !== undefined ? { reviewFindings: reviewFindingsSummary } : {}),
       });
       try {
         if (runRoleAgent !== undefined) {
@@ -1075,6 +1094,126 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         return { decision: 'revise', notes: 'CEO review turn failed; no verdict produced.' };
       }
     };
+
+    // --- REVIEW-AT-MERGE (spec §8): advisory specialists MEASURE the assembled
+    // product BEFORE the CEO signs off. AGENT PATH ONLY — the reviewers run the
+    // build/typecheck/tests via bash (harnessed, read-only), so this needs the
+    // role-agent seam; on the chat-fallback path (no bash) it is skipped gracefully.
+    // A BLOCKING finding triggers a bounded revision (re-dispatch the affected
+    // contracts + re-verify), reusing the revise bound; the CEO then reviews the
+    // re-worked product WITH the specialists' transcript-free FINDINGS summary. ---
+    if (
+      runRoleAgent !== undefined &&
+      chart !== undefined &&
+      dispatchReport !== undefined &&
+      !budgetExceeded(budget)
+    ) {
+      const reviewedChart = chart;
+      const preManifest = buildProductManifest(reviewedChart, options.workspace, options.readFs);
+      const preVerify = verifyProduct(options.workspace, options.readFs, options.fileCheck);
+      const lensPlan = selectReviewLenses(preManifest);
+
+      // Charge + run ONE reviewer. A spent budget → undefined → runReviewPhase skips
+      // the rest gracefully; a seam error → a recorded empty output (surfaced).
+      const runReviewAgent: RunReviewAgentFn = async (input) => {
+        if (!chargeTurn(budget)) {
+          terminatedReason ??= 'budget-exceeded';
+          return undefined;
+        }
+        turnsByPurpose.review += 1;
+        try {
+          return await runRoleAgent(input);
+        } catch (err) {
+          errors.push({ purpose: 'review', message: errorMessage(err) });
+          return { filesWritten: [], finalText: '', toolCalls: [], terminatedReason: 'error' };
+        }
+      };
+
+      // The bounded-revision seam: re-dispatch each finding-affected contract through
+      // the SAME engineer path (pruned deps + shared workspace, so it reads the tree
+      // and its dep files while fixing), fold the results back into chart/dispatchReport,
+      // then re-verify. Budget-guarded; never throws. Reuses the revise re-dispatch shape.
+      const reviseForFindings = async (revInput: {
+        contractIds: readonly string[];
+        notes: string;
+      }): Promise<{ ran: boolean; verify: VerifyResult } | undefined> => {
+        if (chart === undefined || dispatchReport === undefined) return undefined;
+        if (budgetExceeded(budget)) return undefined;
+        const ids = new Set(revInput.contractIds);
+        const targets = chart.contracts.filter((c) => ids.has(c.id));
+        if (targets.length === 0) return undefined;
+        let ranAny = false;
+        for (const target of targets) {
+          if (budgetExceeded(budget)) break;
+          // Per-contract note: the blocking findings + read-hints for this file's
+          // dependencies (so a shared-workspace engineer rebuilds against real deps).
+          const depHints = target.dependsOn
+            .map((d) => chart?.contracts.find((c) => c.id === d))
+            .filter((c): c is Contract => c !== undefined)
+            .map((c) => `  - ${c.slot} — provides: ${c.output}`);
+          const note =
+            depHints.length > 0
+              ? `${revInput.notes}\n\nRead these existing dependency files before you rebuild ${target.slot}:\n${depHints.join('\n')}`
+              : revInput.notes;
+          // Pruned deps + shared workspace (the rescoped-contract shape): dispatch can
+          // run it standalone, and it can read the already-produced tree while fixing.
+          const reworkContract: Contract = {
+            ...target,
+            status: 'queued' as ContractStatus,
+            workspace: 'shared',
+            dependsOn: [],
+          };
+          let rework: DispatchReport;
+          try {
+            rework = await dispatchContracts({
+              orgChart: { ...chart, contracts: [reworkContract], queue: [] },
+              runEngineer: makeEngineerSeam(note),
+              readFs: options.readFs,
+              workspace: options.workspace,
+              ...(useAgentEngineer ? {} : { captureReviews: true }),
+              ...(concurrency !== undefined ? { concurrency } : {}),
+            });
+          } catch {
+            continue;
+          }
+          ranAny = ranAny || rework.done.length > 0 || rework.failed.length > 0;
+          const newlyDone = new Set(rework.done);
+          chart = {
+            ...chart,
+            contracts: chart.contracts.map((c) =>
+              newlyDone.has(c.id) ? { ...c, status: 'in-review' as ContractStatus } : c,
+            ),
+          };
+          dispatchReport = {
+            ...dispatchReport,
+            done: [...new Set([...dispatchReport.done, ...rework.done])],
+            failed: [...dispatchReport.failed.filter((id) => !newlyDone.has(id)), ...rework.failed],
+            chart,
+          };
+        }
+        const verify = verifyProduct(options.workspace, options.readFs, options.fileCheck);
+        return { ran: ranAny, verify };
+      };
+
+      log(`review-at-merge — lenses: ${lensPlan.map((p) => p.lens).join(', ')}`);
+      reviewSummary = await runReviewPhase({
+        lensPlan,
+        task: options.task,
+        visionBrief,
+        manifest: preManifest,
+        verifyResult: preVerify,
+        contracts: reviewedChart.contracts,
+        workspace: options.workspace,
+        maxTokens: baseMaxTokens,
+        runReviewAgent,
+        reviseForFindings,
+        ...(options.maxRevisions !== undefined ? { maxRevisions: options.maxRevisions } : {}),
+        budget,
+        log,
+      });
+      reviewFindingsSummary = reviewSummary.ceoFindingsSummary;
+      if (reviewSummary.skippedForBudget) terminatedReason ??= 'budget-exceeded';
+    }
 
     log('CEO final review');
     initialCeoDecision = await ceoReview('ceo');
@@ -1259,6 +1398,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
           },
         }
       : {}),
+    ...(reviewSummary !== undefined ? { review: reviewSummary } : {}),
     ...(initialCeoDecision !== undefined ? { initialCeoDecision } : {}),
     ...(finalCeoDecision !== undefined ? { ceoDecision: finalCeoDecision } : {}),
     ...(reviseSummary !== undefined ? { revise: reviseSummary } : {}),

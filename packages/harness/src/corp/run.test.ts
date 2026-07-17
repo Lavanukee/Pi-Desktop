@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { newRunBudget } from './budget.js';
 import { CREATE_PRODUCTION_HIERARCHY } from './promotion.js';
-import type { RoleAgentRunInput, RunRoleAgentFn } from './role-agent-seam.js';
+import { SUBMIT_FINDINGS_TOOL } from './review.js';
+import type { RoleAgentRunInput, RoleAgentRunOutput, RunRoleAgentFn } from './role-agent-seam.js';
 import { type CorpChatFn, type CorpChatResult, type CorpTurnPurpose, runCorp } from './run.js';
 import { type WorkspaceFs, type WorkspaceReadFs, writeSlot } from './workspace.js';
 
@@ -62,6 +63,7 @@ function makeMock(config: MockConfig = {}): Mock {
     ceo: 0,
     rescope: 0,
     revise: 0,
+    review: 0,
     consult: 0,
   };
   let contractCounter = 0;
@@ -541,6 +543,144 @@ describe('runCorp — every role runs harnessed through the role-agent seam', ()
   });
 });
 
+// --- REVIEW-AT-MERGE: harnessed specialists MEASURE before the CEO (spec §8) --
+
+describe('runCorp — the review-at-merge phase (spec §8)', () => {
+  it('runs advisory reviewers harnessed; a blocking finding triggers a bounded revision; the CEO gets the transcript-free findings', async () => {
+    const { fs, readFs } = memWorkspace();
+    const workspace = '/ws';
+    const calls: RoleAgentRunInput[] = [];
+    const writeCount = new Map<string, number>();
+    let engineerSlot = '';
+    const base = { filesWritten: [], toolCalls: [], terminatedReason: 'stop' } as const;
+
+    const runRoleAgent: RunRoleAgentFn = (input): Promise<RoleAgentRunOutput> => {
+      calls.push(input);
+      switch (input.purpose) {
+        case 'vision':
+          return Promise.resolve({
+            ...base,
+            finalText: '',
+            toolCalls: [{ name: 'submit_vision', arguments: { brief: VISION_BRIEF } }],
+          });
+        case 'worker':
+          return Promise.resolve({
+            ...base,
+            finalText: '',
+            toolCalls: [
+              { name: CREATE_PRODUCTION_HIERARCHY, arguments: JSON.stringify(PROMOTION_ONE) },
+            ],
+          });
+        case 'architect':
+          return Promise.resolve({
+            ...base,
+            finalText: JSON.stringify({ moduleMap: [], interfaces: [] }),
+          });
+        case 'manager':
+          return Promise.resolve({ ...base, finalText: oneContractJson('src/core.ts') });
+        case 'engineer': {
+          engineerSlot = /THIS exact path\):\s*(\S+)/.exec(input.userPrompt)?.[1] ?? 'src/core.ts';
+          const n = (writeCount.get(engineerSlot) ?? 0) + 1;
+          writeCount.set(engineerSlot, n);
+          // First dispatch writes a FLAWED file (unbalanced bracket → verify FAILs);
+          // the revision re-dispatch writes a valid file (the flaw fixed).
+          const body = n === 1 ? 'export const broken = (\n' : ENGINEER_FILE;
+          const path = writeSlot(workspace, engineerSlot, body, fs);
+          return Promise.resolve({
+            ...base,
+            finalText: '',
+            filesWritten: [{ path, bytes: body.length }],
+          });
+        }
+        case 'review': {
+          const isCorrectness = input.userPrompt.includes('correctness lens');
+          const findings = isCorrectness
+            ? [
+                {
+                  severity: 'blocking',
+                  title: `${engineerSlot} does not build`,
+                  evidence: 'node --check: SyntaxError: unexpected end of input',
+                  location: engineerSlot,
+                },
+              ]
+            : [];
+          return Promise.resolve({
+            ...base,
+            finalText: '',
+            toolCalls: [
+              { name: 'bash', arguments: { command: `node --check ${engineerSlot}` } },
+              { name: SUBMIT_FINDINGS_TOOL, arguments: { findings } },
+            ],
+          });
+        }
+        default: // ceo (+ any revise)
+          return Promise.resolve({ ...base, finalText: CEO_APPROVE });
+      }
+    };
+
+    const result = await runCorp({
+      task: 'Build a thing',
+      chat: () => ({ content: '' }),
+      runRoleAgent,
+      fs,
+      readFs,
+      workspace,
+    });
+
+    // The review phase ran, harnessed, over the three code lenses (no renderable
+    // artifacts → no visual/accessibility), each read-only + measuring via bash.
+    const reviewCalls = calls.filter((c) => c.purpose === 'review');
+    expect(reviewCalls.map((c) => c.samplingMode)).toEqual([
+      'thinking-general',
+      'thinking-general',
+      'thinking-general',
+    ]);
+    expect(reviewCalls.every((c) => c.tools.includes('bash') && !c.tools.includes('write'))).toBe(
+      true,
+    );
+    expect(result.review?.lensRuns.map((r) => r.lens)).toEqual([
+      'correctness',
+      'security',
+      'performance',
+    ]);
+    expect(result.review?.lensRuns.every((r) => r.ran && r.usedBash)).toBe(true);
+
+    // A blocking finding triggered a BOUNDED revision that re-dispatched the flagged
+    // contract; the re-dispatch fixed the file, so the objective re-verify now passes.
+    expect(result.review?.revisionTriggered).toBe(true);
+    expect(result.review?.revisionContractIds).toContain('c1');
+    expect(result.review?.revisionRan).toBe(true);
+    expect(result.review?.revisedVerifyOk).toBe(true);
+    expect(writeCount.get('src/core.ts')).toBe(2); // draft + one revision re-dispatch
+
+    // The reviewers ran BEFORE the CEO, and the CEO's turn carried the specialists'
+    // transcript-free FINDINGS summary (the false-completion cure preserved by shape).
+    const purposes = calls.map((c) => c.purpose);
+    expect(purposes.indexOf('review')).toBeLessThan(purposes.indexOf('ceo'));
+    const ceo = calls.find((c) => c.purpose === 'ceo');
+    expect(ceo?.userPrompt).toContain('SPECIALIST REVIEW FINDINGS');
+    expect(ceo?.userPrompt).toContain('does not build');
+    expect(result.ceoDecision?.decision).toBe('approve');
+
+    // Bounded: the review turns are counted, and nothing looped.
+    expect(result.turnsByPurpose.review).toBe(3);
+  });
+
+  it('the review phase is SKIPPED on the chat-fallback path (no bash, no role-agent)', async () => {
+    const { fs, readFs } = memWorkspace();
+    const mock = makeMock();
+    const result = await runCorp({
+      task: 'Build a thing',
+      chat: mock.chat,
+      fs,
+      readFs,
+      workspace: '/ws',
+    });
+    expect(result.review).toBeUndefined();
+    expect(result.turnsByPurpose.review).toBe(0);
+  });
+});
+
 // --- Escalation RE-DISPATCHES a re-scoped contract (spec §9, §205) ------------
 
 const PROMOTION_ONE = {
@@ -598,6 +738,7 @@ function makeEscalationMock(mode: 'recover' | 'gap'): Mock {
     ceo: 0,
     rescope: 0,
     revise: 0,
+    review: 0,
     consult: 0,
   };
   const chat: CorpChatFn = (request) => {

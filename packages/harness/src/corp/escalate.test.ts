@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  buildManagerRescopeContractPrompt,
   buildManagerRescopePrompt,
   type EscalationRecord,
   escalateContract,
+  rescopedContractFrom,
   resolveEscalation,
   runBoundedEscalation,
 } from './escalate.js';
@@ -84,6 +86,51 @@ describe('buildManagerRescopePrompt', () => {
     expect(prompt).toContain('RE-CONTRACT');
     expect(prompt).toContain('REORDER');
     expect(prompt).toContain('ACCEPT THE GAP');
+  });
+});
+
+describe('buildManagerRescopeContractPrompt (re-scope INTO a re-dispatchable contract)', () => {
+  it('asks for ONE narrower JSON contract on the SAME slot, or [] to accept the gap', () => {
+    const prompt = buildManagerRescopeContractPrompt(
+      contract(),
+      'no collision primitive is available',
+    );
+    expect(prompt).toContain('Physics integration');
+    expect(prompt).toContain('no collision primitive is available');
+    // It requests a structured contract (so parseManagerContracts can parse it) and
+    // pins the slot so the re-dispatched output lands where the original was meant to.
+    expect(prompt).toContain('JSON array');
+    expect(prompt).toContain('src/engine/physics.ts');
+    // The bounded escape hatch: an empty array accepts the gap (never a deadlock).
+    expect(prompt).toContain('EMPTY array [] to accept the gap');
+  });
+});
+
+describe('rescopedContractFrom (normalize a re-scope into a ready-to-dispatch contract)', () => {
+  it('keeps the original id + slot, self-contains it, and targets the shared tree', () => {
+    const original = contract({ id: 'fe-3', slot: 'src/engine/physics.ts', dependsOn: ['fe-2'] });
+    const rescoped = contract({
+      id: 'r1',
+      slot: 'src/somewhere-else.ts',
+      dependsOn: ['x', 'y'],
+      input: 'a narrower spec',
+      output: 'a smaller step function',
+      status: 'queued',
+    });
+    const out = rescopedContractFrom(rescoped, original);
+    // Original identity + slot are preserved (so the SAME contract is recovered and
+    // the output lands in the same place).
+    expect(out.id).toBe('fe-3');
+    expect(out.slot).toBe('src/engine/physics.ts');
+    expect(out.ownerNodeId).toBe(original.ownerNodeId);
+    // The re-attempt is self-contained (immediately ready) and runs in the shared
+    // tree (so it can read anything already produced).
+    expect(out.dependsOn).toEqual([]);
+    expect(out.workspace).toBe('shared');
+    expect(out.status).toBe('queued');
+    // The narrowed spec comes from the re-scope.
+    expect(out.input).toBe('a narrower spec');
+    expect(out.output).toBe('a smaller step function');
   });
 });
 

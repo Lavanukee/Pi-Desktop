@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  bumpDecision,
+  type ConsultRunner,
   createSubmitReviewGate,
   newSubmitReviewCapture,
   seedIsolatedWorkspace,
@@ -163,5 +165,126 @@ describe('toToolDefinition — submit tool wires the §164 gate against a real c
       content: { text?: string }[];
     };
     expect(res.content[0]?.text).toContain('recorded');
+  });
+});
+
+describe('bumpDecision — the completeness backstop condition (pure)', () => {
+  const CONTINUE = 'You ended without submitting. Write the file and submit_contract.';
+  const base = { finalText: '', continuePrompt: CONTINUE };
+
+  it('STOPS (no bump) when the submit finalized', () => {
+    expect(bumpDecision({ ...base, finalized: true, slotExists: false })).toBeUndefined();
+  });
+
+  it('STOPS (no bump) when the slot file exists (deliverable present)', () => {
+    expect(bumpDecision({ ...base, finalized: false, slotExists: true })).toBeUndefined();
+  });
+
+  it('STOPS (no bump) on an explicit "unfulfillable, because …" terminal decision', () => {
+    expect(
+      bumpDecision({
+        finalized: false,
+        slotExists: false,
+        finalText: 'unfulfillable, because the codec spec is unavailable',
+        continuePrompt: CONTINUE,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('BUMPS (returns the continue prompt) on a premature stop — no file, no decision', () => {
+    expect(bumpDecision({ ...base, finalized: false, slotExists: false })).toBe(CONTINUE);
+  });
+});
+
+describe('toToolDefinition — consult tools spawn a clean-context advisor (advice-only)', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'corp-consult-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function consultTool(kind: 'peer' | 'specialist') {
+    return {
+      name: kind === 'peer' ? 'call_peer' : 'call_specialist',
+      description: 'consult',
+      parameters: { type: 'object', properties: {}, required: [] },
+      consult:
+        kind === 'peer'
+          ? {
+              kind,
+              context: 'the stuck module',
+              systemPrompt: 'PEER-PROMPT',
+              samplingMode: 'thinking-general' as const,
+            }
+          : {
+              kind,
+              context: 'the stuck module',
+              lensPrompts: { correctness: 'CORRECTNESS-PROMPT', security: 'SECURITY-PROMPT' },
+              samplingMode: 'thinking-general' as const,
+            },
+    };
+  }
+
+  function recordingRunner(overrides: Partial<ConsultRunner> = {}): {
+    runner: ConsultRunner;
+    calls: { systemPrompt: string; question: string; kind: string }[];
+  } {
+    const calls: { systemPrompt: string; question: string; kind: string }[] = [];
+    const runner: ConsultRunner = {
+      spawnAdvisor: async (req) => {
+        calls.push({ systemPrompt: req.systemPrompt, question: req.question, kind: req.kind });
+        return `advice for: ${req.question}`;
+      },
+      ...overrides,
+    };
+    return { runner, calls };
+  }
+
+  const call = (def: ReturnType<typeof toToolDefinition>, params: unknown) =>
+    def.execute('c1', params as never, undefined, undefined, {} as never) as Promise<{
+      content: { text?: string }[];
+    }>;
+
+  it('call_peer spawns the peer advisor with its prompt + the question, returns prose', async () => {
+    const { runner, calls } = recordingRunner();
+    const def = toToolDefinition(consultTool('peer'), dir, undefined, runner);
+    const res = await call(def, { question: 'How do I integrate physics?' });
+    expect(res.content[0]?.text).toBe('advice for: How do I integrate physics?');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.systemPrompt).toBe('PEER-PROMPT');
+    expect(calls[0]?.kind).toBe('peer');
+  });
+
+  it('call_specialist resolves the chosen lens prompt (and falls back to the first)', async () => {
+    const { runner, calls } = recordingRunner();
+    const def = toToolDefinition(consultTool('specialist'), dir, undefined, runner);
+    await call(def, { lens: 'security', question: 'is this safe?' });
+    expect(calls[0]?.systemPrompt).toBe('SECURITY-PROMPT');
+    // An unknown/absent lens falls back to the first entry.
+    await call(def, { lens: 'nonsense', question: 'check it' });
+    expect(calls[1]?.systemPrompt).toBe('CORRECTNESS-PROMPT');
+  });
+
+  it('DECLINES without spawning when the consult budget is spent (charged like any turn)', async () => {
+    const { runner, calls } = recordingRunner({ onConsult: () => false });
+    const def = toToolDefinition(consultTool('peer'), dir, undefined, runner);
+    const res = await call(def, { question: 'help' });
+    expect(res.content[0]?.text?.toLowerCase()).toContain('budget is spent');
+    expect(calls).toHaveLength(0); // no advisor spawned
+  });
+
+  it('charges exactly once per consult when the budget allows', async () => {
+    let charges = 0;
+    const { runner } = recordingRunner({
+      onConsult: () => {
+        charges += 1;
+        return true;
+      },
+    });
+    const def = toToolDefinition(consultTool('peer'), dir, undefined, runner);
+    await call(def, { question: 'help' });
+    expect(charges).toBe(1);
   });
 });

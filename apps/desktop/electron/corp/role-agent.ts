@@ -417,6 +417,25 @@ export interface RoleAgentConfig {
    * NOT a limit on how long or how much the agent works; a responding request clears
    * it immediately, and the agent then streams/works freely. Default 10 minutes. */
   readonly perCallTimeoutMs?: number;
+  /**
+   * BUMP-TO-CONTINUE (spec "Run safety & budgets" — the completeness backstop). When
+   * set, after the agent's `prompt` loop ends, {@link BumpConfig.nextPrompt} is asked
+   * whether to RE-PROMPT the SAME session to continue (returning the user turn to
+   * append) or to stop (returning `undefined` — a terminal decision was reached),
+   * bounded to {@link BumpConfig.maxBumps} re-prompts. This prevents a PREMATURE stop
+   * (an engineer that quit without producing its deliverable); it is NOT a per-agent
+   * work cap. Absent → the session runs once, exactly as before. */
+  readonly bump?: BumpConfig;
+}
+
+/** The BUMP-TO-CONTINUE policy for a run (see {@link RoleAgentConfig.bump}). */
+export interface BumpConfig {
+  /** Max times the SAME session is re-prompted to continue (spec bound: 2). */
+  readonly maxBumps: number;
+  /** Given the run's current final assistant text, return the user turn to append to
+   * CONTINUE the same session, or `undefined` to stop (deliverable present, or a
+   * terminal "unfulfillable" decision). */
+  readonly nextPrompt: (ctx: { readonly finalText: string }) => string | undefined;
 }
 
 /** The recorded terminal state of one role-agent run. */
@@ -431,6 +450,9 @@ export interface RoleAgentResult {
   readonly stats: SessionStats | undefined;
   /** How many assistant turns ran. */
   readonly turns: number;
+  /** BUMP-TO-CONTINUE: how many times the SAME session was re-prompted to continue
+   * after ending without its deliverable (0 when none / no bump policy). */
+  readonly bumps: number;
   /** Largest single-turn output tokens (the runaway detector). */
   readonly maxTurnOutputTokens: number;
   /** Why the run ended. */
@@ -559,8 +581,26 @@ export async function runRoleAgent(
   // --- run: fully autonomous, guarded ONLY by the per-CALL network abort ---
   sessionRef = session; // arm the watchdog's abort target
   let promptError = false;
+  let bumps = 0;
+  const lastText = (): string => {
+    try {
+      return session.getLastAssistantText() ?? '';
+    } catch {
+      return '';
+    }
+  };
   try {
     await session.prompt(config.userPrompt);
+    // BUMP-TO-CONTINUE: if the loop ended without the deliverable, re-prompt the SAME
+    // session to reach a terminal decision — bounded to `bump.maxBumps`. Each bump is
+    // an ordinary user turn on the live session (its context preserved), NOT a fresh
+    // run and NOT a work cap.
+    while (config.bump !== undefined && bumps < config.bump.maxBumps) {
+      const next = config.bump.nextPrompt({ finalText: lastText() });
+      if (next === undefined) break; // deliverable present or unfulfillable declared
+      bumps += 1;
+      await session.prompt(next);
+    }
   } catch {
     promptError = true;
   } finally {
@@ -601,6 +641,7 @@ export async function runRoleAgent(
     toolCalls,
     stats,
     turns: countAssistantTurns(messages),
+    bumps,
     maxTurnOutputTokens: maxTurnOutputTokens(messages),
     // `timeout` here means a per-CALL network abort fired (a hung request), NOT a
     // per-agent work limit — those no longer exist.

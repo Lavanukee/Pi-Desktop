@@ -121,6 +121,68 @@ export function buildManagerRescopePrompt(contract: Contract, reason: string): s
 }
 
 /**
+ * Build the manager's re-scope turn that asks for a RE-DISPATCHABLE contract (spec
+ * §9, §205 — bounded to one re-attempt). Unlike {@link buildManagerRescopePrompt}
+ * (prose decision), this asks the manager (thinking-off, structured) to emit ONE
+ * narrower, self-contained contract as a JSON array — same shape the division's
+ * manager turn emits, so {@link parseManagerContracts} parses it and the harness
+ * RE-DISPATCHES it through the normal engineer path. When the work genuinely cannot
+ * be delivered, the manager returns an EMPTY array `[]` to accept the gap. Pure.
+ */
+export function buildManagerRescopeContractPrompt(contract: Contract, reason: string): string {
+  return [
+    'One of your contracts came back unfulfillable. You own the queue and roadmap — RE-SCOPE it into something an engineer can actually deliver, so we can re-dispatch it.',
+    '',
+    'THE STUCK CONTRACT',
+    `- Title: ${contract.title}`,
+    `- Slot: ${contract.slot}`,
+    `- Input: ${contract.input}`,
+    `- Output (what it was meant to produce): ${contract.output}`,
+    `- Review rubric: ${contract.reviewRubric}`,
+    `- Why it is stuck: ${reason}`,
+    '',
+    'Re-scope it: rewrite it as ONE narrower, concrete, SELF-CONTAINED contract targeting the SAME slot that an engineer can fulfil in a single pass — drop or work around whatever blocked it, keep the smallest slice that keeps the vision on track.',
+    '',
+    'Output ONLY a JSON array with EXACTLY ONE contract object, no prose and no code fence, with these fields:',
+    '- "id": string — a short id.',
+    '- "title": string — short human title.',
+    '- "ownerNodeId": string — an engineer slot id.',
+    '- "input": string — what the engineer receives.',
+    '- "output": string — the narrowed deliverable (achievable in one pass).',
+    `- "slot": string — keep it EXACTLY "${contract.slot}".`,
+    '- "available": { "tools": string[], "imports": string[] }.',
+    '- "reviewRubric": string — what the narrowed work is reviewed against.',
+    '- "dependsOn": [] — the re-scoped contract must be self-contained (no dependencies).',
+    '- "notes": string (optional) — how you narrowed it / what to avoid.',
+    '- "status": "queued".',
+    '',
+    'If the work genuinely cannot be delivered as any contract, output an EMPTY array [] to accept the gap. Do not pretend it is done.',
+  ].join('\n');
+}
+
+/**
+ * Normalize a manager-emitted re-scoped contract into one ready to RE-DISPATCH for
+ * the ORIGINAL failed contract (spec §9 escalation → §7 dispatch). It keeps the
+ * original `id` and `slot` (so the harness can mark the same contract recovered and
+ * the output lands in the same place), forces `workspace:'shared'` (the re-attempt
+ * runs in the shared product tree so it can read anything already produced) and
+ * `dependsOn:[]` (self-contained → immediately ready), takes the narrowed
+ * input/output/rubric/tools/imports/notes from the re-scope, and resets the status
+ * to `queued`. Pure.
+ */
+export function rescopedContractFrom(rescoped: Contract, original: Contract): Contract {
+  return {
+    ...rescoped,
+    id: original.id,
+    slot: original.slot,
+    ownerNodeId: original.ownerNodeId,
+    dependsOn: [],
+    workspace: 'shared',
+    status: 'queued',
+  };
+}
+
+/**
  * The pure core of the bounded escalation: given the record and whether the single
  * re-scope attempt fixed the contract, return the {@link EscalationOutcome}. Always
  * exactly one attempt — a still-failing contract becomes an ACCEPTED GAP, never a

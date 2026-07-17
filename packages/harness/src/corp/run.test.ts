@@ -58,6 +58,7 @@ function makeMock(config: MockConfig = {}): Mock {
     ceo: 0,
     rescope: 0,
     revise: 0,
+    consult: 0,
   };
   let contractCounter = 0;
 
@@ -445,6 +446,22 @@ describe('runCorp — every role runs harnessed through the role-agent seam', ()
       engineer?.userPrompt.match(/THIS exact path\):\s*(\S+)/)?.[1],
     );
     expect(submit?.submitReview?.reviewPrompt).toBeTruthy();
+
+    // CONSULTS (spec §7, advice-only): the engineer ALSO gets call_peer +
+    // call_specialist, with their names in the allowlist (the gate) — the stuck
+    // engineer's first stop before returning unfulfillable.
+    expect(engineer?.tools).toEqual(expect.arrayContaining(['call_peer', 'call_specialist']));
+    const peer = engineer?.customTools?.find((t) => t.name === 'call_peer');
+    const specialist = engineer?.customTools?.find((t) => t.name === 'call_specialist');
+    expect(peer?.consult?.kind).toBe('peer');
+    expect(specialist?.consult?.kind).toBe('specialist');
+    expect(Object.keys(specialist?.consult?.lensPrompts ?? {})).toEqual(
+      expect.arrayContaining(['correctness', 'security', 'performance']),
+    );
+    // BUMP-TO-CONTINUE (completeness backstop): the engineer run carries the bounded
+    // bump policy (2 max) + the continue prompt — NOT a per-agent work cap.
+    expect(engineer?.bump?.maxBumps).toBe(2);
+    expect(engineer?.bump?.continuePrompt).toContain('without submitting');
     // NO per-agent caps: the seam carries neither a step cap nor a per-agent
     // timeout — the field for each was removed. The engineer runs until it submits
     // / the global RunBudget; only a per-CALL network abort lives in the app runtime.
@@ -472,6 +489,145 @@ describe('runCorp — every role runs harnessed through the role-agent seam', ()
     expect(result.ceoDecision?.decision).toBe('approve');
     expect(mock.callsByPurpose.worker).toBe(1);
     expect(mock.callsByPurpose.engineer).toBe(8); // draft + review per contract × 4
+  });
+});
+
+// --- Escalation RE-DISPATCHES a re-scoped contract (spec §9, §205) ------------
+
+const PROMOTION_ONE = {
+  reason: 'one hard module beyond a solo pass',
+  divisions: [{ name: 'Core', purpose: 'the core module' }],
+};
+
+/** A JSON contract array with one contract at `slot`. */
+function oneContractJson(slot: string): string {
+  return JSON.stringify([
+    {
+      id: 'c1',
+      title: 'The hard module',
+      ownerNodeId: 'eng-1',
+      input: 'a spec',
+      output: 'the module',
+      slot,
+      available: { tools: ['write'], imports: [] },
+      reviewRubric: 'meets the slot',
+      dependsOn: [],
+      status: 'queued',
+    },
+  ]);
+}
+
+/** A re-scoped (narrower) contract the manager emits on the rescope turn. */
+const RESCOPED_JSON = JSON.stringify([
+  {
+    id: 'r1',
+    title: 'Narrowed hard module',
+    ownerNodeId: 'eng-1',
+    input: 'a narrower spec',
+    output: 'a smaller module',
+    slot: 'src/hard.ts',
+    available: { tools: ['write'], imports: [] },
+    reviewRubric: 'meets the narrowed slot',
+    dependsOn: [],
+    status: 'queued',
+  },
+]);
+
+/**
+ * A chat mock for the escalation path: promotes to one division, plans one contract
+ * whose ENGINEER fails on first dispatch (empty draft + empty retry) and SUCCEEDS
+ * once re-dispatched, approves at the CEO, and — critically — answers the RESCOPE
+ * turn with either a re-scoped contract (`recover`) or an empty array (`gap`).
+ */
+function makeEscalationMock(mode: 'recover' | 'gap'): Mock {
+  const callsByPurpose: Record<CorpTurnPurpose, number> = {
+    worker: 0,
+    architect: 0,
+    manager: 0,
+    engineer: 0,
+    ceo: 0,
+    rescope: 0,
+    revise: 0,
+    consult: 0,
+  };
+  const chat: CorpChatFn = (request) => {
+    callsByPurpose[request.purpose] += 1;
+    switch (request.purpose) {
+      case 'worker':
+        return {
+          content: '',
+          toolCalls: [
+            { name: CREATE_PRODUCTION_HIERARCHY, arguments: JSON.stringify(PROMOTION_ONE) },
+          ],
+        };
+      case 'architect':
+        return { content: JSON.stringify({ moduleMap: [], interfaces: [] }) };
+      case 'manager':
+        return { content: oneContractJson('src/hard.ts') };
+      case 'engineer':
+        // First dispatch (draft + retry = 2 calls) fails empty; the re-dispatch
+        // (draft + self-review = calls 3,4) produces a real file → recovered.
+        return callsByPurpose.engineer > 2
+          ? { content: '```\nexport const hard = 1;\n```' }
+          : { content: '' };
+      case 'rescope':
+        return { content: mode === 'recover' ? RESCOPED_JSON : '[]' };
+      default:
+        return { content: CEO_APPROVE };
+    }
+  };
+  return { chat, callsByPurpose };
+}
+
+describe('runCorp — escalation re-scopes AND re-dispatches (recovery, not a silent gap)', () => {
+  it('a failed contract is re-scoped by the manager and RE-DISPATCHED, recovering the gap', async () => {
+    const { fs, readFs } = memWorkspace();
+    const mock = makeEscalationMock('recover');
+    const result = await runCorp({
+      task: 'Build one hard thing',
+      chat: mock.chat,
+      fs,
+      readFs,
+      workspace: '/ws',
+    });
+
+    expect(result.promoted).toBe(true);
+    expect(result.escalations).toHaveLength(1);
+    const esc = result.escalations[0];
+    // The escalation ran the re-scope turn, produced a contract, RE-DISPATCHED it,
+    // and recovered — NOT a silently accepted gap (the old NO-OP behavior).
+    expect(esc?.rescoped).toBe(true);
+    expect(esc?.redispatched).toBe(true);
+    expect(esc?.recovered).toBe(true);
+    expect(esc?.acceptedGap).toBe(false);
+    // Exactly ONE re-scope turn (bounded); the re-dispatch produced the slot file.
+    expect(mock.callsByPurpose.rescope).toBe(1);
+    expect(result.manifest?.fileCount).toBe(1); // the recovered file exists
+    // The recovered contract is no longer reported as a failure.
+    expect(result.failures.map((f) => f.contractId)).not.toContain('c1');
+    expect(result.budget.exceeded).toBe(false);
+  });
+
+  it('when the manager accepts the gap (empty re-scope), it is a bounded accepted gap — never a deadlock', async () => {
+    const { fs, readFs } = memWorkspace();
+    const mock = makeEscalationMock('gap');
+    const result = await runCorp({
+      task: 'Build one hard thing',
+      chat: mock.chat,
+      fs,
+      readFs,
+      workspace: '/ws',
+    });
+
+    expect(result.escalations).toHaveLength(1);
+    const esc = result.escalations[0];
+    expect(esc?.rescoped).toBe(false); // the manager returned [] (accept the gap)
+    expect(esc?.redispatched).toBe(false);
+    expect(esc?.recovered).toBe(false);
+    expect(esc?.acceptedGap).toBe(true); // bounded — accepted, not retried forever
+    expect(mock.callsByPurpose.rescope).toBe(1); // exactly one attempt
+    expect(result.terminatedReason).toBe('completed'); // still an honest end
+    expect(result.budget.exceeded).toBe(false);
   });
 });
 

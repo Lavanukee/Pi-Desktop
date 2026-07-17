@@ -106,6 +106,40 @@ export interface RoleAgentCustomTool {
     /** The model-free self-review prompt returned on the first (bounce) call. */
     readonly reviewPrompt: string;
   };
+  /**
+   * THE CONSULT MARKER (spec §7 peer/specialist consults, §12-Q11 advice-only).
+   * When set, the app impl wires an `execute` that spawns a CLEAN-CONTEXT advisor
+   * role-agent (a peer of the engineer's own division, or an advisory specialist)
+   * with {@link ConsultSpec.context} + the model's question, and returns the
+   * advisor's prose as the tool result. ADVICE-ONLY: the advisor gets read-only
+   * tools and NO consult tools of its own (a depth cap of 1 — a consult can never
+   * spawn another consult), so it can never edit the requester's files or recurse.
+   * Each consult charges the global RunBudget via {@link RoleAgentRunInput.onConsult}.
+   */
+  readonly consult?: ConsultSpec;
+}
+
+/**
+ * A CONSULT tool spec (spec §7). `kind` picks the advisor family; the app impl
+ * spawns a fresh advisor role-agent from the resolved system prompt (advice-only,
+ * read-only, depth-capped) and returns its prose.
+ */
+export interface ConsultSpec {
+  /** `peer` = a clean-context instance of the engineer's own division/role;
+   * `specialist` = an advisory reviewer chosen by the model's `lens` argument. */
+  readonly kind: 'peer' | 'specialist';
+  /** Minimal relevant context prepended to the advisor's user turn (the stuck
+   * contract's slot / output / rubric) — the requester's question is appended. */
+  readonly context: string;
+  /** For `peer`: the single advisor system prompt (the engineer's own division
+   * base + domain). Ignored for `specialist` (see {@link lensPrompts}). */
+  readonly systemPrompt?: string;
+  /** For `specialist`: lens id → advisor system prompt (from PROMPT_LIBRARY, e.g.
+   * correctness / security / performance). The tool's `lens` argument selects one;
+   * an unknown/absent lens falls back to the first entry. */
+  readonly lensPrompts?: Readonly<Record<string, string>>;
+  /** Sampling profile for the spawned advisor (judgment prose → thinking-general). */
+  readonly samplingMode: SamplingMode;
 }
 
 /** One dependency file to SEED into an engineer's isolated workspace (spec §91):
@@ -159,6 +193,31 @@ export interface RoleAgentRunInput {
   readonly samplingMode: SamplingMode;
   /** Optional per-turn output cap. */
   readonly maxTokens?: number;
+  /**
+   * BUMP-TO-CONTINUE — the completeness backstop (spec "Run safety & budgets",
+   * like the §204 retry-on-empty, bounded). Set ONLY on an engineer run. After the
+   * agent's loop ends, if the engineer did NOT finalize via `submit_contract` AND
+   * its slot file does not exist AND it did not declare "unfulfillable, because …",
+   * the SAME session is RE-PROMPTED with {@link continuePrompt} to reach a terminal
+   * decision (write + submit, or declare unfulfillable), up to {@link maxBumps}
+   * times. This is NOT a per-agent work cap — it only prevents a PREMATURE stop (an
+   * engineer that read its deps then quit without producing its deliverable). After
+   * the bumps are spent with still no file and no unfulfillable declaration, the run
+   * ends and the missing slot is a finite failure the escalation path recovers.
+   */
+  readonly bump?: {
+    /** Max times the same session is re-prompted to continue (spec bound: 2). */
+    readonly maxBumps: number;
+    /** The user turn appended on each bump (engineer.ts `buildBumpContinuePrompt`). */
+    readonly continuePrompt: string;
+  };
+  /**
+   * CONSULT budget hook (spec §7). Charge one turn against the global RunBudget
+   * BEFORE spawning a peer/specialist advisor. Returns `false` when the budget is
+   * spent — the consult tool then declines with a note instead of spawning. Absent
+   * → consults run uncharged (tests). Supplied by the harness, which owns the budget.
+   */
+  readonly onConsult?: () => boolean;
   // NOTE: there is deliberately NO per-agent step cap and NO per-agent total
   // timeout on this seam. A role runs FULLY AUTONOMOUSLY — any tools, as much as it
   // wants, for as long as it wants — until IT submits (its submit tool) or the
@@ -182,6 +241,14 @@ export interface RoleAgentRunOutput {
   readonly maxTurnOutputTokens?: number;
   /** How many assistant turns ran, when reported. */
   readonly turns?: number;
+  /** BUMP-TO-CONTINUE: how many times the SAME session was re-prompted to continue
+   * after ending without its deliverable (0 / absent when none or not an engineer
+   * run). The completeness-backstop evidence. */
+  readonly bumps?: number;
+  /** True when the engineer explicitly declared the contract unfulfillable
+   * ("unfulfillable, because …") — a TERMINAL decision routed to escalation, NOT a
+   * premature stop. */
+  readonly declaredUnfulfillable?: boolean;
   /** The §164 self-review signal (present only for a `submit_contract` run): did
    * the review bounce fire, did the engineer finalize, and did the slot file CHANGE
    * between the draft (at first submit) and the final (at finalize)? The quality

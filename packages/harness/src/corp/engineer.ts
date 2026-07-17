@@ -49,7 +49,12 @@
  */
 
 import type { Contract } from './org-chart.js';
-import { ENGINEERING_HANDBOOK, getRolePrompt } from './prompts.js';
+import {
+  composeNodePrompt,
+  ENGINEERING_HANDBOOK,
+  getPromptById,
+  getRolePrompt,
+} from './prompts.js';
 import type { RoleAgentCustomTool } from './role-agent-seam.js';
 
 /**
@@ -331,12 +336,19 @@ export function buildSubmitContractTool(contract: Contract): RoleAgentCustomTool
 
 /**
  * The engineer's AGENT tool allowlist: the built-in toolset for its declared tools
- * ({@link engineerToolAllowlist}) PLUS the {@link SUBMIT_CONTRACT_TOOL} name — the
- * custom submit tool is only offered to the model when its name is in the allowlist
- * (the pi allowlist gotcha). Pure + deterministic.
+ * ({@link engineerToolAllowlist}) PLUS the custom tool NAMES — {@link
+ * SUBMIT_CONTRACT_TOOL} and the two consult tools ({@link CALL_PEER_TOOL} /
+ * {@link CALL_SPECIALIST_TOOL}). A custom tool is only offered to the model when its
+ * name is in the allowlist (the pi allowlist gotcha), so the submit + consult tools
+ * must be listed here or the model never sees them. Pure + deterministic.
  */
 export function engineerAgentToolAllowlist(declared: readonly string[]): string[] {
-  return [...engineerToolAllowlist(declared), SUBMIT_CONTRACT_TOOL];
+  return [
+    ...engineerToolAllowlist(declared),
+    SUBMIT_CONTRACT_TOOL,
+    CALL_PEER_TOOL,
+    CALL_SPECIALIST_TOOL,
+  ];
 }
 
 /**
@@ -413,8 +425,118 @@ export function buildAgentEngineerPrompt(
   lines.push(
     '',
     `Now WRITE the complete file to ${contract.slot} with the write tool, run ONE quick bash sanity check, then call submit_contract to finish — you are NOT finished until you call it, as simply stopping does not submit your work. On your first submit you get one chance to review and improve the file before it is final. Writing the slot file is the entire task — do not explore the workspace or print the file as text.`,
+    `If you get stuck, consult FIRST (call_peer / call_specialist) before giving up; only if it is still genuinely impossible after that, reply on one line exactly: unfulfillable, because <reason>.`,
   );
   return lines.join('\n');
+}
+
+/** The spec bound on bump-to-continue: after a premature stop, re-prompt the SAME
+ * engineer session at most this many times to reach a terminal decision (write +
+ * submit, or declare unfulfillable). NOT a per-agent work cap — see §"Run safety". */
+export const MAX_ENGINEER_BUMPS = 2;
+
+/**
+ * The BUMP-TO-CONTINUE user turn (spec "Run safety & budgets" — the completeness
+ * backstop, like §204 retry-on-empty). Appended to the SAME engineer session when
+ * its loop ended WITHOUT producing its deliverable: it names the exact slot, insists
+ * the file be written + submit_contract be called, and offers the single explicit
+ * escape — an "unfulfillable, because …" line — so the engineer always reaches a
+ * TERMINAL decision instead of a silent premature stop. Pure + deterministic.
+ */
+export function buildBumpContinuePrompt(contract: Contract): string {
+  return [
+    'You ended your turn without submitting your deliverable.',
+    `Your module is NOT complete until the file at ${contract.slot} exists AND you have called submit_contract.`,
+    `If your module is complete, WRITE the file at ${contract.slot} now with the write tool and then call submit_contract.`,
+    'If you got stuck, call call_peer or call_specialist for advice, then finish.',
+    'If it is genuinely impossible, reply on ONE line exactly: unfulfillable, because <reason>.',
+    'Do not stop again without doing one of these.',
+  ].join('\n');
+}
+
+/** The peer-consult tool name (a clean-context engineer of the same division/role). */
+export const CALL_PEER_TOOL = 'call_peer';
+/** The specialist-consult tool name (an advisory reviewer chosen by lens). */
+export const CALL_SPECIALIST_TOOL = 'call_specialist';
+
+/** The advisory-specialist lenses a stuck engineer may consult (spec §4 advisory
+ * reviewers; a safe, focused subset of PROMPT_LIBRARY). */
+export const CONSULT_SPECIALIST_LENSES = ['correctness', 'security', 'performance'] as const;
+
+/**
+ * Build the engineer's two CONSULT tools (spec §7 peer & specialist consults, the
+ * stuck-engineer's first stop before returning unfulfillable):
+ *  - `call_peer(question)` — a CLEAN-CONTEXT instance of the engineer's own
+ *    division/role (its archetype base + domain), returning its approach as prose.
+ *  - `call_specialist(lens, question)` — an advisory reviewer (correctness /
+ *    security / performance, from PROMPT_LIBRARY) returning evidence-grounded advice.
+ *
+ * ADVICE-ONLY (§12-Q11 safe default): the app seam runs each advisor read-only with
+ * NO consult tools of its own (a depth cap of 1), so advisors return prose and can
+ * never edit the requester's files or recurse. `promptId` selects the peer's
+ * archetype base; `domain` is the division purpose flavor. Pure + deterministic.
+ */
+export function buildConsultTools(
+  contract: Contract,
+  opts?: { readonly promptId?: string; readonly domain?: string },
+): RoleAgentCustomTool[] {
+  const context = [
+    `A teammate is building the module at slot ${contract.slot} and is stuck.`,
+    `Module title: ${contract.title}`,
+    `What it must produce: ${contract.output}`,
+    `Review rubric it will be checked against: ${contract.reviewRubric}`,
+  ].join('\n');
+
+  const archetypeBase = getPromptById(opts?.promptId ?? '') ?? getRolePrompt('engineer');
+  const peerSystemPrompt = `You are consulting as a PEER: a fresh engineer with the same skills, asked for advice by a teammate who is stuck. Return concise, concrete, actionable guidance as prose — the approach you would take, the key types or steps, and the pitfalls to avoid. You give ADVICE ONLY; never write or edit files.\n\n${composeNodePrompt(archetypeBase, opts?.domain)}`;
+
+  const lensPrompts: Record<string, string> = {};
+  for (const lens of CONSULT_SPECIALIST_LENSES) lensPrompts[lens] = getRolePrompt(lens).prompt;
+
+  return [
+    {
+      name: CALL_PEER_TOOL,
+      description:
+        'Ask a peer engineer (same skills, fresh context) for advice when you are stuck. Returns concrete guidance as prose; it does not touch your files.',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: {
+            type: 'string',
+            description: 'What you are stuck on — be specific about the blocker.',
+          },
+        },
+        required: ['question'],
+      },
+      consult: {
+        kind: 'peer',
+        context,
+        systemPrompt: peerSystemPrompt,
+        samplingMode: 'thinking-general',
+      },
+    },
+    {
+      name: CALL_SPECIALIST_TOOL,
+      description:
+        'Ask an advisory specialist to review your approach through one lens (correctness, security, or performance). Returns evidence-grounded advice as prose; it does not touch your files.',
+      parameters: {
+        type: 'object',
+        properties: {
+          lens: {
+            type: 'string',
+            enum: [...CONSULT_SPECIALIST_LENSES],
+            description: 'Which lens to review through.',
+          },
+          question: {
+            type: 'string',
+            description: 'What you want the specialist to check or advise on.',
+          },
+        },
+        required: ['lens', 'question'],
+      },
+      consult: { kind: 'specialist', context, lensPrompts, samplingMode: 'thinking-general' },
+    },
+  ];
 }
 
 /**

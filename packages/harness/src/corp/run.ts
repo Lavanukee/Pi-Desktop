@@ -59,13 +59,21 @@ import {
 import {
   AGENT_ENGINEER_SYSTEM_PROMPT,
   buildAgentEngineerPrompt,
+  buildBumpContinuePrompt,
+  buildConsultTools,
   buildEngineerPrompt,
   buildSubmitContractTool,
   ENGINEER_SYSTEM_PROMPT,
   engineerAgentToolAllowlist,
+  MAX_ENGINEER_BUMPS,
   parseEngineerOutput,
 } from './engineer.js';
-import { buildManagerRescopePrompt, escalateContract, runBoundedEscalation } from './escalate.js';
+import {
+  buildManagerRescopeContractPrompt,
+  escalateContract,
+  rescopedContractFrom,
+  runBoundedEscalation,
+} from './escalate.js';
 import { type DivisionContracts, resolveInterfaceHandles } from './integrate.js';
 import type { Contract, ContractStatus, OrgChart, OrgNode } from './org-chart.js';
 import { buildOrgChartQueueWithReport } from './plan.js';
@@ -102,7 +110,8 @@ export type CorpTurnPurpose =
   | 'engineer'
   | 'ceo'
   | 'rescope'
-  | 'revise';
+  | 'revise'
+  | 'consult';
 
 /** One chat message handed to the seam (provider-agnostic: no `/no_think` tag,
  * no `chat_template_kwargs` — the seam applies provider specifics from `thinking`). */
@@ -204,11 +213,22 @@ export interface ManifestSummary {
   readonly contractStatusSummary: ContractStatusSummary;
 }
 
-/** One escalated failed contract's bounded outcome. */
+/** One escalated failed contract's bounded outcome (spec §9 → §7 re-dispatch). */
 export interface EscalationSummary {
   readonly contractId: string;
   readonly ownerManager: string;
   readonly reason: string;
+  /** The manager's re-scope turn produced a re-dispatchable contract (vs. accepting
+   * the gap outright). */
+  readonly rescoped: boolean;
+  /** The re-scoped contract was RE-DISPATCHED through the engineer path (the one
+   * bounded re-attempt). */
+  readonly redispatched: boolean;
+  /** The re-dispatch produced the slot file — the gap was RECOVERED (not silently
+   * accepted). */
+  readonly recovered: boolean;
+  /** True when, after the one bounded attempt, the gap was accepted (not recovered)
+   * — never a deadlock. */
   readonly acceptedGap: boolean;
 }
 
@@ -340,6 +360,7 @@ const zeroTurns = (): Record<CorpTurnPurpose, number> => ({
   ceo: 0,
   rescope: 0,
   revise: 0,
+  consult: 0,
 });
 
 /**
@@ -400,6 +421,88 @@ function buildEngineerNodes(
     }
   });
   return nodes;
+}
+
+/** Options for {@link buildEngineerAgentInput}. */
+export interface EngineerAgentInputOptions {
+  /** The shared product tree (the harvest target for an isolated engineer). */
+  readonly workspace: string;
+  /** The generation-heavy token cap (floored ≥16k, like the manager). */
+  readonly genMaxTokens: number;
+  /** Whether the engineer runs thinking-ON (prompts.ts `ROLE_THINKING.engineer`). */
+  readonly engineerThinking: boolean;
+  /** CEO revision notes to append (a re-dispatch of a flagged contract). */
+  readonly extraNotes?: string;
+}
+
+/**
+ * Build the {@link RoleAgentRunInput} for ONE engineer run on the agent path — the
+ * single source of truth for the engineer's agentic framing (spec §7/§91), shared
+ * by {@link runCorp}'s dispatcher AND the recovery-validation driver so neither
+ * diverges. It assembles: the self-contained module-builder system prompt (+ the
+ * division PURPOSE as neutral domain flavor), the write-flow user prompt, the tool
+ * allowlist (built-ins + the submit + the two consult tool NAMES), the custom tools
+ * (§164 `submit_contract` + the `call_peer` / `call_specialist` consults), the
+ * ISOLATED-workspace directive (seeded with the dep files, harvested back), and the
+ * BUMP-TO-CONTINUE policy (up to {@link MAX_ENGINEER_BUMPS} re-prompts to reach a
+ * terminal decision). It does NOT attach `onConsult` — the CALLER wires that budget
+ * hook (it owns the RunBudget). Pure + deterministic.
+ */
+export function buildEngineerAgentInput(
+  request: EngineerRequest,
+  options: EngineerAgentInputOptions,
+): RoleAgentRunInput {
+  const domain = request.promptExtension?.trim();
+  const systemPrompt =
+    domain !== undefined && domain !== ''
+      ? `${AGENT_ENGINEER_SYSTEM_PROMPT}\n\nThis module's domain: ${domain}`
+      : AGENT_ENGINEER_SYSTEM_PROMPT;
+  const userPrompt = buildAgentEngineerPrompt(
+    request.contract,
+    request.depContext,
+    request.architectureRegion,
+    options.extraNotes,
+  );
+  // ISOLATED WORKSPACE (spec §91/§119/§182 — default isolated): seed a fresh dir
+  // with ONLY the read-only dep files, harvest the engineer's writes back into the
+  // shared tree. Contract.workspace==='shared' opts back into the shared tree (used
+  // by the escalation re-dispatch so it can read anything already produced).
+  const isolated = request.contract.workspace !== 'shared';
+  const seed = request.depContext
+    .filter((d) => d.content !== undefined && d.content !== '')
+    .map((d) => ({ path: d.slot, content: d.content as string }));
+  return {
+    purpose: 'engineer',
+    systemPrompt,
+    userPrompt,
+    // Built-ins + the submit + consult tool NAMES (the pi allowlist gates custom
+    // tools by name — the submit + consults must be listed here or the model never
+    // sees them).
+    tools: engineerAgentToolAllowlist(request.contract.available.tools),
+    // §164 submit_contract (the self-review bounce) + the two consults (the stuck
+    // engineer's first stop before returning unfulfillable).
+    customTools: [
+      buildSubmitContractTool(request.contract),
+      ...buildConsultTools(request.contract, {
+        ...(request.promptId !== undefined ? { promptId: request.promptId } : {}),
+        ...(domain !== undefined && domain !== '' ? { domain } : {}),
+      }),
+    ],
+    cwd: options.workspace, // the SHARED product tree = harvest target
+    ...(isolated ? { isolation: { seed } } : {}),
+    thinking: options.engineerThinking,
+    samplingMode: samplingModeForPurpose('engineer'),
+    maxTokens: options.genMaxTokens,
+    // BUMP-TO-CONTINUE: prevent a premature stop — re-prompt the SAME session up to
+    // MAX_ENGINEER_BUMPS times to reach a terminal decision (write+submit, or
+    // declare unfulfillable). Bounded; NOT a per-agent work cap.
+    bump: {
+      maxBumps: MAX_ENGINEER_BUMPS,
+      continuePrompt: buildBumpContinuePrompt(request.contract),
+    },
+    // NO per-agent step/time cap: the engineer runs fully autonomously until it
+    // submits / the global RunBudget; only a per-CALL network abort lives in the app.
+  };
 }
 
 // --- The orchestrator --------------------------------------------------------
@@ -546,6 +649,18 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
     parameters: CREATE_PRODUCTION_HIERARCHY_TOOL.function.parameters,
   };
 
+  // Charge ONE consult (call_peer / call_specialist) turn against the global budget
+  // — a refusal STOPS the run (like any turn). Passed to the seam as `onConsult`, so
+  // the consult tool declines when the budget is spent (never a silent free turn).
+  const onConsult = (): boolean => {
+    if (!chargeTurn(budget)) {
+      terminatedReason ??= 'budget-exceeded';
+      return false;
+    }
+    turnsByPurpose.consult += 1;
+    return true;
+  };
+
   const makeAgentEngineer =
     (extraNotes?: string): RunEngineer =>
     async (request: EngineerRequest): Promise<readonly WrittenFile[]> => {
@@ -555,50 +670,17 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         throw new BudgetExhausted();
       }
       turnsByPurpose.engineer += 1;
-      // SELF-CONTAINED module-builder system prompt (spec §91): no CEO/manager/
-      // division/corporation lore — the engineer knows only its contract + deps.
-      // The division PURPOSE is appended as neutral domain flavor, not org structure.
-      const domain = request.promptExtension?.trim();
-      const systemPrompt =
-        domain !== undefined && domain !== ''
-          ? `${AGENT_ENGINEER_SYSTEM_PROMPT}\n\nThis module's domain: ${domain}`
-          : AGENT_ENGINEER_SYSTEM_PROMPT;
-      const userPrompt = buildAgentEngineerPrompt(
-        request.contract,
-        request.depContext,
-        request.architectureRegion,
-        extraNotes,
-      );
-      // ISOLATED WORKSPACE (spec §91/§119/§182 — default isolated): the seam runs
-      // the engineer in a fresh dir seeded with ONLY its dependency files (read-only
-      // context), then HARVESTS what it wrote back into the shared product tree. An
-      // explicit Contract.workspace==='shared' opts back into the shared tree. The
-      // architect's non-overlapping module map keeps the harvest merge conflict-free.
-      const isolated = request.contract.workspace !== 'shared';
-      const seed = request.depContext
-        .filter((d) => d.content !== undefined && d.content !== '')
-        .map((d) => ({ path: d.slot, content: d.content as string }));
-      const out = await runRoleAgent({
-        purpose: 'engineer',
-        systemPrompt,
-        userPrompt,
-        // The built-in toolset PLUS the `submit_contract` name — the pi allowlist
-        // gates custom tools by name, so the submit tool must be listed here or the
-        // model never sees it (the same gotcha as the worker).
-        tools: engineerAgentToolAllowlist(request.contract.available.tools),
-        // submit_contract IS the §164 submission interceptor: the FIRST call bounces
-        // with a self-review prompt (improve, do not finalize); the SECOND verifies
-        // the slot file exists in the isolated cwd and finalizes.
-        customTools: [buildSubmitContractTool(request.contract)],
-        cwd: options.workspace, // the SHARED product tree = harvest target
-        ...(isolated ? { isolation: { seed } } : {}),
-        thinking: engineerThinking,
-        samplingMode: samplingModeForPurpose('engineer'),
-        maxTokens: genMaxTokens,
-        // NO per-agent caps: the engineer runs fully autonomously (any tools, as
-        // long as it wants) until it calls submit_contract, bounded only by the
-        // global RunBudget. The app runtime keeps only a per-CALL network abort.
+      // The engineer's agentic framing is assembled once, centrally (spec §7/§91) —
+      // self-contained system prompt, the write-flow user turn, the submit + consult
+      // custom tools, the ISOLATED-workspace directive, and the BUMP-TO-CONTINUE
+      // policy. The budget hook (`onConsult`) is attached here — the harness owns it.
+      const input = buildEngineerAgentInput(request, {
+        workspace: options.workspace,
+        genMaxTokens,
+        engineerThinking,
+        ...(extraNotes !== undefined ? { extraNotes } : {}),
       });
+      const out = await runRoleAgent({ ...input, onConsult });
       return out.filesWritten.map((f) => ({ path: f.path, bytes: f.bytes }));
     };
 
@@ -949,8 +1031,56 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
     };
     if (revise.stoppedForBudget) terminatedReason ??= 'budget-exceeded';
 
-    // BOUNDED ESCALATION: each still-failed contract routes ONE level up for a
-    // single re-scope turn, then an accepted gap — never a deadlock. Budget-checked.
+    // RE-DISPATCH a re-scoped contract through the SAME engineer path — the one
+    // bounded re-attempt escalation now makes (spec §9, §205). Runs the re-scoped
+    // (self-contained, shared-workspace) contract as a single-contract dispatch; on
+    // success it folds the recovered contract back into `chart` + `dispatchReport`
+    // (so the failure list and status reflect the recovery). Returns whether the
+    // slot file was produced (recovered). The engineer turn it runs is budget-charged
+    // by the seam; a spent budget or an error simply yields `false` (accepted gap).
+    const redispatchRescoped = async (rescoped: Contract): Promise<boolean> => {
+      if (chart === undefined || dispatchReport === undefined) return false;
+      if (budgetExceeded(budget)) return false;
+      const oneContractChart: OrgChart = { ...chart, contracts: [rescoped], queue: [] };
+      let report: DispatchReport;
+      try {
+        report = await dispatchContracts({
+          orgChart: oneContractChart,
+          runEngineer: makeEngineerSeam(),
+          readFs: options.readFs,
+          workspace: options.workspace,
+          ...(useAgentEngineer ? {} : { captureReviews: true }),
+          ...(concurrency !== undefined ? { concurrency } : {}),
+        });
+      } catch {
+        return false;
+      }
+      const recovered = report.done.includes(rescoped.id);
+      if (recovered) {
+        const recoveredChart: OrgChart = {
+          ...chart,
+          contracts: chart.contracts.map((c) =>
+            c.id === rescoped.id ? { ...c, status: 'in-review' as ContractStatus } : c,
+          ),
+        };
+        chart = recoveredChart;
+        dispatchReport = {
+          ...dispatchReport,
+          done: [...new Set([...dispatchReport.done, rescoped.id])],
+          failed: dispatchReport.failed.filter((id) => id !== rescoped.id),
+          results: dispatchReport.results.map((r) =>
+            r.contractId === rescoped.id ? { ...r, status: 'done' as const } : r,
+          ),
+          chart: recoveredChart,
+        };
+      }
+      return recovered;
+    };
+
+    // BOUNDED ESCALATION: each still-failed contract routes ONE level up for a single
+    // re-scope turn that produces a re-dispatchable contract; that contract gets ONE
+    // re-attempt through the dispatch path. Recovered → the gap is closed; still
+    // failing → an accepted gap. Never a deadlock; every turn is budget-charged.
     escalations = await runEscalations({
       chart,
       dispatchReport,
@@ -959,10 +1089,20 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
       genMaxTokens,
       turnsByPurpose,
       errors,
+      redispatch: redispatchRescoped,
       onBudgetOut: () => {
         terminatedReason ??= 'budget-exceeded';
       },
     });
+
+    // If escalation RECOVERED any gap (re-scoped + re-dispatched), the on-disk product
+    // now has more than the CEO reviewed — refresh the final manifest + verify so the
+    // RESULT reflects the true product. The CEO's verdict already stands (its context
+    // was the clean pre-recovery product); the manager's recovery is honestly added.
+    if (escalations.some((e) => e.recovered) && chart !== undefined) {
+      manifest = buildProductManifest(chart, options.workspace, options.readFs);
+      verifyResult = verifyProduct(options.workspace, options.readFs, options.fileCheck);
+    }
   }
 
   if (terminatedReason === undefined) terminatedReason = promoted ? 'completed' : 'solo';
@@ -1033,9 +1173,11 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
   };
 }
 
-/** Run the bounded escalation for every still-failed contract (one re-scope turn
- * each, budget-checked, then an accepted gap). Extracted to keep {@link runCorp}
- * legible; never throws. */
+/** Run the bounded escalation for every still-failed contract (spec §9, §205): ONE
+ * re-scope manager turn that produces a re-dispatchable contract, then ONE bounded
+ * RE-DISPATCH of it through the engineer path — recovered, or an accepted gap. Every
+ * turn is budget-charged; never a deadlock, never throws. Extracted to keep
+ * {@link runCorp} legible. */
 async function runEscalations(params: {
   readonly chart: OrgChart | undefined;
   readonly dispatchReport: DispatchReport | undefined;
@@ -1044,18 +1186,28 @@ async function runEscalations(params: {
   readonly genMaxTokens: number;
   readonly turnsByPurpose: Record<CorpTurnPurpose, number>;
   readonly errors: { purpose: string; message: string }[];
+  /** The one bounded re-attempt: dispatch the re-scoped contract through the engineer
+   * path; returns whether the slot file was produced (recovered). */
+  readonly redispatch: (rescoped: Contract) => Promise<boolean>;
   readonly onBudgetOut: () => void;
 }): Promise<EscalationSummary[]> {
   const { chart, dispatchReport } = params;
   const out: EscalationSummary[] = [];
   if (chart === undefined || dispatchReport === undefined) return out;
-  for (const failedId of dispatchReport.failed) {
+  // Snapshot the failed ids: a successful re-dispatch mutates the outer report, but
+  // each ORIGINALLY-failed contract still gets its one escalation attempt.
+  for (const failedId of [...dispatchReport.failed]) {
     const contract = chart.contracts.find((c) => c.id === failedId);
     if (contract === undefined) continue;
     const failedResult = dispatchReport.results.find((r) => r.contractId === failedId);
     const record = escalateContract(chart, failedId, failedResult?.error);
+    let rescoped = false;
+    let redispatched = false;
     const outcome = await runBoundedEscalation({
       record,
+      // Exactly ONE attempt (runBoundedEscalation calls this once). The re-scope
+      // manager turn + the re-dispatch engineer turn are the two budget-charged turns
+      // this attempt may spend.
       attemptRescope: async () => {
         // Budget-checked: no budget → accept the gap without a turn (never hang).
         if (!chargeTurn(params.budget)) {
@@ -1063,27 +1215,45 @@ async function runEscalations(params: {
           return false;
         }
         params.turnsByPurpose.rescope += 1;
+        let content = '';
         try {
-          await params.chat({
+          const res = await params.chat({
             purpose: 'rescope',
             messages: [
               { role: 'system', content: getRolePrompt('manager').prompt },
-              { role: 'user', content: buildManagerRescopePrompt(contract, record.reason) },
+              {
+                role: 'user',
+                content: buildManagerRescopeContractPrompt(contract, record.reason),
+              },
             ],
+            // Structured JSON (a re-scoped contract) → thinking-off, like the manager.
             thinking: roleThinkingEnabled('manager'),
             maxTokens: params.genMaxTokens,
           });
+          content = res.content ?? '';
         } catch (err) {
           params.errors.push({ purpose: 'rescope', message: errorMessage(err) });
+          return false; // a failed re-scope turn → accept the gap (never a retry)
         }
-        // Bounded: this pass does not re-dispatch, so the gap is accepted.
-        return false;
+        // Parse the manager's re-scoped contract. Empty (the manager accepted the
+        // gap) or unparseable → accept the gap, no re-dispatch.
+        const parsed = parseManagerContracts(content)[0];
+        if (parsed === undefined) return false;
+        rescoped = true;
+        const readyToDispatch = rescopedContractFrom(parsed, contract);
+        redispatched = true;
+        // The ONE bounded re-attempt through the same dispatch path. Recovered ⇒ the
+        // gap is closed; else it becomes an accepted gap. Never loops.
+        return await params.redispatch(readyToDispatch);
       },
     });
     out.push({
       contractId: record.contractId,
       ownerManager: record.ownerManager,
       reason: record.reason,
+      rescoped,
+      redispatched,
+      recovered: outcome.resolved,
       acceptedGap: outcome.acceptedGap,
     });
   }

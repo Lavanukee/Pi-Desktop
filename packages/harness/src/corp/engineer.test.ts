@@ -3,12 +3,18 @@ import {
   AGENT_ENGINEER_ADDENDUM,
   AGENT_ENGINEER_SYSTEM_PROMPT,
   buildAgentEngineerPrompt,
+  buildBumpContinuePrompt,
+  buildConsultTools,
   buildEngineerPrompt,
   buildSelfReviewPrompt,
   buildSubmitContractTool,
+  CALL_PEER_TOOL,
+  CALL_SPECIALIST_TOOL,
+  CONSULT_SPECIALIST_LENSES,
   type DependencyContext,
   ENGINEER_SYSTEM_PROMPT,
   engineerAgentToolAllowlist,
+  MAX_ENGINEER_BUMPS,
   parseEngineerOutput,
   relativeImportSpecifier,
   SUBMIT_CONTRACT_TOOL,
@@ -241,6 +247,51 @@ describe('engineerAgentToolAllowlist (submit_contract + file tools)', () => {
   it('honours a genuinely-declared subset but always keeps read/write + submit', () => {
     const tools = engineerAgentToolAllowlist(['read', 'write', 'bash']);
     expect(tools).toEqual(expect.arrayContaining(['read', 'write', 'bash', 'submit_contract']));
+  });
+
+  it('also lists the two consult tools by NAME (the allowlist gotcha for custom tools)', () => {
+    const tools = engineerAgentToolAllowlist(['write']);
+    expect(tools).toEqual(expect.arrayContaining([CALL_PEER_TOOL, CALL_SPECIALIST_TOOL]));
+  });
+});
+
+describe('buildBumpContinuePrompt (completeness backstop — bounded)', () => {
+  it('names the slot, demands write + submit, and offers the unfulfillable escape', () => {
+    const prompt = buildBumpContinuePrompt(contract());
+    expect(prompt).toContain('without submitting');
+    expect(prompt).toContain('src/AppShell.tsx'); // the exact slot
+    expect(prompt).toContain('submit_contract');
+    expect(prompt.toLowerCase()).toContain('unfulfillable, because');
+  });
+
+  it('bounds bump-to-continue to 2 (a completeness backstop, not a per-agent cap)', () => {
+    expect(MAX_ENGINEER_BUMPS).toBe(2);
+  });
+});
+
+describe('buildConsultTools (peer + specialist consults, advice-only)', () => {
+  it('builds call_peer with a clean-context peer prompt + the stuck-contract context', () => {
+    const [peer] = buildConsultTools(contract(), { promptId: 'frontend-dev', domain: 'the UI' });
+    expect(peer?.name).toBe(CALL_PEER_TOOL);
+    expect(peer?.consult?.kind).toBe('peer');
+    // A peer is a clean-context instance of the engineer's own division/role.
+    expect(peer?.consult?.systemPrompt).toContain('PEER');
+    expect(peer?.consult?.systemPrompt).toContain('ADVICE ONLY');
+    // Minimal relevant context — the stuck contract's slot + what it must produce.
+    expect(peer?.consult?.context).toContain('src/AppShell.tsx');
+    expect(peer?.consult?.context).toContain('AppShell component (typed props)');
+  });
+
+  it('builds call_specialist with correctness/security/performance lenses from PROMPT_LIBRARY', () => {
+    const tools = buildConsultTools(contract());
+    const specialist = tools.find((t) => t.name === CALL_SPECIALIST_TOOL);
+    expect(specialist?.consult?.kind).toBe('specialist');
+    const lenses = Object.keys(specialist?.consult?.lensPrompts ?? {});
+    expect(lenses).toEqual([...CONSULT_SPECIALIST_LENSES]);
+    // The lens prompts are the evidence-grounded advisory-reviewer prompts.
+    expect(specialist?.consult?.lensPrompts?.correctness).toContain('advisory specialist');
+    // The `lens` argument is required so the model names which lens it wants.
+    expect(specialist?.parameters).toMatchObject({ required: expect.arrayContaining(['lens']) });
   });
 });
 

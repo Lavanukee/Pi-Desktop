@@ -127,6 +127,15 @@ export function tierForRole(role: LabeledRole): CapabilityTier {
  *  - JUDGMENT roles (the solo/promotion worker, `ceo`, `engineer`, and the
  *    advisory specialists) run thinking ON — their reasoning IS the value (the
  *    promote-or-not call, the final review, evidence-grounded findings, code).
+ *    The `engineer` in particular emits a FREE-FORM file, not a parse-critical
+ *    JSON structure, so the runaway-`<think>` defect that starves the manager's
+ *    contract array does not apply — a long think costs tokens, not the whole
+ *    artifact, and a thinking model streams reasoning on a separate channel so the
+ *    file body stays clean to parse (corp/engineer.ts). The guard is the adequate
+ *    generation budget (~16k), not thinking-off. VALIDATED (real-qwen, slice-4):
+ *    engineer thinking-ON is safe at 16k — 0/8 turns ran away, every one emitted a
+ *    clean file; a very open-ended slot's residual risk is covered by the
+ *    retry-on-empty backstop (corp/retry.ts), not by flipping thinking off.
  *
  * A `false` entry means the dispatcher sends the provider's thinking-off switch
  * for that turn (for llama.cpp: `chat_template_kwargs.enable_thinking:false`,

@@ -92,6 +92,9 @@ const {
   resolveInterfaceHandles,
   countCrossDivisionEdges,
   topologicalOrder,
+  // robustness backstop (spec §0.6):
+  withRetryOnEmpty,
+  MANAGER_EMPTY_RETRY_NUDGE,
 } = await import(corpUrl);
 
 // --- Args --------------------------------------------------------------------
@@ -510,29 +513,54 @@ try {
     const managerThinking = roleThinkingEnabled('manager');
     const contractsByDivision = [];
     const managerReplyPreviews = [];
+    const emptyAfterRetryDivisions = [];
     for (const division of divisions) {
       log(
         `manager turn → contracts for "${division.name}" (thinking=${managerThinking}, seeded, max_tokens=${managerMaxTokens})`,
       );
-      const managerUser = buildManagerContractPrompt(division, task, architecture);
-      const managerMsg = await chat({
-        messages: [
-          { role: 'system', content: managerBase },
-          { role: 'user', content: withThinkTag(managerUser, managerThinking) },
-        ],
-        temperature,
-        max_tokens: managerMaxTokens,
-        ...thinkingBody(managerThinking),
+      // Fix 2: retry-on-empty. A manager that parses 0 contracts silently loses a
+      // whole division — retry ONCE with a nudge; if still 0, record it, never drop.
+      let lastReply = '';
+      const managerResult = await withRetryOnEmpty({
+        isEmpty: (contracts) => contracts.length === 0,
+        run: async ({ isRetry }) => {
+          if (isRetry) log(`  0 contracts for "${division.name}" — retrying once with a nudge`);
+          const base = withThinkTag(
+            buildManagerContractPrompt(division, task, architecture),
+            managerThinking,
+          );
+          const managerMsg = await chat({
+            messages: [
+              { role: 'system', content: managerBase },
+              { role: 'user', content: isRetry ? `${base}\n\n${MANAGER_EMPTY_RETRY_NUDGE}` : base },
+            ],
+            temperature,
+            max_tokens: managerMaxTokens,
+            ...thinkingBody(managerThinking),
+          });
+          lastReply = managerMsg.content ?? '';
+          return parseManagerContracts(lastReply);
+        },
       });
-      const contracts = parseManagerContracts(managerMsg.content ?? '');
+      const contracts = managerResult.value;
       contractsByDivision.push(contracts);
       managerReplyPreviews.push({
         division: division.name,
-        replyPreview: preview(managerMsg.content, 600),
+        replyPreview: preview(lastReply, 600),
+        contractCount: contracts.length,
+        retried: managerResult.retried,
+        emptyAfterRetry: managerResult.emptyAfterRetry,
       });
-      log(`  parsed ${contracts.length} contract(s) for "${division.name}"`);
+      if (managerResult.emptyAfterRetry) {
+        emptyAfterRetryDivisions.push(division.name);
+        log(`  division "${division.name}" produced 0 contracts AFTER retry — recorded`);
+      }
+      log(
+        `  parsed ${contracts.length} contract(s) for "${division.name}"${managerResult.retried ? ' (after retry)' : ''}`,
+      );
     }
     report.managerReplyPreviews = managerReplyPreviews;
+    report.emptyAfterRetryDivisions = emptyAfterRetryDivisions;
 
     // Resolve cross-division handles, assemble, and build the whole-corp queue.
     Object.assign(

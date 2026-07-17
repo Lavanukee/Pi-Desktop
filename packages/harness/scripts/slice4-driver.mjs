@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 /**
- * Slice-4 driver — the EXECUTION CORE end to end (spec §7). Where slice 3 stopped
- * at PLANNING (promotion → architect → seeded managers → resolve → queue), slice 4
- * DISPATCHES engineers to a subset of the queued contracts so they produce REAL
- * files, with the model-free submission interceptor and workspace isolation.
+ * Slice-4/5 driver — the EXECUTION CORE plus the COMPLETION path end to end (spec
+ * §7/§8/§9). Where slice 3 stopped at PLANNING (promotion → architect → seeded
+ * managers → resolve → queue), slice 4 DISPATCHES engineers to a subset of the
+ * queued contracts so they produce REAL files, with the model-free submission
+ * interceptor and workspace isolation. Slice 5 then COMPLETES the run: it assembles
+ * the produced files into a product manifest, runs an evidence-grounded verify
+ * pass, takes the CEO sign-off in a clean vision-only context (the false-completion
+ * cure), and escalates any failed contract one bounded level up to its manager.
  *
  * Pipeline (spec §7; §4/§5/§6; §0.6 "robustness is external"):
  *   1. solo worker turn → promote-or-not (create_production_hierarchy);
@@ -15,6 +19,12 @@
  *      each ready contract's engineer turn (balanced tier, thinking-ON, ~16k
  *      budget) runs through the submission interceptor (first submit bounced once
  *      for a self-review), writing <workspace>/<slot>.
+ *   7. ASSEMBLE the workspace into a product manifest → VERIFY the produced files
+ *      (deterministic, model-free) → the CEO final-review turn (intelligent tier,
+ *      seeded ONLY with the original task + manifest + verify evidence — never the
+ *      build transcript) → parse the approve/revise decision → bounded ESCALATION
+ *      of every failed contract one level up to its manager (one re-scope turn,
+ *      then an accepted gap — never a deadlock).
  *
  * It reuses @pi-desktop/harness/corp end to end and NEVER launches a server — you
  * point it at one.
@@ -27,7 +37,9 @@
  *
  * Usage (offline dry-run — dispatches a 3-contract fixture with a MOCK engineer to
  * a temp workspace and ASSERTS files written + DAG ordering + the interceptor
- * firing once per contract; no network):
+ * firing once per contract, THEN exercises the slice-5 completion path over the
+ * fixture: assemble → verify(mock all-pass + some-fail) → CEO decision(mock approve
+ * & revise) → bounded escalation → accepted gap; no network):
  *   node packages/harness/scripts/slice4-driver.mjs --dry-run
  *
  * Options (live):
@@ -46,7 +58,11 @@
  *     filesWritten:[{path,bytes,sample}], interceptorFired, interceptorReviewTurns,
  *     interceptorChangedCount, reviews:[{contractId,draftBytes,reviewedBytes,changed}],
  *     emptyAfterRetryDivisions, engineerEmptyAfterRetry,
- *     failures, skips, dispatchResults, ...planningPreviews }
+ *     failures, skips, dispatchResults,
+ *     manifest:{divisions,fileCount,totalBytes,interfaceCount,contractStatusSummary},
+ *     verify:{ok,errorCount,errorsPreview}, ceoDecision:{decision,notesPreview},
+ *     escalations:[{contractId,ownerManager,reason,acceptedGap,rescopePreview}],
+ *     ...planningPreviews }
  */
 
 import { mkdtempSync, readFileSync } from 'node:fs';
@@ -103,6 +119,16 @@ const {
   withRetryOnEmpty,
   isBlankFile,
   MANAGER_EMPTY_RETRY_NUDGE,
+  // slice 5 (completion — assemble → verify → CEO sign-off → escalation):
+  makeNodeWorkspaceReadFs,
+  buildProductManifest,
+  verifyProduct,
+  CEO_REVIEW_PROMPT,
+  buildCeoReviewPrompt,
+  parseCeoDecision,
+  escalateContract,
+  buildManagerRescopePrompt,
+  runBoundedEscalation,
 } = await import(corpUrl);
 
 // --- Args --------------------------------------------------------------------
@@ -254,6 +280,83 @@ async function runDryRun() {
     assert(r.changed === true, `review changed ${r.contractId}`);
   }
 
+  // --- slice 5: assemble → verify → CEO decision → escalation (all offline) ---
+  const readFs = makeNodeWorkspaceReadFs();
+
+  // Assemble the dispatched workspace into a product manifest.
+  const manifest = buildProductManifest(report.chart, workspace, readFs);
+  assert(
+    manifest.files.length === 3,
+    `manifest lists all 3 produced files (got ${manifest.files.length})`,
+  );
+  assert(manifest.totalBytes > 0, 'manifest totals real bytes');
+  assert(
+    manifest.contractStatusSummary.done === 3,
+    `manifest summary counts 3 done (got ${manifest.contractStatusSummary.done})`,
+  );
+
+  // Verify — a mock all-pass and a mock some-fail check (the objective evidence).
+  const vPass = verifyProduct(workspace, readFs, () => undefined);
+  assert(vPass.ok && vPass.filesChecked === 3, 'verify(all-pass) is ok over 3 files');
+  const vFail = verifyProduct(workspace, readFs, (f) =>
+    f.endsWith('b.ts') ? 'mock type error' : undefined,
+  );
+  assert(!vFail.ok && vFail.errors.length === 1, 'verify(some-fail) reports exactly one error');
+
+  // CEO review — the prompt composes cleanly, and both decisions parse.
+  const ceoPrompt = buildCeoReviewPrompt({
+    originalTask: 'dry-run task',
+    manifest,
+    verifyResult: vPass,
+  });
+  assert(
+    ceoPrompt.includes('ORIGINAL TASK') && ceoPrompt.includes('dry-run task'),
+    'CEO prompt is seeded with the original task',
+  );
+  assert(
+    !ceoPrompt.includes('reviewed') && !ceoPrompt.includes('draft'),
+    'CEO prompt carries no build transcript',
+  );
+  const ceoApprove = parseCeoDecision('APPROVE — meets the vision.');
+  const ceoRevise = parseCeoDecision('REVISE\nThe data layer is missing entirely.');
+  assert(ceoApprove.decision === 'approve', 'CEO mock approve parses to approve');
+  assert(
+    ceoRevise.decision === 'revise' && (ceoRevise.notes ?? '').includes('data layer'),
+    'CEO mock revise parses to revise + notes',
+  );
+
+  // Escalation — a failed contract routes one level up, bounded to one attempt.
+  const escChart = {
+    projectId: 'dry',
+    nodes: [
+      { id: 'ceo', role: 'ceo', name: 'CEO' },
+      { id: 'manager', role: 'manager', name: 'Manager block', parentId: 'ceo' },
+      { id: 'division-x', role: 'division', name: 'X', parentId: 'manager' },
+    ],
+    contracts: [makeContract('x', 'x-eng-1', { slot: 'src/x.ts' })],
+    queue: [],
+    branches: [],
+    status: 'running',
+    nodeStatus: {},
+  };
+  const escRecord = escalateContract(
+    escChart,
+    'x',
+    'unfulfillable, because the API is unavailable',
+  );
+  assert(escRecord.ownerManager === 'manager', 'escalation routes one level up to the manager');
+  const escOutcome = await runBoundedEscalation({ record: escRecord, attemptRescope: () => false });
+  assert(escOutcome.attempts === 1, 'escalation is bounded to one attempt');
+  assert(
+    escOutcome.acceptedGap === true,
+    'a still-failing contract becomes an accepted gap (no deadlock)',
+  );
+  // The manager re-scope prompt is well-formed.
+  assert(
+    buildManagerRescopePrompt(escChart.contracts[0], escRecord.reason).includes('ACCEPT THE GAP'),
+    'manager re-scope prompt offers the accept-the-gap path',
+  );
+
   const out = {
     task: '(dry-run)',
     dryRun: true,
@@ -275,6 +378,23 @@ async function runDryRun() {
       bytes: f.bytes,
       sample: preview(readFileSync(f.path, 'utf8'), SAMPLE_LEN),
     })),
+    manifest: {
+      divisions: manifest.divisions.length,
+      fileCount: manifest.files.length,
+      totalBytes: manifest.totalBytes,
+      contractStatusSummary: manifest.contractStatusSummary,
+    },
+    verify: {
+      pass: { ok: vPass.ok, filesChecked: vPass.filesChecked },
+      fail: { ok: vFail.ok, errorCount: vFail.errors.length },
+    },
+    ceo: { approve: ceoApprove, revise: ceoRevise },
+    escalation: {
+      record: escRecord,
+      resolved: escOutcome.resolved,
+      acceptedGap: escOutcome.acceptedGap,
+      attempts: escOutcome.attempts,
+    },
     failures: [],
     skips: [],
   };
@@ -660,6 +780,100 @@ try {
       `dispatch done: ${dispatch.done.length} file(s) written, ${dispatch.failed.length} failed, ` +
         `${dispatch.skipped.length} skipped, interceptor fired ${interceptorReviewTurns} time(s)`,
     );
+
+    // --- slice 5: assemble → verify → CEO sign-off → escalation -------------
+    const readFs = makeNodeWorkspaceReadFs();
+    const manifest = buildProductManifest(dispatch.chart, workspace, readFs);
+    const verifyResult = verifyProduct(workspace, readFs);
+    report.manifest = {
+      divisions: manifest.divisions.map((d) => d.name),
+      fileCount: manifest.files.length,
+      totalBytes: manifest.totalBytes,
+      interfaceCount: manifest.interfaces.length,
+      contractStatusSummary: manifest.contractStatusSummary,
+    };
+    report.verify = {
+      ok: verifyResult.ok,
+      errorCount: verifyResult.errors.length,
+      errorsPreview: verifyResult.errors
+        .slice(0, 10)
+        .map((e) => ({ file: e.file, message: e.message })),
+    };
+    log(
+      `verify: ${verifyResult.ok ? 'PASS' : 'FAIL'} (${verifyResult.filesChecked} checked, ${verifyResult.errors.length} error(s))`,
+    );
+
+    // CEO final review — CLEAN, vision-only context: ONLY the original task, the
+    // product manifest, and the verify evidence (never the build transcript).
+    const ceoThinking = roleThinkingEnabled('ceo');
+    log(`CEO review turn (intelligent tier, thinking=${ceoThinking})`);
+    const ceoMsg = await chat({
+      messages: [
+        { role: 'system', content: CEO_REVIEW_PROMPT },
+        {
+          role: 'user',
+          content: withThinkTag(
+            buildCeoReviewPrompt({ originalTask: task, manifest, verifyResult }),
+            ceoThinking,
+          ),
+        },
+      ],
+      temperature,
+      max_tokens: maxTokens,
+      ...thinkingBody(ceoThinking),
+    });
+    const ceoDecision = parseCeoDecision(ceoMsg.content ?? '');
+    report.ceoDecision = {
+      decision: ceoDecision.decision,
+      notesPreview: preview(ceoDecision.notes, 600),
+    };
+    log(`CEO decision: ${ceoDecision.decision.toUpperCase()}`);
+
+    // Bounded escalation: each failed contract routes ONE level up to its manager
+    // for a single re-scope turn; this slice does not re-dispatch, so the bounded
+    // attempt records an accepted gap — never a deadlock (spec §9).
+    const managerThinkingForRescope = roleThinkingEnabled('manager');
+    const escalations = [];
+    for (const failed of dispatch.results.filter((r) => r.status === 'failed')) {
+      const contract = dispatch.chart.contracts.find((c) => c.id === failed.contractId);
+      if (contract === undefined) continue;
+      const record = escalateContract(dispatch.chart, failed.contractId, failed.error);
+      log(`escalating ${failed.contractId} → manager ${record.ownerManager}`);
+      let rescopePreview;
+      const outcome = await runBoundedEscalation({
+        record,
+        attemptRescope: async () => {
+          const rescopeMsg = await chat({
+            messages: [
+              { role: 'system', content: getRolePrompt('manager').prompt },
+              {
+                role: 'user',
+                content: withThinkTag(
+                  buildManagerRescopePrompt(contract, record.reason),
+                  managerThinkingForRescope,
+                ),
+              },
+            ],
+            temperature,
+            max_tokens: managerMaxTokens,
+            ...thinkingBody(managerThinkingForRescope),
+          });
+          rescopePreview = preview(rescopeMsg.content ?? '', 600);
+          return false; // bounded: no re-dispatch this slice → accept the gap
+        },
+      });
+      escalations.push({
+        contractId: record.contractId,
+        ownerManager: record.ownerManager,
+        reason: record.reason,
+        acceptedGap: outcome.acceptedGap,
+        rescopePreview,
+      });
+    }
+    report.escalations = escalations;
+    if (escalations.length > 0) {
+      log(`escalated ${escalations.length} failed contract(s) — bounded, all accepted gaps`);
+    }
   }
 } catch (err) {
   report.error = err instanceof Error ? err.message : String(err);

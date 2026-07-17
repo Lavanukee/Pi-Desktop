@@ -15,7 +15,7 @@
  * the browser bundle.
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 /** The minimal fs surface dispatch needs to place a produced file. Injectable. */
@@ -32,6 +32,61 @@ export function makeNodeWorkspaceFs(): WorkspaceFs {
       writeFileSync(path, content, 'utf8');
     },
   };
+}
+
+/**
+ * The READ side of the workspace seam (slice 5: assembly + verify). After dispatch
+ * the workspace IS the integrated product, and the review pass has to READ it back:
+ * {@link ./assemble.ts | buildProductManifest} reads each produced file to size it,
+ * and {@link ./verify.ts | verifyProduct} lists + reads every file to check it.
+ * Injected so both are unit-testable with an in-memory store; the same `node:fs`
+ * confinement discipline as {@link WorkspaceFs} keeps disk access out of the
+ * renderer bundle.
+ */
+export interface WorkspaceReadFs {
+  /** Read the utf8 file at an absolute `path`; `undefined` if it does not exist. */
+  readonly readFile: (path: string) => string | undefined;
+  /** Every regular file beneath `root`, as absolute paths (recursive). */
+  readonly listFiles: (root: string) => readonly string[];
+}
+
+/** The default read seam, backed by node:fs: a missing file reads as `undefined`
+ * (never throws), and {@link WorkspaceReadFs.listFiles} walks `root` recursively. */
+export function makeNodeWorkspaceReadFs(): WorkspaceReadFs {
+  return {
+    readFile: (path) => {
+      try {
+        return readFileSync(path, 'utf8');
+      } catch {
+        return undefined;
+      }
+    },
+    listFiles: (root) => walkFiles(root),
+  };
+}
+
+/** Recursively collect the absolute paths of every regular file under `dir`.
+ * Missing/unreadable directories contribute nothing (never throws). */
+function walkFiles(dir: string): string[] {
+  let entries: readonly string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const name of entries) {
+    const full = join(dir, name);
+    let isDir = false;
+    try {
+      isDir = statSync(full).isDirectory();
+    } catch {
+      continue;
+    }
+    if (isDir) out.push(...walkFiles(full));
+    else out.push(full);
+  }
+  return out;
 }
 
 /**

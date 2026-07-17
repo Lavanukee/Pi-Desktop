@@ -37,6 +37,18 @@ describe('ENGINEER_SYSTEM_PROMPT', () => {
     expect(ENGINEER_SYSTEM_PROMPT.toLowerCase()).toContain('fenced code block');
     expect(ENGINEER_SYSTEM_PROMPT.toLowerCase()).toContain('never a diff');
   });
+
+  it('scopes imports to this standalone project (Fix 0 — no host `@pi-desktop/*` imports)', () => {
+    // The real slice-4 defect: an engineer imported the HOST app's `@pi-desktop/ui`
+    // in a standalone project. The system prompt now forbids unrelated internal
+    // packages while allowing declared / relative / genuine third-party imports.
+    expect(ENGINEER_SYSTEM_PROMPT).toContain('Import ONLY from');
+    expect(ENGINEER_SYSTEM_PROMPT).toContain('@pi-desktop/*');
+    expect(ENGINEER_SYSTEM_PROMPT.toLowerCase()).toContain('standalone project');
+    // Still permits the three legitimate import sources.
+    expect(ENGINEER_SYSTEM_PROMPT).toContain('relative specifiers');
+    expect(ENGINEER_SYSTEM_PROMPT).toContain('third-party');
+  });
 });
 
 describe('buildEngineerPrompt', () => {

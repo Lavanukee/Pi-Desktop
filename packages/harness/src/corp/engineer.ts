@@ -7,8 +7,10 @@
  *
  *  - {@link ENGINEER_SYSTEM_PROMPT} — the engineer's system prompt: the library
  *    base (prompts.ts) + the engineering handbook (carried in every contract,
- *    spec §7) + the strict OUTPUT-FORMAT rule that makes the reply a file, not a
- *    chat message.
+ *    spec §7) + an IMPORT-SCOPING rule (a standalone project imports only its
+ *    declared/relative/third-party deps, never the host app's `@pi-desktop/*`
+ *    packages — a real slice-4 defect) + the strict OUTPUT-FORMAT rule that makes
+ *    the reply a file, not a chat message.
  *  - {@link buildEngineerPrompt} — the USER turn: the contract, its resolved
  *    {@link DependencyContext} (the interfaces it consumes AND the ACTUAL produced
  *    content of the contracts it dependsOn, so it builds against real code, not a
@@ -60,6 +62,9 @@ import { ENGINEERING_HANDBOOK, getRolePrompt } from './prompts.js';
 export const ENGINEER_SYSTEM_PROMPT = `${getRolePrompt('engineer').prompt}
 
 ${ENGINEERING_HANDBOOK}
+
+Imports — this is a standalone project:
+Import ONLY from (a) the imports your contract declares as available, (b) other files in THIS project — use the exact relative specifiers given in the DEPENDENCIES block, (c) genuine third-party packages you'd install (e.g. 'three'). Do NOT import from unrelated internal packages like '@pi-desktop/*' — this is a standalone project.
 
 Output format — this is not optional:
 Your entire reply is written verbatim to your contract's slot as a single file, so it must BE the file and nothing else. Produce the COMPLETE file for the slot — never a diff, a fragment, or a "…rest unchanged" placeholder. Put the whole file in ONE fenced code block (\`\`\`), with nothing before or after the fence, or output the raw file body alone with no prose. Do not add explanations, headings, or commentary outside the file.`;

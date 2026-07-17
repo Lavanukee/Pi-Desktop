@@ -1,7 +1,9 @@
 /**
  * `@pi-desktop/harness/corp` — the corporation data-model backbone (spec §4/§5/
- * §6/§7): the org-chart/contract/queue types + guards, the dependency-DAG
- * helpers, per-project persistence, and the predefined system-prompt library.
+ * §6/§7/§8/§9): the org-chart/contract/queue types + guards, the dependency-DAG
+ * helpers, per-project persistence, the predefined system-prompt library, and the
+ * completion path — product assembly, the evidence-grounded verify pass, the CEO
+ * sign-off (the false-completion cure), and one-level escalation.
  *
  * Exposed as a DEDICATED SUBPATH, not the root `@pi-desktop/harness` barrel, on
  * purpose: {@link ./persistence.js} imports `node:fs`, and the renderer
@@ -14,10 +16,13 @@
  */
 
 export * from './architect.js';
+export * from './assemble.js';
+export * from './ceo.js';
 export * from './contracts.js';
 export * from './dag.js';
 export * from './dispatch.js';
 export * from './engineer.js';
+export * from './escalate.js';
 export * from './integrate.js';
 export * from './org-chart.js';
 export * from './persistence.js';
@@ -26,4 +31,5 @@ export * from './promotion.js';
 export * from './prompts.js';
 export * from './retry.js';
 export * from './sanitize.js';
+export * from './verify.js';
 export * from './workspace.js';

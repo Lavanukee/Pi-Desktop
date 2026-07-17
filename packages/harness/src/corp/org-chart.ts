@@ -221,6 +221,67 @@ export interface BranchRef {
 }
 
 /**
+ * One canonical region of the module map (the integration layer, spec
+ * "Integration layer"): a file or directory ONE division owns. The architect
+ * lays these out up front — one clear area per division, no overlaps — so
+ * divisions build against a shared structure instead of each inventing its own
+ * (the real-qwen defect this fixes: three divisions each building a start-menu
+ * at three different paths, which the exact-string slot detector reads as
+ * "clean" because no two paths literally collide).
+ */
+export interface ModuleEntry {
+  /**
+   * Canonical path the division builds within — normally a DIRECTORY namespace
+   * (e.g. `src/engine/`) the division fills with many distinct files, NOT a
+   * single file. Kept a plain string; the trailing-slash directory convention is
+   * carried by the architect prompt, not the type. (A single-file region traps a
+   * division into piling every contract onto one slot — the real-qwen defect the
+   * directory framing fixes.)
+   */
+  readonly path: string;
+  /** The division (by name) that owns this region. */
+  readonly owner: string;
+  /** What lives here — the division's charter for this path. */
+  readonly purpose: string;
+}
+
+/**
+ * A cross-division SEAM (the integration layer): a typed interface one division
+ * exposes for others to consume. This is the artifact that makes a real
+ * cross-division dependency expressible — a consumer declares
+ * `dependsOn: ['iface:<name>']` and the integrate pass (integrate.ts) rewrites
+ * that handle to the concrete contract id in the {@link exposedBy} division that
+ * produces {@link path}. Without it, divisions plan as siloed backlogs with ZERO
+ * edges between them.
+ */
+export interface InterfaceHandle {
+  /** The handle name consumers reference (e.g. "GameState"). */
+  readonly name: string;
+  /** The division (by name) that produces/owns this interface. */
+  readonly exposedBy: string;
+  /** The slot (file/module/export) where the interface is produced. */
+  readonly path: string;
+  /** A short typed summary of what the interface provides. */
+  readonly summary: string;
+  /** The divisions (by name) expected to consume it. */
+  readonly consumedBy: readonly string[];
+}
+
+/**
+ * The shared ARCHITECTURE (the integration layer): the canonical file/dir layout
+ * (one region per division) plus the cross-division interface seams. Produced up
+ * front by the architect step (corp/architect.ts) on the `intelligent` tier,
+ * BEFORE managers write contracts, so every division builds against one map.
+ * Optional on {@link OrgChart} — a solo/unplanned chart has none.
+ */
+export interface Architecture {
+  /** The canonical module map — one clear region per division, no overlaps. */
+  readonly moduleMap: readonly ModuleEntry[];
+  /** The typed interfaces divisions expose for each other to consume. */
+  readonly interfaces: readonly InterfaceHandle[];
+}
+
+/**
  * Overall run state of the chart. `solo` = no promotion happened (the chart may
  * exist with just a CEO-to-be); `running` = the corporation is executing;
  * `paused` = resumable snapshot (crash/quit); `done` = CEO signed off.
@@ -259,6 +320,12 @@ export interface OrgChart {
   readonly status: OrgChartRunStatus;
   /** Per-node live state, keyed by node id (absent node ⇒ `idle`). */
   readonly nodeStatus: Readonly<Record<string, NodeStatus>>;
+  /**
+   * The shared architecture every division builds against (the integration
+   * layer). Absent on a solo/unplanned chart; set by the architect step before
+   * managers write contracts, so cross-division interface handles resolve.
+   */
+  readonly architecture?: Architecture;
 }
 
 /** An empty chart for a project — the state before any promotion. */
@@ -335,6 +402,38 @@ function isNodeStatusMap(v: unknown): v is Readonly<Record<string, NodeStatus>> 
   return Object.values(v).every(isNodeStatus);
 }
 
+/** Structural guard for a {@link ModuleEntry}. Pure. */
+export function isModuleEntry(v: unknown): v is ModuleEntry {
+  if (v === null || typeof v !== 'object') return false;
+  const m = v as Record<string, unknown>;
+  return typeof m.path === 'string' && typeof m.owner === 'string' && typeof m.purpose === 'string';
+}
+
+/** Structural guard for an {@link InterfaceHandle}. Pure. */
+export function isInterfaceHandle(v: unknown): v is InterfaceHandle {
+  if (v === null || typeof v !== 'object') return false;
+  const h = v as Record<string, unknown>;
+  return (
+    typeof h.name === 'string' &&
+    typeof h.exposedBy === 'string' &&
+    typeof h.path === 'string' &&
+    typeof h.summary === 'string' &&
+    isStringArray(h.consumedBy)
+  );
+}
+
+/** Structural guard for an {@link Architecture}. Pure. */
+export function isArchitecture(v: unknown): v is Architecture {
+  if (v === null || typeof v !== 'object') return false;
+  const a = v as Record<string, unknown>;
+  return (
+    Array.isArray(a.moduleMap) &&
+    a.moduleMap.every(isModuleEntry) &&
+    Array.isArray(a.interfaces) &&
+    a.interfaces.every(isInterfaceHandle)
+  );
+}
+
 /**
  * Structural validation of a decoded JSON value as an {@link OrgChart}.
  * Shape-only (referential integrity — owner ids existing, DAG acyclicity — is
@@ -354,6 +453,7 @@ export function isOrgChart(v: unknown): v is OrgChart {
     Array.isArray(c.branches) &&
     c.branches.every(isBranchRef) &&
     isOrgChartRunStatus(c.status) &&
-    isNodeStatusMap(c.nodeStatus)
+    isNodeStatusMap(c.nodeStatus) &&
+    (c.architecture === undefined || isArchitecture(c.architecture))
   );
 }

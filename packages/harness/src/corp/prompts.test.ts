@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CAPABILITY_TIERS,
   CORE_ROLES,
   composeNodePrompt,
   DIVISION_ARCHETYPES,
@@ -7,14 +8,17 @@ import {
   getArchetypePrompt,
   getPromptById,
   getRolePrompt,
+  isCapabilityTier,
   isCoreRole,
   isDivisionArchetype,
   isSpecialistKind,
   PROMPT_LIBRARY,
   type PromptLibraryId,
   ROLE_THINKING,
+  ROLE_TIER,
   roleThinkingEnabled,
   SPECIALIST_KINDS,
+  tierForRole,
 } from './prompts.js';
 
 describe('id type guards', () => {
@@ -137,6 +141,42 @@ describe('ROLE_THINKING (per-role thinking control knob)', () => {
   it('has an explicit boolean entry for every core role and specialist', () => {
     for (const role of CORE_ROLES) expect(typeof ROLE_THINKING[role]).toBe('boolean');
     for (const kind of SPECIALIST_KINDS) expect(typeof ROLE_THINKING[kind]).toBe('boolean');
+  });
+});
+
+describe('ROLE_TIER (role → capability tier, model-agnostic)', () => {
+  it('maps reasoning/judgment roles to intelligent and code-execution roles to balanced', () => {
+    // Reasoning/judgment: CEO, manager, architect, every advisory specialist.
+    expect(tierForRole('ceo')).toBe('intelligent');
+    expect(tierForRole('manager')).toBe('intelligent');
+    expect(tierForRole('architect')).toBe('intelligent');
+    for (const kind of SPECIALIST_KINDS) expect(tierForRole(kind)).toBe('intelligent');
+    // Code execution: engineer + division-head.
+    expect(tierForRole('engineer')).toBe('balanced');
+    expect(tierForRole('division-head')).toBe('balanced');
+  });
+
+  it('only ever names a tier, never a concrete model', () => {
+    for (const tier of Object.values(ROLE_TIER)) expect(isCapabilityTier(tier)).toBe(true);
+  });
+
+  it('has a tier entry for every core role, specialist, and the architect', () => {
+    for (const role of CORE_ROLES) expect(isCapabilityTier(ROLE_TIER[role])).toBe(true);
+    for (const kind of SPECIALIST_KINDS) expect(isCapabilityTier(ROLE_TIER[kind])).toBe(true);
+    expect(isCapabilityTier(ROLE_TIER.architect)).toBe(true);
+  });
+
+  it('CAPABILITY_TIERS is exactly the three tiers', () => {
+    expect([...CAPABILITY_TIERS]).toEqual(['fast', 'balanced', 'intelligent']);
+    for (const t of CAPABILITY_TIERS) expect(isCapabilityTier(t)).toBe(true);
+    for (const v of ['huge', '', 3, null]) expect(isCapabilityTier(v)).toBe(false);
+  });
+});
+
+describe('ROLE_THINKING — the architect', () => {
+  it('runs the architect thinking-OFF like the manager (it emits structured JSON)', () => {
+    expect(roleThinkingEnabled('architect')).toBe(false);
+    expect(ROLE_THINKING.architect).toBe(false);
   });
 });
 

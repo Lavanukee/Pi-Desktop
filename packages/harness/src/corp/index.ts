@@ -13,8 +13,10 @@
  * persistence helpers actually touch `node:fs`, and only when invoked.
  */
 
+export * from './architect.js';
 export * from './contracts.js';
 export * from './dag.js';
+export * from './integrate.js';
 export * from './org-chart.js';
 export * from './persistence.js';
 export * from './plan.js';

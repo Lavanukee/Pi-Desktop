@@ -49,16 +49,81 @@ export function isSpecialistKind(v: unknown): v is SpecialistKind {
 }
 
 /**
+ * Every role that carries a capability label (tier + thinking): the core
+ * hierarchy roles, the advisory specialists, and the lead `architect` (the
+ * integration-layer role, corp/architect.ts). The architect is not a
+ * {@link CoreRole} — it does not own a predefined library prompt keyed in
+ * {@link PROMPT_LIBRARY} (its prompt lives in corp/architect.ts) — but it is a
+ * labeled role because it too resolves to a tier + a thinking setting.
+ */
+export type LabeledRole = CoreRole | SpecialistKind | 'architect';
+
+/**
+ * Capability TIERS — the abstraction that keeps the corporation model-agnostic
+ * (the user's role→tier directive). Roles map to a *capability* (`fast` /
+ * `balanced` / `intelligent`), never to a hardcoded model. This is the SAME
+ * three-tier vocabulary the inference package exposes as
+ * `ModelTier` — deliberately kept as a local literal type so `corp` carries NO
+ * dependency on `@pi-desktop/inference` (the corp is pure structure; it must not
+ * know which models exist).
+ *
+ * The resolution path (documented, NOT wired here — that is the memory-scheduler
+ * slice): the engine takes a role, reads its tier via {@link tierForRole}, then
+ * resolves that tier to a concrete catalog model + quant for THIS Mac's RAM via
+ * `resolveTierModels(hardware)` in `packages/inference/src/recommender.ts`
+ * (which returns `{ fast, balanced, intelligent }`, each a real model). So on a
+ * <8 GB machine `intelligent` may resolve to a small model and on a 64 GB
+ * machine to a 27B+, with ZERO change to any corp code (spec §3, §6).
+ */
+export type CapabilityTier = 'fast' | 'balanced' | 'intelligent';
+
+export const CAPABILITY_TIERS: readonly CapabilityTier[] = ['fast', 'balanced', 'intelligent'];
+
+export function isCapabilityTier(v: unknown): v is CapabilityTier {
+  return typeof v === 'string' && (CAPABILITY_TIERS as readonly string[]).includes(v);
+}
+
+/**
+ * Role → capability tier (spec §3 "hands vs. brain"). Reasoning/judgment roles
+ * (CEO, manager, architect, and every advisory reviewer) map to `intelligent`
+ * because their output is direction/contracts/judgment, not tool-formatting;
+ * the code-execution roles (engineer, division-head) map to `balanced` — capable
+ * agentic implementation without spending the top tier's memory on every worker.
+ * The engine resolves each tier → a concrete model per hardware (see
+ * {@link CapabilityTier}); this table never names a model.
+ */
+export const ROLE_TIER: Readonly<Record<LabeledRole, CapabilityTier>> = {
+  ceo: 'intelligent',
+  manager: 'intelligent',
+  'division-head': 'balanced',
+  engineer: 'balanced',
+  architect: 'intelligent',
+  'visual-critic': 'intelligent',
+  security: 'intelligent',
+  performance: 'intelligent',
+  accessibility: 'intelligent',
+  correctness: 'intelligent',
+};
+
+/** The capability tier a role resolves to (see {@link ROLE_TIER}). */
+export function tierForRole(role: LabeledRole): CapabilityTier {
+  return ROLE_TIER[role];
+}
+
+/**
  * Per-role model-"thinking" control — a real harness knob (not yet wired into
  * live dispatch; consumed by the slice-1 driver and future Phase-2 dispatch).
  *
  * Thinking models (e.g. qwen3.5) reason inside a `<think>…</think>` block before
  * answering. That splits cleanly along the kind of turn:
  *
- *  - STRUCTURED-OUTPUT roles (`manager`, `division-head` — they emit a JSON array
- *    of contracts) run thinking OFF. Real-model testing showed the manager's
- *    contract-writing turn running away inside `<think>` and never closing it,
- *    starving the actual JSON — a 0-contract outcome. Thinking-off fixes it.
+ *  - STRUCTURED-OUTPUT roles (`manager`, `division-head`, `architect` — they emit
+ *    a JSON array of contracts / a JSON Architecture object) run thinking OFF.
+ *    Real-model testing showed the manager's contract-writing turn running away
+ *    inside `<think>` and never closing it, starving the actual JSON — a
+ *    0-contract outcome. Thinking-off fixes it, and the architect emits the same
+ *    kind of structured JSON, so it runs thinking-off like the manager (revisit
+ *    if reasoning-on proves safe for the smaller architecture object).
  *  - JUDGMENT roles (the solo/promotion worker, `ceo`, `engineer`, and the
  *    advisory specialists) run thinking ON — their reasoning IS the value (the
  *    promote-or-not call, the final review, evidence-grounded findings, code).
@@ -69,11 +134,12 @@ export function isSpecialistKind(v: unknown): v is SpecialistKind {
  * thinking enabled. The pre-promotion solo worker has no node role of its own —
  * it is a judgment turn, so it runs thinking ON like the roles above.
  */
-export const ROLE_THINKING: Readonly<Record<CoreRole | SpecialistKind, boolean>> = {
+export const ROLE_THINKING: Readonly<Record<LabeledRole, boolean>> = {
   ceo: true,
   manager: false,
   'division-head': false,
   engineer: true,
+  architect: false,
   'visual-critic': true,
   security: true,
   performance: true,
@@ -82,7 +148,7 @@ export const ROLE_THINKING: Readonly<Record<CoreRole | SpecialistKind, boolean>>
 };
 
 /** Whether a role runs with model "thinking" enabled (see {@link ROLE_THINKING}). */
-export function roleThinkingEnabled(role: CoreRole | SpecialistKind): boolean {
+export function roleThinkingEnabled(role: LabeledRole): boolean {
   return ROLE_THINKING[role];
 }
 

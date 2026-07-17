@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  type Architecture,
   CONTRACT_STATUSES,
   emptyOrgChart,
+  isArchitecture,
   isContractStatus,
+  isInterfaceHandle,
+  isModuleEntry,
   isNodeRole,
   isNodeStatus,
   isOrgChart,
@@ -144,5 +148,59 @@ describe('isOrgChart', () => {
   it('rejects a non-string contract notes field', () => {
     const bad = { ...validChart().contracts[0], notes: 42 };
     expect(isOrgChart({ ...validChart(), contracts: [bad] })).toBe(false);
+  });
+
+  it('accepts an optional architecture (absent, or a valid one) and rejects a malformed one', () => {
+    const base = validChart();
+    expect(base.architecture).toBeUndefined(); // absent is fine
+    expect(isOrgChart(base)).toBe(true);
+    expect(isOrgChart({ ...base, architecture: validArchitecture() })).toBe(true);
+    // Malformed architecture (a module entry missing `owner`).
+    const badArch = { moduleMap: [{ path: 'src/x.ts', purpose: 'x' }], interfaces: [] };
+    expect(isOrgChart({ ...base, architecture: badArch })).toBe(false);
+  });
+});
+
+/** A structurally-valid architecture (one owned region + one cross-division seam). */
+function validArchitecture(): Architecture {
+  return {
+    moduleMap: [
+      { path: 'src/game/state.ts', owner: 'Gameplay', purpose: 'the shared game state' },
+      { path: 'src/ui/hud.tsx', owner: 'UI', purpose: 'the heads-up display' },
+    ],
+    interfaces: [
+      {
+        name: 'GameState',
+        exposedBy: 'Gameplay',
+        path: 'src/game/state.ts',
+        summary: 'the typed game-state store',
+        consumedBy: ['UI'],
+      },
+    ],
+  };
+}
+
+describe('Architecture guards', () => {
+  it('isModuleEntry accepts a full entry and rejects a mistyped/partial one', () => {
+    expect(isModuleEntry({ path: 'p', owner: 'o', purpose: 'why' })).toBe(true);
+    expect(isModuleEntry({ path: 'p', owner: 'o' })).toBe(false); // no purpose
+    expect(isModuleEntry({ path: 'p', owner: 3, purpose: 'why' })).toBe(false);
+    for (const v of [null, undefined, 'x', 7, []]) expect(isModuleEntry(v)).toBe(false);
+  });
+
+  it('isInterfaceHandle requires all fields incl. a string[] consumedBy', () => {
+    const h = validArchitecture().interfaces[0];
+    expect(isInterfaceHandle(h)).toBe(true);
+    expect(isInterfaceHandle({ ...h, consumedBy: [1] })).toBe(false); // not string[]
+    expect(isInterfaceHandle({ ...h, consumedBy: 'UI' })).toBe(false); // not an array
+    expect(isInterfaceHandle({ ...h, exposedBy: undefined })).toBe(false);
+  });
+
+  it('isArchitecture validates both arrays and rejects a bad element', () => {
+    expect(isArchitecture(validArchitecture())).toBe(true);
+    expect(isArchitecture({ moduleMap: [], interfaces: [] })).toBe(true); // empty is valid
+    expect(isArchitecture({ moduleMap: 'x', interfaces: [] })).toBe(false);
+    expect(isArchitecture({ moduleMap: [{ path: 'p' }], interfaces: [] })).toBe(false);
+    for (const v of [null, undefined, 'x', 7]) expect(isArchitecture(v)).toBe(false);
   });
 });

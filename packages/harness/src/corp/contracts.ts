@@ -18,18 +18,86 @@
  * manager's authoring step only.
  */
 
+import type { Architecture } from './org-chart.js';
 import { type Contract, isContract } from './org-chart.js';
 import type { HierarchyDivisionSpec } from './promotion.js';
+
+/** Normalized division-name compare (the architect uses the exact names, but a
+ * small model may drift case/whitespace). */
+function sameDivision(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/**
+ * The architecture-seeding block spliced into a manager's turn when a shared
+ * {@link Architecture} exists (the integration layer): (a) the module-map region
+ * THIS division owns — target files there, do not invent structure — and (b) the
+ * cross-division interface handles, with the rule to express a dependency on
+ * another division's work by adding `iface:<Name>` to a contract's `dependsOn`
+ * rather than reinventing it. Returns `[]` (no lines) when there is no
+ * architecture, so a 2-arg call is byte-identical to the pre-integration prompt.
+ */
+function architectureSeedLines(
+  division: HierarchyDivisionSpec,
+  architecture: Architecture | undefined,
+): string[] {
+  if (architecture === undefined) return [];
+  const owned = architecture.moduleMap.filter((m) => sameDivision(m.owner, division.name));
+  const exposedHere = architecture.interfaces.filter((h) =>
+    sameDivision(h.exposedBy, division.name),
+  );
+
+  const lines: string[] = ['', 'SHARED ARCHITECTURE (build against it — do not invent your own):'];
+
+  if (owned.length > 0) {
+    lines.push(
+      'Your division owns the directory region(s) listed below. Create your work as DISTINCT FILES inside your region\'s directory — one distinct file (and/or export) per contract; set each contract\'s "slot" to a distinct file path within your region. Never assign two contracts the same slot, and never pile multiple contracts onto one file. Do not create files outside your region:',
+    );
+    for (const m of owned) lines.push(`  - ${m.path} — ${m.purpose}`);
+  } else {
+    lines.push(
+      'The module map did not carve out a dedicated region for your division; place your work sensibly and lean on the interfaces below to connect to other divisions.',
+    );
+  }
+
+  if (architecture.interfaces.length > 0) {
+    lines.push(
+      'Cross-division interfaces (the seams one division exposes for others). If your work needs something ANOTHER division produces, do NOT rebuild it — add that interface\'s handle to the contract\'s "dependsOn" as "iface:<Name>" (e.g. "dependsOn": ["iface:GameState"]); the harness resolves the handle to the real contract that produces it. Only depend on interfaces OTHER divisions expose — never add an "iface:<Name>" your OWN division exposes to a contract\'s "dependsOn" (your division BUILDS that interface, it does not consume it). Review the interface list below and reference EVERY handle your work genuinely depends on — cross-division consumption should be symmetric, not one-directional:',
+    );
+    for (const h of architecture.interfaces) {
+      const consumers = h.consumedBy.length > 0 ? ` — consumed by ${h.consumedBy.join(', ')}` : '';
+      lines.push(
+        `  - iface:${h.name} — exposed by ${h.exposedBy} at ${h.path}: ${h.summary}${consumers}`,
+      );
+    }
+  }
+
+  if (exposedHere.length > 0) {
+    lines.push(
+      `Your division EXPOSES ${exposedHere.map((h) => `iface:${h.name}`).join(', ')}. Make sure one of your contracts has its "slot" set to the matching path (${exposedHere.map((h) => h.path).join(', ')}) so consuming divisions resolve to it.`,
+    );
+  }
+
+  return lines;
+}
 
 /**
  * Build the manager's user turn for authoring ONE division's contracts. Pairs
  * with the manager base system prompt (prompts.ts `MANAGER_PROMPT`), which
  * already establishes disposition, granularity, and the `notes` invitation; this
  * message supplies the concrete division + the exact output shape to emit.
+ *
+ * When a shared {@link Architecture} is supplied (the integration layer), the
+ * turn is seeded with the module-map region this division owns and the
+ * cross-division interface handles — so contracts target the canonical structure
+ * and express real cross-division dependencies as `iface:<Name>` entries (see
+ * {@link architectureSeedLines}). Omit `architecture` (2-arg call) for the
+ * pre-integration behavior — the output is then unchanged.
  */
 export function buildManagerContractPrompt(
   division: HierarchyDivisionSpec,
   vision: string,
+  architecture?: Architecture,
 ): string {
   return [
     'Write the typed contracts for ONE division of this project.',
@@ -38,6 +106,7 @@ export function buildManagerContractPrompt(
     '',
     `Division: ${division.name}`,
     `Division purpose: ${division.purpose}`,
+    ...architectureSeedLines(division, architecture),
     '',
     'Keep each contract small and focused, but bounded: aim for roughly 6–12 focused contracts for this division. If a contract would take an hour, split it — but if this division genuinely needs MORE than ~12 contracts, that is the signal it should be split into sub-divisions, not crammed into one oversized contract set. Order them so each contract only depends on ones that come before it.',
     '',
@@ -238,6 +307,65 @@ function repairUnterminatedStrings(fragment: string): string {
 }
 
 /**
+ * Balance an open-but-truncated leading JSON object: close a value cut off
+ * mid-string, drop a dangling trailing comma, and append the closers for every
+ * still-open `{`/`[` (innermost first). Pure, string-aware, never throws — the
+ * caller still gates the result on `JSON.parse` + {@link isContract}, so an
+ * un-closeable fragment simply fails to parse and is discarded.
+ */
+function closeTruncatedObject(fragment: string): string {
+  const closers: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < fragment.length; i++) {
+    const ch = fragment[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') closers.push('}');
+    else if (ch === '[') closers.push(']');
+    else if (ch === '}' || ch === ']') closers.pop();
+  }
+  let out = fragment;
+  if (inString) {
+    // Value truncated mid-string with no trailing newline for
+    // repairUnterminatedStrings to close on — terminate it here.
+    out += '"';
+  } else {
+    // Outside a string at the cut: drop trailing whitespace + a dangling comma
+    // so the object closes cleanly ("…,"queued", ␤" → "…,"queued"").
+    out = out.replace(/[\s,]*$/, '');
+  }
+  while (closers.length > 0) out += closers.pop();
+  return out;
+}
+
+/**
+ * Final backstop for the worst truncation: the reply was cut off BEFORE the
+ * first contract object ever closed, so {@link salvageTopLevelObjects} recovered
+ * nothing. Extract the partial leading `{…}` (from the first brace after the
+ * opening `[`), close its unterminated strings + open braces/brackets, and
+ * JSON.parse it. Returns the decoded value (validated by the caller) or
+ * `undefined` when there is no leading object or it will not parse. Never throws.
+ */
+function repairTruncatedLeadingObject(text: string): unknown {
+  const unfenced = stripFences(text);
+  const arrStart = unfenced.indexOf('[');
+  const objStart = unfenced.indexOf('{', arrStart === -1 ? 0 : arrStart + 1);
+  if (objStart === -1) return undefined;
+  const closed = closeTruncatedObject(repairUnterminatedStrings(unfenced.slice(objStart)));
+  try {
+    return JSON.parse(closed);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Parse a manager reply into validated {@link Contract}[]. Tolerant of fences /
  * prose around the array and of the two most-omitted fields (via
  * {@link normalizeContractCandidate}); every element is validated with
@@ -255,7 +383,15 @@ function repairUnterminatedStrings(fragment: string): string {
  * re-synchronizes past it so every well-formed element AFTER the defect survives;
  * and each element that fails to parse on its own gets one lenient repair pass
  * ({@link repairUnterminatedStrings}) so the poisoned element is usually recovered
- * too. Returns `[]` (never throws) when nothing usable is present.
+ * too.
+ *
+ * Final backstop (real-qwen defect: a too-tight `max_tokens` cut the reply off
+ * BEFORE its first contract object even closed): when salvage recovers zero
+ * complete objects, {@link repairTruncatedLeadingObject} closes the partial
+ * leading object and, if it validates, returns that one contract — so a division
+ * whose reply truncated on its first object yields its one partial-but-complete
+ * contract instead of silently vanishing from the plan. Returns `[]` (never
+ * throws) when nothing usable is present.
  */
 export function parseManagerContracts(text: string): Contract[] {
   const region = extractJsonArray(text);
@@ -268,8 +404,9 @@ export function parseManagerContracts(text: string): Contract[] {
     }
   }
   // Salvage: the array was truncated (no closing `]`) or failed to parse whole.
+  const salvagedRaw = salvageTopLevelObjects(text);
   const salvaged: unknown[] = [];
-  for (const raw of salvageTopLevelObjects(text)) {
+  for (const raw of salvagedRaw) {
     try {
       salvaged.push(JSON.parse(raw));
     } catch {
@@ -283,5 +420,14 @@ export function parseManagerContracts(text: string): Contract[] {
       }
     }
   }
-  return collectContracts(salvaged);
+  const contracts = collectContracts(salvaged);
+  if (contracts.length > 0) return contracts;
+  // Backstop: salvage found NO complete object ⇒ the reply truncated before the
+  // first object closed. Try to close that partial leading object rather than
+  // dropping the whole division.
+  if (salvagedRaw.length === 0) {
+    const partial = repairTruncatedLeadingObject(text);
+    if (partial !== undefined) return collectContracts([partial]);
+  }
+  return [];
 }

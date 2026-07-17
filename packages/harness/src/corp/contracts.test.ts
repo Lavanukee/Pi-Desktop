@@ -1,5 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { buildManagerContractPrompt, parseManagerContracts } from './contracts.js';
+import type { Architecture } from './org-chart.js';
+
+/** An architecture where Frontend owns a region and Backend exposes an interface. */
+function architecture(): Architecture {
+  return {
+    moduleMap: [
+      { path: 'src/ui/app.tsx', owner: 'Frontend', purpose: 'the app shell' },
+      { path: 'src/api/client.ts', owner: 'Backend', purpose: 'the API client' },
+    ],
+    interfaces: [
+      {
+        name: 'ApiClient',
+        exposedBy: 'Backend',
+        path: 'src/api/client.ts',
+        summary: 'the typed API client',
+        consumedBy: ['Frontend'],
+      },
+    ],
+  };
+}
 
 describe('buildManagerContractPrompt', () => {
   const division = { name: 'Frontend', purpose: 'build the UI shell' };
@@ -44,6 +64,71 @@ describe('buildManagerContractPrompt', () => {
     ]) {
       expect(prompt).toContain(`"${field}"`);
     }
+  });
+
+  it('is byte-identical to the pre-integration prompt when no architecture is given', () => {
+    // A 2-arg call must not carry any architecture-seeding text.
+    expect(prompt).not.toContain('SHARED ARCHITECTURE');
+    expect(prompt).not.toContain('iface:');
+  });
+});
+
+describe('buildManagerContractPrompt — seeded with the shared architecture', () => {
+  it('gives THIS division its owned directory region and tells it to make distinct files', () => {
+    const seeded = buildManagerContractPrompt(
+      { name: 'Frontend', purpose: 'the UI' },
+      'Build an app.',
+      architecture(),
+    );
+    expect(seeded).toContain('SHARED ARCHITECTURE');
+    expect(seeded).toContain('src/ui/app.tsx'); // the region Frontend owns
+    expect(seeded).toContain('the app shell');
+    expect(seeded).not.toContain('src/api/client.ts — the API client'); // not Frontend's region
+    // The granularity fix: spread contracts across DISTINCT FILES in the region,
+    // never pile them onto one file, never leave the region.
+    expect(seeded).toContain('DISTINCT FILES');
+    expect(seeded.toLowerCase()).toContain('never pile multiple contracts onto one file');
+    expect(seeded.toLowerCase()).toContain('do not create files outside your region');
+  });
+
+  it('lists the interface handles, the iface:<Name> rule, and the symmetric-consumption nudge', () => {
+    const seeded = buildManagerContractPrompt(
+      { name: 'Frontend', purpose: 'the UI' },
+      'Build an app.',
+      architecture(),
+    );
+    expect(seeded).toContain('iface:ApiClient');
+    expect(seeded).toContain('exposed by Backend');
+    expect(seeded).toContain('"dependsOn": ["iface:GameState"]'); // the worked example
+    expect(seeded).toContain('consumed by Frontend');
+    // The symmetry fix: reference EVERY handle the work depends on, not one-way.
+    expect(seeded).toContain('EVERY handle');
+    expect(seeded.toLowerCase()).toContain('symmetric');
+    // The self-referential tidy: only depend on interfaces OTHER divisions expose.
+    expect(seeded).toContain('OTHER divisions expose');
+    expect(seeded.toLowerCase()).toContain('your own division');
+  });
+
+  it('tells the EXPOSING division to slot a contract at the interface path', () => {
+    const seeded = buildManagerContractPrompt(
+      { name: 'Backend', purpose: 'the API' },
+      'Build an app.',
+      architecture(),
+    );
+    expect(seeded).toContain('Your division EXPOSES iface:ApiClient');
+    expect(seeded).toContain('src/api/client.ts'); // the path a Backend contract must slot to
+  });
+
+  it('still bounds granularity (6–12) and keeps the terminator when seeded', () => {
+    const seeded = buildManagerContractPrompt(
+      { name: 'Frontend', purpose: 'the UI' },
+      'Build an app.',
+      architecture(),
+    );
+    expect(seeded).toMatch(/6[–-]12/);
+    expect(seeded).toContain(
+      'Output between 6 and 12 contracts as a JSON array, then STOP and close the array.',
+    );
   });
 });
 
@@ -273,5 +358,62 @@ Let me know if you want more.`;
     // This fixture's 4th element is fully repairable → all 12 come back in order.
     expect(ids).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((i) => `div-${i}`));
     expect(contracts.find((c) => c.id === 'div-4')?.notes).toBe('single-track.');
+  });
+
+  it('returns the 1 complete first object when the SECOND object is truncated (regression)', () => {
+    // Salvage already handles this: the first object closes, the second is cut
+    // off mid-string. The backstop must NOT change this — only the truncated
+    // element is lost, the finished one survives.
+    const truncated = `[
+      {
+        "id": "fe-1",
+        "title": "App shell",
+        "ownerNodeId": "fe-eng-1",
+        "input": "design tokens",
+        "output": "AppShell component",
+        "slot": "src/AppShell.tsx",
+        "available": { "tools": ["read", "write"], "imports": ["@pi-desktop/ui"] },
+        "reviewRubric": "renders all routes",
+        "dependsOn": [],
+        "status": "queued"
+      },
+      {
+        "id": "fe-2",
+        "title": "Sidebar with a long unfinished descrip`;
+    const contracts = parseManagerContracts(truncated);
+    expect(contracts).toHaveLength(1);
+    expect(contracts[0]?.id).toBe('fe-1');
+  });
+
+  it('closes a truncated FIRST object (all required fields + a dangling string) and returns 1', () => {
+    // The real-qwen defect: max_tokens cut the reply off BEFORE the first object
+    // ever closed — every required field is already present, but the final
+    // `notes` value is a dangling string with no closing quote, no `}`, no `]`.
+    // Salvage recovers 0 complete objects; the backstop must close it and return
+    // the one contract instead of nothing (the whole division vanishing).
+    const truncated = `Here are the contracts for the Frontend division:
+
+\`\`\`json
+[
+  {
+    "id": "fe-1",
+    "title": "App shell layout",
+    "ownerNodeId": "fe-eng-1",
+    "input": "design tokens + route list",
+    "output": "AppShell component (typed props)",
+    "slot": "src/AppShell.tsx",
+    "available": { "tools": ["read", "write"], "imports": ["@pi-desktop/ui"] },
+    "reviewRubric": "renders all routes; keyboard navigable",
+    "dependsOn": [],
+    "status": "queued",
+    "notes": "the earlier flexbox approach broke on overflow and needs a rethin`;
+    const contracts = parseManagerContracts(truncated);
+    expect(contracts).toHaveLength(1);
+    expect(contracts[0]?.id).toBe('fe-1');
+    expect(contracts[0]?.slot).toBe('src/AppShell.tsx');
+    // The dangling notes string was closed at the truncation point.
+    expect(contracts[0]?.notes).toBe(
+      'the earlier flexbox approach broke on overflow and needs a rethin',
+    );
   });
 });

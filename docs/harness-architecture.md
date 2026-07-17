@@ -78,6 +78,8 @@ One model runs at a time on consumer hardware, reused via `-np` slots. But roles
 
 The advisor insight (Phase-important): a heavily-quantized 27B is *ideal* for the CEO/manager/advisor tiers, because those roles output **judgment as prose, not tool calls** — so the quality that quantization costs (precise formatting/tool syntax) is exactly the quality those roles don't need, while the world knowledge they *do* need survives. **This is a hypothesis to validate by testing**, memory permitting (worker + advisor ≈ 7.4 GB resident; sequence on tight machines).
 
+**Roles map to capability *tiers*, never to hardcoded models.** The corp is model-agnostic: each role resolves to one of three tiers — `fast` / `balanced` / `intelligent` — and the engine turns a tier into a concrete model *per hardware*. Reasoning/judgment roles (CEO, manager, **architect**, and every advisory reviewer) are `intelligent`; the code-execution roles (engineer, division-head) are `balanced` — capable agentic implementation without spending the top tier's memory on every worker. The mapping lives in `packages/harness/src/corp/prompts.ts` as `ROLE_TIER` (+ `tierForRole(role)`), and it *only ever names a tier*. **Resolution path:** the engine reads a role's tier via `tierForRole`, then resolves that tier → a real catalog model + quant for this Mac's RAM via `resolveTierModels(hardware)` in `packages/inference` (the existing recommender, which returns `{ fast, balanced, intelligent }`). So on a <8 GB machine `intelligent` may resolve to a small model and on 64 GB to a 27B+, **with zero change to any corp code** — the live model-selection wiring is the memory-scheduler slice, not this one; the corp just publishes the label.
+
 ---
 
 ## 4. The corporation — roles
@@ -128,6 +130,30 @@ Projects are a **directory feature** (grouping conversations that share a workin
 - **Dependency DAG.** Managers build the queue ordered by dependency. Managers **queue, they don't start** — a contract runs only when its prerequisites clear. Independent work goes "off to the side" and runs whenever there's capacity. `C` needs `A,B` (independent) → `A ∥ B → C`. **Parallel is always optional**: if hardware can't run A and B at once, they serialize — correctness never depends on parallelism, only speed does.
 - **Memory scheduler.** Heavy non-LM specialists (trellis, comfy, a review model) cannot co-reside with the worker LM. They get **exclusive memory windows** — unload the LM, run the heavy job, reload. Asset generation for a dependency-root division naturally runs *up front*.
 - **`-np` throughput governor.** N = argmax over N of `N × per-slot-throughput(N)`, bounded by KV-cache fit (1 worker @ 50 tok/s vs 3 @ 30 → run 3). qwen3.5's hybrid attention (~4× less KV) lets far more workers fit. Overflow queues.
+
+---
+
+## Integration layer — the shared architecture pass
+
+The DAG in §6 assumes cross-division edges exist, but never said **how one gets created**. Real-model testing (qwen3.5-4b) exposed the gap: when every division's manager plans in isolation, the plan is a **federation of siloed backlogs** — *zero* cross-division dependencies (a manager can't see another division's contract ids to depend on), and **silent semantic duplication** (three divisions each build a start-menu at three *different* file paths, so the exact-string slot detector reports "clean"). Divisions plan against nothing shared, so nothing connects them.
+
+The fix is a shared **architecture, produced up front, that every division builds against.** It slots in between promotion and manager contract-writing:
+
+*promotion → **architect turn** → per-division manager turns (seeded) → resolve handles → sweep → DAG.*
+
+- **The architect** is a lead-architect role that runs *once*, before any contracts, on the **`intelligent` tier** (thinking-off like the manager — it emits structured JSON). Given the vision + the divisions, it defines the canonical **module map** — one clear region per division, no overlaps — and the key typed **interfaces** one division exposes for others to consume. It writes no code and no contracts; it defines the shared shape. (`corp/architect.ts`: `ARCHITECT_PROMPT`, `buildArchitectPrompt`, `parseArchitecture` — the parse reuses the tolerant salvage/repair ladder from `contracts.ts`.)
+
+- **The `Architecture` artifact** (on the org chart, `corp/org-chart.ts`) has two parts:
+  - `moduleMap: ModuleEntry[]` — `{ path, owner /*division*/, purpose }`: the canonical file/dir layout, one region per division. This is where duplication dies — there is one place each thing goes.
+  - `interfaces: InterfaceHandle[]` — `{ name, exposedBy /*division*/, path /*slot*/, summary, consumedBy /*divisions*/ }`: the cross-division seams. This is the artifact that makes a cross-division dependency **expressible**.
+
+- **Seeding the managers.** Each manager's contract-writing turn is seeded (`buildManagerContractPrompt(division, vision, architecture)`) with (a) the module-map region *this* division owns — target files there, do not invent a parallel structure — and (b) the interface handles, with the rule: when your work needs something another division produces, **express it by adding the interface handle NAME to that contract's `dependsOn`** (e.g. `dependsOn: ['iface:GameState']`) — do not reinvent it. The 6–12 granularity cap and terminator are unchanged.
+
+- **Resolving the handles at assembly.** A pure resolver (`corp/integrate.ts`, `resolveInterfaceHandles`) rewrites each `dependsOn` entry of the form `iface:<Name>` to the concrete **contract id in the exposing division** that produces that interface's `path` (the contract whose `slot` equals the interface path, else the first contract in that division). That rewrite is what yields **real cross-division edges.** Unresolvable handles (naming no known interface, or an exposing division that wrote no contracts) are left in place and dropped by the existing `sanitize` sweep as dangling ids (recorded). Then `buildOrgChartQueue` runs exactly as before — sweep → DAG → break cycles.
+
+The metric the whole layer exists to raise is the **cross-division edge count** (a siloed plan has zero). The slice-3 driver (`scripts/slice3-driver.mjs`) runs the full flow live (or `--dry-run` against a fixture) and reports `architectureModuleCount`, `interfaceCount`, `crossDivisionEdgeCount`, `perDivisionContractCounts`, `sweepRepairs`, `dagAcyclic`, and a `topoOrderPreview`.
+
+- **Token budgets are config robustness.** Generation-heavy role turns — the **manager** writing a whole division's contract JSON, and later the **engineers** — need an *adequate* token budget (~16k), well above the judgment turns' cap. A verbose division emits ~10–12 KB of contract JSON, and a too-tight `max_tokens` silently **truncates**: in one real qwen run the reply was cut off *before its first contract object even closed*, so `parseManagerContracts` recovered 0 and an **entire division vanished from the plan** with no error. This is the "robustness is external" principle (§0.6) applied to *config*: a cap that's too tight loses whole units of work invisibly, so the driver floors the manager turn at ~16k. (The parser is hardened in tandem — a first-object truncation now yields its one partial-but-complete contract rather than nothing — but the real fix is not to truncate.)
 
 ---
 

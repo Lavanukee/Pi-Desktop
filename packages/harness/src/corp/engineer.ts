@@ -50,6 +50,7 @@
 
 import type { Contract } from './org-chart.js';
 import { ENGINEERING_HANDBOOK, getRolePrompt } from './prompts.js';
+import type { RoleAgentCustomTool } from './role-agent-seam.js';
 
 /**
  * The engineer's system prompt: the predefined library base (disposition +
@@ -259,12 +260,84 @@ export function engineerToolAllowlist(declared: readonly string[]): string[] {
 }
 
 /**
- * The TOOL-WRITING addendum appended to the engineer's system prompt on the AGENT
- * path. It RETIRES the {@link ENGINEER_SYSTEM_PROMPT} "your entire reply is written
- * verbatim to your slot" instruction: on the agent path the files the engineer
- * WRITES are its submission, not its reply text.
+ * The AGENT-path engineer addendum — a SELF-CONTAINED module-builder framing
+ * (spec §7/§91). It carries NO corporation lore (no CEO/manager/division/peers/
+ * escalation): the model builds ONE module and knows nothing of the org around it.
+ * It RETIRES the {@link ENGINEER_SYSTEM_PROMPT} "your entire reply is your slot"
+ * rule (on the agent path the files it WRITES are its submission) and drives the
+ * reliable write flow: read only the named deps → WRITE the slot → one bash
+ * self-check → `submit_contract`. The submit tool is the §164 interceptor — the
+ * first call bounces with a self-review, the second finalizes — so the model gets
+ * exactly one nudge to improve before its work is final.
+ *
+ * WRITE-RELIABILITY (real-model defect: engineers over-EXPLORED a sparse SHARED
+ * tree and stopped WITHOUT writing). The workspace is now ISOLATED and seeded with
+ * ONLY the dependency files, so there is nothing to wander; the framing makes
+ * WRITING the slot the single first-class action and kills the aimless
+ * `ls`/`find`/`grep`.
  */
-export const AGENT_ENGINEER_ADDENDUM = `You have real tools. Read any dependency files you need with the read tool. Write the file for your contract's slot at its exact path using the write tool; you MAY create small supporting files within your own region. Run a quick \`bash\` typecheck/compile sanity check to verify before finishing. Do NOT print the file as text — the files you write ARE your submission. Stop when the slot file satisfies the contract.`;
+export const AGENT_ENGINEER_ADDENDUM = `You build ONE self-contained module. TWO tool calls are MANDATORY and are the ONLY way to finish — do them, do not just talk:
+  (1) WRITE: call the write tool to create the COMPLETE file at your contract's slot path. The file you WRITE is your deliverable — NEVER paste code as a chat message; a message is not a submission.
+  (2) SUBMIT: call submit_contract. Simply stopping does NOT count and fails the contract. Your FIRST submit_contract call gives you one chance to improve the file before it is final; then call submit_contract AGAIN to finalize.
+Do NOT explore the workspace (no ls / find / grep) — it holds ONLY your read-only dependency files, nothing to discover. Read ONLY the dependency files your contract names (skip reading entirely if it names none), then IMMEDIATELY call write to create your file, optionally run one quick \`bash\` check, then call submit_contract. Writing the file is the whole task — call write first, deliberate less.`;
+
+/**
+ * The AGENT engineer's SELF-CONTAINED system prompt (spec §7/§91). Unlike
+ * {@link ENGINEER_SYSTEM_PROMPT} (chat path, reply-IS-the-file) it carries NO
+ * corporation lore — no CEO/manager/division/peers/escalation. It is a clean
+ * module-builder identity + the engineering handbook + the import-scoping rule +
+ * {@link AGENT_ENGINEER_ADDENDUM} (the write flow + §164 submit-review). The run
+ * appends the division PURPOSE as neutral domain flavor, never org structure.
+ */
+export const AGENT_ENGINEER_SYSTEM_PROMPT = `You are a software engineer building ONE self-contained module. You work alone: there is no team and no wider codebase to explore — your entire world is the contract you are given and the dependency files it names.
+
+Good code is legible to a worker who does not share your context: typed boundaries, small single-responsibility units, intent-carrying names, and only the imports and tools your contract declares.
+
+Imports — this is a standalone module: import ONLY from (a) your contract's declared imports, (b) the dependency files it names (use the exact relative specifiers given), (c) genuine third-party packages you'd install (e.g. 'three'). Never import from unrelated internal packages like '@pi-desktop/*'.
+
+${AGENT_ENGINEER_ADDENDUM}`;
+
+/** The name of the engineer's §164 submit tool (a custom tool). It MUST also
+ * appear in the engineer's `tools` allowlist, or the pi runtime's allowlist
+ * (which gates custom tools by name) hides it from the model. */
+export const SUBMIT_CONTRACT_TOOL = 'submit_contract';
+
+/**
+ * Build the engineer's `submit_contract` tool — the §164 submission interceptor
+ * (spec §7). The returned neutral {@link RoleAgentCustomTool} carries `submitReview`
+ * with the contract's slot AND the model-free {@link buildSelfReviewPrompt}, so the
+ * app seam wires a STATEFUL `execute`: the FIRST call returns the self-review prompt
+ * (the bounce — improve, do not finalize), the SECOND verifies the slot file exists
+ * and finalizes. Pure + deterministic.
+ */
+export function buildSubmitContractTool(contract: Contract): RoleAgentCustomTool {
+  return {
+    name: SUBMIT_CONTRACT_TOOL,
+    description: `Call this when you believe your file at ${contract.slot} meets the contract. The FIRST time you call it you get one chance to re-read your contract and improve the file before it is final; call it again once you are satisfied to finalize.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        summary: {
+          type: 'string',
+          description:
+            'One line: the file you wrote and that it satisfies the contract (optional).',
+        },
+      },
+      required: [],
+    },
+    submitReview: { slot: contract.slot, reviewPrompt: buildSelfReviewPrompt(contract) },
+  };
+}
+
+/**
+ * The engineer's AGENT tool allowlist: the built-in toolset for its declared tools
+ * ({@link engineerToolAllowlist}) PLUS the {@link SUBMIT_CONTRACT_TOOL} name — the
+ * custom submit tool is only offered to the model when its name is in the allowlist
+ * (the pi allowlist gotcha). Pure + deterministic.
+ */
+export function engineerAgentToolAllowlist(declared: readonly string[]): string[] {
+  return [...engineerToolAllowlist(declared), SUBMIT_CONTRACT_TOOL];
+}
 
 /**
  * Build the engineer's USER turn for the AGENT path — the contract framing of
@@ -287,7 +360,7 @@ export function buildAgentEngineerPrompt(
     contract.available.imports.length > 0 ? contract.available.imports.join(', ') : '(none)';
 
   const lines: string[] = [
-    'Build the file for your contract by WRITING it into the workspace with your tools.',
+    `Your single required deliverable is the file at ${contract.slot}. WRITE it with the write tool. Do NOT explore the workspace (it may be empty — expected); do NOT print the file as text.`,
     '',
     'YOUR CONTRACT',
     `- Title: ${contract.title}`,
@@ -314,7 +387,7 @@ export function buildAgentEngineerPrompt(
   if (depContext.length > 0) {
     lines.push(
       '',
-      'DEPENDENCIES — already written to the workspace by prior contracts. READ these files with your `read` tool and integrate against their ACTUAL types/names/signatures:',
+      'DEPENDENCIES — already written to the workspace by prior contracts. Read ONLY these exact files with your `read` tool (nothing else in the workspace) and integrate against their ACTUAL types/names/signatures:',
     );
     for (const dep of depContext) {
       lines.push(
@@ -325,6 +398,11 @@ export function buildAgentEngineerPrompt(
         `Import from '${relativeImportSpecifier(contract.slot, dep.slot)}' (use exactly this specifier).`,
       );
     }
+  } else {
+    lines.push(
+      '',
+      'DEPENDENCIES: none — do not read or explore anything. Go straight to writing your slot file.',
+    );
   }
 
   const extra = extraNotes?.trim();
@@ -334,7 +412,7 @@ export function buildAgentEngineerPrompt(
 
   lines.push(
     '',
-    `Write the complete file to ${contract.slot}, then run a quick bash sanity check. Stop once the slot file satisfies the contract.`,
+    `Now WRITE the complete file to ${contract.slot} with the write tool, run ONE quick bash sanity check, then call submit_contract to finish — you are NOT finished until you call it, as simply stopping does not submit your work. On your first submit you get one chance to review and improve the file before it is final. Writing the slot file is the entire task — do not explore the workspace or print the file as text.`,
   );
   return lines.join('\n');
 }

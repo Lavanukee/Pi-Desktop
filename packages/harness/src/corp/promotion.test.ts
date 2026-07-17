@@ -15,6 +15,11 @@ describe('PROMOTION_SYSTEM_PROMPT', () => {
     expect(PROMOTION_SYSTEM_PROMPT).toContain(CREATE_PRODUCTION_HIERARCHY);
     expect(PROMOTION_SYSTEM_PROMPT).toContain('single focused pass');
   });
+
+  it('bounds the worker: stop the moment the promotion tool is called (no ramble)', () => {
+    expect(PROMOTION_SYSTEM_PROMPT).toContain('you are finished');
+    expect(PROMOTION_SYSTEM_PROMPT).toContain('output nothing after the tool call');
+  });
 });
 
 describe('CREATE_PRODUCTION_HIERARCHY_TOOL', () => {

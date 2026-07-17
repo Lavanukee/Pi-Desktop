@@ -1,11 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AGENT_ENGINEER_ADDENDUM,
+  AGENT_ENGINEER_SYSTEM_PROMPT,
+  buildAgentEngineerPrompt,
   buildEngineerPrompt,
   buildSelfReviewPrompt,
+  buildSubmitContractTool,
   type DependencyContext,
   ENGINEER_SYSTEM_PROMPT,
+  engineerAgentToolAllowlist,
   parseEngineerOutput,
   relativeImportSpecifier,
+  SUBMIT_CONTRACT_TOOL,
 } from './engineer.js';
 import type { Contract } from './org-chart.js';
 
@@ -126,6 +132,115 @@ describe('buildEngineerPrompt', () => {
     );
     expect(prompt).toContain('YOUR MODULE REGION');
     expect(prompt).toContain('src/ui/ (owner Frontend): the UI shell');
+  });
+});
+
+describe('AGENT_ENGINEER_ADDENDUM (self-contained module-builder framing)', () => {
+  it('drives WRITE → bash → submit_contract, forbids exploration, and describes the §164 review', () => {
+    const a = AGENT_ENGINEER_ADDENDUM;
+    // Writing is the single required action; the submit tool closes the turn.
+    expect(a).toContain('write tool');
+    expect(a).toContain('submit_contract');
+    // Kill the over-exploration defect.
+    expect(a.toLowerCase()).toContain('do not explore');
+    expect(a).toContain('ls / find / grep');
+    // Read ONLY declared deps; a quick bash self-check.
+    expect(a.toLowerCase()).toContain('read only');
+    expect(a).toContain('bash');
+    // The §164 self-review bounce: one chance to improve before it is final.
+    expect(a.toLowerCase()).toContain('improve the file before it is final');
+    // No corporation lore — the engineer builds ONE module, alone.
+    expect(a.toLowerCase()).toContain('one self-contained module');
+    for (const lore of ['CEO', 'manager', 'division', 'corporation']) expect(a).not.toContain(lore);
+  });
+});
+
+describe('AGENT_ENGINEER_SYSTEM_PROMPT (scoped, lore-free)', () => {
+  it('is self-contained: handbook + import rule + the write flow, and NO corp lore', () => {
+    const s = AGENT_ENGINEER_SYSTEM_PROMPT;
+    expect(s).toContain('one self-contained module'.replace('one', 'ONE'));
+    // The engineering handbook is carried.
+    expect(s).toContain('legible to a worker who does not share your context');
+    // Import scoping preserved (no host @pi-desktop/* imports).
+    expect(s).toContain('@pi-desktop/*');
+    // The write flow addendum is included.
+    expect(s).toContain('submit_contract');
+    // A model that does NOT know the corporation exists — no org structure lore.
+    for (const lore of ['CEO', 'manager', 'division', 'corporation', 'peer', 'escalat'])
+      expect(s).not.toContain(lore);
+  });
+});
+
+describe('buildAgentEngineerPrompt (agent path — drives to a write + submit)', () => {
+  it('opens on the slot as the single deliverable and keeps the exact-path marker', () => {
+    const prompt = buildAgentEngineerPrompt(contract(), []);
+    expect(prompt).toContain('single required deliverable is the file at src/AppShell.tsx');
+    // The exact-path line the dispatch relies on to identify the slot.
+    expect(prompt).toContain('write your file to THIS exact path): src/AppShell.tsx');
+    // Closes on WRITE → bash → submit_contract.
+    expect(prompt).toContain('submit_contract');
+    expect(prompt.toLowerCase()).toContain('do not explore');
+  });
+
+  it('tells an engineer with NO deps to read nothing and go straight to writing', () => {
+    const prompt = buildAgentEngineerPrompt(contract(), []);
+    expect(prompt).toContain('DEPENDENCIES: none');
+    expect(prompt.toLowerCase()).toContain('go straight to writing');
+  });
+
+  it('lists declared deps as read-only exact paths with the import specifier', () => {
+    const deps: DependencyContext[] = [
+      {
+        contractId: 'gp-1',
+        title: 'Game state store',
+        slot: 'src/game/state.ts',
+        output: 'GameState store (typed)',
+      },
+    ];
+    const prompt = buildAgentEngineerPrompt(contract({ dependsOn: ['gp-1'] }), deps);
+    expect(prompt).toContain('Read ONLY these exact files');
+    expect(prompt).toContain('Read file: src/game/state.ts');
+    expect(prompt).toContain("Import from './game/state'");
+  });
+
+  it('appends CEO revision notes when re-dispatched', () => {
+    const prompt = buildAgentEngineerPrompt(contract(), [], undefined, 'fix the null case');
+    expect(prompt).toContain('CEO REVISION NOTES');
+    expect(prompt).toContain('fix the null case');
+  });
+});
+
+describe('buildSubmitContractTool (§164 submission interceptor)', () => {
+  it('carries the slot + the model-free self-review prompt, and names the slot in the description', () => {
+    const c = contract({ slot: 'src/game/physics.ts' });
+    const tool = buildSubmitContractTool(c);
+    expect(tool.name).toBe(SUBMIT_CONTRACT_TOOL);
+    expect(tool.name).toBe('submit_contract');
+    // The §164 payload: the slot to verify + the self-review bounce prompt.
+    expect(tool.submitReview?.slot).toBe('src/game/physics.ts');
+    expect(tool.submitReview?.reviewPrompt).toBe(buildSelfReviewPrompt(c));
+    expect(tool.submitReview?.reviewPrompt).toContain(c.reviewRubric);
+    // The description frames the one-review-then-final flow.
+    expect(tool.description).toContain('src/game/physics.ts');
+    expect(tool.description.toLowerCase()).toContain('improve');
+    // A well-formed, arg-light JSON schema (no required args).
+    const params = tool.parameters as { type: string; required: string[] };
+    expect(params.type).toBe('object');
+    expect(params.required).toEqual([]);
+  });
+});
+
+describe('engineerAgentToolAllowlist (submit_contract + file tools)', () => {
+  it('adds submit_contract to the built-in engineer toolset (the allowlist gotcha)', () => {
+    const tools = engineerAgentToolAllowlist(['write']);
+    expect(tools).toContain('submit_contract');
+    // Keeps the file tools an engineer needs to read deps + write its slot + check.
+    expect(tools).toEqual(expect.arrayContaining(['read', 'write', 'edit', 'bash']));
+  });
+
+  it('honours a genuinely-declared subset but always keeps read/write + submit', () => {
+    const tools = engineerAgentToolAllowlist(['read', 'write', 'bash']);
+    expect(tools).toEqual(expect.arrayContaining(['read', 'write', 'bash', 'submit_contract']));
   });
 });
 

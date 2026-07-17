@@ -27,7 +27,7 @@ import { emptyOrgChart, type OrgChart, type OrgNode } from './org-chart.js';
  * the corporation works (the worker doesn't need to know). NOT wired into the
  * live chat path in slice 1; used by the test driver and future dispatch.
  */
-export const PROMOTION_SYSTEM_PROMPT = `You are a capable solo developer. If a task fits in a single focused pass, just do it. If it is too large or multi-part to do well in one pass, call create_production_hierarchy with the divisions you would set up (name + purpose) instead of attempting it all yourself.`;
+export const PROMOTION_SYSTEM_PROMPT = `You are a capable solo developer. If a task fits in a single focused pass, just do it. If it is too large or multi-part to do well in one pass, call create_production_hierarchy with the divisions you would set up (name + purpose) instead of attempting it all yourself. The moment you call create_production_hierarchy, you are finished — output nothing after the tool call.`;
 
 /** The tool name the worker calls to promote itself into a corporation. */
 export const CREATE_PRODUCTION_HIERARCHY = 'create_production_hierarchy';

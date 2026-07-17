@@ -57,11 +57,12 @@ import {
   type WrittenFile,
 } from './dispatch.js';
 import {
-  AGENT_ENGINEER_ADDENDUM,
+  AGENT_ENGINEER_SYSTEM_PROMPT,
   buildAgentEngineerPrompt,
   buildEngineerPrompt,
+  buildSubmitContractTool,
   ENGINEER_SYSTEM_PROMPT,
-  engineerToolAllowlist,
+  engineerAgentToolAllowlist,
   parseEngineerOutput,
 } from './engineer.js';
 import { buildManagerRescopePrompt, escalateContract, runBoundedEscalation } from './escalate.js';
@@ -78,13 +79,7 @@ import {
   PROMOTION_SYSTEM_PROMPT,
   parseCreateHierarchyArgs,
 } from './promotion.js';
-import {
-  composeNodePrompt,
-  ENGINEERING_HANDBOOK,
-  getPromptById,
-  getRolePrompt,
-  roleThinkingEnabled,
-} from './prompts.js';
+import { composeNodePrompt, getRolePrompt, roleThinkingEnabled } from './prompts.js';
 import { isBlankFile, MANAGER_EMPTY_RETRY_NUDGE, withRetryOnEmpty } from './retry.js';
 import { type ReviseOutcome, runBoundedRevise } from './revise.js';
 import {
@@ -348,12 +343,11 @@ const zeroTurns = (): Record<CorpTurnPurpose, number> => ({
 });
 
 /**
- * Map a division to a prompt-library archetype id so the engineer's composed
- * system prompt is DIVISION-SPECIFIC (frontend-dev / backend-dev good practice),
- * else the generic `engineer` base. Heuristic over the division name + purpose; a
- * misclassification only swaps which good-practice base seeds the prompt (the
- * typed contract still governs the work), so it is safe. Returns a valid
- * {@link getPromptById}-resolvable id.
+ * Map a division to a prompt-library archetype id (frontend-dev / backend-dev),
+ * else the generic `engineer` id, recorded as the engineer node's `promptId`
+ * metadata. Heuristic over the division name + purpose; a misclassification is
+ * harmless (the agent engineer's self-contained system prompt does not branch on
+ * it — the typed contract governs the work). Returns a valid prompt-library id.
  */
 function archetypeForDivision(division: HierarchyDivisionSpec): string {
   const hay = `${division.name} ${division.purpose}`.toLowerCase();
@@ -368,14 +362,14 @@ function archetypeForDivision(division: HierarchyDivisionSpec): string {
 
 /**
  * Materialize an engineer {@link OrgNode} per distinct contract owner so the
- * dispatcher composes each engineer's system prompt DIVISION-SPECIFICALLY. Today a
- * contract's `ownerNodeId` names a node that was never created, so the dispatcher
- * finds no node, `promptId` falls back to the generic `engineer`, and the
- * division's flavor is lost. Here each division's engineers get a node whose
- * `promptId` is the division archetype ({@link archetypeForDivision}) and whose
- * `promptExtension` is the division purpose — so the dispatcher's `composeNodePrompt`
- * resolves the right base + extension. Robust: a blank owner id, or one that
- * already exists (a permanent role), is skipped; a blank extension still composes.
+ * dispatcher can carry each engineer's DIVISION context. Today a contract's
+ * `ownerNodeId` names a node that was never created, so the dispatcher finds no
+ * node and the division's flavor is lost. Here each division's engineers get a node
+ * whose `promptId` is the division archetype ({@link archetypeForDivision},
+ * metadata) and whose `promptExtension` is the division purpose — the agent
+ * engineer appends that purpose as neutral DOMAIN flavor onto its self-contained
+ * system prompt. Robust: a blank owner id, or one that already exists (a permanent
+ * role), is skipped.
  */
 function buildEngineerNodes(
   base: OrgChart,
@@ -561,25 +555,49 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         throw new BudgetExhausted();
       }
       turnsByPurpose.engineer += 1;
-      const base = getPromptById(request.promptId ?? 'engineer') ?? getRolePrompt('engineer');
-      const systemPrompt = `${composeNodePrompt(base, request.promptExtension)}\n\n${ENGINEERING_HANDBOOK}\n\n${AGENT_ENGINEER_ADDENDUM}`;
+      // SELF-CONTAINED module-builder system prompt (spec §91): no CEO/manager/
+      // division/corporation lore — the engineer knows only its contract + deps.
+      // The division PURPOSE is appended as neutral domain flavor, not org structure.
+      const domain = request.promptExtension?.trim();
+      const systemPrompt =
+        domain !== undefined && domain !== ''
+          ? `${AGENT_ENGINEER_SYSTEM_PROMPT}\n\nThis module's domain: ${domain}`
+          : AGENT_ENGINEER_SYSTEM_PROMPT;
       const userPrompt = buildAgentEngineerPrompt(
         request.contract,
         request.depContext,
         request.architectureRegion,
         extraNotes,
       );
+      // ISOLATED WORKSPACE (spec §91/§119/§182 — default isolated): the seam runs
+      // the engineer in a fresh dir seeded with ONLY its dependency files (read-only
+      // context), then HARVESTS what it wrote back into the shared product tree. An
+      // explicit Contract.workspace==='shared' opts back into the shared tree. The
+      // architect's non-overlapping module map keeps the harvest merge conflict-free.
+      const isolated = request.contract.workspace !== 'shared';
+      const seed = request.depContext
+        .filter((d) => d.content !== undefined && d.content !== '')
+        .map((d) => ({ path: d.slot, content: d.content as string }));
       const out = await runRoleAgent({
         purpose: 'engineer',
         systemPrompt,
         userPrompt,
-        tools: engineerToolAllowlist(request.contract.available.tools),
-        cwd: options.workspace,
+        // The built-in toolset PLUS the `submit_contract` name — the pi allowlist
+        // gates custom tools by name, so the submit tool must be listed here or the
+        // model never sees it (the same gotcha as the worker).
+        tools: engineerAgentToolAllowlist(request.contract.available.tools),
+        // submit_contract IS the §164 submission interceptor: the FIRST call bounces
+        // with a self-review prompt (improve, do not finalize); the SECOND verifies
+        // the slot file exists in the isolated cwd and finalizes.
+        customTools: [buildSubmitContractTool(request.contract)],
+        cwd: options.workspace, // the SHARED product tree = harvest target
+        ...(isolated ? { isolation: { seed } } : {}),
         thinking: engineerThinking,
         samplingMode: samplingModeForPurpose('engineer'),
         maxTokens: genMaxTokens,
-        maxSteps: 24,
-        timeoutMs: 5 * 60 * 1000,
+        // NO per-agent caps: the engineer runs fully autonomously (any tools, as
+        // long as it wants) until it calls submit_contract, bounded only by the
+        // global RunBudget. The app runtime keeps only a per-CALL network abort.
       });
       return out.filesWritten.map((f) => ({ path: f.path, bytes: f.bytes }));
     };
@@ -624,8 +642,8 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         thinking: true,
         samplingMode: samplingModeForPurpose('worker'),
         maxTokens: baseMaxTokens,
-        maxSteps: 6,
-        timeoutMs: 3 * 60 * 1000,
+        // No per-agent caps — PROMOTION_SYSTEM_PROMPT tells the worker to stop the
+        // moment it calls the tool; the global RunBudget is the only net.
       });
       workerRes = { content: out.finalText, toolCalls: out.toolCalls };
     } else {
@@ -666,8 +684,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
           thinking: architectThinking,
           samplingMode: samplingModeForPurpose('architect'),
           maxTokens: genMaxTokens,
-          maxSteps: 6,
-          timeoutMs: 5 * 60 * 1000,
+          // No per-agent caps — the global RunBudget is the only net.
         });
         architectContent = out.finalText;
       } else {
@@ -713,8 +730,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
                 thinking: managerThinking,
                 samplingMode: samplingModeForPurpose('manager'),
                 maxTokens: genMaxTokens,
-                maxSteps: 6,
-                timeoutMs: 5 * 60 * 1000,
+                // No per-agent caps — the global RunBudget is the only net.
               });
               content = out.finalText;
             } else {
@@ -838,8 +854,8 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
           // Harnessed review: the CEO gets read + bash so it can INSPECT the
           // produced product and run a quick compile/typecheck sanity check — but
           // its context is still the vision + the finished artifact, never the
-          // build. Bounded tightly (maxSteps 10) — it reviews, it does not build.
-          // Thinking ON — the CEO's reasoning is the value.
+          // build. Thinking ON — the CEO's reasoning is the value. No per-agent
+          // caps; the global RunBudget is the only net.
           const out = await runRoleAgent({
             purpose,
             systemPrompt: getRolePrompt('ceo').prompt,
@@ -849,8 +865,6 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
             thinking: roleThinkingEnabled('ceo'),
             samplingMode: samplingModeForPurpose(purpose),
             maxTokens: baseMaxTokens,
-            maxSteps: 10,
-            timeoutMs: 5 * 60 * 1000,
           });
           return parseCeoDecision(out.finalText);
         }

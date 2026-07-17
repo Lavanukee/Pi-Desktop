@@ -406,10 +406,17 @@ export interface RoleAgentConfig {
   readonly samplingMode: SamplingMode;
   /** Optional per-turn output cap (sent as `max_tokens`/`max_completion_tokens`). */
   readonly maxTokens?: number;
-  /** Hard cap on tool calls before the step-cap blocks further ones (default 20). */
+  /** Optional hard cap on tool calls. UNSET → NO step cap: the role runs FULLY
+   * autonomously (any tools, as much as it wants) until IT submits, bounded only by
+   * the global RunBudget. The spec has no per-agent step cap; the seam never sets
+   * this. Kept only for deterministic unit tests. */
   readonly maxSteps?: number;
-  /** Wall-clock backstop before the run is aborted (default 9 minutes). */
-  readonly timeoutMs?: number;
+  /** Per-individual-CALL network-abort (spec §197): the max time ONE provider HTTP
+   * request may take to return a response before it is treated as a hung socket and
+   * aborted (degraded to empty). This is a network-hang guard on a SINGLE request —
+   * NOT a limit on how long or how much the agent works; a responding request clears
+   * it immediately, and the agent then streams/works freely. Default 10 minutes. */
+  readonly perCallTimeoutMs?: number;
 }
 
 /** The recorded terminal state of one role-agent run. */
@@ -434,15 +441,21 @@ export interface RoleAgentResult {
   readonly sentSampling: SamplingParams | undefined;
 }
 
-const DEFAULT_TIMEOUT_MS = 9 * 60 * 1000;
+const DEFAULT_PER_CALL_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
  * Run ONE corp role as a headless {@link AgentSession}: a `corpExt` extension
- * installs the owner's sampling on `before_provider_request`, strips prior
- * thinking on `context`, and step-caps `tool_call`; a timeout aborts as a final
- * backstop. Never throws for a misbehaving model — a runaway/erroring turn is
- * caught and the run returns a recorded {@link RoleAgentResult}. Disposes the
- * session (and its temp agent dir) in a `finally`.
+ * installs the owner's sampling on `before_provider_request`, strips prior thinking
+ * on `context`, and captures `tool_call`s. The role runs FULLY AUTONOMOUSLY — any
+ * tools, as much as it wants, for as long as it wants — until IT stops (its submit
+ * tool) or the GLOBAL RunBudget (owned by the harness) stops the run. There is NO
+ * per-agent step cap and NO per-agent total timeout. The ONLY per-run guard is a
+ * per-individual-CALL network abort: a single provider HTTP request that fails to
+ * return a response within `perCallTimeoutMs` is treated as a hung socket and the
+ * session is aborted (degraded to empty) — a network-hang guard on ONE request, not
+ * a limit on the agent's work (a responding request clears it, and generation then
+ * streams freely). Never throws for a misbehaving model — a caught turn returns a
+ * recorded {@link RoleAgentResult}. Disposes the session + its temp dir in `finally`.
  */
 export async function runRoleAgent(
   handle: CorpModelHandle,
@@ -452,13 +465,35 @@ export async function runRoleAgent(
 
   // --- per-run capture state (closed over by corpExt) ---
   const toolCalls: RoleAgentToolCall[] = [];
-  const stepCap = createStepCapCounter(config.maxSteps ?? 20);
+  // A step cap ONLY when one is explicitly requested (tests) — the seam never sets
+  // it, so a role normally runs uncapped until it submits / the global RunBudget.
+  const stepCap = config.maxSteps !== undefined ? createStepCapCounter(config.maxSteps) : undefined;
   let samplingCalls = 0;
   let sentSampling: SamplingParams | undefined;
 
+  // --- per-CALL network abort (the ONLY per-run guard) ---
+  const perCallMs = config.perCallTimeoutMs ?? DEFAULT_PER_CALL_TIMEOUT_MS;
+  let callTimedOut = false;
+  let callTimer: ReturnType<typeof setTimeout> | undefined;
+  // Set after the session exists; the timer's abort closes over this holder.
+  let sessionRef: { abort: () => void | Promise<void> } | undefined;
+  const clearCallTimer = (): void => {
+    if (callTimer !== undefined) {
+      clearTimeout(callTimer);
+      callTimer = undefined;
+    }
+  };
+
   const corpExt: ExtensionFactory = (pi: ExtensionAPI) => {
-    // Owner-tuned sampling, merged onto every outgoing request body.
+    // Owner-tuned sampling, merged onto every outgoing request body. This also arms
+    // the per-CALL watchdog: THIS request must return a response within perCallMs or
+    // it is a hung socket → abort. (A responding request clears the timer below.)
     pi.on('before_provider_request', (e: BeforeProviderRequestEvent) => {
+      clearCallTimer();
+      callTimer = setTimeout(() => {
+        callTimedOut = true;
+        void sessionRef?.abort();
+      }, perCallMs);
       const payload = applySamplingMode(e.payload, config.samplingMode);
       if (payload !== null && typeof payload === 'object') {
         const p = payload as Record<string, unknown>;
@@ -472,16 +507,23 @@ export async function runRoleAgent(
       return payload;
     });
 
+    // The provider responded → this request is not a hung socket; disarm the guard
+    // so the (legitimately long) response stream + the agent's work run unbounded.
+    pi.on('after_provider_response', () => {
+      clearCallTimer();
+      return undefined;
+    });
+
     // Preserve-thinking OFF: drop prior thinking blocks from outgoing context.
     pi.on('context', (e: ContextEvent) => {
       const { messages } = stripPriorThinking(e.messages as unknown as readonly StripMessage[]);
       return { messages: messages as unknown as ContextEvent['messages'] };
     });
 
-    // Capture calls + enforce the hard step-cap.
+    // Capture calls + enforce the step-cap ONLY when one was explicitly requested.
     pi.on('tool_call', (e: ToolCallEvent) => {
       toolCalls.push({ name: e.toolName, arguments: e.input });
-      return stepCap.charge();
+      return stepCap?.charge();
     });
   };
 
@@ -514,20 +556,15 @@ export async function runRoleAgent(
     settingsManager: settings,
   });
 
-  // --- run under a timeout backstop ---
-  let timedOut = false;
+  // --- run: fully autonomous, guarded ONLY by the per-CALL network abort ---
+  sessionRef = session; // arm the watchdog's abort target
   let promptError = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    void session.abort();
-  }, config.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-
   try {
     await session.prompt(config.userPrompt);
   } catch {
     promptError = true;
   } finally {
-    clearTimeout(timer);
+    clearCallTimer();
   }
 
   // --- gather results before disposing ---
@@ -565,7 +602,13 @@ export async function runRoleAgent(
     stats,
     turns: countAssistantTurns(messages),
     maxTurnOutputTokens: maxTurnOutputTokens(messages),
-    terminatedReason: deriveTerminatedReason({ timedOut, stepCapHit: stepCap.hit, promptError }),
+    // `timeout` here means a per-CALL network abort fired (a hung request), NOT a
+    // per-agent work limit — those no longer exist.
+    terminatedReason: deriveTerminatedReason({
+      timedOut: callTimedOut,
+      stepCapHit: stepCap?.hit ?? false,
+      promptError,
+    }),
     samplingCalls,
     sentSampling,
   };

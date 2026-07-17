@@ -389,7 +389,8 @@ describe('runCorp — every role runs harnessed through the role-agent seam', ()
     expect(chatCalls).toBe(0); // no role ran bare on the chat seam
 
     // Each role ran through the seam exactly as expected (agent engineer path runs
-    // ONE turn per contract — no self-review bounce).
+    // ONE dispatch turn per contract — the §164 self-review bounce lives INSIDE that
+    // one agent run, in the submit_contract tool, not as a second dispatch turn).
     const purposes = mock.calls.map((c) => c.purpose);
     expect(purposes.filter((p) => p === 'worker')).toHaveLength(1);
     expect(purposes.filter((p) => p === 'architect')).toHaveLength(1);
@@ -423,11 +424,35 @@ describe('runCorp — every role runs harnessed through the role-agent seam', ()
     expect(ceo?.userPrompt).toContain('Build a thing'); // the original task (the standard)
     expect(ceo?.userPrompt).not.toContain('export const value'); // NOT the build/file body
 
-    // Engineer system prompt is DIVISION-SPECIFIC (materialized node → composed
-    // archetype base + the division purpose extension).
+    // Engineer system prompt is SELF-CONTAINED (spec §91): a module-builder framing
+    // with the division PURPOSE as neutral domain flavor — and NO corporation lore.
     const engineer = mock.calls.find((c) => c.purpose === 'engineer');
-    expect(engineer?.systemPrompt).toContain('frontend engineer division'); // archetype base
-    expect(engineer?.systemPrompt).toContain('the UI'); // division purpose extension
+    expect(engineer?.systemPrompt).toContain('ONE self-contained module'); // module-builder base
+    expect(engineer?.systemPrompt).toContain("This module's domain: the UI"); // domain flavor
+    for (const lore of ['CEO', 'manager', 'division', 'corporation'])
+      expect(engineer?.systemPrompt).not.toContain(lore);
+
+    // WRITE-RELIABILITY: every engineer runs in an ISOLATED workspace (spec §91,
+    // isolated is the default) and gets `submit_contract` as a custom tool whose
+    // name is ALSO in the allowlist (the gotcha) — the §164 submission interceptor,
+    // carrying its slot + self-review prompt — plus the file tools to write.
+    expect(engineer?.isolation).toBeDefined(); // isolated per engineer (default)
+    expect(engineer?.tools).toContain('submit_contract');
+    expect(engineer?.tools).toEqual(expect.arrayContaining(['read', 'write', 'bash']));
+    const submit = engineer?.customTools?.find((t) => t.name === 'submit_contract');
+    expect(submit).toBeDefined();
+    expect(submit?.submitReview?.slot).toBe(
+      engineer?.userPrompt.match(/THIS exact path\):\s*(\S+)/)?.[1],
+    );
+    expect(submit?.submitReview?.reviewPrompt).toBeTruthy();
+    // NO per-agent caps: the seam carries neither a step cap nor a per-agent
+    // timeout — the field for each was removed. The engineer runs until it submits
+    // / the global RunBudget; only a per-CALL network abort lives in the app runtime.
+    expect('maxSteps' in (engineer ?? {})).toBe(false);
+    expect('timeoutMs' in (engineer ?? {})).toBe(false);
+    // The prompt drives to a WRITE + submit, and forbids aimless exploration.
+    expect(engineer?.userPrompt).toContain('submit_contract');
+    expect(engineer?.userPrompt.toLowerCase()).toContain('do not explore');
   });
 
   it('falls back to the chat seam for every role when no role-agent is injected', async () => {

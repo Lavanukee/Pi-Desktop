@@ -47,7 +47,7 @@ const TASK =
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const repoRoot = path.resolve(appRoot, '../..');
-const ROLE_AGENT_TS = path.join(appRoot, 'electron', 'corp', 'role-agent.ts');
+const SEAM_IMPL_TS = path.join(appRoot, 'electron', 'corp', 'role-agent-seam-impl.ts');
 const CORP_INDEX_TS = path.join(repoRoot, 'packages', 'harness', 'src', 'corp', 'index.ts');
 
 const RUN_DIR = mkdtempSync(path.join(os.tmpdir(), 'corp-eng-agent-'));
@@ -59,13 +59,16 @@ function log(...a) {
   console.error(`[${new Date().toISOString()}] ${a.join(' ')}`);
 }
 
-// The corp TS sources use `.js` specifiers that resolve to `.ts`; retry .js → .ts.
+// The corp TS sources use `.js` specifiers that resolve to `.ts`, and the seam impl
+// imports `./role-agent` extensionless; retry `.js`→`.ts` and add `.ts`.
 const tsResolveHook = `
 export async function resolve(specifier, context, next) {
-  if (/^(\\.\\.?\\/|\\/)/.test(specifier) && specifier.endsWith('.js')) {
+  if (/^(\\.\\.?\\/|\\/)/.test(specifier)) {
     try { return await next(specifier, context); }
     catch (err) {
-      if (err && err.code === 'ERR_MODULE_NOT_FOUND') return next(specifier.slice(0, -3) + '.ts', context);
+      if (!err || err.code !== 'ERR_MODULE_NOT_FOUND') throw err;
+      if (specifier.endsWith('.js')) { try { return await next(specifier.slice(0, -3) + '.ts', context); } catch {} }
+      try { return await next(specifier + '.ts', context); } catch {}
       throw err;
     }
   }
@@ -225,34 +228,19 @@ const corpChat = async (req) => {
 // ── main ──────────────────────────────────────────────────────────────────────
 const roleRuns = []; // per-role-agent-run stats (worker/architect/manager/engineer/ceo)
 
-// Convert a harness-neutral custom-tool spec (the worker's promotion tool) into a
-// pi ToolDefinition — mirrors role-agent-seam-impl.ts's converter. The CALL is the
-// signal (captured via the runtime tool_call event); the execute is a no-op ack.
-function toToolDefinition(tool) {
-  return {
-    name: tool.name,
-    label: tool.name,
-    description: tool.description,
-    parameters: tool.parameters,
-    execute: async () => ({
-      content: [{ type: 'text', text: `${tool.name} recorded.` }],
-      details: undefined,
-    }),
-  };
-}
-
 async function main() {
   startServer();
   await waitForHealth();
 
   const corp = await import(pathToFileURL(CORP_INDEX_TS).href);
   const { runCorp, makeNodeWorkspaceFs, makeNodeWorkspaceReadFs } = corp;
-  const ra = await import(pathToFileURL(ROLE_AGENT_TS).href);
-  const { createCorpModelProvider, runRoleAgent } = ra;
+  const seamMod = await import(pathToFileURL(SEAM_IMPL_TS).href);
+  const { createRunRoleAgent } = seamMod;
 
-  // The APP's runRoleAgent seam impl (adapting role-agent.ts), instrumented to
-  // record per-contract stats.
-  const handle = createCorpModelProvider({ baseUrl: BASE_URL, model: MODEL_ID });
+  // THE PRODUCTION SEAM — the exact closure runCorp injects for every role (engineer
+  // isolation + seed/harvest, the §164 submit_contract bounce, and NO per-agent
+  // caps all come from it). Wrapped to record per-role stats.
+  const seam = createRunRoleAgent({ baseUrl: BASE_URL, model: MODEL_ID });
   const slotOf = (userPrompt) => {
     const m = /THIS exact path\):\s*(\S+)/.exec(userPrompt);
     return m ? m[1] : '(unknown)';
@@ -269,21 +257,7 @@ async function main() {
   };
   const runRoleAgentSeam = async (input) => {
     const t0 = Date.now();
-    const result = await runRoleAgent(handle, {
-      purpose: input.purpose,
-      systemPrompt: input.systemPrompt,
-      userPrompt: input.userPrompt,
-      tools: [...input.tools],
-      cwd: input.cwd,
-      thinking: input.thinking,
-      samplingMode: input.samplingMode,
-      ...(input.customTools?.length
-        ? { customTools: input.customTools.map(toToolDefinition) }
-        : {}),
-      ...(input.maxTokens !== undefined ? { maxTokens: input.maxTokens } : {}),
-      ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
-      ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
-    });
+    const result = await seam(input); // the production seam (isolation + §164 + no caps)
     const wallMs = Date.now() - t0;
     const toolNames = [...new Set(result.toolCalls.map((c) => c.name))];
     roleRuns.push({
@@ -296,16 +270,10 @@ async function main() {
       toolNames,
       readDeps: toolNames.includes('read'),
       selfChecked: toolNames.includes('bash'),
+      submitReview: result.submitReview,
       filesWritten: result.filesWritten.map((f) => ({ path: f.path, bytes: f.bytes })),
     });
-    return {
-      filesWritten: result.filesWritten.map((f) => ({ path: f.path, bytes: f.bytes })),
-      finalText: result.finalText,
-      toolCalls: result.toolCalls.map((c) => ({ name: c.name, arguments: c.arguments })),
-      terminatedReason: result.terminatedReason,
-      maxTurnOutputTokens: result.maxTurnOutputTokens,
-      turns: result.turns,
-    };
+    return result;
   };
 
   log(`driving corp — task="Three.js game", limit=${LIMIT}, workspace=${WORKSPACE}`);

@@ -89,6 +89,45 @@ export interface RoleAgentCustomTool {
   readonly description: string;
   /** JSON Schema for the arguments object (serialized to the LLM tool schema). */
   readonly parameters: Record<string, unknown>;
+  /**
+   * THE §164 SUBMISSION INTERCEPTOR (the engineer's `submit_contract`). When set,
+   * the app impl wires a STATEFUL `execute` that implements the spec's self-review
+   * bounce over TWO calls within one agent run:
+   *  - FIRST call → returns {@link reviewPrompt} as the tool RESULT (the bounce)
+   *    and does NOT finalize; the agent keeps working and improves.
+   *  - SECOND call → verifies the {@link slot} file exists in the run's cwd (errors
+   *    back to the model if missing — "write it before submitting"), then finalizes.
+   * Left unset (e.g. the promotion tool) the call is a plain no-op ack — the call
+   * itself is the signal, surfaced in {@link RoleAgentRunOutput.toolCalls}.
+   */
+  readonly submitReview?: {
+    /** The contract's slot path (verified to exist on the finalizing call). */
+    readonly slot: string;
+    /** The model-free self-review prompt returned on the first (bounce) call. */
+    readonly reviewPrompt: string;
+  };
+}
+
+/** One dependency file to SEED into an engineer's isolated workspace (spec §91):
+ * the read-only produced output of a contract this engineer builds against, placed
+ * at its exact relative path so the engineer reads real code, not a description. */
+export interface RoleAgentSeedFile {
+  /** The dependency's slot (relative path within the workspace). */
+  readonly path: string;
+  /** Its produced file content (written read-only into the isolated dir). */
+  readonly content: string;
+}
+
+/**
+ * ISOLATED-WORKSPACE directive (spec §91/§119/§182). When present on a role-agent
+ * run, the app seam creates a FRESH temp dir, seeds it with {@link seed} (the
+ * engineer's dependency files, read-only, at their exact paths), runs the agent
+ * there (its `cwd`), and after the run HARVESTS the files the engineer WROTE (the
+ * diff against the seed) back into the run's `cwd` (the shared product tree). Absent
+ * → the agent runs directly in `cwd` (Contract.workspace==='shared').
+ */
+export interface RoleAgentIsolation {
+  readonly seed: readonly RoleAgentSeedFile[];
 }
 
 /**
@@ -108,18 +147,24 @@ export interface RoleAgentRunInput {
   /** Extra custom tools to register for this run (e.g. the worker's promotion
    * tool). Their invocations surface in {@link RoleAgentRunOutput.toolCalls}. */
   readonly customTools?: readonly RoleAgentCustomTool[];
-  /** The per-run workspace root (produced files land beneath here). */
+  /** The per-run workspace root. For an isolated engineer this is the SHARED
+   * product tree (the harvest target); otherwise the agent runs directly here. */
   readonly cwd: string;
+  /** When set, run this engineer in a fresh ISOLATED workspace seeded with its
+   * dependency files, harvesting its writes back into {@link cwd} (spec §91). */
+  readonly isolation?: RoleAgentIsolation;
   /** Whether the role runs with model "thinking" on. */
   readonly thinking: boolean;
   /** Which owner-tuned sampling profile to send every turn. */
   readonly samplingMode: SamplingMode;
   /** Optional per-turn output cap. */
   readonly maxTokens?: number;
-  /** Hard cap on tool calls before the run's step-cap blocks further ones. */
-  readonly maxSteps?: number;
-  /** Wall-clock backstop before the run is aborted. */
-  readonly timeoutMs?: number;
+  // NOTE: there is deliberately NO per-agent step cap and NO per-agent total
+  // timeout on this seam. A role runs FULLY AUTONOMOUSLY — any tools, as much as it
+  // wants, for as long as it wants — until IT submits (its submit tool) or the
+  // GLOBAL RunBudget (budget.ts, the whole-run wall-clock) stops the run. The app
+  // runtime keeps only a per-individual-CALL network abort (a hung HTTP request
+  // degraded to empty), which is a network guard on ONE request, not a work limit.
 }
 
 /** The recorded terminal state of one role-agent run (never throws — a runaway /
@@ -137,6 +182,17 @@ export interface RoleAgentRunOutput {
   readonly maxTurnOutputTokens?: number;
   /** How many assistant turns ran, when reported. */
   readonly turns?: number;
+  /** The §164 self-review signal (present only for a `submit_contract` run): did
+   * the review bounce fire, did the engineer finalize, and did the slot file CHANGE
+   * between the draft (at first submit) and the final (at finalize)? The quality
+   * measurement the interceptor exists to produce. */
+  readonly submitReview?: {
+    readonly bounced: boolean;
+    readonly finalized: boolean;
+    readonly changed: boolean;
+    readonly draftBytes: number;
+    readonly finalBytes: number;
+  };
 }
 
 /**

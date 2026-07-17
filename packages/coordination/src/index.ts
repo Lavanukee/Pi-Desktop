@@ -139,6 +139,40 @@ export interface OrgEdgeView {
 }
 
 /**
+ * Neutral view of one module-map region (spec "Integration layer"): a canonical
+ * directory/file region ONE division owns. The situation room's file map draws
+ * these as the project skeleton and lights files up inside them as
+ * {@link Activity} `file-touch` events land. A neutral projection of the corp
+ * engine's richer `ModuleEntry` (`@pi-desktop/harness` corp/org-chart) — any
+ * engine that has a module layout can produce it.
+ */
+export interface ModuleRegionView {
+  /** Canonical path, normally a directory namespace ("src/engine/"). */
+  readonly path: string;
+  /** The owning division, by display name ("Core Engine"). */
+  readonly owner: string;
+  /** What lives here — the division's charter for this path. */
+  readonly purpose?: string;
+}
+
+/**
+ * Neutral view of a cross-division interface seam (spec "Integration layer"):
+ * a typed interface one division exposes for others to consume. The situation
+ * room uses these to show WHERE divisions connect (the cross-division edges of
+ * the plan). Projection of the corp engine's `InterfaceHandle`.
+ */
+export interface InterfaceSeamView {
+  /** Handle name consumers reference ("GameState"). */
+  readonly name: string;
+  /** The exposing division, by display name. */
+  readonly exposedBy: string;
+  /** The slot (file/module) where the interface is produced. */
+  readonly path: string;
+  /** Consuming divisions, by display name. */
+  readonly consumedBy: readonly string[];
+}
+
+/**
  * The neutral, renderable snapshot of the corporation (spec §5/§11). ANY engine
  * can produce this; our corp engine maps its on-disk `OrgChart` into it.
  * Returned synchronously by {@link CoordinationEngine.getOrgChart} for a
@@ -148,6 +182,15 @@ export interface OrgChartView {
   readonly taskId: string;
   readonly nodes: readonly OrgNodeView[];
   readonly edges: readonly OrgEdgeView[];
+  /**
+   * The shared architecture's module map, once an architect (or equivalent)
+   * has laid one out (spec "Integration layer"). Optional and additive: a solo
+   * or pre-planning chart has none, and engines without a module concept simply
+   * omit it. The situation room's file map renders from this.
+   */
+  readonly modules?: readonly ModuleRegionView[];
+  /** The cross-division interface seams, when the engine knows them. */
+  readonly interfaces?: readonly InterfaceSeamView[];
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +217,16 @@ export type EngineStatus =
   | 'aborted'
   | 'error';
 
+/**
+ * Lifecycle of a `file-touch` activity, so a UI can light a file up WHILE it is
+ * being worked on (spec §11 live file map):
+ * - `start` — the worker opened the file / began writing it.
+ * - `progress` — a chunk landed (carries incremental line deltas).
+ * - `end` — the worker finished with the file (final deltas).
+ * Absent = a single completed touch (back-compatible with older engines).
+ */
+export type FileTouchPhase = 'start' | 'progress' | 'end';
+
 /** A single line of visible work (spec §1 `activity`; §11 file-map + feed). */
 export interface Activity {
   /** The node doing the work, if attributable (situation room highlights it). */
@@ -183,8 +236,34 @@ export interface Activity {
   readonly summary: string;
   /** File path when the activity touched one (lights up the file map). */
   readonly path?: string;
+  /** `file-touch` lifecycle; absent = a single completed touch. */
+  readonly phase?: FileTouchPhase;
+  /** Lines added in this touch/chunk, when the engine knows (live +N readout). */
+  readonly linesAdded?: number;
+  /** Lines removed in this touch/chunk, when the engine knows (live −N readout). */
+  readonly linesRemoved?: number;
   /** Epoch millis. */
   readonly timestamp: number;
+}
+
+/**
+ * A live "exercising the work" session (spec §11): the run is browsing docs,
+ * running its own build, or executing a test pass — the moments the user should
+ * SEE. The situation room slides in a prominent activity panel while one is
+ * `running` and settles it away on a terminal status. Neutral and additive:
+ * engines without such sessions simply never emit them.
+ */
+export interface ExerciseSessionView {
+  readonly id: string;
+  /** What kind of exercise: browsing, a test pass, or running the build. */
+  readonly kind: 'browse' | 'test' | 'run';
+  /** Headline the panel shows ("Playing the build"). */
+  readonly title: string;
+  readonly status: 'running' | 'passed' | 'failed' | 'ended';
+  /** Sub-line detail ("checking the game loop", "214 checks · all passing"). */
+  readonly detail?: string;
+  /** The node exercising the work, if attributable. */
+  readonly nodeId?: string;
 }
 
 /** A produced artifact — the "peek at what we have so far" material (spec §11). */
@@ -268,6 +347,53 @@ export interface TaskResult {
 }
 
 // ---------------------------------------------------------------------------
+// Worker transcript (the situation-room click-through, spec §11)
+// ---------------------------------------------------------------------------
+
+/**
+ * The stylized leading "briefing" bubble for a worker's stream: what this node
+ * was ASKED to do. A neutral projection any engine can produce; the situation
+ * room's left-pane renders it as a task briefing (eyebrow + title + goal +
+ * deliverables), visibly distinct from a normal user input.
+ */
+export interface WorkerBriefingView {
+  readonly workerName: string;
+  /** Plain-language role line ("Lead", "Area lead · Frontend", "Builder"). */
+  readonly roleLine: string;
+  /** The task headline ("Deliver the Frontend area"). */
+  readonly title: string;
+  /** Owned path/area, when the node has one ("src/ui/"). */
+  readonly area?: string;
+  readonly goal: string;
+  readonly deliverables: readonly string[];
+}
+
+/** One line of a worker's transcript, revealed at `at` ms into the run. A
+ * neutral projection of the same {@link Activity} the room already folds — the
+ * click-through renders these as messages / tool-step chains. */
+export interface WorkerTranscriptLine {
+  readonly at: number;
+  readonly kind: Activity['kind'];
+  readonly text: string;
+  /** File path when the line touched one (rendered as a file step). */
+  readonly path?: string;
+}
+
+/**
+ * A node's REAL captured turn stream (spec §11 click-through): the briefing plus
+ * the ordered activity attributed to that node. Returned by an engine on demand
+ * (e.g. over IPC) when the user clicks a node in the situation room; the app
+ * routes it into the left chat area. Distinct from the live {@link Activity}
+ * feed, which shows the whole run — this is one node's slice.
+ */
+export interface WorkerTranscriptView {
+  readonly nodeId: string;
+  readonly role: OrgNodeRole;
+  readonly briefing: WorkerBriefingView;
+  readonly lines: readonly WorkerTranscriptLine[];
+}
+
+// ---------------------------------------------------------------------------
 // The event union (spec §1: status, org-chart, activity, artifact, checklist,
 // eta, permission, done)
 // ---------------------------------------------------------------------------
@@ -311,6 +437,16 @@ export interface PermissionEvent {
   readonly request: PermissionRequest;
 }
 
+/**
+ * An exercise-session update (spec §11 prominent activity panel). Emitted when
+ * the run starts browsing / testing / running its own work, and again when the
+ * session reaches a terminal status. Additive to the spec §1 set.
+ */
+export interface ExerciseEvent {
+  readonly type: 'exercise';
+  readonly session: ExerciseSessionView;
+}
+
 /** Terminal event — always the last event on a stream. */
 export interface DoneEvent {
   readonly type: 'done';
@@ -329,9 +465,10 @@ export type CoordinationEvent =
   | ChecklistEvent
   | EtaEvent
   | PermissionEvent
+  | ExerciseEvent
   | DoneEvent;
 
-/** Every event `type` discriminant, in the spec §1 order. Renderer-safe. */
+/** Every event `type` discriminant, in the spec §1 order (+ additive ones). */
 export const COORDINATION_EVENT_TYPES = [
   'status',
   'org-chart',
@@ -340,6 +477,7 @@ export const COORDINATION_EVENT_TYPES = [
   'checklist',
   'eta',
   'permission',
+  'exercise',
   'done',
 ] as const;
 

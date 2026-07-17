@@ -54,6 +54,58 @@ export {
 } from './registry.ts';
 // Sanitization trust boundaries
 export { sanitizeHtmlStatic, sanitizeSvg } from './sanitize.ts';
+export type { ExercisePanelProps } from './situation/exercise-panel.tsx';
+export { ExercisePanel } from './situation/exercise-panel.tsx';
+// Situation room (spec §11) — the live view of a coordination run
+export type {
+  MockRunHandle,
+  MockRunOptions,
+  TimedCoordinationEvent,
+} from './situation/mock-run.ts';
+export {
+  buildMockCorpRunScript,
+  MOCK_TASK_ID,
+  mockPeekHtml,
+  mockRunDurationMs,
+  startMockCorpRun,
+} from './situation/mock-run.ts';
+export type { DivisionProgress, SituationOrgChartProps } from './situation/org-chart-panel.tsx';
+export { SituationOrgChart } from './situation/org-chart-panel.tsx';
+export { replayableEvents } from './situation/replay-stream.ts';
+export type {
+  ChecklistGroup,
+  ContractProgress,
+  FileTouchView,
+  ModuleRegionFill,
+  SituationState,
+} from './situation/situation-model.ts';
+export {
+  contractProgress,
+  crossGroupWaits,
+  fillModuleRegions,
+  formatEta,
+  groupChecklist,
+  initialSituation,
+  reduceSituation,
+} from './situation/situation-model.ts';
+export type {
+  SituationRoomHostProps,
+  SituationRoomSurfaceProps,
+  SituationUserMode,
+} from './situation/situation-surface.tsx';
+export {
+  latestArtifact,
+  SituationRoomHost,
+  SituationRoomSurface,
+} from './situation/situation-surface.tsx';
+export type { TaskBriefingBubbleProps } from './situation/task-briefing.tsx';
+export { TaskBriefingBubble } from './situation/task-briefing.tsx';
+export type {
+  WorkerBriefing,
+  WorkerStream,
+  WorkerStreamEntry,
+} from './situation/worker-streams.ts';
+export { mockWorkerStreamFor } from './situation/worker-streams.ts';
 // Surfaces
 export type { BrowserSurfaceProps } from './surfaces/browser-surface.tsx';
 export { BrowserSurface } from './surfaces/browser-surface.tsx';

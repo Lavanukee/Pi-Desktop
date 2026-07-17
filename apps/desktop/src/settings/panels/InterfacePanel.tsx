@@ -21,6 +21,7 @@ export function InterfacePanel({
   const sidebarScale = useSettingsStore((s) => s.settings.sidebarScale);
   const menuScale = useSettingsStore((s) => s.settings.menuScale);
   const flavor = useSettingsStore((s) => s.settings.theme.flavor);
+  const productionHarness = useSettingsStore((s) => s.settings.experimentalProductionHarness);
   const update = useSettingsStore((s) => s.update);
 
   return (
@@ -151,6 +152,27 @@ export function InterfacePanel({
             </div>
           </SettingRow>
         ) : null}
+      </SettingSection>
+
+      <SettingSection
+        title="Experimental"
+        description="Early features that are still being built. May be rough — off by default."
+      >
+        <SettingRow
+          label="Coordination harness"
+          hint="Route a prompt through the multi-agent coordination harness and watch it work in the situation room, instead of a normal single-agent chat. Experimental."
+        >
+          <SegmentedControl
+            aria-label="Coordination harness"
+            data-testid="settings-production-harness"
+            value={productionHarness ? 'on' : 'off'}
+            onValueChange={(v) => void update({ experimentalProductionHarness: v === 'on' })}
+            options={[
+              { value: 'off', label: 'Off' },
+              { value: 'on', label: 'On' },
+            ]}
+          />
+        </SettingRow>
       </SettingSection>
     </div>
   );

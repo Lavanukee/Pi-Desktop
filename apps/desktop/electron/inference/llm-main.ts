@@ -57,6 +57,40 @@ export function getInferenceUtility(): { baseUrl: string; model: string } | null
   return { baseUrl: lastStatus.baseUrl, model: lastStatus.model?.id ?? 'utility' };
 }
 
+/**
+ * Ensure a local model server is up for the coordination harness, returning its
+ * OpenAI-compatible endpoint (or null if one could not be started). When a server
+ * is already running it is reused as-is; otherwise the recommended sub-12B Q8 qwen
+ * (the utility/fast pick — `qwen3.5-4b-mtp` `Q8_0`) is started via the SAME
+ * supervisor path the Model Manager uses. Context size is auto-capped to 16384 by
+ * the supervisor (CONTEXT_CAP), so the corp turns run with `-c 16384` without a
+ * knob here. Best-effort: a failed start resolves to whatever `getInferenceUtility`
+ * reports, so callers degrade gracefully (never throws).
+ */
+export async function ensureCorpInferenceServer(): Promise<{
+  baseUrl: string;
+  model: string;
+} | null> {
+  const existing = getInferenceUtility();
+  if (existing !== null) return existing;
+  try {
+    const res = await request<{ success: boolean; baseUrl?: string; error?: string }>({
+      type: 'start-server',
+      modelId: 'qwen3.5-4b-mtp',
+      quant: 'Q8_0',
+      launchMode: 'fast-text',
+    });
+    if (res.success && res.baseUrl !== undefined && res.baseUrl.length > 0) {
+      return { baseUrl: res.baseUrl, model: 'qwen3.5-4b-mtp' };
+    }
+  } catch (err) {
+    log.warn('ensureCorpInferenceServer: start-server failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return getInferenceUtility();
+}
+
 function broadcast<K extends keyof AppEventMap & string>(
   channel: K,
   payload: AppEventMap[K],

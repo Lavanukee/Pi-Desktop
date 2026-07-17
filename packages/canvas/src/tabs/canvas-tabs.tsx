@@ -1,3 +1,4 @@
+import type { ArtifactRef, OrgNodeView } from '@pi-desktop/coordination';
 import {
   IconButton,
   IconCheck,
@@ -19,6 +20,7 @@ import {
 import { type CanvasConfig, CanvasConfigContext, defaultCanvasConfig } from '../context.ts';
 import type { ArtifactContent } from '../model.ts';
 import { defaultSurfaceRegistry, type SurfaceRegistry } from '../registry.ts';
+import { SituationRoomHost } from '../situation/situation-surface.tsx';
 import { BrowserSurface } from '../surfaces/browser-surface.tsx';
 import { CodeSurface, rawSourceContent } from '../surfaces/code-surface.tsx';
 import { FileSurface } from '../surfaces/file-surface.tsx';
@@ -110,6 +112,11 @@ export interface CanvasTabsHandlers {
   onMediaRefresh?: (tabId: string) => void;
   onMediaExpand?: (tabId: string) => void;
   onSubagentSelect?: (tabId: string, subagentId: string) => void;
+  /** Situation room — "peek at what we have so far" (open the artifact). */
+  onSituationPeek?: (tabId: string, artifact: ArtifactRef) => void;
+  /** Situation room — a worker node was clicked (route its live stream into
+   * the chat area, with the stylized task-briefing bubble leading it). */
+  onSituationNodeSelect?: (tabId: string, node: OrgNodeView) => void;
   /** File split button — primary "Open" segment (open with the tab's default app). */
   onOpen?: (tabId: string) => void;
   /** File split button — a specific app chosen from the "Open with" dropdown. */
@@ -612,6 +619,24 @@ function DefaultSurface({
         <SubagentSurface
           subagents={tab.subagents ?? []}
           onSelect={(subagentId) => handlers?.onSubagentSelect?.(id, subagentId)}
+        />
+      );
+    case 'situation':
+      // The situation room (spec §11): folds the tab's live CoordinationEvent
+      // stream into the war-room view. "Peek" routes to the app, which opens
+      // the artifact in its own tab.
+      return (
+        <SituationRoomHost
+          events={tab.situationEvents}
+          taskId={tab.situationTaskId}
+          userMode={tab.situationUserMode}
+          selectedNodeId={tab.situationSelectedNodeId}
+          onPeek={(artifact) => handlers?.onSituationPeek?.(id, artifact)}
+          onSelectNode={
+            handlers?.onSituationNodeSelect
+              ? (node) => handlers.onSituationNodeSelect?.(id, node)
+              : undefined
+          }
         />
       );
     case 'filetree':

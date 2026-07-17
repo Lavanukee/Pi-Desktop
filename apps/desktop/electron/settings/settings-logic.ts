@@ -72,6 +72,7 @@ export const DEFAULT_SETTINGS: DesktopSettings = {
   favoriteModels: [],
   modelEffortDefaults: {},
   hfToken: '',
+  experimentalProductionHarness: false,
 };
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
@@ -157,6 +158,10 @@ export function clampSettings(raw: unknown): DesktopSettings {
     favoriteModels: strArray(o.favoriteModels),
     modelEffortDefaults: effortMap(o.modelEffortDefaults),
     hfToken: str(o.hfToken, d.hfToken),
+    experimentalProductionHarness: bool(
+      o.experimentalProductionHarness,
+      d.experimentalProductionHarness,
+    ),
   };
 }
 

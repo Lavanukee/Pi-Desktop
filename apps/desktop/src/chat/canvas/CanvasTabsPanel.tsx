@@ -14,10 +14,13 @@
  * destroyed when the tab leaves the controller. This component only presents the
  * container + exposes the controller to the E2E probes.
  */
+
 import { type CanvasTab, CanvasTabs, type NewTabKind, useCanvasTabs } from '@pi-desktop/canvas';
+import type { ArtifactRef, OrgNodeView } from '@pi-desktop/coordination';
 import { IconButton, IconClose } from '@pi-desktop/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useCanvasStore } from '../../state/canvas-store';
+import { useCorpStore } from '../../state/corp-store';
 import { usePiStore } from '../../state/pi-slice';
 import { artifactToPayload } from './artifacts';
 import { useBrowserAgent } from './browser-agent';
@@ -211,6 +214,39 @@ export function CanvasTabsPanel() {
     [controller, setCanvasOpen],
   );
 
+  // EXPERIMENTAL production harness: clicking a worker node in the situation room
+  // routes its REAL stream into the LEFT chat area (via the corp store, read by
+  // ChatApp) and highlights the node in the room. Inert unless a corp run is on.
+  const onSituationNodeSelect = useCallback(
+    (tabId: string, node: OrgNodeView) => {
+      useCorpStore.getState().selectNode(node);
+      controller.updateTab(tabId, {
+        situationSelectedNodeId: useCorpStore.getState().selectedNode?.id,
+      });
+    },
+    [controller],
+  );
+
+  // "Peek at the build": open the current best artifact in its own tab.
+  const onSituationPeek = useCallback(
+    (_tabId: string, artifact: ArtifactRef) => {
+      controller.upsertTab(`situation-peek:${artifact.id}`, {
+        kind: 'html',
+        title: 'Build snapshot',
+        artifact: {
+          id: `peek-${artifact.id}`,
+          title: artifact.title,
+          content: {
+            kind: 'html',
+            text: `<!doctype html><meta charset="utf-8"><body style="font:14px/1.6 system-ui;padding:24px;color:#ddd;background:#1a1a1a"><h2>${artifact.title}</h2><p>A snapshot of the build so far.</p></body>`,
+          },
+        },
+      });
+      setCanvasOpen(true);
+    },
+    [controller, setCanvasOpen],
+  );
+
   // Render nothing only once the closed rail has finished sliding out AND has no
   // tabs to preserve (`exiting` holds it through the exit transition above).
   // When the user opens it with no tabs (top-right toggle), the rail shows
@@ -224,7 +260,7 @@ export function CanvasTabsPanel() {
   // surface with copyable content (round-5 #20/#21).
   const surface = (
     <CanvasTabs
-      handlers={{ ...surfaceHandlers, onSubagentSelect }}
+      handlers={{ ...surfaceHandlers, onSubagentSelect, onSituationNodeSelect, onSituationPeek }}
       onNewTab={onNewTab}
       onMenuOpenChange={setOverlayOpen}
       onPopout={popOut}

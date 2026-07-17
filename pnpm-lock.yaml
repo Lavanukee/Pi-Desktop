@@ -38,6 +38,9 @@ importers:
       '@pi-desktop/canvas':
         specifier: workspace:*
         version: link:../../packages/canvas
+      '@pi-desktop/coordination':
+        specifier: workspace:*
+        version: link:../../packages/coordination
       '@pi-desktop/engine':
         specifier: workspace:*
         version: link:../../packages/engine
@@ -233,6 +236,9 @@ importers:
       '@codemirror/view':
         specifier: ^6.43.6
         version: 6.43.6
+      '@pi-desktop/coordination':
+        specifier: workspace:*
+        version: link:../coordination
       '@pi-desktop/ui':
         specifier: workspace:*
         version: link:../ui
@@ -300,6 +306,9 @@ importers:
       '@pi-desktop/engine':
         specifier: workspace:*
         version: link:../engine
+      '@pi-desktop/harness':
+        specifier: workspace:*
+        version: link:../harness
       typescript:
         specifier: ^6.0.3
         version: 6.0.3

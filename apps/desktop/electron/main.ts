@@ -25,6 +25,7 @@ import {
   registerCanvasSchemesAsPrivileged,
 } from './canvas/canvas-main';
 import { registerConnectorsIpc } from './connectors/connectors-main';
+import { registerCorpIpc } from './corp/corp-main';
 import { fsHandlers } from './fs-handlers';
 import { registerGenCatalogIpc } from './gen/gen-manager';
 import { registerImportIpc } from './import/import-main';
@@ -183,7 +184,11 @@ function createMainWindow(): BrowserWindow {
     events.send(win.webContents, 'app:boot', { sentAt: Date.now() });
   });
 
-  loadRenderer(win);
+  // Dev override for the experimental production coordination harness: with
+  // `PI_DESKTOP_CORP=1` set, surface a `?corp=1` query param the renderer reads
+  // (settings-store `productionHarnessEnabled`) so a dev launch drives the corp
+  // flow without toggling the persisted setting. No env ⇒ no param ⇒ default app.
+  loadRenderer(win, process.env.PI_DESKTOP_CORP === '1' ? { corp: '1' } : undefined);
 
   win.on('closed', () => {
     if (mainWindow === win) mainWindow = null;
@@ -371,6 +376,12 @@ function registerAppIpc(): void {
   // Skills: bundled catalog + install/remove into ~/.pi/agent/skills (the dir
   // the pi engine auto-discovers skills from); copies from app resources.
   registerSkillsIpc(ipcMain, allowSender);
+
+  // EXPERIMENTAL coordination harness (CorpEngine): runs the harness `runCorp`
+  // behind the local model server and streams situation-room events to the
+  // window. Channels are always registered but only reached when the
+  // experimental flag / `PI_DESKTOP_CORP=1` gate is on (sender-gated internally).
+  registerCorpIpc();
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();

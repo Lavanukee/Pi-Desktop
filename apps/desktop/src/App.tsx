@@ -4,6 +4,7 @@ import type { AppInfo } from '../electron/ipc-contract';
 import { ChatApp } from './chat/ChatApp';
 import { CanvasPopoutView } from './chat/canvas/CanvasPopoutView';
 import { ConnectorsScreen } from './connectors/ConnectorsScreen';
+import { SituationDemoView } from './demo/SituationDemoView';
 import { GalleryView } from './gallery/GalleryView';
 import { FirstRunTips, resetFirstRunTips } from './onboarding/FirstRunTips';
 import { OnboardingWizard } from './onboarding/OnboardingWizard';
@@ -15,6 +16,9 @@ type GateStatus = 'loading' | 'onboarding' | 'ready';
 
 /** The standalone canvas pop-out window loads with `?canvasPopout=1`. */
 const IS_CANVAS_POPOUT = new URLSearchParams(window.location.search).has('canvasPopout');
+
+/** Dev/demo route: the situation room driven by the scripted mock corp run. */
+const IS_SITUATION_DEMO = new URLSearchParams(window.location.search).has('situationDemo');
 
 /**
  * Hidden probe hooks: keep the boot-event / theme / app-info testids the
@@ -80,7 +84,7 @@ export function App() {
   // has since changed via the top-bar toggle / settings panel (which write
   // settings.json, not onboarding.json). The canvas pop-out never onboards.
   useEffect(() => {
-    if (IS_CANVAS_POPOUT) return;
+    if (IS_CANVAS_POPOUT || IS_SITUATION_DEMO) return;
     let cancelled = false;
     window.piDesktop
       .invoke('onboarding:get-state', undefined)
@@ -103,6 +107,16 @@ export function App() {
       <TooltipProvider delayDuration={200}>
         <div className="h-full">
           <CanvasPopoutView />
+        </div>
+      </TooltipProvider>
+    );
+  }
+
+  if (IS_SITUATION_DEMO) {
+    return (
+      <TooltipProvider delayDuration={200}>
+        <div className="h-full">
+          <SituationDemoView />
         </div>
       </TooltipProvider>
     );

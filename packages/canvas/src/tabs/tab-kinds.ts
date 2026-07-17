@@ -6,6 +6,7 @@ import {
   IconFolder,
   IconMarkup,
   IconPdf,
+  IconSituation,
   IconSubagent,
 } from '../tab-icons.tsx';
 import type { CanvasTabKind } from './tab-model.ts';
@@ -54,6 +55,15 @@ export const CANVAS_TAB_KINDS: Record<CanvasTabKind, CanvasTabKindMeta> = {
     kind: 'subagent',
     label: 'Subagents',
     icon: IconSubagent,
+    live: true,
+    opensInCanvas: true,
+  },
+  // The situation room (spec §11): the live view of a coordination run. App-fed
+  // like a live surface — the tab carries the run's event stream.
+  situation: {
+    kind: 'situation',
+    label: 'Situation room',
+    icon: IconSituation,
     live: true,
     opensInCanvas: true,
   },

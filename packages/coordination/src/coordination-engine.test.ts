@@ -24,7 +24,7 @@ function terminal(events: CoordinationEvent[]): DoneEvent {
 }
 
 describe('CoordinationEvent DTOs', () => {
-  it('lists exactly the spec §1 event types, in order', () => {
+  it('lists exactly the spec §1 event types (+ additive ones), in order', () => {
     expect([...COORDINATION_EVENT_TYPES]).toEqual([
       'status',
       'org-chart',
@@ -33,6 +33,7 @@ describe('CoordinationEvent DTOs', () => {
       'checklist',
       'eta',
       'permission',
+      'exercise',
       'done',
     ]);
   });

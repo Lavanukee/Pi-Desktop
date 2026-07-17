@@ -29,6 +29,7 @@ const base: DesktopSettings = {
   favoriteModels: [],
   modelEffortDefaults: {},
   hfToken: '',
+  experimentalProductionHarness: false,
 };
 
 describe('autoEffortForTier', () => {

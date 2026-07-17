@@ -7,7 +7,8 @@
   "description": "The swappable CoordinationEngine boundary (harness-architecture spec section 1): the stable typed interface + plain DTOs the UI depends on, plus the SoloEngine adapter skeleton over the current pi flow.",
   "exports": {
     ".": "./src/index.ts",
-    "./solo": "./src/solo/index.ts"
+    "./solo": "./src/solo/index.ts",
+    "./corp": "./src/corp/index.ts"
   },
   "scripts": {
     "lint": "biome check .",
@@ -17,6 +18,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.2",
     "@pi-desktop/engine": "workspace:*",
+    "@pi-desktop/harness": "workspace:*",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   }

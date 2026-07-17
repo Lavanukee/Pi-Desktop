@@ -28,6 +28,7 @@ import {
   steerPrompt,
 } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
+import { productionHarnessEnabled } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
 import { ComposerBar } from './ComposerBar';
 import { ComposerFooter } from './ComposerFooter';
@@ -184,9 +185,14 @@ function AttachmentPreview({
 export function ChatComposer({
   piModels,
   onOpenModels,
+  onCorpSubmit,
 }: {
   piModels: Model[];
   onOpenModels?: () => void;
+  /** EXPERIMENTAL: when the production-harness flag is on, a submitted prompt is
+   * routed here (the CorpEngine + situation room) instead of the normal pi turn.
+   * Absent / flag off ⇒ the composer behaves exactly as it does today. */
+  onCorpSubmit?: (echo: string, imageUris: string[]) => void;
 }) {
   const flavor = useThemeStore((s) => s.flavor);
   const isStreaming = usePiStore((s) => s.agent.isStreaming);
@@ -435,6 +441,15 @@ export function ChatComposer({
       fileBlocks.length > 0 ? (raw.length > 0 ? `${fileBlocks}\n\n${raw}` : fileBlocks) : raw;
     const echo =
       raw.length > 0 ? raw : textFiles.length > 0 ? textFiles.map((a) => a.name).join(', ') : raw;
+
+    // EXPERIMENTAL production harness (flag / env on): drive the CorpEngine +
+    // situation room instead of the normal pi turn. Bash mode (`!`) still runs
+    // locally. When off, this branch is never taken and the app is byte-for-byte
+    // its current self.
+    if (onCorpSubmit !== undefined && productionHarnessEnabled()) {
+      onCorpSubmit(echo, imageUris);
+      return;
+    }
 
     if (usePiStore.getState().agent.isStreaming) await steerPrompt(echo, agentMessage);
     else await sendPrompt(echo, imageUris, agentMessage, pinnedClass ?? undefined);

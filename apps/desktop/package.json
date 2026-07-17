@@ -22,6 +22,7 @@
     "@pi-desktop/afm": "workspace:*",
     "@pi-desktop/browser-use": "workspace:*",
     "@pi-desktop/canvas": "workspace:*",
+    "@pi-desktop/coordination": "workspace:*",
     "@pi-desktop/engine": "workspace:*",
     "@pi-desktop/gen-service": "workspace:*",
     "@pi-desktop/gen-tools": "workspace:*",

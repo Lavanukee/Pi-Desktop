@@ -199,3 +199,15 @@ export function IconFolders(props: IconProps) {
     </Icon>
   );
 }
+
+/** Org chart — the situation room tab (a root node fanning out to reports). */
+export function IconSituation(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect x="6" y="2" width="4" height="3.4" rx="1" />
+      <rect x="2" y="10.6" width="4" height="3.4" rx="1" />
+      <rect x="10" y="10.6" width="4" height="3.4" rx="1" />
+      <path d="M8 5.4v2.3M8 7.7H4v2.9M8 7.7h4v2.9" />
+    </Icon>
+  );
+}

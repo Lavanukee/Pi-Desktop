@@ -126,6 +126,14 @@ export interface DesktopSettings {
   /** Hugging Face access token for gated/private repos (search + gated
    * downloads). Sensitive — persisted to the 0600 settings.json. Empty = unset. */
   hfToken: string;
+  /**
+   * EXPERIMENTAL (default FALSE): route a submitted prompt through the
+   * production coordination harness (the CorpEngine → situation room) instead of
+   * the normal solo pi chat turn. Off = the app is byte-for-byte its current
+   * self. Also force-enabled for a dev launch via `PI_DESKTOP_CORP=1` (surfaced
+   * to the renderer as a `?corp=1` query param). Gates ALL corp wiring.
+   */
+  experimentalProductionHarness: boolean;
 }
 
 /** A partial patch merged over the current document (one level deep on the
@@ -151,6 +159,8 @@ export interface DesktopSettingsPatch {
   /** Full replacement map (renderer read-modify-writes the whole record). */
   modelEffortDefaults?: Record<string, EffortLevel>;
   hfToken?: string;
+  /** Experimental production-harness toggle (default FALSE). */
+  experimentalProductionHarness?: boolean;
 }
 
 /** Icon-stroke bounds — mirrors the IconStrokeControl slider range. */

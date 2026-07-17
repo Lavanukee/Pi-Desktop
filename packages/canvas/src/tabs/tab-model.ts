@@ -1,12 +1,13 @@
+import type { CoordinationEvent } from '@pi-desktop/coordination';
 import type { ReactNode } from 'react';
 import type { Artifact } from '../model.ts';
 
 /**
  * The kinds a canvas tab can host. Each maps to a surface component (browser |
- * terminal | subagent are LIVE surfaces the app wires to native content; the
- * rest render from an {@link Artifact}). The union is closed on purpose here —
- * the tab bar renders a per-kind type icon — but a new kind is a one-line add
- * across this union + `CANVAS_TAB_KINDS`.
+ * terminal | subagent | situation are LIVE surfaces the app wires to native
+ * content or a live stream; the rest render from an {@link Artifact}). The
+ * union is closed on purpose here — the tab bar renders a per-kind type icon —
+ * but a new kind is a one-line add across this union + `CANVAS_TAB_KINDS`.
  */
 export type CanvasTabKind =
   | 'browser'
@@ -19,6 +20,7 @@ export type CanvasTabKind =
   | 'video'
   | 'pdf'
   | 'subagent'
+  | 'situation'
   | 'markdown'
   | 'code';
 
@@ -125,6 +127,20 @@ export interface CanvasTab {
 
   // subagent surface state
   subagents?: SubagentItem[];
+
+  // situation-room surface state: the task's live CoordinationEvent stream
+  // (`TaskHandle.events` from the engine bridge, or the scripted mock). The
+  // surface folds it into the renderable situation state itself. Tab switches
+  // unmount the surface, so give it a RE-ITERABLE stream — wrap a single-pass
+  // engine handle in `replayableEvents()` so a remount replays history.
+  situationEvents?: AsyncIterable<CoordinationEvent>;
+  /** Task id the situation events belong to (resets the fold when it changes). */
+  situationTaskId?: string;
+  /** Experience level (round-12 userMode): `power` shows raw file paths +
+   * line deltas in the room; `user` (default) gets the calm, path-free view. */
+  situationUserMode?: 'user' | 'power';
+  /** The worker whose live stream the app is showing (highlights its node). */
+  situationSelectedNodeId?: string;
 
   /** Free-form per-surface data the core never reads. */
   data?: Record<string, unknown>;

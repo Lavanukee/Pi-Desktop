@@ -43,6 +43,7 @@ const DEFAULTS: DesktopSettings = {
   favoriteModels: [],
   modelEffortDefaults: {},
   hfToken: '',
+  experimentalProductionHarness: false,
 };
 
 function prefersDark(): boolean {
@@ -234,6 +235,51 @@ export function applySavedHarnessConfig(): void {
   if (patch.permissionMode !== undefined || patch.effort !== undefined) {
     void applyHarnessConfig(patch);
   }
+}
+
+/**
+ * Experimental production-harness flag (default FALSE). The single gate for ALL
+ * corp wiring: when this returns false the app is byte-for-byte its current self
+ * (normal solo pi chat). Follows the userMode API pattern — a plain selector, a
+ * reactive hook, and a persist setter.
+ */
+export const selectExperimentalProductionHarness = (state: SettingsStoreState): boolean =>
+  state.settings.experimentalProductionHarness;
+
+/** Reactive hook: the persisted experimental production-harness setting. */
+export function useExperimentalProductionHarness(): boolean {
+  return useSettingsStore(selectExperimentalProductionHarness);
+}
+
+/** Persist the experimental production-harness flag. */
+export async function setExperimentalProductionHarness(enabled: boolean): Promise<void> {
+  await useSettingsStore.getState().update({ experimentalProductionHarness: enabled });
+}
+
+/**
+ * The DEV env override (`PI_DESKTOP_CORP=1`), surfaced by main.ts as a `?corp=1`
+ * query param on the main window. Resolved lazily + cached (a launch-time flag),
+ * and guarded so importing this module in a non-DOM (test) context is safe.
+ */
+let corpEnvOverride: boolean | undefined;
+function corpEnvOverrideEnabled(): boolean {
+  if (corpEnvOverride === undefined) {
+    corpEnvOverride =
+      typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('corp');
+  }
+  return corpEnvOverride;
+}
+
+/**
+ * The EFFECTIVE production-harness state: the persisted setting OR the dev env
+ * override. This is the value the chat trigger consults to decide whether a
+ * submitted prompt drives the CorpEngine instead of the normal pi turn. Imperative
+ * (reads the current store state) so a submit handler can call it inline.
+ */
+export function productionHarnessEnabled(): boolean {
+  return (
+    corpEnvOverrideEnabled() || useSettingsStore.getState().settings.experimentalProductionHarness
+  );
 }
 
 /** Star / unstar a model id, persisting the whole favorites list. */

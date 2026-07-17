@@ -13,22 +13,26 @@ import {
   CanvasProvider,
   createCanvasController,
   IconPanelRight,
+  replayableEvents,
 } from '@pi-desktop/canvas';
 import type { Model } from '@pi-desktop/engine';
 import { IconButton, IconClose, MainSurface, TopBar } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
 import type { SettingsSection } from '../settings/SettingsView';
 import { registerCanvasControllerReset, useCanvasStore } from '../state/canvas-store';
+import { startCorpTask } from '../state/corp-connect';
+import { useCorpStore } from '../state/corp-store';
 import { getModels, setSessionName, startPi } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { useProjectStore } from '../state/project-store';
-import { applySavedHarnessConfig } from '../state/settings-store';
+import { applySavedHarnessConfig, useUserMode } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
 import { preloadFastestModel } from './auto-router';
 import { ChatComposer } from './ChatComposer';
 import { ChatThread } from './ChatThread';
 import { ChatTitle } from './ChatTitle';
 import { CanvasTabsPanel } from './canvas/CanvasTabsPanel';
+import { CorpWorkerPane } from './corp/CorpWorkerPane';
 import { useHarnessTitleSync } from './harness-title';
 import { SessionSidebar, type SidebarStub } from './SessionSidebar';
 import { ToastHost } from './ToastHost';
@@ -107,6 +111,12 @@ export function ChatApp({
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [truncatedNote, setTruncatedNote] = useState(false);
   const [stub, setStub] = useState<SidebarStub | null>(null);
+  // EXPERIMENTAL production harness: the selected situation-room worker node (its
+  // REAL stream shows in the left area) + the active corp task id. Both null and
+  // inert unless the flag routes a prompt through the CorpEngine.
+  const corpNode = useCorpStore((s) => s.selectedNode);
+  const corpTaskId = useCorpStore((s) => s.taskId);
+  const userMode = useUserMode();
 
   // Load the persisted project (working folder) first, then spawn the window's
   // pi session rooted at it (so the initial session adopts the active project's
@@ -180,6 +190,29 @@ export function ChatApp({
     });
   }, []);
 
+  // EXPERIMENTAL production harness: a submitted prompt (flag on) starts a
+  // CorpEngine task and opens the situation-room canvas tab streaming its live
+  // events (replayable so a tab-switch remount rebuilds instantly). The prompt is
+  // still echoed into the thread so the left area shows it until a worker is
+  // clicked. Gated by ChatComposer (only calls this when the flag is on).
+  const onCorpSubmit = (echo: string, imageUris: string[]) => {
+    usePiStore.getState().appendUser(echo, imageUris);
+    void startCorpTask(echo, imageUris.length > 0 ? { images: imageUris } : undefined).then(
+      (handle) => {
+        useCorpStore.getState().setTask(handle.taskId);
+        const controller = canvasController.current;
+        controller?.upsertTab(`situation:${handle.taskId}`, {
+          kind: 'situation',
+          title: 'Situation room',
+          situationEvents: replayableEvents(handle.events),
+          situationTaskId: handle.taskId,
+          situationUserMode: userMode,
+        });
+        useCanvasStore.getState().setCanvasOpen(true);
+      },
+    );
+  };
+
   const title = windowTitle ?? (messageCount > 0 ? 'Chat' : 'New chat');
   const empty = messageCount === 0;
 
@@ -191,6 +224,7 @@ export function ChatApp({
       key="composer"
       piModels={piModels}
       onOpenModels={() => onOpenSettings('models')}
+      onCorpSubmit={onCorpSubmit}
     />
   );
 
@@ -249,6 +283,12 @@ export function ChatApp({
                 <p className="text-body text-text-muted">
                   {flavor === 'claude' ? 'How can I help you today?' : 'What are we building?'}
                 </p>
+              </div>
+            ) : corpNode !== null ? (
+              // EXPERIMENTAL: a clicked situation-room worker routes its REAL
+              // stream into the left area (the spec §11 click-through).
+              <div key="lead" className="flex min-h-0 flex-1 flex-col">
+                <CorpWorkerPane node={corpNode} taskId={corpTaskId} />
               </div>
             ) : (
               <div key="lead" className="flex min-h-0 flex-1 flex-col">

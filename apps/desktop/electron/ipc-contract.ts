@@ -21,6 +21,7 @@ import {
   CONNECTORS_INVOKE_CHANNELS,
   type ConnectorsInvokeMap,
 } from './connectors/connectors-contract';
+import { CORP_INVOKE_CHANNELS, type CorpEventMap, type CorpInvokeMap } from './corp/corp-contract';
 import { GEN_CATALOG_INVOKE_CHANNELS, type GenCatalogInvokeMap } from './gen/gen-ipc-contract';
 import { IMPORT_INVOKE_CHANNELS, type ImportInvokeMap } from './import/import-contract';
 import { PI_INVOKE_CHANNELS, type PiEventMap, type PiInvokeMap } from './pi/contract';
@@ -465,6 +466,7 @@ export type AppInvokeMap = CoreInvokeMap &
   BrowserInvokeMap &
   BrowserAgentInvokeMap &
   PtyInvokeMap &
+  CorpInvokeMap &
   PiInvokeMap;
 
 /** Runtime allowlist for the preload's invoke passthrough: only channels in
@@ -487,6 +489,7 @@ export const APP_INVOKE_CHANNELS = [
   ...BROWSER_INVOKE_CHANNELS,
   ...BROWSER_AGENT_INVOKE_CHANNELS,
   ...PTY_INVOKE_CHANNELS,
+  ...CORP_INVOKE_CHANNELS,
   ...PI_INVOKE_CHANNELS,
 ] as const satisfies readonly (keyof AppInvokeMap)[];
 
@@ -517,6 +520,7 @@ export type AppEventMap = {
 } & BrowserEventMap &
   BrowserAgentEventMap &
   PtyEventMap &
+  CorpEventMap &
   PiEventMap;
 
 /** Shape of `window.piDesktop` as exposed by the preload script. */

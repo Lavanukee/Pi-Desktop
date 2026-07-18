@@ -1,33 +1,27 @@
 /**
- * The left-chat-area worker stream (spec §11 click-through): when a node in
- * the situation room is clicked, THIS pane shows that worker's live stream —
- * rendered like a normal thread (messages + tool/thinking chains through the
- * app's ActivityChain), EXCEPT the leading "user message" is the worker's
- * task, shown as the stylized {@link TaskBriefingBubble}.
+ * The left-chat-area worker stream for the DEMO route (spec §11 click-through):
+ * the followed/pinned node's live stream, rendered through the SAME
+ * {@link WorkerPaneShell}/feed the real corp pane uses — the streaming text
+ * tail with its typing caret, the live "Thinking…" block, named tool rows, the
+ * current-action tail, and the context ring all render exactly as a live run
+ * renders them.
  *
- * Demo wiring: streams come from the canvas mock (`mockWorkerStreamFor`) and
- * replay on a local clock. A real engine bridge swaps the mock for the
- * worker's actual transcript — the rendering below stays as-is.
+ * Demo wiring: the canvas mock synthesizes a real `WorkerTranscriptView` at
+ * each clock tick (`mockWorkerTranscriptAt`) — the pane just ticks. A real
+ * engine bridge swaps the mock for `corp:worker-transcript` (CorpWorkerPane).
  */
 
-import {
-  mockWorkerStreamFor,
-  TaskBriefingBubble,
-  type WorkerStreamEntry,
-} from '@pi-desktop/canvas';
+import { mockWorkerStreamEndMs, mockWorkerTranscriptAt } from '@pi-desktop/canvas';
 import type { OrgNodeView } from '@pi-desktop/coordination';
-import {
-  ActivityChain,
-  type ActivityStepData,
-  MessageRow,
-  ShimmerText,
-  Thread,
-} from '@pi-desktop/ui';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { WorkerPaneShell } from '../chat/corp/CorpWorkerPane';
 
-/** Wall-clock replay position, ticked coarsely (250ms) to reveal entries.
- * The pane is keyed by node id, so a new worker remounts with a fresh clock. */
-function useReplayClock(lastAt: number): number {
+/** Clock tick for the mock's streaming reveal (fast enough to read as live). */
+const TICK_MS = 120;
+
+/** Wall-clock replay position; the pane is keyed by node id, so a new worker
+ * remounts with a fresh clock. Stops ticking once the script has fully played. */
+function useReplayClock(endMs: number): number {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     setElapsed(0);
@@ -35,30 +29,11 @@ function useReplayClock(lastAt: number): number {
     const timer = setInterval(() => {
       const now = Date.now() - started;
       setElapsed(now);
-      if (now > lastAt + 500) clearInterval(timer);
-    }, 250);
+      if (now > endMs + 500) clearInterval(timer);
+    }, TICK_MS);
     return () => clearInterval(timer);
-  }, [lastAt]);
+  }, [endMs]);
   return elapsed;
-}
-
-/** Group revealed entries: consecutive steps merge into one activity chain. */
-type RenderGroup =
-  | { kind: 'message'; text: string; key: string }
-  | { kind: 'chain'; steps: ActivityStepData[]; key: string };
-
-function groupEntries(entries: readonly WorkerStreamEntry[]): RenderGroup[] {
-  const groups: RenderGroup[] = [];
-  for (const [i, entry] of entries.entries()) {
-    if (entry.kind === 'message') {
-      groups.push({ kind: 'message', text: entry.text, key: `m${i}` });
-      continue;
-    }
-    const last = groups[groups.length - 1];
-    if (last !== undefined && last.kind === 'chain') last.steps.push({ ...entry.step });
-    else groups.push({ kind: 'chain', steps: [{ ...entry.step }], key: `c${i}` });
-  }
-  return groups;
 }
 
 export function WorkerStreamPane({
@@ -71,11 +46,14 @@ export function WorkerStreamPane({
   pinned?: boolean;
   onFollowLive?: () => void;
 }) {
-  const stream = useMemo(() => (node ? mockWorkerStreamFor(node) : undefined), [node]);
-  const lastAt = stream?.entries.at(-1)?.at ?? 0;
-  const elapsed = useReplayClock(lastAt);
+  const endMs = useMemo(() => (node ? mockWorkerStreamEndMs(node) : 0), [node]);
+  const elapsed = useReplayClock(endMs);
+  const transcript = useMemo(
+    () => (node ? mockWorkerTranscriptAt(node, elapsed) : null),
+    [node, elapsed],
+  );
 
-  if (node === undefined || stream === undefined) {
+  if (node === undefined || transcript === null) {
     return (
       <div className="pd-workerpane" data-testid="worker-pane">
         <div className="pd-workerpane-empty">
@@ -86,102 +64,20 @@ export function WorkerStreamPane({
     );
   }
 
-  const revealed = stream.entries.filter((e) => e.at <= elapsed);
-  const streaming = revealed.length < stream.entries.length;
-  const groups = groupEntries(revealed);
-  const lastGroup = groups[groups.length - 1];
+  // "Working" while the mock is still replaying — the shell shows the live
+  // chip, running chain shimmer, and the current-action tail exactly as the
+  // real pane would for a mid-turn agent.
+  const working = elapsed <= endMs;
 
   return (
-    <div className="pd-workerpane" data-testid="worker-pane">
-      <div className="pd-workerpane-head">
-        <span className="pd-sitroom-gem" data-state={streaming ? 'working' : 'idle'} aria-hidden>
-          <span className="pd-sitroom-gem-glow" />
-          <span className="pd-sitroom-gem-ring" />
-          <span className="pd-sitroom-gem-core" />
-        </span>
-        <span className="pd-workerpane-title">{node.name}</span>
-        <span>{streaming ? 'live' : 'caught up'}</span>
-        <span className="pd-workerpane-mode">
-          {pinned ? (
-            <>
-              <span>pinned</span>
-              <button
-                type="button"
-                className="pd-workerpane-follow pd-focusable"
-                data-testid="corp-follow-live"
-                title="Go back to watching whoever is working right now"
-                onClick={onFollowLive}
-              >
-                ⇄ Follow live
-              </button>
-            </>
-          ) : (
-            <span data-testid="corp-following">following live</span>
-          )}
-        </span>
-      </div>
-      <div className="pd-workerpane-body pd-elastic-scroll">
-        <Thread>
-          {/* The leading "user turn" is the worker's TASK — visibly a briefing. */}
-          <TaskBriefingBubble briefing={stream.briefing} collapsible />
-          {groups.map((group) => {
-            const isLast = group === lastGroup;
-            if (group.kind === 'message') {
-              return (
-                <MessageRow key={group.key} kind="assistant">
-                  <StreamedText text={group.text} live={isLast && streaming} />
-                </MessageRow>
-              );
-            }
-            // A live trailing chain marks its final step running (the shimmer).
-            const steps = group.steps.map((step, i) =>
-              isLast && streaming && i === group.steps.length - 1
-                ? { ...step, status: 'running' as const }
-                : step,
-            );
-            return (
-              <ActivityChain
-                key={group.key}
-                steps={steps}
-                defaultExpanded={false}
-                active={isLast && streaming}
-              />
-            );
-          })}
-          {revealed.length === 0 ? (
-            <div className="text-footnote text-text-muted">
-              <ShimmerText>Connecting to the worker…</ShimmerText>
-            </div>
-          ) : null}
-        </Thread>
-      </div>
-    </div>
+    <WorkerPaneShell
+      node={node}
+      transcript={transcript}
+      working={working}
+      loading={false}
+      pinned={pinned}
+      onFollowLive={onFollowLive}
+      testId="worker-pane"
+    />
   );
-}
-
-/** Types the newest message on; older messages render whole. */
-function StreamedText({ text, live }: { text: string; live: boolean }) {
-  const [shown, setShown] = useState(live ? 0 : text.length);
-  const target = useRef(text.length);
-  target.current = text.length;
-
-  useEffect(() => {
-    if (!live) {
-      setShown(text.length);
-      return undefined;
-    }
-    setShown(0);
-    const timer = setInterval(() => {
-      setShown((n) => {
-        if (n >= target.current) {
-          clearInterval(timer);
-          return n;
-        }
-        return n + 3;
-      });
-    }, 28);
-    return () => clearInterval(timer);
-  }, [live, text]);
-
-  return <span className="whitespace-pre-wrap">{text.slice(0, shown)}</span>;
 }

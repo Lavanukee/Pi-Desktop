@@ -73,6 +73,7 @@ export type { DivisionProgress, SituationOrgChartProps } from './situation/org-c
 export { SituationOrgChart } from './situation/org-chart-panel.tsx';
 export { replayableEvents } from './situation/replay-stream.ts';
 export type {
+  ActionFeedRow,
   ChecklistGroup,
   ContractProgress,
   FileTouchView,
@@ -107,7 +108,11 @@ export type {
   WorkerStream,
   WorkerStreamEntry,
 } from './situation/worker-streams.ts';
-export { mockWorkerStreamFor } from './situation/worker-streams.ts';
+export {
+  mockWorkerStreamEndMs,
+  mockWorkerStreamFor,
+  mockWorkerTranscriptAt,
+} from './situation/worker-streams.ts';
 // Surfaces
 export type { BrowserSurfaceProps } from './surfaces/browser-surface.tsx';
 export { BrowserSurface } from './surfaces/browser-surface.tsx';

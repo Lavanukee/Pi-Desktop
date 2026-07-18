@@ -75,6 +75,29 @@ describe('buildMockCorpRunScript', () => {
     expect(mid.chart.nodes.some((n) => n.role === 'engineer' && n.state === 'working')).toBe(true);
   });
 
+  it('carries per-node currentAction and drives the live-action feed', () => {
+    // Planning: the root's chart carries a live action from the very first snapshot.
+    const early = foldTo(600);
+    expect(early.chart.nodes[0]?.currentAction).toBe('Reading the request');
+    expect(early.actionFeed[0]).toMatchObject({ area: 'Pi', done: false });
+
+    // Mid-dispatch: working builders carry "Writing <file>" actions, and the
+    // feed holds OPEN rows (spinners) plus settled ones (done checks).
+    const mid = foldTo(26_000);
+    const workingEngineers = mid.chart.nodes.filter(
+      (n) => n.role === 'engineer' && n.state === 'working',
+    );
+    expect(workingEngineers.some((n) => n.currentAction?.startsWith('Writing '))).toBe(true);
+    expect(mid.actionFeed.some((r) => !r.done)).toBe(true);
+    expect(mid.actionFeed.some((r) => r.done)).toBe(true);
+    // Rows read as "Area · action" — a builder reports under its AREA name.
+    expect(mid.actionFeed.some((r) => r.area === 'Core Engine')).toBe(true);
+
+    // Terminal: every row settles.
+    const final = foldTo(Number.POSITIVE_INFINITY);
+    expect(final.actionFeed.every((r) => r.done)).toBe(true);
+  });
+
   it('narrows the ETA range monotonically as contracts complete', () => {
     const etas = script
       .map((e) => e.event)

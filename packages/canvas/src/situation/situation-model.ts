@@ -27,6 +27,29 @@ import type {
 /** How many activity lines the feed keeps (the lower-third shows the tail). */
 const ACTIVITY_CAP = 120;
 
+/** How many live-action rows the fold retains (the surface renders a tail). */
+const ACTION_FEED_CAP = 14;
+
+/**
+ * One row of the "Live activity" feed: an AREA doing ONE thing, in real time —
+ * `Core Engine · Writing src/engine/renderer.ts`, `Pi · thinking…`. Rows open
+ * while the action is happening (the surface shows a spinner) and close when it
+ * finishes or the node's action changes (the spinner settles to a done check and
+ * the stack slides up). Driven by the org chart's per-node `currentAction`, with
+ * the activity stream filling in for engines that don't carry live actions.
+ */
+export interface ActionFeedRow {
+  /** Monotonic stream sequence — stable row identity for enter/shift motion. */
+  readonly seq: number;
+  readonly nodeId: string;
+  /** The user-facing area/worker label ("Core Engine", "Pi"). */
+  readonly area: string;
+  /** What it is doing / did ("thinking", "Writing src/menu.ts", "Ran: pnpm test"). */
+  readonly action: string;
+  /** False while the action is live (spinner); true once settled (done check). */
+  readonly done: boolean;
+}
+
 /**
  * One file the run has touched, deduplicated by path. `touches` counts repeat
  * writes; `lastTouch` drives the "this file just landed" flash (fresh = shiny).
@@ -72,6 +95,14 @@ export interface SituationState {
   /** Files touched so far, in first-touch order (the map fills in). */
   readonly files: readonly FileTouchView[];
   /**
+   * The live-action rows ("Area · current action"), oldest → newest, capped at
+   * {@link ACTION_FEED_CAP}. Open rows (done=false) are actions happening RIGHT
+   * NOW; the newest rows sit at the bottom and finished rows slide up.
+   */
+  readonly actionFeed: readonly ActionFeedRow[];
+  /** Monotonic sequence for {@link ActionFeedRow.seq} (row identity). */
+  readonly actionSeq: number;
+  /**
    * The most recent exercise session (browse / test / run). The surface slides
    * the activity panel in while its status is `running` and settles it away on
    * a terminal status (kept, not cleared, so the exit can animate).
@@ -91,6 +122,8 @@ export function initialSituation(taskId = ''): SituationState {
     artifacts: [],
     checklist: [],
     files: [],
+    actionFeed: [],
+    actionSeq: 0,
   };
 }
 
@@ -144,6 +177,119 @@ function foldFileTouch(
   return next;
 }
 
+/** The user-facing AREA label for a feed row: a builder reports under its parent
+ * area's name; everyone else under its own ("Pi", "Core Engine"). */
+function areaLabelOf(chart: OrgChartView, node: OrgNodeView): string {
+  if ((node.role === 'engineer' || node.role === 'division-head') && node.parentId !== undefined) {
+    return chart.nodes.find((n) => n.id === node.parentId)?.name ?? node.name;
+  }
+  return node.name;
+}
+
+/** Index of a node's OPEN action row (its latest, still-live row), or -1. */
+function openRowIndex(feed: readonly ActionFeedRow[], nodeId: string): number {
+  for (let i = feed.length - 1; i >= 0; i -= 1) {
+    const row = feed[i];
+    if (row !== undefined && row.nodeId === nodeId && !row.done) return i;
+  }
+  return -1;
+}
+
+/** Settle a row (spinner → done check); returns the same array when already done. */
+function closeRow(feed: readonly ActionFeedRow[], index: number): readonly ActionFeedRow[] {
+  const row = feed[index];
+  if (row === undefined || row.done) return feed;
+  const next = feed.slice();
+  next[index] = { ...row, done: true };
+  return next;
+}
+
+/** The action-feed slice of the fold (kept out of reduceSituation for clarity). */
+interface ActionFold {
+  readonly actionFeed: readonly ActionFeedRow[];
+  readonly actionSeq: number;
+}
+
+/**
+ * Fold one org-chart snapshot into the live-action rows: every working node with
+ * a `currentAction` keeps exactly one OPEN row (a changed action closes the old
+ * row and opens a fresh one at the bottom); a node that stopped working closes
+ * its open row. Pure; returns the incoming slices when nothing changed.
+ */
+function foldChartActions(state: SituationState, chart: OrgChartView): ActionFold {
+  let feed: readonly ActionFeedRow[] = state.actionFeed;
+  let seq = state.actionSeq;
+  const workingIds = new Set(chart.nodes.filter((n) => n.state === 'working').map((n) => n.id));
+  // Settle rows whose node is no longer running.
+  for (let i = 0; i < feed.length; i += 1) {
+    const row = feed[i];
+    if (row !== undefined && !row.done && !workingIds.has(row.nodeId)) feed = closeRow(feed, i);
+  }
+  // Open/refresh a row per working node with a live action.
+  for (const node of chart.nodes) {
+    if (node.state !== 'working' || node.currentAction === undefined) continue;
+    const open = openRowIndex(feed, node.id);
+    if (open !== -1 && feed[open]?.action === node.currentAction) continue;
+    if (open !== -1) feed = closeRow(feed, open);
+    feed = [
+      ...feed,
+      {
+        seq: seq,
+        nodeId: node.id,
+        area: areaLabelOf(chart, node),
+        action: node.currentAction,
+        done: false,
+      },
+    ];
+    seq += 1;
+  }
+  if (feed === state.actionFeed) return { actionFeed: state.actionFeed, actionSeq: seq };
+  return { actionFeed: feed.slice(-ACTION_FEED_CAP), actionSeq: seq };
+}
+
+/**
+ * Fold one activity into the live-action rows — the fill-in source for engines
+ * (and run phases) whose charts don't carry `currentAction`. Only a node the
+ * CURRENT chart shows as `working` updates its row (honest: never a row for a
+ * settled node). A terminal file-touch (`phase: 'end'`) only SETTLES the node's
+ * open row — finishing a file is the end of an action, not a new one.
+ */
+function foldActivityAction(state: SituationState, activity: Activity): ActionFold {
+  const unchanged: ActionFold = { actionFeed: state.actionFeed, actionSeq: state.actionSeq };
+  const nodeId = activity.nodeId;
+  if (nodeId === undefined) return unchanged;
+  const node = state.chart.nodes.find((n) => n.id === nodeId);
+  if (node === undefined || node.state !== 'working') return unchanged;
+  let feed: readonly ActionFeedRow[] = state.actionFeed;
+  let seq = state.actionSeq;
+  const open = openRowIndex(feed, nodeId);
+  if (activity.kind === 'file-touch' && activity.phase === 'end') {
+    if (open === -1) return unchanged;
+    return { actionFeed: closeRow(feed, open), actionSeq: seq };
+  }
+  if (activity.summary.trim() === '') return unchanged;
+  if (open !== -1 && feed[open]?.action === activity.summary) return unchanged;
+  if (open !== -1) feed = closeRow(feed, open);
+  feed = [
+    ...feed,
+    {
+      seq: seq,
+      nodeId,
+      area: areaLabelOf(state.chart, node),
+      action: activity.summary,
+      done: false,
+    },
+  ];
+  seq += 1;
+  return { actionFeed: feed.slice(-ACTION_FEED_CAP), actionSeq: seq };
+}
+
+/** Every open action row settles when the run reaches a terminal state. */
+function settleActionFeed(feed: readonly ActionFeedRow[]): readonly ActionFeedRow[] {
+  if (feed.every((row) => row.done)) return feed;
+  return feed.map((row) => (row.done ? row : { ...row, done: true }));
+}
+
 /**
  * Fold one event into the state. Pure — returns a new state, never mutates.
  * Unknown-at-runtime event types fall through unchanged (forward-compatible
@@ -154,14 +300,20 @@ export function reduceSituation(state: SituationState, event: CoordinationEvent)
     case 'status':
       return { ...state, status: event.status, statusDetail: event.detail };
     case 'org-chart':
-      return { ...state, chart: event.chart };
+      return { ...state, chart: event.chart, ...foldChartActions(state, event.chart) };
     case 'activity': {
       const activities = [...state.activities, event.activity].slice(-ACTIVITY_CAP);
       const files =
         event.activity.kind === 'file-touch'
           ? foldFileTouch(state.files, event.activity)
           : state.files;
-      return { ...state, activities, activityCount: state.activityCount + 1, files };
+      return {
+        ...state,
+        activities,
+        activityCount: state.activityCount + 1,
+        files,
+        ...foldActivityAction(state, event.activity),
+      };
     }
     case 'artifact':
       return { ...state, artifacts: [...state.artifacts, event.artifact] };
@@ -176,7 +328,12 @@ export function reduceSituation(state: SituationState, event: CoordinationEvent)
     case 'exercise':
       return { ...state, exercise: event.session };
     case 'done':
-      return { ...state, status: statusForOutcome(event.result), result: event.result };
+      return {
+        ...state,
+        status: statusForOutcome(event.result),
+        result: event.result,
+        actionFeed: settleActionFeed(state.actionFeed),
+      };
     default:
       return state;
   }

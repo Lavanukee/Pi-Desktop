@@ -180,6 +180,99 @@ describe('derived readings', () => {
   });
 });
 
+describe('action feed (the live "Area · current action" rows)', () => {
+  const chartWith = (nodes: OrgNodeView[]): CoordinationEvent => ({
+    type: 'org-chart',
+    chart: {
+      taskId: 't1',
+      nodes,
+      edges: [],
+    },
+  });
+  const div: OrgNodeView = { id: 'div-a', role: 'division', name: 'Core Engine', state: 'idle' };
+  const eng = (state: OrgNodeView['state'], currentAction?: string): OrgNodeView => ({
+    id: 'e1',
+    role: 'engineer',
+    name: 'Core Engine builder 1',
+    parentId: 'div-a',
+    state,
+    ...(currentAction !== undefined ? { currentAction } : {}),
+  });
+
+  it('opens a row per working node action, labeled by its AREA', () => {
+    const state = fold([chartWith([div, eng('working', 'Writing src/engine/renderer.ts')])]);
+    expect(state.actionFeed).toHaveLength(1);
+    expect(state.actionFeed[0]).toMatchObject({
+      nodeId: 'e1',
+      area: 'Core Engine',
+      action: 'Writing src/engine/renderer.ts',
+      done: false,
+    });
+  });
+
+  it('a changed action closes the old row and opens a new one at the bottom', () => {
+    const state = fold([
+      chartWith([div, eng('working', 'thinking')]),
+      chartWith([div, eng('working', 'Writing src/engine/renderer.ts')]),
+    ]);
+    expect(state.actionFeed.map((r) => [r.action, r.done])).toEqual([
+      ['thinking', true],
+      ['Writing src/engine/renderer.ts', false],
+    ]);
+    // Stable identity: the seq advances per opened row.
+    expect(state.actionFeed[1]?.seq).toBeGreaterThan(state.actionFeed[0]?.seq as number);
+  });
+
+  it('an unchanged action across chart pulses does NOT churn the feed', () => {
+    const one = fold([chartWith([div, eng('working', 'thinking')])]);
+    const two = fold([chartWith([div, eng('working', 'thinking')])], one);
+    expect(two.actionFeed).toHaveLength(1);
+  });
+
+  it('a node leaving `working` settles its open row (spinner → done)', () => {
+    const state = fold([
+      chartWith([div, eng('working', 'thinking')]),
+      chartWith([div, eng('done')]),
+    ]);
+    expect(state.actionFeed).toEqual([expect.objectContaining({ action: 'thinking', done: true })]);
+  });
+
+  it('activities fill in for charts without currentAction — only for working nodes', () => {
+    const at = (summary: string, phase?: 'start' | 'progress' | 'end'): CoordinationEvent => ({
+      type: 'activity',
+      activity: {
+        nodeId: 'e1',
+        kind: 'file-touch',
+        summary,
+        path: 'src/a.ts',
+        ...(phase !== undefined ? { phase } : {}),
+        timestamp: 100,
+      },
+    });
+    // Node idle → no row (honest: never a live row for a settled node).
+    const idle = fold([chartWith([div, eng('idle')]), at('Writing src/a.ts', 'start')]);
+    expect(idle.actionFeed).toHaveLength(0);
+    // Working → the activity opens the row; phase `end` settles it, no new row.
+    const state = fold([
+      chartWith([div, eng('working')]),
+      at('Writing src/a.ts', 'start'),
+      at('Writing src/a.ts', 'progress'), // identical text → no churn
+      at('Finished src/a.ts', 'end'),
+    ]);
+    expect(state.actionFeed).toEqual([
+      expect.objectContaining({ area: 'Core Engine', action: 'Writing src/a.ts', done: true }),
+    ]);
+  });
+
+  it('the terminal done event settles every open row', () => {
+    const state = fold([
+      chartWith([div, eng('working', 'thinking')]),
+      { type: 'done', result: { outcome: 'completed' } },
+    ]);
+    expect(state.actionFeed.every((r) => r.done)).toBe(true);
+  });
+});
+
 describe('followTarget (the never-blank auto-follow)', () => {
   const node = (
     id: string,

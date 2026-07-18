@@ -1,16 +1,23 @@
 /**
  * Per-worker live streams for the situation room's click-through (spec §11):
  * clicking a node in the tree routes THAT worker's stream into the left chat
- * area, rendered like a normal thread — except the leading "user message" is
- * the worker's TASK BRIEFING, a distinctly stylized bubble.
+ * area, rendered like a normal thread — the leading card is the worker's ASK
+ * (a plain user-message-style card with its deliverables as checklist rows).
  *
  * This module is the mock provider: deterministic, per-node scripted streams
  * shaped exactly like what a real engine bridge will surface (messages +
- * tool/thinking steps with timings). Pure data + pure builders — no React, no
- * timers — so the pane can replay them at any speed and tests can fold them.
+ * tool/thinking steps with timings), plus {@link mockWorkerTranscriptAt} — the
+ * same data synthesized as a LIVE `WorkerTranscriptView` at a moment in time
+ * (growing streaming tails, currentAction, a filling context reading). Pure
+ * data + pure builders — no React, no timers — so the pane can replay them at
+ * any speed and tests can fold them.
  */
 
-import type { OrgNodeView } from '@pi-desktop/coordination';
+import type {
+  OrgNodeView,
+  WorkerTranscriptLine,
+  WorkerTranscriptView,
+} from '@pi-desktop/coordination';
 import type { ActivityStepData } from '@pi-desktop/ui';
 
 /**
@@ -509,4 +516,158 @@ export function mockWorkerStreamFor(node: Pick<OrgNodeView, 'id' | 'name' | 'rol
     case 'specialist':
       return layoutStream(node);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Live-transcript synthesis — the demo's WorkerTranscriptView at a moment
+// ---------------------------------------------------------------------------
+
+/** Streaming reveal rate for the mock's live text/reasoning (chars per second). */
+const STREAM_CHARS_PER_SEC = 34;
+
+/** Fallback thinking duration when a step carries none. */
+const DEFAULT_THINK_MS = 3200;
+
+interface TimedLine {
+  /** Script ms the line appears. */
+  readonly at: number;
+  /** Script ms the line's STREAM closes (tool lines close instantly). */
+  readonly closeAt: number;
+  readonly line: Omit<WorkerTranscriptLine, 'at'>;
+  /** The node's current action while this line's window is live. */
+  readonly action?: string;
+}
+
+/** One entry of a {@link WorkerStream} → its transcript line + action window. */
+function toTimedLine(entry: WorkerStreamEntry, nextAt: number): TimedLine | undefined {
+  if (entry.kind === 'message') {
+    const naturalEnd = entry.at + (entry.text.length / STREAM_CHARS_PER_SEC) * 1000;
+    return {
+      at: entry.at,
+      closeAt: Math.min(naturalEnd, nextAt),
+      line: { kind: 'message', text: entry.text },
+      action: 'Responding',
+    };
+  }
+  const step = entry.step;
+  switch (step.kind) {
+    case 'thinking': {
+      const text = step.thought ?? '';
+      const end = entry.at + (step.durationMs ?? DEFAULT_THINK_MS);
+      return {
+        at: entry.at,
+        closeAt: Math.min(end, nextAt),
+        line: { kind: 'thinking', text },
+        action: 'thinking',
+      };
+    }
+    case 'read': {
+      const file = step.detail ?? step.filename ?? '';
+      return {
+        at: entry.at,
+        closeAt: entry.at,
+        line: {
+          kind: 'tool-call',
+          text: 'read',
+          label: 'Reading',
+          ...(file !== '' ? { detail: file, path: file } : {}),
+        },
+        action: file !== '' ? `Reading ${file}` : 'Reading a file',
+      };
+    }
+    case 'edit': {
+      const file = step.detail ?? step.filename ?? '';
+      return {
+        at: entry.at,
+        closeAt: entry.at,
+        line: {
+          kind: 'file-touch',
+          text: `writing ${file}`,
+          label: 'Writing',
+          ...(file !== '' ? { detail: file, path: file } : {}),
+        },
+        action: file !== '' ? `Writing ${file}` : 'Writing a file',
+      };
+    }
+    case 'bash': {
+      const cmd = step.command ?? step.detail ?? '';
+      return {
+        at: entry.at,
+        closeAt: entry.at,
+        line: {
+          kind: 'tool-call',
+          text: 'bash',
+          label: 'Ran',
+          ...(cmd !== '' ? { detail: cmd } : {}),
+        },
+        action: cmd !== '' ? `Ran: ${cmd}` : 'Ran a command',
+      };
+    }
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * The mock's answer to `getWorkerTranscript` at a moment in a node's replay:
+ * lines revealed up to `elapsedMs`, with the newest text/reasoning line GROWING
+ * char by char (`streaming` true) exactly like the live engine, a real
+ * `currentAction`, and a context reading that fills as the run works. Pure and
+ * deterministic — the pane ticks a clock and re-derives.
+ */
+export function mockWorkerTranscriptAt(
+  node: Pick<OrgNodeView, 'id' | 'name' | 'role'>,
+  elapsedMs: number,
+): WorkerTranscriptView {
+  const stream = mockWorkerStreamFor(node);
+  const timed: TimedLine[] = [];
+  for (const [i, entry] of stream.entries.entries()) {
+    const nextAt = stream.entries[i + 1]?.at ?? Number.POSITIVE_INFINITY;
+    const t = toTimedLine(entry, nextAt);
+    if (t !== undefined) timed.push(t);
+  }
+
+  const lines: WorkerTranscriptLine[] = [];
+  let currentAction: string | undefined;
+  let anyStreaming = false;
+  for (const t of timed) {
+    if (t.at > elapsedMs) break;
+    const grows = t.line.kind === 'message' || t.line.kind === 'thinking';
+    if (grows && elapsedMs < t.closeAt) {
+      const shown = Math.max(0, Math.floor(((elapsedMs - t.at) / 1000) * STREAM_CHARS_PER_SEC));
+      lines.push({ ...t.line, at: t.at, text: t.line.text.slice(0, shown), streaming: true });
+      anyStreaming = true;
+      currentAction = t.action;
+      continue;
+    }
+    lines.push({ ...t.line, at: t.at });
+    // A settled line still names the node's action until the next entry starts
+    // (tool windows are near-contiguous); past the script's end it clears.
+    currentAction =
+      elapsedMs < t.closeAt + 1600 || t !== timed[timed.length - 1] ? t.action : undefined;
+  }
+
+  // Context fullness grows as the session works — deterministic per node.
+  const seed = seedOf(node.id);
+  const rate = 1.5 + (seed % 5) * 0.4;
+  const contextPercent = Math.min(85, Math.round(6 + (elapsedMs / 1000) * rate));
+
+  return {
+    nodeId: node.id,
+    role: node.role,
+    briefing: stream.briefing,
+    lines,
+    ...(anyStreaming ? { streaming: true } : {}),
+    ...(currentAction !== undefined ? { currentAction } : {}),
+    ...(elapsedMs > 0 ? { contextPercent } : {}),
+  };
+}
+
+/** Script end (ms) for a node's mock replay — when the pane can stop ticking. */
+export function mockWorkerStreamEndMs(node: Pick<OrgNodeView, 'id' | 'name' | 'role'>): number {
+  const stream = mockWorkerStreamFor(node);
+  const last = stream.entries[stream.entries.length - 1];
+  if (last === undefined) return 0;
+  const lastText = last.kind === 'message' ? last.text : '';
+  return last.at + (lastText.length / STREAM_CHARS_PER_SEC) * 1000 + 400;
 }

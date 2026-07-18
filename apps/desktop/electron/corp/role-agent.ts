@@ -693,6 +693,11 @@ export async function runRoleAgent(
     }
   };
 
+  // Live context reading for turn-boundary activity records: set once the session
+  // exists (turn events only fire after that), read best-effort per emit. Percent
+  // is 0..100 (or null right after compaction) — null/errors surface as undefined.
+  let readContextPercent: () => number | undefined = () => undefined;
+
   const corpExt: ExtensionFactory = (pi: ExtensionAPI) => {
     // LIVE ACTIVITY sink (spec §11) — forward this run's tool/turn lifecycle AND the
     // model's live stream (streaming assistant text + reasoning) the MOMENT it
@@ -777,11 +782,23 @@ export async function runRoleAgent(
     // live stream the MOMENT they happen so the situation room lights up mid-work.
     // Registered only when a sink is wired (avoids per-token overhead otherwise).
     if (onActivity !== undefined) {
+      // Turn boundaries carry the session's live context fullness (when readable)
+      // so the app's context ring fills from the RUN's real usage.
       pi.on('turn_start', (e: TurnStartEvent) => {
-        emit({ kind: 'turn-start', turnIndex: e.turnIndex });
+        const contextPercent = readContextPercent();
+        emit({
+          kind: 'turn-start',
+          turnIndex: e.turnIndex,
+          ...(contextPercent !== undefined ? { contextPercent } : {}),
+        });
       });
       pi.on('turn_end', (e: TurnEndEvent) => {
-        emit({ kind: 'turn-end', turnIndex: e.turnIndex });
+        const contextPercent = readContextPercent();
+        emit({
+          kind: 'turn-end',
+          turnIndex: e.turnIndex,
+          ...(contextPercent !== undefined ? { contextPercent } : {}),
+        });
       });
       // A finished write/edit → the file now exists → a file-touch record (the
       // moment to light the file map). Non-file tools already streamed at
@@ -870,6 +887,14 @@ export async function runRoleAgent(
 
   // --- run: fully autonomous, guarded ONLY by the per-CALL network abort ---
   sessionRef = session; // arm the watchdog's abort target
+  readContextPercent = () => {
+    try {
+      const percent = session.getContextUsage()?.percent;
+      return typeof percent === 'number' && Number.isFinite(percent) ? percent : undefined;
+    } catch {
+      return undefined;
+    }
+  };
   let promptError = false;
   let bumps = 0;
   const lastText = (): string => {

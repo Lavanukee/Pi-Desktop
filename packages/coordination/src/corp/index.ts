@@ -242,6 +242,10 @@ interface CorpRuntime {
    * "Writing src/menu.ts"), surfaced on the working org node + the transcript;
    * cleared the moment the node leaves `working`. */
   readonly currentAction: Map<string, string>;
+  /** Per-node live context fullness (0..100), from the role agent's turn-boundary
+   * records — the app's context ring fills from this during a run. Kept after a
+   * node settles (an honest last reading), cleared only with the task. */
+  readonly contextPercent: Map<string, number>;
   /** The OPEN streaming transcript line per node (assistant text OR reasoning),
    * mutated in place as deltas land; removed when the block ends. */
   readonly openStream: Map<string, { line: LiveLine; kind: 'message' | 'thinking' }>;
@@ -390,6 +394,12 @@ export function describeTool(
     case 'ls':
     case 'list':
       return { label: 'Looked around', summary: 'Looked around the project' };
+    case 'tool':
+      // The nameless fallback — never the meaningless "Used a tool": say the
+      // honest minimum ("Running a step"), with the arg detail when there is one.
+      return d !== undefined
+        ? { label: 'Running a step', detail: d, summary: `Running a step: ${d}` }
+        : { label: 'Running a step', summary: 'Running a step' };
     default: {
       const nm = humanizeToolName(toolName);
       return d !== undefined
@@ -445,6 +455,7 @@ export class CorpEngine implements CoordinationEngine {
       nodeState: new Map(),
       lines: new Map(),
       currentAction: new Map(),
+      contextPercent: new Map(),
       openStream: new Map(),
       streamedMessage: new Set(),
       mgrCursor: 0,
@@ -567,6 +578,7 @@ export class CorpEngine implements CoordinationEngine {
     // keeps polling and renders the tail as live rather than a settled log.
     const streaming = rt.openStream.has(nodeId) || lines.some((l) => l.streaming === true);
     const currentAction = rt.currentAction.get(nodeId);
+    const contextPercent = rt.contextPercent.get(nodeId);
     return {
       nodeId,
       role: node.role,
@@ -574,6 +586,7 @@ export class CorpEngine implements CoordinationEngine {
       lines,
       ...(streaming ? { streaming: true } : {}),
       ...(currentAction !== undefined ? { currentAction } : {}),
+      ...(contextPercent !== undefined ? { contextPercent } : {}),
     };
   }
 
@@ -696,7 +709,14 @@ export class CorpEngine implements CoordinationEngine {
           this.setNode(rt, ARCHITECT_NODE, 'idle');
           rt.divisions = divisions.map((name) => ({ id: `div-${slug(name)}`, name }));
           for (const d of rt.divisions) this.setNode(rt, d.id, 'idle');
-          this.addLine(rt, CEO_NODE, 'message', `Promoting to a team: ${divisions.join(', ')}.`);
+          // Plain words, never org jargon: say what actually happens to the
+          // user's project — more hands are joining, and these are the areas.
+          this.addLine(
+            rt,
+            CEO_NODE,
+            'message',
+            `This needs more than one pair of hands — bringing in ${divisions.join(', ')}.`,
+          );
           this.emit(rt, { type: 'org-chart', chart: this.buildChart(rt) });
         } else if (!rt.streamedMessage.has(SOLO_NODE)) {
           // On the AGENT path the model's answer already streamed into a live message
@@ -969,6 +989,9 @@ export class CorpEngine implements CoordinationEngine {
           // The node is lit ONLY while its agent is mid-turn (bug 2) — the run's
           // completion boundary (observeEngineerAgentDone / observePost) settles it.
           this.setNode(rt, nodeId, 'working');
+          if (record.contextPercent !== undefined) {
+            rt.contextPercent.set(nodeId, record.contextPercent);
+          }
           // NOTE: the redundant "— continued (turn N) —" divider is intentionally
           // NOT emitted — the streaming text/reasoning/tool lines already read as
           // continuous work, and the owner found the turn labels noise.
@@ -976,7 +999,12 @@ export class CorpEngine implements CoordinationEngine {
         break;
       }
       case 'turn-end':
-        if (nodeId !== undefined) this.closeStream(rt, nodeId);
+        if (nodeId !== undefined) {
+          this.closeStream(rt, nodeId);
+          if (record.contextPercent !== undefined) {
+            rt.contextPercent.set(nodeId, record.contextPercent);
+          }
+        }
         break;
     }
   }

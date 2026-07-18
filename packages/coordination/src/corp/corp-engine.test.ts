@@ -395,7 +395,8 @@ function liveRoleAgent(workspace: CorpWorkspace): RunRoleAgentFn {
         const content = 'export const core = () => 42;\n';
         const bytes = new TextEncoder().encode(content).length;
         // Stream a real read → bash → write tool sequence, THEN write the slot.
-        emit?.({ kind: 'turn-start', turnIndex: 0 });
+        // The turn boundary carries the session's live context reading (0..100).
+        emit?.({ kind: 'turn-start', turnIndex: 0, contextPercent: 37 });
         emit?.({ kind: 'tool', toolName: 'read' });
         emit?.({ kind: 'tool', toolName: 'bash' });
         workspace.fs.writeFile(slotPath(root, slot), content);
@@ -478,6 +479,9 @@ describe('CorpEngine — live progress, node status, and transcript (bugs 1–3)
       .map((l) => l.text);
     expect(toolNames).toContain('read');
     expect(toolNames).toContain('bash');
+    // The run's live context reading threads through to the transcript (the
+    // app's context ring fills from this).
+    expect(finalTranscript?.contextPercent).toBe(37);
 
     // Bug 1: "X of N" climbed DURING the run — an intermediate checklist showed at
     // least one contract 'done' BEFORE the terminal event, and it grew.

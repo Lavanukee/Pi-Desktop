@@ -4,35 +4,54 @@
  * the moment a task starts (the lead forming the vision, then whoever is
  * actually running) — or a node the user clicked/pinned in the situation room.
  *
- * The body is the node's REAL activity, streamed: the engine's per-node live
+ * The body is the node's REAL activity, STREAMED: the engine's per-node live
  * transcript (`corp:worker-transcript`, backed by `getWorkerTranscript`) is
- * polled while the agent is mid-turn, and its tool calls render as human rows
- * ("Read a file", "Writing src/ecs.ts", "Ran a command") threaded through the
- * app's ActivityChain — NOT a static briefing. The stylized briefing bubble
- * stays as the collapsible header. NOTHING here is invented: a node that has
- * produced no activity yet says so honestly (no generated preview streams).
- * Only reachable behind the experimental production-harness flag.
+ * polled while the agent is mid-turn, and
+ *
+ *  - the growing `streaming` tail renders as live text with a typing caret
+ *    (assistant text) or a force-open reasoning block ("Thinking…") whose
+ *    content grows as the model reasons,
+ *  - tool steps render NAMED ("Searched the web: <query>", "Reading <file>",
+ *    "Ran: <cmd>") through the app's ActivityChain — never "Used a tool",
+ *  - between streams the tail shows the node's real `currentAction` with the
+ *    branded spinner — never a bare "working…" void,
+ *  - the head carries a context ring filled from the RUN's real usage.
+ *
+ * NOTHING here is invented: a node that has produced no activity yet says so
+ * honestly. Only reachable behind the experimental production-harness flag.
+ * {@link WorkerPaneShell} + {@link CorpWorkerFeed} are shared with the demo
+ * route's pane so the demo renders EXACTLY what a live run renders.
  */
 import { TaskBriefingBubble } from '@pi-desktop/canvas';
 import type { OrgNodeView, WorkerTranscriptView } from '@pi-desktop/coordination';
 import {
   ActivityChain,
   type ActivityStepData,
+  ContextGauge,
   MessageRow,
   ShimmerText,
+  Spinner,
+  ThinkingBlock,
   Thread,
 } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
 import { fetchWorkerTranscript } from '../../state/corp-connect';
+import { useCorpStore } from '../../state/corp-store';
 
-/** Live-transcript poll cadence while the node's agent is mid-turn. */
+/** Live-transcript poll cadence: fast while text is streaming in, calm otherwise. */
 const POLL_MS = 900;
+const POLL_STREAMING_MS = 350;
 
 type TranscriptLine = WorkerTranscriptView['lines'][number];
 
 /** The last path segment (the filename shown on a collapsed step row). */
 function baseName(path: string): string {
   return path.split(/[/\\]/).pop() || path;
+}
+
+/** The engine's raw "thinking" action reads as a live "thinking…" to a person. */
+function actionText(action: string): string {
+  return action === 'thinking' ? 'thinking…' : action;
 }
 
 /** The raw tool name → the step's ICON kind (the engine supplies the human label
@@ -69,12 +88,18 @@ function toolIconKind(tool: string): ActivityStepData['kind'] {
 
 /** One renderable row of the live feed. */
 type FeedRow =
-  | { kind: 'message'; text: string }
+  | { kind: 'message'; text: string; streaming: boolean }
+  | { kind: 'thinking-live'; text: string }
   | { kind: 'note'; text: string }
-  | { kind: 'turn'; text: string }
   | { kind: 'step'; step: ActivityStepData };
 
-function lineToRow(line: TranscriptLine): FeedRow {
+/** A humanized fallback verb for a tool line missing its engine label. */
+function fallbackToolLabel(rawTool: string): string {
+  const words = rawTool.replace(/[_-]+/g, ' ').trim();
+  return words.length > 0 ? `Used ${words}` : 'Running a step';
+}
+
+function lineToRow(line: TranscriptLine): FeedRow | null {
   switch (line.kind) {
     case 'file-touch': {
       // Engine lines read "writing <path>" — surface the path as a file step.
@@ -92,42 +117,45 @@ function lineToRow(line: TranscriptLine): FeedRow {
         kind: 'step',
         step: {
           kind,
-          label: line.label ?? `Used ${line.text}`,
+          label: line.label ?? fallbackToolLabel(line.text),
           ...(line.detail !== undefined ? { detail: line.detail } : {}),
           ...(line.path !== undefined ? { filename: baseName(line.path) } : {}),
         },
       };
     }
     case 'thinking':
-      // A real reasoning step — the thought text expands inline; it shimmers while
-      // still streaming (handled by the trailing-chain active state).
+      // The LIVE reasoning stream renders as a force-open block whose content
+      // grows; a settled thought folds into the chain as a "Thought" step.
+      if (line.streaming === true) return { kind: 'thinking-live', text: line.text };
       return {
         kind: 'step',
         step: {
           kind: 'thinking',
-          label: line.streaming === true ? 'Thinking…' : 'Thought',
+          label: 'Thought',
           ...(line.text.length > 0 ? { thought: line.text } : {}),
         },
       };
     case 'consult':
       return { kind: 'step', step: { kind: 'tool', label: 'Consulted', detail: line.text } };
     case 'note': {
-      // Legacy turn markers ("— continued (turn 2) —") render as quiet dividers
-      // (the engine no longer emits them, but keep the parse for any older stream).
-      const turn = line.text.match(/^—\s*(.+?)\s*—$/);
-      if (turn?.[1] !== undefined) return { kind: 'turn', text: turn[1] };
+      // Legacy turn markers ("— continued (turn 2) —") are pure noise — dropped.
+      if (/^—\s*.+\s*—$/.test(line.text)) return null;
       return { kind: 'note', text: line.text };
     }
     default:
-      return { kind: 'message', text: line.text };
+      return {
+        kind: 'message',
+        text: line.text,
+        streaming: line.streaming === true,
+      };
   }
 }
 
 /** Group consecutive steps into one ActivityChain; other rows pass through. */
 type RenderGroup =
-  | { kind: 'message'; text: string; key: string }
+  | { kind: 'message'; text: string; streaming: boolean; key: string }
+  | { kind: 'thinking-live'; text: string; key: string }
   | { kind: 'note'; text: string; key: string }
-  | { kind: 'turn'; text: string; key: string }
   | { kind: 'chain'; steps: ActivityStepData[]; key: string };
 
 function groupRows(rows: readonly FeedRow[]): RenderGroup[] {
@@ -160,79 +188,148 @@ function emptyLine(state: OrgNodeView['state']): string {
   }
 }
 
-export interface CorpWorkerPaneProps {
+// ---------------------------------------------------------------------------
+// The shared feed — renders a WorkerTranscriptView as a live stream
+// ---------------------------------------------------------------------------
+
+export interface CorpWorkerFeedProps {
+  transcript: WorkerTranscriptView | null;
+  /** The node is actually running right now (drives running/tail states). */
+  working: boolean;
+  loading: boolean;
+  /** The node's chart state, for the honest empty line. */
+  nodeState: OrgNodeView['state'];
+}
+
+/** The live feed body: briefing card + streamed rows + the current-action tail. */
+export function CorpWorkerFeed({ transcript, working, loading, nodeState }: CorpWorkerFeedProps) {
+  const hasLines = transcript !== null && transcript.lines.length > 0;
+  const rows =
+    transcript !== null
+      ? transcript.lines.map(lineToRow).filter((r): r is FeedRow => r !== null)
+      : [];
+  const groups = groupRows(rows);
+  const lastGroup = groups[groups.length - 1];
+  const lastIsChain = lastGroup !== undefined && lastGroup.kind === 'chain';
+  // A LIVE text/reasoning tail is on screen — the tail row would be redundant.
+  const streamingTail =
+    lastGroup !== undefined &&
+    ((lastGroup.kind === 'message' && lastGroup.streaming) || lastGroup.kind === 'thinking-live');
+  const currentAction = transcript?.currentAction;
+
+  return (
+    <Thread>
+      {transcript !== null ? (
+        <TaskBriefingBubble briefing={transcript.briefing} collapsible />
+      ) : null}
+      {groups.map((group, i) => {
+        if (group.kind === 'message') {
+          return (
+            <MessageRow key={group.key} kind="assistant">
+              <span className="whitespace-pre-wrap">
+                {group.text}
+                {group.streaming ? <span className="pd-stream-caret" aria-hidden /> : null}
+              </span>
+            </MessageRow>
+          );
+        }
+        if (group.kind === 'thinking-live') {
+          // The model reasoning RIGHT NOW: force-open, content growing live.
+          return (
+            <ThinkingBlock key={group.key} status="running" active>
+              {group.text}
+            </ThinkingBlock>
+          );
+        }
+        if (group.kind === 'note') {
+          return (
+            <div key={group.key} className="pd-workerpane-note">
+              {group.text}
+            </div>
+          );
+        }
+        const isLast = lastIsChain && i === groups.length - 1;
+        const steps =
+          isLast && working
+            ? group.steps.map((step, s) =>
+                s === group.steps.length - 1 ? { ...step, status: 'running' as const } : step,
+              )
+            : group.steps;
+        return (
+          <ActivityChain
+            key={group.key}
+            steps={steps}
+            defaultExpanded={false}
+            active={isLast && working}
+          />
+        );
+      })}
+      {/* The current-action tail: what the node is doing THIS instant, with the
+          branded spinner — the anti-void row. Shown only when nothing above
+          already reads as live (no streaming text tail, no active chain whose
+          last step is shimmering) so it fills gaps instead of duplicating. */}
+      {working && hasLines && !streamingTail && !lastIsChain && currentAction !== undefined ? (
+        <div className="pd-workerpane-action" data-testid="corp-current-action">
+          <Spinner size={12} />
+          <span className="pd-workerpane-action-text">{actionText(currentAction)}</span>
+        </div>
+      ) : null}
+      {!hasLines && !loading ? (
+        <div className="pd-workerpane-tail">
+          {working ? <ShimmerText>{emptyLine(nodeState)}</ShimmerText> : emptyLine(nodeState)}
+        </div>
+      ) : null}
+      {loading && transcript === null ? (
+        <div className="pd-workerpane-tail">
+          <ShimmerText>Connecting to the live work…</ShimmerText>
+        </div>
+      ) : null}
+    </Thread>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The shared shell — header (gem · name · live · context ring · mode) + scroll
+// ---------------------------------------------------------------------------
+
+export interface WorkerPaneShellProps {
   node: OrgNodeView;
-  taskId: string | null;
+  transcript: WorkerTranscriptView | null;
+  working: boolean;
+  loading: boolean;
   /** The user pinned this node (clicked it); shows the "follow live" way back. */
   pinned?: boolean;
   onFollowLive?: () => void;
+  testId?: string;
 }
 
-export function CorpWorkerPane({
+export function WorkerPaneShell({
   node,
-  taskId,
+  transcript,
+  working,
+  loading,
   pinned = false,
   onFollowLive,
-}: CorpWorkerPaneProps) {
-  const [transcript, setTranscript] = useState<WorkerTranscriptView | null>(null);
-  const [loading, setLoading] = useState(true);
-  const working = node.state === 'working';
+  testId = 'corp-worker-pane',
+}: WorkerPaneShellProps) {
   const hasLines = transcript !== null && transcript.lines.length > 0;
-  // The node is actively producing a live stream (assistant text / reasoning still
-  // generating) — drives the "live" chip and keeps the tail shimmering.
   const streaming = transcript?.streaming === true;
-
-  // Fetch on node switch, then POLL while the agent is actually mid-turn (or
-  // until the first transcript lands) so the feed streams as work happens.
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setTranscript(null);
-    if (taskId === null) {
-      setLoading(false);
-      return undefined;
-    }
-    const pull = () => {
-      void fetchWorkerTranscript(taskId, node.id).then((t) => {
-        if (cancelled) return;
-        setLoading(false);
-        if (t !== null) {
-          // Only take a new snapshot when it actually grew — poll bursts must
-          // not re-render (or re-scroll) an unchanged feed.
-          setTranscript((prev) =>
-            prev !== null && prev.nodeId === t.nodeId && prev.lines.length === t.lines.length
-              ? prev
-              : t,
-          );
-        }
-      });
-    };
-    pull();
-    const timer = setInterval(pull, POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [taskId, node.id]);
+  const contextPercent = transcript?.contextPercent;
 
   // Keep the feed pinned to the newest activity unless the user scrolled up.
+  // The growth key tracks BOTH new lines and the streaming tail growing.
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const stickToEnd = useRef(true);
-  const lineCount = transcript?.lines.length ?? 0;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: lineCount is the scroll trigger (new feed rows), not read in the effect
+  const lastLine = transcript?.lines[transcript.lines.length - 1];
+  const growthKey = (transcript?.lines.length ?? 0) * 1_000_000 + (lastLine?.text.length ?? 0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: growthKey is the scroll trigger (feed growth), not read in the effect
   useEffect(() => {
     const el = bodyRef.current;
     if (el !== null && stickToEnd.current) el.scrollTop = el.scrollHeight;
-  }, [lineCount]);
-
-  const rows = transcript !== null ? transcript.lines.map(lineToRow) : [];
-  const groups = groupRows(rows);
-  // The trailing chain streams: its last step shimmers while the agent runs.
-  const lastGroup = groups[groups.length - 1];
-  const lastIsChain = lastGroup !== undefined && lastGroup.kind === 'chain';
+  }, [growthKey]);
 
   return (
-    <div className="pd-workerpane" data-testid="corp-worker-pane">
+    <div className="pd-workerpane" data-testid={testId}>
       <div className="pd-workerpane-head">
         <span className="pd-sitroom-gem" data-state={node.state} aria-hidden>
           <span className="pd-sitroom-gem-glow" />
@@ -240,7 +337,21 @@ export function CorpWorkerPane({
           <span className="pd-sitroom-gem-core" />
         </span>
         <span className="pd-workerpane-title">{node.name}</span>
-        {streaming ? <ShimmerText>live</ShimmerText> : hasLines ? <span>live</span> : null}
+        {streaming ? (
+          <ShimmerText>live</ShimmerText>
+        ) : working ? (
+          <span>live</span>
+        ) : hasLines ? (
+          <span>caught up</span>
+        ) : null}
+        {contextPercent !== undefined ? (
+          <span
+            className="pd-workerpane-gauge"
+            title={`Context ${Math.round(contextPercent)}% full`}
+          >
+            <ContextGauge value={contextPercent / 100} size={14} />
+          </span>
+        ) : null}
         <span className="pd-workerpane-mode">
           {pinned ? (
             <>
@@ -268,65 +379,91 @@ export function CorpWorkerPane({
           stickToEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
         }}
       >
-        <Thread>
-          {transcript !== null ? (
-            <TaskBriefingBubble briefing={transcript.briefing} collapsible />
-          ) : null}
-          {groups.map((group, i) => {
-            if (group.kind === 'message') {
-              return (
-                <MessageRow key={group.key} kind="assistant">
-                  <span className="whitespace-pre-wrap">{group.text}</span>
-                </MessageRow>
-              );
-            }
-            if (group.kind === 'note') {
-              return (
-                <div key={group.key} className="pd-workerpane-note">
-                  {group.text}
-                </div>
-              );
-            }
-            if (group.kind === 'turn') {
-              return (
-                <div key={group.key} className="pd-workerpane-turn" aria-hidden>
-                  {group.text}
-                </div>
-              );
-            }
-            const isLast = lastIsChain && i === groups.length - 1;
-            const steps =
-              isLast && working
-                ? group.steps.map((step, s) =>
-                    s === group.steps.length - 1 ? { ...step, status: 'running' as const } : step,
-                  )
-                : group.steps;
-            return (
-              <ActivityChain
-                key={group.key}
-                steps={steps}
-                defaultExpanded={false}
-                active={isLast && working}
-              />
-            );
-          })}
-          {working && hasLines && !lastIsChain ? (
-            <div className="pd-workerpane-tail">
-              <ShimmerText>working…</ShimmerText>
-            </div>
-          ) : null}
-          {!hasLines && !loading ? (
-            <div className="pd-workerpane-tail">
-              {working ? <ShimmerText>{emptyLine(node.state)}</ShimmerText> : emptyLine(node.state)}
-            </div>
-          ) : null}
-          {loading && transcript === null ? (
-            <div className="pd-workerpane-tail">
-              <ShimmerText>Connecting to the live work…</ShimmerText>
-            </div>
-          ) : null}
-        </Thread>
+        <CorpWorkerFeed
+          transcript={transcript}
+          working={working}
+          loading={loading}
+          nodeState={node.state}
+        />
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The live pane — polls the engine's real transcript over IPC
+// ---------------------------------------------------------------------------
+
+/** True when a fresh snapshot shows nothing new (poll bursts must not re-render
+ * or re-scroll an unchanged feed). Compares the growth surface: line count, the
+ * tail's text, and the live flags. */
+function sameTranscript(prev: WorkerTranscriptView, next: WorkerTranscriptView): boolean {
+  if (prev.nodeId !== next.nodeId || prev.lines.length !== next.lines.length) return false;
+  if (prev.streaming !== next.streaming || prev.currentAction !== next.currentAction) return false;
+  if (prev.contextPercent !== next.contextPercent) return false;
+  const a = prev.lines[prev.lines.length - 1];
+  const b = next.lines[next.lines.length - 1];
+  return a?.text === b?.text && a?.streaming === b?.streaming;
+}
+
+export interface CorpWorkerPaneProps {
+  node: OrgNodeView;
+  taskId: string | null;
+  /** The user pinned this node (clicked it); shows the "follow live" way back. */
+  pinned?: boolean;
+  onFollowLive?: () => void;
+}
+
+export function CorpWorkerPane({
+  node,
+  taskId,
+  pinned = false,
+  onFollowLive,
+}: CorpWorkerPaneProps) {
+  const [transcript, setTranscript] = useState<WorkerTranscriptView | null>(null);
+  const [loading, setLoading] = useState(true);
+  const working = node.state === 'working';
+
+  // Fetch on node switch, then POLL (fast while the model streams, calm
+  // otherwise) so the feed streams as the work happens.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    setLoading(true);
+    setTranscript(null);
+    if (taskId === null) {
+      setLoading(false);
+      return undefined;
+    }
+    const pull = () => {
+      void fetchWorkerTranscript(taskId, node.id).then((t) => {
+        if (cancelled) return;
+        setLoading(false);
+        if (t !== null) {
+          setTranscript((prev) => (prev !== null && sameTranscript(prev, t) ? prev : t));
+          // Thread the run's live context usage to the app's context ring.
+          if (t.contextPercent !== undefined) {
+            useCorpStore.getState().setContextPercent(t.contextPercent);
+          }
+        }
+        timer = setTimeout(pull, t?.streaming === true ? POLL_STREAMING_MS : POLL_MS);
+      });
+    };
+    pull();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [taskId, node.id]);
+
+  return (
+    <WorkerPaneShell
+      node={node}
+      transcript={transcript}
+      working={working}
+      loading={loading}
+      pinned={pinned}
+      onFollowLive={onFollowLive}
+    />
   );
 }

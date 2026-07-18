@@ -1922,54 +1922,85 @@
   outline-offset: 1.5px;
 }
 
-/* -- activity feed (the lower third) ---------------------------------- */
+/* -- live activity feed: "Area · current action" rows -------------------
+   One row per action, newest at the bottom. Live rows carry the branded
+   spinner on the LEFT; finished rows settle to a done check and the stack
+   slides up (a FLIP glide in the surface — no snapping). */
 
-.pd-sitroom-feed {
+.pd-sitroom-actionfeed {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  gap: 3px;
-  min-height: 84px;
+  gap: 4px;
+  min-height: 96px;
   padding: var(--pd-space-xs) var(--pd-space-lg) var(--pd-space-sm);
   overflow: hidden;
 }
 
-.pd-sitroom-feed-line {
+.pd-sitroom-feed-empty {
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-ghost);
+}
+
+.pd-sitroom-action {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
   font-size: var(--pd-font-size-caption);
+  line-height: 1.5;
   color: var(--pd-text-secondary);
-  animation: pd-sitroom-rise var(--pd-duration-base) var(--pd-easing-enter);
+  /* New actions slide in at the bottom (the app's signature rise). */
+  animation: pd-sitroom-action-in var(--pd-duration-base) var(--pd-easing-enter);
 }
 
-.pd-sitroom-feed-line[data-age="1"] {
-  opacity: 0.68;
-}
-
-.pd-sitroom-feed-line[data-age="2"] {
-  opacity: 0.44;
-}
-
-.pd-sitroom-feed-line[data-age="3"] {
-  opacity: 0.24;
-}
-
-.pd-sitroom-feed-icon {
-  flex: 0 0 auto;
-  display: inline-flex;
+/* Finished rows recede with age (the newest live rows keep full presence). */
+.pd-sitroom-action[data-done] {
   color: var(--pd-text-muted);
 }
 
-.pd-sitroom-feed-node {
+.pd-sitroom-action[data-done][data-age="2"] {
+  opacity: 0.62;
+}
+
+.pd-sitroom-action[data-done][data-age="3"] {
+  opacity: 0.38;
+}
+
+/* The left mark: the branded spinner while live; a soft success check once
+   done (a quiet pop, not a color flood — no cheap solid dots). */
+.pd-sitroom-action-mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  color: color-mix(in srgb, var(--pd-accent-primary) 80%, var(--pd-text-secondary));
+}
+
+.pd-sitroom-action-mark[data-done] {
+  color: var(--pd-status-success-fg);
+  animation: pd-sitroom-check-in var(--pd-duration-base) var(--pd-easing-enter);
+}
+
+.pd-sitroom-action-area {
   flex: 0 0 auto;
   font-weight: var(--pd-font-weight-medium);
   color: var(--pd-text-primary);
 }
 
-.pd-sitroom-feed-text {
+.pd-sitroom-action[data-done] .pd-sitroom-action-area {
+  color: var(--pd-text-secondary);
+}
+
+.pd-sitroom-action-sep {
+  flex: 0 0 auto;
+  color: var(--pd-text-ghost);
+}
+
+.pd-sitroom-action-text {
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -2959,62 +2990,75 @@
   animation: pd-sitroom-rise var(--pd-duration-base) var(--pd-easing-enter);
 }
 
-/* -- the task-briefing bubble (click-through, left chat area) ----------- */
+/* -- the worker's task card (click-through, left chat area) -------------
+   A plain user-message-style card: the ask reads like a normal chat message
+   (byline above, a quiet bubble), with the deliverables embedded as the SAME
+   checklist rows the Plan panel uses. Never a labelled "briefing" box. */
 
 .pd-taskbrief {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 13px 16px 14px;
-  border: 1px solid color-mix(in srgb, var(--pd-accent-primary) 30%, var(--pd-border-default));
-  border-radius: var(--pd-radius-bubble);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--pd-accent-primary) 7%, var(--pd-bg-raised)) 0%,
-    var(--pd-bg-raised) 82%
-  );
-  box-shadow: var(--pd-shadow-sm);
+  gap: 4px;
   animation: pd-sitroom-rise var(--pd-duration-slow) var(--pd-easing-enter) both;
 }
 
-.pd-taskbrief-eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 10px;
-  font-weight: var(--pd-font-weight-semibold);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--pd-accent-primary) 80%, var(--pd-text-secondary));
+/* Tiny byline above the bubble: who the ask is for ("Pi · Lead"). */
+.pd-taskbrief-who {
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* Collapsible briefing: the eyebrow row doubles as the toggle; collapsed, the
-   bubble keeps only the eyebrow + title (grid-rows roll on the detail). */
+/* The card itself rides the user-bubble tokens — a message, not a panel. */
+.pd-taskbrief-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 16px 11px;
+  border-radius: var(--pd-radius-bubble);
+  background: var(--pd-user-bubble-bg);
+  color: var(--pd-user-bubble-fg);
+  box-shadow: var(--pd-shadow-sm);
+}
+
+.pd-taskbrief-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Collapsible: the title row doubles as the toggle (grid-rows roll below). */
 .pd-taskbrief-toggle {
   appearance: none;
   display: flex;
   align-items: center;
   width: 100%;
-  gap: 7px;
+  gap: 8px;
   margin: 0;
   padding: 0;
   border: none;
   background: transparent;
   font: inherit;
-  font-size: 10px;
-  font-weight: var(--pd-font-weight-semibold);
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--pd-accent-primary) 80%, var(--pd-text-secondary));
+  color: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.pd-taskbrief-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: var(--pd-font-size-body);
+  font-weight: var(--pd-font-weight-medium);
+  color: inherit;
 }
 
 .pd-taskbrief-chevron {
   display: inline-flex;
   flex: 0 0 auto;
-  color: var(--pd-text-muted);
+  color: color-mix(in srgb, var(--pd-user-bubble-fg) 55%, transparent);
   transform: rotate(0deg);
   transition: transform var(--pd-duration-base) var(--pd-easing-standard);
 }
@@ -3038,75 +3082,31 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-
-.pd-taskbrief-mark {
-  flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
-  border-radius: 1.5px;
-  transform: rotate(45deg);
-  background: var(--pd-accent-primary);
-}
-
-.pd-taskbrief-worker {
-  margin-left: auto;
-  font-weight: var(--pd-font-weight-regular);
-  letter-spacing: 0;
-  text-transform: none;
-  font-size: var(--pd-font-size-caption);
-  color: var(--pd-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.pd-taskbrief-title {
-  font-size: var(--pd-font-size-body);
-  font-weight: var(--pd-font-weight-semibold);
-  color: var(--pd-text-primary);
+  gap: 5px;
 }
 
 .pd-taskbrief-area {
   font-family: var(--pd-font-mono);
   font-size: 11px;
-  color: var(--pd-text-muted);
+  color: color-mix(in srgb, var(--pd-user-bubble-fg) 62%, transparent);
 }
 
 .pd-taskbrief-goal {
   margin: 2px 0 0;
   font-size: var(--pd-font-size-footnote);
   line-height: 1.55;
-  color: var(--pd-text-secondary);
+  color: color-mix(in srgb, var(--pd-user-bubble-fg) 82%, transparent);
 }
 
-.pd-taskbrief-deliverables {
-  margin: 4px 0 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+/* The embedded deliverable checklist reuses the Plan rows verbatim; only the
+   plan's deep indent is pulled back to the bubble's own padding. */
+.pd-taskbrief-list {
+  padding: 2px 0 0;
 }
 
-.pd-taskbrief-deliverables li {
-  position: relative;
-  padding-left: 16px;
-  font-size: var(--pd-font-size-caption);
-  color: var(--pd-text-secondary);
-}
-
-.pd-taskbrief-deliverables li::before {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: 0.55em;
-  width: 5px;
-  height: 5px;
-  border-radius: 1px;
-  transform: rotate(45deg);
-  background: color-mix(in srgb, var(--pd-accent-primary) 55%, transparent);
+.pd-taskbrief-list .pd-sitroom-task {
+  padding-left: 2px;
+  color: color-mix(in srgb, var(--pd-user-bubble-fg) 82%, transparent);
 }
 
 /* -- the worker-stream pane (left chat area, demo wiring) --------------- */
@@ -3234,6 +3234,49 @@
   color: var(--pd-text-muted);
 }
 
+/* The current-action tail row: the branded spinner + the node's live action
+   ("thinking…", "Writing src/menu.ts") — never a bare "working…" void. */
+.pd-workerpane-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-secondary);
+  animation: pd-sitroom-rise var(--pd-duration-base) var(--pd-easing-enter);
+}
+
+.pd-workerpane-action .pd-loader {
+  color: color-mix(in srgb, var(--pd-accent-primary) 80%, var(--pd-text-secondary));
+}
+
+.pd-workerpane-action-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The live streaming tail's caret: a thin blinking bar riding the text end —
+   the subtle "still typing" tell on the growing assistant/reasoning stream. */
+.pd-stream-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--pd-accent-primary) 85%, var(--pd-text-primary));
+  animation: pd-stream-caret-blink 1.1s steps(2, jump-none) infinite;
+}
+
+/* The context ring in the worker-pane head: fills from the RUN's real usage. */
+.pd-workerpane-gauge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--pd-text-muted);
+}
+
 /* -- keyframes ---------------------------------------------------------- */
 
 /* The app's signature entrance: 6px rise + fade. */
@@ -3245,6 +3288,45 @@
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* A new action row slides in at the bottom of the live feed. */
+@keyframes pd-sitroom-action-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The spinner settling into the done check: a quiet pop, no color flood. */
+@keyframes pd-sitroom-check-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  60% {
+    transform: scale(1.12);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* The streaming tail's typing caret. */
+@keyframes pd-stream-caret-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0.12;
   }
 }
 
@@ -3529,7 +3611,16 @@
   .pd-sitroom-cursor-ripple,
   .pd-sitroom-gamerun-player,
   .pd-sitroom-gamerun-health,
-  .pd-sitroom-gamerun-blip {
+  .pd-sitroom-gamerun-blip,
+  .pd-stream-caret {
+    animation: none;
+  }
+
+  /* Feed rows settle in place: no slide-in, no check pop (the FLIP glide in
+     the surface already checks the media query itself). */
+  .pd-sitroom-action,
+  .pd-sitroom-action-mark[data-done],
+  .pd-workerpane-action {
     animation: none;
   }
 

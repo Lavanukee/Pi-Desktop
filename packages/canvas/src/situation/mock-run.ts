@@ -507,6 +507,9 @@ interface NodeDraft {
   name: string;
   parentId?: string;
   state: OrgNodeView['state'];
+  /** The node's live current action ("thinking", "Writing src/menu.ts") —
+   * carried on chart snapshots only while the node is `working`. */
+  action?: string;
 }
 
 /** Mutable working model the builder snapshots from. */
@@ -530,7 +533,17 @@ class ScriptBuilder {
 
   setNodeState(id: string, state: OrgNodeView['state']): void {
     const n = this.nodes.find((x) => x.id === id);
-    if (n) n.state = state;
+    if (n) {
+      n.state = state;
+      // A node that stops working has no live action (mirrors the real engine).
+      if (state !== 'working') n.action = undefined;
+    }
+  }
+
+  /** Set/clear a working node's live current action for subsequent charts. */
+  setNodeAction(id: string, action: string | undefined): void {
+    const n = this.nodes.find((x) => x.id === id);
+    if (n) n.action = action;
   }
 
   hasNode(id: string): boolean {
@@ -551,6 +564,7 @@ class ScriptBuilder {
         name: n.name,
         parentId: n.parentId,
         state: n.state,
+        ...(n.state === 'working' && n.action !== undefined ? { currentAction: n.action } : {}),
       })),
       edges: this.nodes
         .filter((n) => n.parentId !== undefined)
@@ -633,7 +647,7 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
 
   // -- Phase A: solo agent, then promotion -------------------------------- --
   b.status(0, 'starting', 'Reading the request');
-  b.node({ id: 'root', role: 'solo', name: 'Pi', state: 'working' });
+  b.node({ id: 'root', role: 'solo', name: 'Pi', state: 'working', action: 'Reading the request' });
   b.chart(250);
   b.activity(950, {
     nodeId: 'root',
@@ -647,10 +661,17 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
   });
   // Promotion: the SAME agent gets a new hat — the id and name stay, the role
   // flips, and the surface crossfades the caption (Working solo → Lead).
-  b.node({ id: 'root', role: 'ceo', name: 'Pi', state: 'working' });
+  b.node({ id: 'root', role: 'ceo', name: 'Pi', state: 'working', action: 'thinking' });
   b.chart(2500);
   b.status(2550, 'planning', 'Forming a plan');
-  b.node({ id: 'mgr', role: 'manager', name: 'Build plan', parentId: 'root', state: 'working' });
+  b.node({
+    id: 'mgr',
+    role: 'manager',
+    name: 'Build plan',
+    parentId: 'root',
+    state: 'working',
+    action: 'thinking',
+  });
   b.chart(2950);
   b.activity(3350, {
     nodeId: 'root',
@@ -669,6 +690,7 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
     name: 'Project layout',
     parentId: 'mgr',
     state: 'working',
+    action: 'thinking',
   });
   b.chart(3900);
   b.activity(4100, { nodeId: 'arch', kind: 'note', summary: 'Sketching the project structure' });
@@ -691,10 +713,12 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
     purpose: d.purpose,
   }));
   b.setModules(regions.slice(0, 2));
+  b.setNodeAction('arch', 'Laying out the areas');
   b.chart(5100);
   b.setModules(regions.slice(0, 4));
   b.chart(5700);
   b.setModules(regions.slice(), INTERFACES.slice());
+  b.setNodeAction('arch', 'Drawing the shared touch points');
   b.chart(6300);
   b.activity(6400, {
     nodeId: 'arch',
@@ -730,6 +754,7 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
   for (const [i, d] of DIVISIONS.entries()) {
     const t0 = 8000 + i * 1350;
     b.setNodeState(d.id, 'working');
+    b.setNodeAction(d.id, 'thinking');
     b.chart(t0);
     b.activity(t0 + 100, {
       nodeId: d.id,
@@ -749,6 +774,7 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
   }
   // The planner's own turn: sequencing the queue before dispatch rolls.
   b.setNodeState('mgr', 'working');
+  b.setNodeAction('mgr', 'Sequencing the task queue');
   b.chart(14900);
   b.activity(15300, {
     nodeId: 'mgr',
@@ -838,13 +864,16 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
       // derives its collective glow from its working crew in the renderer,
       // exactly as it does for a real engine's running-only statuses.
       b.setNodeState(engineerId, 'working');
+      // The chart carries the SAME live action the file-touch reports, so the
+      // live-activity row opens once and holds (no double row per contract).
+      b.setNodeAction(engineerId, `Writing ${contract.file}`);
       b.checklist(at);
       b.chart(at + 20);
       // The file lights up the moment work on it begins (phase start).
       b.activity(at + 40, {
         nodeId: engineerId,
         kind: 'file-touch',
-        summary: `started ${contract.file}`,
+        summary: `Writing ${contract.file}`,
         path: contract.file,
         phase: 'start',
       });
@@ -862,7 +891,7 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
       b.activity(at, {
         nodeId: engineerId,
         kind: 'file-touch',
-        summary: `writing ${contract.file}`,
+        summary: `Writing ${contract.file}`,
         path: contract.file,
         phase: 'progress',
         linesAdded: addedMid,
@@ -871,10 +900,11 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
     });
 
     schedule(start + duration - 420, (at) => {
+      // Phase `end` SETTLES the live-activity row (spinner → done check).
       b.activity(at, {
         nodeId: engineerId,
         kind: 'file-touch',
-        summary: `finished ${contract.file}`,
+        summary: `Finished ${contract.file}`,
         path: contract.file,
         phase: 'end',
         linesAdded: added - addedMid,
@@ -955,6 +985,7 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
   b.status(dispatchEnd + 200, 'reviewing', 'Checking the work');
   // The lead steps back in for review — ITS turn, so it lights again.
   b.setNodeState('root', 'working');
+  b.setNodeAction('root', 'Playing the build');
   b.activity(dispatchEnd + 350, {
     nodeId: 'root',
     kind: 'note',

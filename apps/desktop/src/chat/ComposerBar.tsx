@@ -30,6 +30,7 @@ import {
   PopoverTrigger,
 } from '@pi-desktop/ui';
 import { useRef } from 'react';
+import { useCorpStore } from '../state/corp-store';
 import { useLlmStore } from '../state/llm-store';
 import { autoEffortForTier } from '../state/model-selection';
 import { usePiStore } from '../state/pi-slice';
@@ -98,7 +99,12 @@ function ProjectRegion() {
 function ContextRegion() {
   const messages = usePiStore((s) => s.messages);
   const contextWindow = useLlmStore((s) => s.status.model?.contextWindow ?? 0);
-  const contextPercent = useHarnessStatus()?.contextPercent;
+  const harnessPercent = useHarnessStatus()?.contextPercent;
+  // During a corp run, pi's own harness sits idle — the ring fills from the
+  // RUN's real context usage instead (threaded off the live worker transcript).
+  const corpTaskId = useCorpStore((s) => s.taskId);
+  const corpPercent = useCorpStore((s) => s.contextPercent);
+  const contextPercent = corpTaskId !== null && corpPercent !== null ? corpPercent : harnessPercent;
   const fresh = resolveContextGauge({ contextPercent, messages, contextWindow });
 
   // Hold the last non-null value across a momentary null so the ring renders

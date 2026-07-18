@@ -24,30 +24,19 @@
  */
 
 import type {
-  Activity,
   ArtifactRef,
   CoordinationEvent,
   ExerciseSessionView,
   OrgNodeView,
 } from '@pi-desktop/coordination';
-import {
-  Button,
-  IconChat,
-  IconCheck,
-  IconChevronDown,
-  IconEye,
-  IconFile,
-  IconPuzzle,
-  IconSparkles,
-  IconTerminal,
-  ShimmerText,
-} from '@pi-desktop/ui';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { Button, IconCheck, IconChevronDown, IconEye, ShimmerText, Spinner } from '@pi-desktop/ui';
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ExercisePanel } from './exercise-panel.tsx';
 import { ModuleMapPanel } from './module-map-panel.tsx';
 import { type DivisionProgress, SituationOrgChart } from './org-chart-panel.tsx';
 import { PlanPanel } from './plan-panel.tsx';
 import {
+  type ActionFeedRow,
   contractProgress,
   fillModuleRegions,
   formatEta,
@@ -161,8 +150,11 @@ export function SituationRoomSurface({
   // Honest live summaries for collapsed (and quiet) section headers.
   const busy = workingCount(state.chart);
   const teamSummary = busy > 0 ? `${busy} at work` : undefined;
-  const latestActivity = state.activities[state.activities.length - 1];
-  const feedSummary = !secOpen('feed') && latestActivity ? latestActivity.summary : undefined;
+  const latestAction = state.actionFeed[state.actionFeed.length - 1];
+  const feedSummary =
+    !secOpen('feed') && latestAction
+      ? `${latestAction.area} · ${actionText(latestAction.action)}`
+      : undefined;
   const filesSummary = state.files.length > 0 ? `${state.files.length} files` : undefined;
   const planSummary = progress.total > 0 ? `${progress.done}/${progress.total}` : undefined;
 
@@ -303,7 +295,7 @@ export function SituationRoomSurface({
             open={secOpen('feed')}
             onToggle={toggleSec}
           >
-            <ActivityFeed state={state} userMode={userMode} />
+            <ActivityFeed rows={state.actionFeed} />
           </RoomSection>
           <RoomSection
             id="files"
@@ -379,71 +371,86 @@ function RoomSection({ id, title, summary, live, open, onToggle, children }: Roo
 }
 
 // ---------------------------------------------------------------------------
-// Activity feed — the lower-third ticker of visible work
+// Activity feed — live "Area · current action" rows (spinner → done check)
 // ---------------------------------------------------------------------------
 
-const FEED_LINES = 4;
+/** How many action rows the feed shows (the tail; older rows have slid away). */
+const FEED_ROWS = 6;
 
-function activityIcon(kind: Activity['kind']) {
-  switch (kind) {
-    case 'file-touch':
-      return <IconFile size={11} />;
-    case 'tool-call':
-      return <IconTerminal size={11} />;
-    case 'message':
-      return <IconChat size={11} />;
-    case 'consult':
-      return <IconPuzzle size={11} />;
-    case 'note':
-      return <IconSparkles size={11} />;
-  }
+/** The engine's raw "thinking" action reads as a live "thinking…" to a person. */
+function actionText(action: string): string {
+  return action === 'thinking' ? 'thinking…' : action;
 }
 
-/** Non-power users never see raw paths — file lines read as plain activity. */
-function feedText(activity: Activity, userMode: SituationUserMode): string {
-  if (userMode === 'power' || activity.kind !== 'file-touch' || activity.path === undefined) {
-    return activity.summary;
-  }
-  switch (activity.phase) {
-    case 'start':
-      return 'started a new file';
-    case 'progress':
-      return 'writing…';
-    default:
-      return 'finished a file';
-  }
-}
+/**
+ * The live-activity feed: one row per action — `Area · <what it is doing right
+ * now>` — with a SPINNER on the left while the action runs and a done CHECK once
+ * it settles. New actions slide in at the bottom; when a row finishes, the stack
+ * SLIDES up smoothly (a FLIP glide over the offset chain, skipped under
+ * prefers-reduced-motion) instead of snapping.
+ */
+function ActivityFeed({ rows }: { rows: readonly ActionFeedRow[] }) {
+  const tail = rows.slice(-FEED_ROWS);
+  const lastSeq = tail[tail.length - 1]?.seq ?? 0;
 
-function ActivityFeed({ state, userMode }: { state: SituationState; userMode: SituationUserMode }) {
-  // Stable identity by absolute stream sequence: old lines keep their element
-  // (they only dim/shift); the newest mounts and slides in.
-  const tail = state.activities.slice(-FEED_LINES);
-  const firstSeq = state.activityCount - tail.length;
-  const lines = tail.map((activity, i) => ({ activity, seq: firstSeq + i }));
-  const nameOf = (nodeId?: string) =>
-    nodeId ? state.chart.nodes.find((n) => n.id === nodeId)?.name : undefined;
+  // FLIP glide: keyed rows measure their offsetTop each render; a shifted row
+  // animates from its previous position to the new one (smooth slide-up).
+  const rowRefs = useRef(new Map<number, HTMLDivElement | null>());
+  const prevTops = useRef(new Map<number, number>());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure on every rows change (the FLIP trigger); refs only inside
+  useLayoutEffect(() => {
+    const next = new Map<number, number>();
+    for (const [seq, el] of rowRefs.current) {
+      if (el !== null && el.isConnected) next.set(seq, el.offsetTop);
+    }
+    const reduced =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reduced && typeof Element.prototype.animate === 'function') {
+      for (const [seq, top] of next) {
+        const prev = prevTops.current.get(seq);
+        const el = rowRefs.current.get(seq);
+        if (prev === undefined || el === null || el === undefined) continue;
+        const dy = prev - top;
+        if (Math.abs(dy) < 1) continue;
+        el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], {
+          duration: 320,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+        });
+      }
+    }
+    prevTops.current = next;
+  }, [rows]);
+
+  const setRowRef = (seq: number) => (el: HTMLDivElement | null) => {
+    if (el === null) rowRefs.current.delete(seq);
+    else rowRefs.current.set(seq, el);
+  };
+
   return (
-    <div className="pd-sitroom-feed" aria-live="polite">
-      {lines.map((line) => {
-        const name = nameOf(line.activity.nodeId);
-        return (
+    <div className="pd-sitroom-actionfeed" aria-live="polite">
+      {tail.length === 0 ? (
+        <div className="pd-sitroom-feed-empty">Waiting for the work to start…</div>
+      ) : (
+        tail.map((row) => (
           <div
-            className="pd-sitroom-feed-line"
-            key={line.seq}
-            data-age={state.activityCount - 1 - line.seq}
+            className="pd-sitroom-action"
+            key={row.seq}
+            ref={setRowRef(row.seq)}
+            data-done={row.done || undefined}
+            data-age={row.done ? Math.min(3, lastSeq - row.seq) : 0}
           >
-            <span
-              className="pd-sitroom-feed-icon"
-              data-kind={line.activity.kind}
-              aria-hidden="true"
-            >
-              {activityIcon(line.activity.kind)}
+            <span className="pd-sitroom-action-mark" data-done={row.done || undefined} aria-hidden>
+              {row.done ? <IconCheck size={10} /> : <Spinner size={11} />}
             </span>
-            {name !== undefined ? <span className="pd-sitroom-feed-node">{name}</span> : null}
-            <span className="pd-sitroom-feed-text">{feedText(line.activity, userMode)}</span>
+            <span className="pd-sitroom-action-area">{row.area}</span>
+            <span className="pd-sitroom-action-sep" aria-hidden>
+              ·
+            </span>
+            <span className="pd-sitroom-action-text">{actionText(row.action)}</span>
           </div>
-        );
-      })}
+        ))
+      )}
     </div>
   );
 }

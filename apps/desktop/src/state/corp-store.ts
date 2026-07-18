@@ -24,6 +24,12 @@ interface CorpStoreState {
   liveNode: OrgNodeView | null;
   /** User-pinned node — overrides the follow; null = following live. */
   pinnedNode: OrgNodeView | null;
+  /**
+   * The run's live context fullness (0..100) — the latest reading from the
+   * followed/pinned node's transcript. The composer's context ring prefers this
+   * while a corp task is active, so the circle actually FILLS during a run.
+   */
+  contextPercent: number | null;
   /** Start tracking a new corp task (clears follow + pin). */
   setTask: (taskId: string | null) => void;
   /** Pin a clicked node; clicking the pinned node again resumes following. */
@@ -33,13 +39,18 @@ interface CorpStoreState {
   /** Fold one org-chart snapshot: advance the follow target + refresh the
    * pinned node's live state (its gem/status must stay honest). */
   trackChart: (chart: OrgChartView) => void;
+  /** Record the run's latest context reading (from a transcript poll). */
+  setContextPercent: (percent: number) => void;
 }
 
 export const useCorpStore = create<CorpStoreState>((set) => ({
   taskId: null,
   liveNode: null,
   pinnedNode: null,
-  setTask: (taskId) => set({ taskId, liveNode: null, pinnedNode: null }),
+  contextPercent: null,
+  setTask: (taskId) => set({ taskId, liveNode: null, pinnedNode: null, contextPercent: null }),
+  setContextPercent: (percent) =>
+    set((s) => (s.contextPercent === percent ? s : { contextPercent: percent })),
   selectNode: (node) => set((s) => ({ pinnedNode: s.pinnedNode?.id === node?.id ? null : node })),
   followLive: () => set({ pinnedNode: null }),
   trackChart: (chart) =>

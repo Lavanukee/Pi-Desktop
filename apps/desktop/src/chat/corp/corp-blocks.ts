@@ -14,13 +14,18 @@
  *    reconcile instead of re-mounting the whole chain on every new block, and a
  *    thinking run renders as an ActivityChain (its rail shows WHILE streaming),
  *    never a component that swaps type when it settles.
- *  - a tool call the local model wrote as TEXT (`<function=NAME>…</function>` /
- *    `<tool_call>…`, the qwen grammar-failure shape) is split OUT of a SETTLED
- *    text/thinking block into its own `toolCall` block via the shared
- *    {@link reconstructToolCallFromContent} parser, so it renders as a real bash /
- *    "writing <file>" activity row instead of a raw markup wall — the prose around
- *    it stays prose. Mid-stream (incomplete tag) it is left as live text (no
- *    flicker).
+ *  - a tool call the local model wrote as TEXT (the qwen grammar-failure shape) is
+ *    split OUT of a SETTLED text/thinking block into its own `toolCall` block via
+ *    the shared {@link reconstructToolCallFromContent} parser, so it renders as a
+ *    real bash / "writing <file>" activity row instead of a raw markup wall — the
+ *    prose around it stays prose. The shapes caught: a `<function=NAME>…</function>`
+ *    span (optionally `<tool_call>`-wrapped), a JSON-form `<tool_call>{"name":…,
+ *    "arguments"|"parameters":{…}}</tool_call>` envelope, a bare `<tool_call>…
+ *    </tool_call>` wrapper, and any orphan scaffolding token (`<tool_call>`,
+ *    `</tool_call>`, `</function>`, `<parameter=…>`) left by a partial parse — none
+ *    ever render as literal XML. Mid-stream (an opener whose tag hasn't closed yet)
+ *    the scaffolding is SUPPRESSED: prose before the opener stays, everything from
+ *    the opener on is dropped until the block settles into a real activity row.
  *  - a live file write's `+N/−N` rides the `toolCall` block's `addedLines` so the
  *    real edit row's ±stat counts up.
  *
@@ -29,7 +34,12 @@
 
 import type { WorkerTranscriptLine, WorkerTranscriptView } from '@pi-desktop/coordination';
 import type { AssistantMsg, ContentBlock, ToolResultMsg } from '@pi-desktop/engine';
-import { reconstructToolCallFromContent } from '@pi-desktop/provider-llamacpp/repair';
+import {
+  findToolCallOpener,
+  findWrittenToolCallRegion,
+  reconstructToolCallFromContent,
+  stripToolCallScaffolding,
+} from '@pi-desktop/provider-llamacpp/repair';
 import { toolStepKind } from '../activity-mapping';
 
 /** The corp role-agent built-in tools the text-form salvage resolves written
@@ -56,8 +66,12 @@ type ToolCallBlock = Extract<ContentBlock, { type: 'toolCall' }>;
 
 // ---------------------------------------------------------------------------
 // Text-form tool-call split (display-only) — a SETTLED text/thinking block whose
-// content carries a `<function=NAME>…</function>` (optionally `<tool_call>`-
-// wrapped) call is split into [prose?, toolCall, prose?].
+// content carries a written tool call is split into [prose?, toolCall, prose?].
+// Shapes: a `<function=NAME>…</function>` span (optionally `<tool_call>`-wrapped),
+// a JSON-form `<tool_call>{"name":…}</tool_call>` envelope, a bare `<tool_call>…
+// </tool_call>` wrapper, and orphan scaffolding tokens (scrubbed, never rendered
+// raw). The parsing (region finding, scaffolding scrub) is shared from `repair`;
+// the WHEN-to-split / streaming-suppression policy lives here.
 // ---------------------------------------------------------------------------
 
 /** One `<function=NAME>…</function>` region, optionally wrapped by `<tool_call>`. */
@@ -79,11 +93,39 @@ function toolCallBlock(id: string, name: string, args: Record<string, unknown>):
 }
 
 /**
+ * Assemble the ordered blocks for a matched tool-call region: prose `before`
+ * (scaffolding scrubbed) → the reconstructed `toolCall` (or, when the region
+ * doesn't reconstruct to a known call, its scaffolding-scrubbed text so no raw tag
+ * leaks) → prose `after`. Empty segments are dropped.
+ */
+function assembleSplit(
+  before: string,
+  region: string,
+  after: string,
+  idBase: string,
+  textLike: (t: string) => ContentBlock,
+): ContentBlock[] {
+  const out: ContentBlock[] = [];
+  const beforeClean = stripToolCallScaffolding(before).trim();
+  if (beforeClean.length > 0) out.push(textLike(beforeClean));
+  const call = reconstructToolCallFromContent(region, CORP_TOOL_NAMES);
+  if (call !== undefined) {
+    out.push(toolCallBlock(`${idBase}-tc`, call.toolName, call.arguments));
+  } else {
+    const regionClean = stripToolCallScaffolding(region).trim();
+    if (regionClean.length > 0) out.push(textLike(regionClean));
+  }
+  const afterClean = stripToolCallScaffolding(after).trim();
+  if (afterClean.length > 0) out.push(textLike(afterClean));
+  return out;
+}
+
+/**
  * Split a SETTLED text/thinking block's content when it carries a written tool
  * call, returning the ordered blocks (prose stays `kind`, the call becomes a
- * `toolCall`). Returns null when there's no recoverable call — the caller keeps
- * the plain block. Never called for a streaming block (an incomplete tag must
- * stay live text, no per-delta flicker).
+ * `toolCall`). Returns null when there's nothing to salvage — the caller keeps the
+ * plain block. Never called for a streaming block (an incomplete tag is suppressed
+ * upstream in {@link streamingBlocks}, not split).
  */
 function splitWrittenToolCall(
   kind: 'text' | 'thinking',
@@ -93,21 +135,17 @@ function splitWrittenToolCall(
   const textLike = (t: string): ContentBlock =>
     kind === 'text' ? { type: 'text', text: t } : { type: 'thinking', thinking: t };
 
-  // A `<function=…>` / `<tool_call>` span embedded in prose → split around it.
+  // (A) A `<function=NAME>…</function>` span (optionally `<tool_call>`-wrapped).
   const span = findFunctionSpan(text);
-  if (span !== null) {
-    const call = reconstructToolCallFromContent(span.span, CORP_TOOL_NAMES);
-    if (call === undefined) return null;
-    const out: ContentBlock[] = [];
-    const before = span.before.trim();
-    if (before.length > 0) out.push(textLike(before));
-    out.push(toolCallBlock(`${idBase}-tc`, call.toolName, call.arguments));
-    const after = span.after.trim();
-    if (after.length > 0) out.push(textLike(after));
-    return out;
+  if (span !== null) return assembleSplit(span.before, span.span, span.after, idBase, textLike);
+
+  // (B) A `<tool_call>…</tool_call>` wrapper — JSON-form `{"name":…}` or bare.
+  const region = findWrittenToolCallRegion(text);
+  if (region !== null) {
+    return assembleSplit(region.before, region.region, region.after, idBase, textLike);
   }
 
-  // A block that IS just a call envelope (`{"name":…,"arguments":…}` or a bare
+  // (C) A block that IS just a call envelope (`{"name":…,"arguments":…}` or a bare
   // `<NAME>{…}` tag) → the whole block becomes the call. Guarded to a payload-led
   // block so prose that merely mentions a tool never reconstructs.
   const trimmed = text.trim();
@@ -117,7 +155,50 @@ function splitWrittenToolCall(
       return [toolCallBlock(`${idBase}-tc`, call.toolName, call.arguments)];
     }
   }
+
+  // (D) Orphan scaffolding tokens with no full region — scrub them so a stray
+  // `</tool_call>` / `</function>` / `<parameter=…>` never renders as raw text.
+  const cleaned = stripToolCallScaffolding(text);
+  if (cleaned !== text) {
+    const t = cleaned.trim();
+    return t.length > 0 ? [textLike(t)] : [];
+  }
   return null;
+}
+
+/** Minimal placeholder shown for the open (as-yet-unclosed) span of a streaming
+ * written tool call, so the raw scaffolding is never seen and a live block still
+ * renders until the call settles into its real activity row. */
+const STREAMING_TOOL_CALL_PLACEHOLDER = 'Preparing tool call…';
+
+/**
+ * A STILL-STREAMING text/thinking line. While a written tool call is open its
+ * scaffolding must never show raw: keep any prose BEFORE the first opener, and
+ * suppress everything from the opener on (the tag is as-yet-unclosed) — it becomes
+ * a real activity row once the block settles. When nothing but the open scaffolding
+ * remains, a minimal "preparing…" placeholder stands in (never raw XML). With no
+ * opener but a stray scaffolding token present, scrub the token; otherwise the
+ * ordinary streaming path (JSON fence / live prose) applies.
+ */
+function streamingBlocks(kind: 'text' | 'thinking', text: string): ContentBlock[] {
+  const textLike = (t: string): ContentBlock =>
+    kind === 'text' ? { type: 'text', text: t } : { type: 'thinking', thinking: t };
+
+  const openerIdx = findToolCallOpener(text);
+  if (openerIdx !== -1) {
+    const before = stripToolCallScaffolding(text.slice(0, openerIdx)).trimEnd();
+    return [textLike(before.length > 0 ? before : STREAMING_TOOL_CALL_PLACEHOLDER)];
+  }
+  const cleaned = stripToolCallScaffolding(text);
+  if (cleaned !== text) {
+    const kept = cleaned.trimEnd();
+    return kept.length > 0 ? [textLike(kept)] : [];
+  }
+  if (kind === 'text') {
+    const fenced = jsonFence(text, true);
+    return [{ type: 'text', text: fenced ?? text }];
+  }
+  return [{ type: 'thinking', thinking: text }];
 }
 
 // ---------------------------------------------------------------------------
@@ -234,20 +315,20 @@ function lineToBlocks(line: WorkerTranscriptLine, index: number): ContentBlock[]
       return line.text.length > 0 ? [{ type: 'text', text: line.text }] : [];
     }
     case 'thinking': {
-      if (!streaming) {
-        const split = splitWrittenToolCall('thinking', line.text, idBase);
-        if (split !== null) return split;
-      }
+      // Mid-stream: suppress any open tool-call scaffolding (prose before it kept).
+      if (streaming) return streamingBlocks('thinking', line.text);
+      const split = splitWrittenToolCall('thinking', line.text, idBase);
+      if (split !== null) return split;
       return [{ type: 'thinking', thinking: line.text }];
     }
     default: {
-      // A `message` line. A SETTLED written tool call splits out; else a JSON
-      // payload fences to a code block; else plain prose. Mid-stream stays live text.
-      if (!streaming) {
-        const split = splitWrittenToolCall('text', line.text, idBase);
-        if (split !== null) return split;
-      }
-      const fenced = jsonFence(line.text, streaming);
+      // A `message` line. Mid-stream: suppress any open tool-call scaffolding. Once
+      // SETTLED, a written tool call splits out; else a JSON payload fences to a
+      // code block; else plain prose.
+      if (streaming) return streamingBlocks('text', line.text);
+      const split = splitWrittenToolCall('text', line.text, idBase);
+      if (split !== null) return split;
+      const fenced = jsonFence(line.text, false);
       return [{ type: 'text', text: fenced ?? line.text }];
     }
   }

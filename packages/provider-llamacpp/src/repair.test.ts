@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   balanceJson,
   DEFAULT_TOOL_NAME_MATCH_THRESHOLD,
+  findToolCallOpener,
+  findWrittenToolCallRegion,
   fuzzyMatchToolName,
   nameSimilarity,
   reconstructToolCallFromContent,
@@ -9,6 +11,7 @@ import {
   repairToolCallArguments,
   repairToolCallJson,
   stripCodeFences,
+  stripToolCallScaffolding,
   type ToolSchemaLike,
   validateAgainstSchema,
 } from './repair.js';
@@ -299,6 +302,23 @@ describe('rung 0 — text-content tool-call reconstructor', () => {
     expect(r).toMatchObject({ toolName: 'read', arguments: { path: '/y' } });
   });
 
+  it('reconstructs a JSON-form <tool_call> naming bash into command args', () => {
+    const content = '<tool_call>{"name":"bash","arguments":{"command":"ls src"}}</tool_call>';
+    const r = reconstructToolCallFromContent(content, ['bash', 'write']);
+    expect(r).toMatchObject({
+      toolName: 'bash',
+      arguments: { command: 'ls src' },
+      shape: 'envelope-json',
+    });
+  });
+
+  it('reconstructs a JSON-form <tool_call> that uses the "parameters" key', () => {
+    const content =
+      '<tool_call>{"name":"write","parameters":{"path":"a.ts","content":"x"}}</tool_call>';
+    const r = reconstructToolCallFromContent(content, ['write', 'read']);
+    expect(r).toMatchObject({ toolName: 'write', arguments: { path: 'a.ts', content: 'x' } });
+  });
+
   it('reconstructs a <function=NAME>{…}</function> call', () => {
     const r = reconstructToolCallFromContent('<function=read>{"path":"/z"}</function>', registered);
     expect(r).toMatchObject({ toolName: 'read', arguments: { path: '/z' }, shape: 'function-tag' });
@@ -398,5 +418,57 @@ describe('rung 0 — text-content tool-call reconstructor', () => {
   it('returns undefined with no registered tools or empty content', () => {
     expect(reconstructToolCallFromContent('{"name":"read","arguments":{}}', [])).toBeUndefined();
     expect(reconstructToolCallFromContent('', registered)).toBeUndefined();
+  });
+});
+
+describe('written tool-call scaffolding (display salvage)', () => {
+  it('findToolCallOpener returns the index of the first <tool_call>/<function= opener', () => {
+    expect(findToolCallOpener('run it.\n<tool_call>\n<function=bash>')).toBe(8);
+    expect(findToolCallOpener('call <function=bash>x</function>')).toBe(5);
+    expect(findToolCallOpener('just prose, no call here')).toBe(-1);
+  });
+
+  it('stripToolCallScaffolding scrubs every scaffolding token but keeps values', () => {
+    const raw =
+      '<tool_call>\n<function=bash>\n<parameter=command>\nls\n</parameter>\n</function>\n</tool_call>';
+    const out = stripToolCallScaffolding(raw);
+    expect(out).not.toMatch(/<\/?tool_call\s*>|<\/?function|<\/?parameter/);
+    expect(out).toContain('ls');
+  });
+
+  it('stripToolCallScaffolding removes an orphan </tool_call> and <parameter name="…">', () => {
+    expect(stripToolCallScaffolding('all done</tool_call>')).toBe('all done');
+    expect(stripToolCallScaffolding('<parameter name="url">x</parameter>')).toBe('x');
+  });
+
+  it('findWrittenToolCallRegion splits prose around a JSON-form <tool_call> wrapper', () => {
+    const text = 'Now run it.\n<tool_call>{"name":"bash","arguments":{"command":"ls"}}</tool_call>';
+    const region = findWrittenToolCallRegion(text);
+    expect(region?.before).toBe('Now run it.\n');
+    expect(region?.region).toBe(
+      '<tool_call>{"name":"bash","arguments":{"command":"ls"}}</tool_call>',
+    );
+    expect(region?.after).toBe('');
+  });
+
+  it('findWrittenToolCallRegion splits a bare <tool_call>…</tool_call> wrapper', () => {
+    const region = findWrittenToolCallRegion('before <tool_call>payload</tool_call> after');
+    expect(region).toEqual({
+      before: 'before ',
+      region: '<tool_call>payload</tool_call>',
+      after: ' after',
+    });
+  });
+
+  it('findWrittenToolCallRegion locates a bare <function=…></function> span', () => {
+    const region = findWrittenToolCallRegion('a <function=read>{"path":"/z"}</function> b');
+    expect(region?.before).toBe('a ');
+    expect(region?.region).toBe('<function=read>{"path":"/z"}</function>');
+    expect(region?.after).toBe(' b');
+  });
+
+  it('findWrittenToolCallRegion returns null for an unclosed (streaming) opener', () => {
+    expect(findWrittenToolCallRegion('prose <tool_call>\n<function=bash>')).toBeNull();
+    expect(findWrittenToolCallRegion('no scaffolding at all')).toBeNull();
   });
 });

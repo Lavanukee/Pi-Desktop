@@ -38,6 +38,16 @@ import type { RoleAgentCustomTool } from './role-agent-seam.js';
 export const SUBMIT_VISION = 'submit_vision';
 
 /**
+ * The default results page the CEO's REAL-browser research navigates to. The
+ * DuckDuckGo HTML endpoint is chosen deliberately: it renders plain server-side
+ * results a `browser_read` can extract, and — unlike the scraped `web_search`
+ * backend, which DuckDuckGo blocks server-side (202/challenge → "No results") — a
+ * REAL browser tab is not met with the bot-detection wall. The caller appends the
+ * URL-encoded query. (Google is a one-line swap: `https://www.google.com/search?q=`.)
+ */
+export const VISION_SEARCH_URL = 'https://duckduckgo.com/html/?q=';
+
+/**
  * The vision-forming SYSTEM prompt. Built from the CEO disposition in the prompt
  * library ({@link getRolePrompt}('ceo') — the "you hold the vision" half) and
  * re-framed for the scoped, self-contained vision-forming task: form ONE concrete
@@ -52,7 +62,8 @@ RIGHT NOW you are FORMING THE VISION — this is the very first step, before any
 You are working in INTERPRET mode: do NOT ask the user questions. Where the request is open-ended, research it, decide, and commit to ONE clear interpretation that becomes the task.
 
 You have real tools — use them to form a vision you are confident in, not to overthink:
-- web_search / web_fetch (if available): look up references and inspiration so your brief is grounded, not guessed. If search returns nothing, proceed on your own judgment — do not block on it.
+- browser_navigate + browser_read (PREFERRED for research — this drives a REAL browser tab the user watches live, so it is NOT blocked the way a scraped search is): to look something up, NAVIGATE to a search results page and READ it. Default to DuckDuckGo — browser_navigate to \`${VISION_SEARCH_URL}<your+url-encoded+query>\`, then browser_read to get the results text, and extract the top few titles + links. To dig deeper, browser_navigate to a promising link and browser_read the page itself.
+- web_search / web_fetch (FALLBACK, if the browser is unavailable): look up references the same way. Either path: if research returns nothing, proceed on your own judgment — do not block on it.
 - write / read: sketch a QUICK, ROUGH mockup of the intended result (a single self-contained \`mockup.html\`, or a short markdown outline) so the vision is concrete. It is a throwaway reference to think against, not a deliverable — keep it small.
 - bash: preview or sanity-check what you drafted.
 
@@ -77,7 +88,7 @@ export function buildCeoVisionPrompt(task: string): string {
     '2. Its TONE and SCOPE — the intended feel and how far it reaches (what is in, what is deliberately out).',
     '3. The concrete DELIVERABLES — the specific things that must exist for this to be "done".',
     '',
-    'Before you submit you MAY: research references with web_search / web_fetch (if available) to ground the vision, and sketch a quick throwaway mockup with write (e.g. a rough mockup.html) so it is concrete. Iterate until you are confident.',
+    `Before you submit you MAY: research references to ground the vision — PREFER the real browser (browser_navigate to \`${VISION_SEARCH_URL}<url-encoded query>\`, then browser_read the results and extract the top hits), falling back to web_search / web_fetch — and sketch a quick throwaway mockup with write (e.g. a rough mockup.html) so it is concrete. Iterate until you are confident.`,
     '',
     `When the vision is clear, call ${SUBMIT_VISION} with the full brief as its \`brief\` argument, then stop. (If you cannot call the tool, end your reply with the brief itself.) Direction only — no code, no file layout, no contracts.`,
   ].join('\n');

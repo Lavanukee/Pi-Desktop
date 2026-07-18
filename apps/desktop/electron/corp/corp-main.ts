@@ -16,6 +16,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { BrowserAgentClient, registerBrowserUseTools } from '@pi-desktop/browser-use';
 import type { CoordinationEvent, TaskHandle, TaskResult } from '@pi-desktop/coordination';
 import { CorpEngine, createNodeWorkspaceFactory } from '@pi-desktop/coordination/corp';
 import type { CorpChatFn } from '@pi-desktop/harness/corp';
@@ -156,6 +157,17 @@ async function handleStart(
         // registrar so web_search / web_fetch exist for the runs whose allowlist
         // requests them (the seam gates by name; no other role is affected).
         webResearchFactory: (pi) => registerWebTools(pi),
+        // The CEO vision turn PREFERS the REAL canvas browser to research: a scraped
+        // web_search (DuckDuckGo HTML) is bot-blocked server-side (202/challenge →
+        // "No results"), but a real browser tab is not. The browser-agent bridge
+        // (registerBrowserAgentIpc, on app-ready) publishes PI_BROWSER_AGENT_SOCK/
+        // _TOKEN onto THIS main process's env before any corp run, and its socket
+        // server + browserManager live IN THIS PROCESS — so BrowserAgentClient
+        // .fromEnv() connects to the in-process bridge and the browser_* tools drive
+        // a VISIBLE canvas tab (the search opens live in the situation-room canvas).
+        // Gated by name in the seam like the web tools; no other role is affected.
+        browserToolsFactory: (pi) =>
+          registerBrowserUseTools(pi, { bridge: BrowserAgentClient.fromEnv() }),
       })
     : undefined;
   const engine = new CorpEngine({

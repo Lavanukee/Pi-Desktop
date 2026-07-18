@@ -425,16 +425,20 @@ describe('runCorp — every role runs harnessed through the role-agent seam', ()
     expect(purposes[0]).toBe('vision');
 
     // Vision (spec §4): thinking ON, thinking-general; harnessed with read/write/bash
-    // to draft a mockup + web_search/web_fetch to research + submit_vision to finalize
-    // (its name ALSO in the allowlist — the SDK gate). It runs in a SCRATCH isolated
-    // workspace (harvest OFF) so the mockup never enters the product tree. NO per-agent
-    // caps — it runs until it submits / the global RunBudget.
+    // to draft a mockup + the browser_* set to research by driving the REAL browser
+    // (preferred, not bot-blocked) + web_search/web_fetch as a fallback + submit_vision
+    // to finalize (its name ALSO in the allowlist — the SDK gate). It runs in a SCRATCH
+    // isolated workspace (harvest OFF) so the mockup never enters the product tree. NO
+    // per-agent caps — it runs until it submits / the global RunBudget.
     const vision = mock.calls.find((c) => c.purpose === 'vision');
     expect(vision?.thinking).toBe(true);
     expect(vision?.samplingMode).toBe('thinking-general');
     expect(vision?.tools).toEqual(
       expect.arrayContaining(['read', 'write', 'bash', 'web_search', 'web_fetch', 'submit_vision']),
     );
+    // The real-browser research surface: navigate + read (the preferred DDG flow) must
+    // be in the vision allowlist, or the SDK gate hides the browser_* tools.
+    expect(vision?.tools).toEqual(expect.arrayContaining(['browser_navigate', 'browser_read']));
     expect(vision?.customTools?.map((t) => t.name)).toContain('submit_vision');
     expect(vision?.isolation).toBeDefined();
     expect(vision?.isolation?.harvest).toBe(false); // scratch — not harvested to product

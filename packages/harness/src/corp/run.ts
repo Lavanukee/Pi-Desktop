@@ -29,6 +29,7 @@
  * and the node fs seams.
  */
 
+import { BROWSER_TOOL_NAMES } from '@pi-desktop/browser-use/tool-names';
 import { ARCHITECT_PROMPT, buildArchitectPrompt, parseArchitecture } from './architect.js';
 import {
   buildProductManifest,
@@ -797,10 +798,21 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         purpose: 'vision',
         systemPrompt: CEO_VISION_PROMPT,
         userPrompt: buildCeoVisionPrompt(options.task),
-        // read/write/bash to draft + preview a mockup; web_search/web_fetch to
-        // research references (the app registers them when listed; the seam gates by
-        // name). submit_vision's NAME must be in the allowlist or it is never offered.
-        tools: ['read', 'write', 'bash', 'web_search', 'web_fetch', SUBMIT_VISION],
+        // read/write/bash to draft + preview a mockup; the browser_* set to research
+        // by driving the REAL canvas browser (the PREFERRED path — not bot-blocked
+        // like the scraped web_search), with web_search/web_fetch kept as a fallback.
+        // The app registers each surface only when its names are listed here, and the
+        // seam gates by name — so a role without these names can never reach them.
+        // submit_vision's NAME must be in the allowlist or it is never offered.
+        tools: [
+          'read',
+          'write',
+          'bash',
+          ...BROWSER_TOOL_NAMES,
+          'web_search',
+          'web_fetch',
+          SUBMIT_VISION,
+        ],
         customTools: [SUBMIT_VISION_TOOL],
         cwd: options.workspace,
         // Scratch-only isolation: the CEO's mockup lands in a fresh temp dir that is

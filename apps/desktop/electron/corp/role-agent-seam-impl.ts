@@ -58,6 +58,56 @@ import { createCorpModelProvider, runRoleAgent, type SamplingMode } from './role
  * loadable everywhere (incl. the Node type-stripping e2e drivers). */
 const WEB_TOOL_NAMES: ReadonlySet<string> = new Set(['web_search', 'web_fetch']);
 
+/** The browser-automation tool names a role's allowlist may request (the CEO
+ * vision turn drives the REAL canvas browser to research — a scraped web_search is
+ * bot-blocked server-side, a real browser tab is not). Mirrors {@link
+ * WEB_TOOL_NAMES}: when any is present AND a {@link
+ * RunRoleAgentConfig.browserToolsFactory} is injected, that factory is installed so
+ * the tools exist; the allowlist still gates which of them the role may call. The
+ * names are kept LOCAL (not imported from @pi-desktop/browser-use) so this module
+ * carries NO dependency on the browser-use package and stays loadable everywhere
+ * (incl. the Node type-stripping e2e drivers) — the APP injects the concrete
+ * registrar. Kept in sync with @pi-desktop/browser-use/tool-names. */
+const BROWSER_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'browser_navigate',
+  'browser_snapshot',
+  'browser_click',
+  'browser_type',
+  'browser_scroll',
+  'browser_read',
+  'browser_wait',
+  'browser_back',
+  'browser_forward',
+  'browser_key',
+]);
+
+/**
+ * Choose which injected extension factories to install for one role-agent run,
+ * gated by the run's TOOL ALLOWLIST: the web-research registrar when a web tool
+ * ({@link WEB_TOOL_NAMES}) is present, and the browser-automation registrar when a
+ * browser tool ({@link BROWSER_TOOL_NAMES}) is present. A factory that was not
+ * injected is skipped; the allowlist still gates which of the installed tools the
+ * role may actually call, so a role without those names can never reach them. Pure
+ * + unit-tested. Order is stable (web before browser) so the extension load order
+ * is deterministic.
+ */
+export function selectExtensionFactories(
+  tools: readonly string[],
+  factories: {
+    readonly webResearchFactory?: ExtensionFactory;
+    readonly browserToolsFactory?: ExtensionFactory;
+  },
+): ExtensionFactory[] {
+  const out: ExtensionFactory[] = [];
+  if (factories.webResearchFactory !== undefined && tools.some((t) => WEB_TOOL_NAMES.has(t))) {
+    out.push(factories.webResearchFactory);
+  }
+  if (factories.browserToolsFactory !== undefined && tools.some((t) => BROWSER_TOOL_NAMES.has(t))) {
+    out.push(factories.browserToolsFactory);
+  }
+  return out;
+}
+
 // --- small fs helpers --------------------------------------------------------
 
 /** UTF-8 byte length of a string (no node:Buffer dependency). */
@@ -414,6 +464,20 @@ export interface RunRoleAgentConfig {
    * runs WITHOUT web research (it still has read/write/bash to draft its mockup).
    */
   readonly webResearchFactory?: ExtensionFactory;
+  /**
+   * The browser-automation registrar (spec §4 — the CEO vision turn researches by
+   * driving the REAL canvas browser, which is NOT bot-blocked the way the scraped
+   * web_search is). INJECTED by the app (corp-main.ts passes
+   * `(pi) => registerBrowserUseTools(pi, { bridge: BrowserAgentClient.fromEnv() })`)
+   * so this seam carries NO dependency on the browser-use package and stays loadable
+   * everywhere. Installed ONLY for a run whose allowlist requests a browser tool
+   * ({@link BROWSER_TOOL_NAMES}); the allowlist still gates which tools the role may
+   * call. The browser-agent bridge (PI_BROWSER_AGENT_SOCK/_TOKEN) is published onto
+   * this main process's env at app-ready, and the bridge server + browserManager
+   * live IN THIS PROCESS, so the in-process client reaches them and drives a visible
+   * canvas tab. Absent → the vision turn runs WITHOUT browser research.
+   */
+  readonly browserToolsFactory?: ExtensionFactory;
 }
 
 /**
@@ -432,6 +496,7 @@ export function createRunRoleAgent(config: RunRoleAgentConfig): RunRoleAgentFn {
   // createRunRoleAgent itself stays synchronous, so corp-main's wiring is unchanged.
   const handlePromise = createCorpModelProvider({ baseUrl: config.baseUrl, model: config.model });
   const webResearchFactory = config.webResearchFactory;
+  const browserToolsFactory = config.browserToolsFactory;
 
   return async (input: RoleAgentRunInput): Promise<RoleAgentRunOutput> => {
     const handle = await handlePromise;
@@ -494,14 +559,17 @@ export function createRunRoleAgent(config: RunRoleAgentConfig): RunRoleAgentFn {
           )
         : undefined;
 
-    // WEB-RESEARCH (spec §4 CEO research): when the run's allowlist requests
-    // web_search / web_fetch (the CEO vision turn) AND the app injected a
-    // webResearchFactory, install it so those tools exist. The allowlist still gates
-    // which of them the role may call, so no other role is affected. Absent factory
-    // → the vision turn simply runs without web research.
-    const wantsWebTools = input.tools.some((t) => WEB_TOOL_NAMES.has(t));
-    const extensionFactories: ExtensionFactory[] =
-      wantsWebTools && webResearchFactory !== undefined ? [webResearchFactory] : [];
+    // RESEARCH FACTORIES (spec §4 CEO research): when the run's allowlist requests a
+    // web tool (web_search / web_fetch) or a browser tool (browser_navigate, …) AND
+    // the app injected the matching factory, install it so those tools exist. The
+    // allowlist still gates which of them the role may call, so no other role is
+    // affected. Absent factory → the vision turn simply runs without that research
+    // surface. The CEO vision turn requests BOTH: it drives the real browser first
+    // (not bot-blocked) and keeps web_search as a fallback.
+    const extensionFactories = selectExtensionFactories(input.tools, {
+      ...(webResearchFactory !== undefined ? { webResearchFactory } : {}),
+      ...(browserToolsFactory !== undefined ? { browserToolsFactory } : {}),
+    });
 
     // BUMP-TO-CONTINUE (spec "Run safety & budgets"): after the session's loop ends,
     // if the engineer did NOT finalize AND its slot file is absent AND it did not

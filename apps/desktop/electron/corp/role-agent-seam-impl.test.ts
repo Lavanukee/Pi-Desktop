@@ -1,6 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   bumpDecision,
@@ -8,6 +9,7 @@ import {
   createSubmitReviewGate,
   newSubmitReviewCapture,
   seedIsolatedWorkspace,
+  selectExtensionFactories,
   toToolDefinition,
 } from './role-agent-seam-impl';
 
@@ -225,6 +227,59 @@ describe('bumpDecision — the completeness backstop condition (pure)', () => {
         textIsDeliverable: true,
       }),
     ).toBe(CONTINUE);
+  });
+});
+
+describe('selectExtensionFactories — research surfaces gated by the tool allowlist', () => {
+  // Distinct sentinel factories so the returned list's IDENTITY + ORDER is checkable.
+  const web = ((_pi: ExtensionAPI) => undefined) as unknown as Parameters<
+    typeof selectExtensionFactories
+  >[1]['webResearchFactory'];
+  const browser = ((_pi: ExtensionAPI) => undefined) as unknown as Parameters<
+    typeof selectExtensionFactories
+  >[1]['browserToolsFactory'];
+
+  it('installs the web factory when a web tool is in the allowlist', () => {
+    expect(
+      selectExtensionFactories(['read', 'web_search', 'submit_vision'], {
+        webResearchFactory: web,
+      }),
+    ).toEqual([web]);
+  });
+
+  it('installs the browser factory when a browser tool is in the allowlist', () => {
+    expect(
+      selectExtensionFactories(['read', 'browser_navigate', 'submit_vision'], {
+        browserToolsFactory: browser,
+      }),
+    ).toEqual([browser]);
+  });
+
+  it('installs BOTH (web before browser) for the CEO vision allowlist — browser + web tools', () => {
+    // The real vision allowlist requests both surfaces; the seam installs both, in a
+    // deterministic order (web first).
+    expect(
+      selectExtensionFactories(
+        ['read', 'write', 'bash', 'browser_navigate', 'browser_read', 'web_search', 'web_fetch'],
+        { webResearchFactory: web, browserToolsFactory: browser },
+      ),
+    ).toEqual([web, browser]);
+  });
+
+  it('installs NOTHING when the allowlist requests neither surface (an engineer)', () => {
+    expect(
+      selectExtensionFactories(['read', 'write', 'edit', 'bash'], {
+        webResearchFactory: web,
+        browserToolsFactory: browser,
+      }),
+    ).toEqual([]);
+  });
+
+  it('skips a surface whose factory was not injected even when its tools are listed', () => {
+    // Browser tool listed but no browser factory → only the injected web factory installs.
+    expect(
+      selectExtensionFactories(['browser_navigate', 'web_search'], { webResearchFactory: web }),
+    ).toEqual([web]);
   });
 });
 

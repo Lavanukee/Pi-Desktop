@@ -5,6 +5,7 @@ import {
   parseVisionBrief,
   SUBMIT_VISION,
   SUBMIT_VISION_TOOL,
+  VISION_SEARCH_URL,
 } from './vision.js';
 
 describe('CEO_VISION_PROMPT — the vision-forming system prompt', () => {
@@ -16,6 +17,23 @@ describe('CEO_VISION_PROMPT — the vision-forming system prompt', () => {
     // Direction only — never HOW (no code / contracts): the CEO writes meaning.
     expect(CEO_VISION_PROMPT.toLowerCase()).toContain('never how');
   });
+
+  it('steers research to the REAL browser (navigate → read) with web_search as fallback', () => {
+    // Browser-first: the concrete navigate → read flow against the default DDG page.
+    expect(CEO_VISION_PROMPT).toContain('browser_navigate');
+    expect(CEO_VISION_PROMPT).toContain('browser_read');
+    expect(CEO_VISION_PROMPT).toContain(VISION_SEARCH_URL); // the concrete default results URL
+    expect(CEO_VISION_PROMPT).toContain('PREFERRED'); // browser is the preferred path
+    // web_search / web_fetch are kept as an explicit fallback, not dropped.
+    expect(CEO_VISION_PROMPT).toContain('web_search');
+    expect(CEO_VISION_PROMPT).toContain('FALLBACK');
+  });
+});
+
+describe('VISION_SEARCH_URL — the default real-browser results page', () => {
+  it('is the DuckDuckGo HTML endpoint (server-rendered, not bot-blocked like the scrape)', () => {
+    expect(VISION_SEARCH_URL).toBe('https://duckduckgo.com/html/?q=');
+  });
 });
 
 describe('buildCeoVisionPrompt — the vision-forming user turn', () => {
@@ -26,6 +44,14 @@ describe('buildCeoVisionPrompt — the vision-forming user turn', () => {
     expect(prompt).toContain('TONE');
     expect(prompt).toContain('DELIVERABLES');
     expect(prompt).toContain(SUBMIT_VISION);
+  });
+
+  it('prefers the real browser for research and names the default results URL', () => {
+    const prompt = buildCeoVisionPrompt('Build a habit tracker');
+    expect(prompt).toContain('browser_navigate');
+    expect(prompt).toContain('browser_read');
+    expect(prompt).toContain(VISION_SEARCH_URL);
+    expect(prompt).toContain('web_search'); // fallback still offered
   });
 });
 

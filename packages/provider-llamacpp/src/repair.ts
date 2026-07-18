@@ -825,3 +825,84 @@ export function reconstructToolCallFromContent(
     fromProse(content, registeredToolNames)
   );
 }
+
+// --- Written tool-call scaffolding (display salvage) ------------------------
+//
+// A text-form tool call the model wrote into its CONTENT is wrapped in markup
+// tokens — a `<tool_call>` envelope, a `<function=NAME>` tag, Hermes/Qwen
+// `<parameter=…>` arg tags. Display code (the corp feed) needs to (a) find the
+// COMPLETE region so it can split it out of prose, (b) detect an opener while the
+// block is still STREAMING so the half-written scaffolding is suppressed, and
+// (c) scrub any orphan token that survives a partial parse. These pure helpers own
+// that mechanical parsing; the block-splitting/suppression POLICY lives in the
+// caller.
+
+/**
+ * The opener of a written tool call: a `<tool_call>` wrapper or a `<function=`
+ * tag. A match means a call has STARTED even before it closes.
+ */
+const TOOL_CALL_OPENER_RE = /<tool_call\s*>|<function\s*=/i;
+
+/**
+ * Every standalone tool-call scaffolding token — the `<tool_call>`/`</tool_call>`
+ * wrappers, the `<function=…>`/`</function>` tags, and the Hermes/Qwen
+ * `<parameter=…>` / `<parameter name="…">` / `</parameter>` arg tags. Used to
+ * scrub stray/orphan tokens so none render as literal text.
+ */
+const TOOL_CALL_SCAFFOLD_RE =
+  /<\/?tool_call\s*>|<\/?function(?:\s*=\s*["']?[a-zA-Z0-9_.-]*["']?)?\s*>|<\/?parameter(?:(?:\s*=\s*|\s+name\s*=\s*)["']?[a-zA-Z0-9_.-]*["']?)?\s*>/gi;
+
+/**
+ * Index of the first tool-call opener (`<tool_call>` or `<function=`) in `text`,
+ * or -1. A non-negative result means a written call has begun — display code
+ * suppresses everything from here on while the block is still streaming.
+ */
+export function findToolCallOpener(text: string): number {
+  const m = TOOL_CALL_OPENER_RE.exec(text);
+  return m === null ? -1 : m.index;
+}
+
+/**
+ * Remove every stray tool-call scaffolding token so a `<tool_call>` /
+ * `</tool_call>` / `</function>` / `<parameter=…>` never renders as literal text.
+ * The tag VALUES (a parameter body, prose between tags) are kept — only the markup
+ * tokens are scrubbed. Pure/tolerant; leaves non-scaffolding text untouched.
+ */
+export function stripToolCallScaffolding(text: string): string {
+  return text.replace(TOOL_CALL_SCAFFOLD_RE, '');
+}
+
+/**
+ * Locate the first COMPLETE written tool-call region in `text`: a
+ * `<function=NAME>…</function>` span (optionally trailed by `</tool_call>`) or a
+ * `<tool_call>…</tool_call>` wrapper (JSON-form `{"name":…}` or a bare wrapper).
+ * Returns the prose `before` it, the `region` markup, and the prose `after` it —
+ * or null when there is no complete region (an opener with no matching closer is
+ * still streaming, so it is deliberately NOT reported here). Pure; never throws.
+ */
+export function findWrittenToolCallRegion(
+  text: string,
+): { before: string; region: string; after: string } | null {
+  const open = TOOL_CALL_OPENER_RE.exec(text);
+  if (open === null) return null;
+  const start = open.index;
+  const rest = text.slice(start);
+  const isWrapper = rest.slice(0, 12).toLowerCase().startsWith('<tool_call');
+
+  let len: number | null = null;
+  if (isWrapper) {
+    const wrap = /^<tool_call\s*>[\s\S]*?<\/tool_call\s*>/i.exec(rest);
+    if (wrap !== null) {
+      len = wrap[0].length;
+    } else {
+      // Wrapper opened but no `</tool_call>` — accept an inner closed `<function=…>`.
+      const fn = /<function\s*=[\s\S]*?<\/function\s*>/i.exec(rest);
+      if (fn !== null) len = fn.index + fn[0].length;
+    }
+  } else {
+    const fn = /^<function\s*=[\s\S]*?<\/function\s*>(?:\s*<\/tool_call\s*>)?/i.exec(rest);
+    if (fn !== null) len = fn[0].length;
+  }
+  if (len === null) return null;
+  return { before: text.slice(0, start), region: rest.slice(0, len), after: rest.slice(len) };
+}

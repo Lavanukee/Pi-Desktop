@@ -84,11 +84,59 @@ describe('transcriptToBlocks — line → ContentBlock mapping', () => {
     });
   });
 
-  it('keeps a STILL-STREAMING (incomplete) tool-call tag as live text — no split', () => {
+  it('splits a JSON-form <tool_call>{…}</tool_call> out of a SETTLED message (prose kept)', () => {
+    const text =
+      'Now run it.\n<tool_call>{"name":"bash","arguments":{"command":"ls src"}}</tool_call>';
+    const blocks = transcriptToBlocks([line({ kind: 'message', text })]);
+    expect(blocks[0]).toEqual({ type: 'text', text: 'Now run it.' });
+    // bash → the bash row reads `command`; write/edit would read `path` (file row).
+    expect(blocks[1]).toMatchObject({
+      type: 'toolCall',
+      name: 'bash',
+      arguments: { command: 'ls src' },
+    });
+    // No raw tag survives anywhere.
+    expect(JSON.stringify(blocks)).not.toMatch(/<tool_call>|<\/tool_call>|<function=/);
+  });
+
+  it('handles a bare <tool_call>…</tool_call> wrapper (no <function=) — no raw tag', () => {
+    const text =
+      'Working.\n<tool_call>{"name":"write","parameters":{"path":"a.ts","content":"x"}}</tool_call>';
+    const blocks = transcriptToBlocks([line({ kind: 'message', text })]);
+    expect(blocks[0]).toEqual({ type: 'text', text: 'Working.' });
+    // A write renders as the file row (path surfaced), sourced from "parameters".
+    expect(blocks[1]).toMatchObject({
+      type: 'toolCall',
+      name: 'write',
+      arguments: { path: 'a.ts', content: 'x' },
+    });
+  });
+
+  it('suppresses scaffolding MID-STREAM: keeps prose before the opener, no raw tag', () => {
+    const text = 'Let me run this. <tool_call>\n<function=bash>';
+    const blocks = transcriptToBlocks([line({ kind: 'message', text, streaming: true })]);
+    expect(blocks).toEqual([{ type: 'text', text: 'Let me run this.' }]);
+    expect((blocks[0] as { text: string }).text).not.toMatch(/<tool_call>|<function=/);
+  });
+
+  it('shows a placeholder (never raw XML) for a still-streaming tag with no prose before it', () => {
     const text = '<tool_call>\n<function=write>\n<parameter=path>\nsrc/x.ts';
     const blocks = transcriptToBlocks([line({ kind: 'message', text, streaming: true })]);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0]).toEqual({ type: 'text', text });
+    expect(blocks[0]).toMatchObject({ type: 'text' });
+    // A minimal live block stands in; no raw scaffolding leaks.
+    expect((blocks[0] as { text: string }).text).not.toMatch(/<tool_call>|<function=|<parameter=/);
+  });
+
+  it('scrubs an orphan </tool_call> token from a SETTLED message (no raw tag)', () => {
+    const blocks = transcriptToBlocks([line({ kind: 'message', text: 'All done.</tool_call>' })]);
+    expect(blocks).toEqual([{ type: 'text', text: 'All done.' }]);
+  });
+
+  it('suppresses a written <function=bash> mid-stream INSIDE a Thought (prose kept)', () => {
+    const text = 'Now run it. <tool_call>\n<function=bash>\n<parameter=command>';
+    const blocks = transcriptToBlocks([line({ kind: 'thinking', text, streaming: true })]);
+    expect(blocks).toEqual([{ type: 'thinking', thinking: 'Now run it.' }]);
   });
 
   it('fences a settled JSON payload to a ```json text block, prose stays prose', () => {

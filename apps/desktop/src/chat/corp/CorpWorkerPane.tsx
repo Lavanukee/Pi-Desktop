@@ -30,25 +30,40 @@ const POLL_MS = 900;
 
 type TranscriptLine = WorkerTranscriptView['lines'][number];
 
-/** A tool-call line (the raw tool name) → a human step row. */
-function toolStep(tool: string): ActivityStepData {
+/** The last path segment (the filename shown on a collapsed step row). */
+function baseName(path: string): string {
+  return path.split(/[/\\]/).pop() || path;
+}
+
+/** The raw tool name → the step's ICON kind (the engine supplies the human label
+ * + detail on the line; here we only pick the glyph). NEVER the file read for an
+ * unknown tool — it falls to the neutral `tool` glyph. */
+function toolIconKind(tool: string): ActivityStepData['kind'] {
   switch (tool) {
     case 'read':
-      return { kind: 'read', label: 'Read a file' };
+    case 'cat':
+    case 'view':
+      return 'read';
     case 'write':
     case 'edit':
-      return { kind: 'edit', label: 'Edited a file' };
+      return 'edit';
     case 'bash':
-      return { kind: 'bash', label: 'Ran a command' };
-    case 'grep':
-    case 'glob':
-    case 'find':
-      return { kind: 'tool', label: 'Searched the code' };
+    case 'shell':
+    case 'run':
+    case 'exec':
+      return 'bash';
+    case 'web_search':
+    case 'search':
+    case 'search_web':
+      return 'search';
+    case 'web_fetch':
+    case 'fetch':
+      return 'browser-navigate';
     case 'ls':
     case 'list':
-      return { kind: 'read', label: 'Looked around the project' };
+      return 'read';
     default:
-      return { kind: 'tool', label: `Used ${tool}` };
+      return 'tool';
   }
 }
 
@@ -66,15 +81,39 @@ function lineToRow(line: TranscriptLine): FeedRow {
       const path = line.path ?? line.text.replace(/^writing\s+/i, '');
       return {
         kind: 'step',
-        step: { kind: 'edit', label: 'Writing', detail: path, filename: path },
+        step: { kind: 'edit', label: line.label ?? 'Writing', detail: path, filename: path },
       };
     }
-    case 'tool-call':
-      return { kind: 'step', step: toolStep(line.text) };
+    case 'tool-call': {
+      // The engine names the tool (label) + its arg (detail); `text` is the raw
+      // tool name we map to a glyph. "Searched the web: <query>", "Reading <file>".
+      const kind = toolIconKind(line.text);
+      return {
+        kind: 'step',
+        step: {
+          kind,
+          label: line.label ?? `Used ${line.text}`,
+          ...(line.detail !== undefined ? { detail: line.detail } : {}),
+          ...(line.path !== undefined ? { filename: baseName(line.path) } : {}),
+        },
+      };
+    }
+    case 'thinking':
+      // A real reasoning step — the thought text expands inline; it shimmers while
+      // still streaming (handled by the trailing-chain active state).
+      return {
+        kind: 'step',
+        step: {
+          kind: 'thinking',
+          label: line.streaming === true ? 'Thinking…' : 'Thought',
+          ...(line.text.length > 0 ? { thought: line.text } : {}),
+        },
+      };
     case 'consult':
       return { kind: 'step', step: { kind: 'tool', label: 'Consulted', detail: line.text } };
     case 'note': {
-      // Turn markers ("— continued (turn 2) —") render as quiet dividers.
+      // Legacy turn markers ("— continued (turn 2) —") render as quiet dividers
+      // (the engine no longer emits them, but keep the parse for any older stream).
       const turn = line.text.match(/^—\s*(.+?)\s*—$/);
       if (turn?.[1] !== undefined) return { kind: 'turn', text: turn[1] };
       return { kind: 'note', text: line.text };
@@ -139,6 +178,9 @@ export function CorpWorkerPane({
   const [loading, setLoading] = useState(true);
   const working = node.state === 'working';
   const hasLines = transcript !== null && transcript.lines.length > 0;
+  // The node is actively producing a live stream (assistant text / reasoning still
+  // generating) — drives the "live" chip and keeps the tail shimmering.
+  const streaming = transcript?.streaming === true;
 
   // Fetch on node switch, then POLL while the agent is actually mid-turn (or
   // until the first transcript lands) so the feed streams as work happens.
@@ -198,7 +240,7 @@ export function CorpWorkerPane({
           <span className="pd-sitroom-gem-core" />
         </span>
         <span className="pd-workerpane-title">{node.name}</span>
-        {hasLines ? <span>live</span> : null}
+        {streaming ? <ShimmerText>live</ShimmerText> : hasLines ? <span>live</span> : null}
         <span className="pd-workerpane-mode">
           {pinned ? (
             <>

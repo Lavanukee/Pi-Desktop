@@ -300,6 +300,72 @@ function toolCallPath(args: RoleAgentToolCall['arguments']): string | undefined 
   return typeof raw === 'string' && raw.length > 0 ? raw : undefined;
 }
 
+/** Collapse a shell command to a compact one-line summary for a live readout:
+ * first non-blank line, whitespace squeezed, clipped to `max` chars. Pure. */
+export function summarizeCommand(command: string, max = 60): string {
+  const line =
+    command
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? '';
+  const squeezed = line.replace(/\s+/g, ' ');
+  return squeezed.length > max ? `${squeezed.slice(0, max - 1)}…` : squeezed;
+}
+
+/**
+ * Extract the SHORT human arg summary + file path from a tool call's arguments at
+ * the `tool_call` boundary, so the live transcript can name the ACTUAL work: a
+ * web_search's query, a bash command summary, a grep pattern, a read's file. Pure
+ * + best-effort — an unrecognized tool falls back to its most meaningful primary
+ * arg (query / path / url / name), or nothing. The human VERB ("Searched the
+ * web") is left to the coordination layer; this only surfaces the raw detail the
+ * args carry. Never throws.
+ */
+export function toolCallDetail(
+  toolName: string,
+  input: unknown,
+): { detail?: string; path?: string } {
+  const rec = argsRecord(input as RoleAgentToolCall['arguments']) ?? {};
+  const s = (v: unknown): string | undefined =>
+    typeof v === 'string' && v.trim().length > 0 ? v.trim() : undefined;
+  const path = toolCallPath(input as RoleAgentToolCall['arguments']);
+  switch (toolName) {
+    case 'read':
+    case 'cat':
+    case 'view':
+      return path !== undefined ? { path, detail: path } : {};
+    case 'web_search':
+    case 'search':
+    case 'search_web': {
+      const q = s(rec.query) ?? s(rec.q);
+      return q !== undefined ? { detail: q } : {};
+    }
+    case 'web_fetch':
+    case 'fetch': {
+      const u = s(rec.url) ?? s(rec.href) ?? s(rec.link);
+      return u !== undefined ? { detail: u } : {};
+    }
+    case 'bash':
+    case 'shell':
+    case 'run':
+    case 'exec': {
+      const cmd = s(rec.command) ?? s(rec.cmd) ?? s(rec.script);
+      return cmd !== undefined ? { detail: summarizeCommand(cmd) } : {};
+    }
+    case 'grep':
+    case 'find':
+    case 'glob':
+    case 'rg': {
+      const pat = s(rec.pattern) ?? s(rec.query) ?? s(rec.q);
+      return pat !== undefined ? { detail: pat } : {};
+    }
+    default: {
+      const prim = s(rec.query) ?? s(rec.q) ?? path ?? s(rec.url) ?? s(rec.name) ?? s(rec.title);
+      return prim !== undefined ? { detail: prim } : {};
+    }
+  }
+}
+
 /**
  * Shape the files-written result from captured `write`/`edit` tool calls, using
  * an injected `statBytes` (so it is pure + unit-testable from mock events). The
@@ -628,6 +694,22 @@ export async function runRoleAgent(
   };
 
   const corpExt: ExtensionFactory = (pi: ExtensionAPI) => {
+    // LIVE ACTIVITY sink (spec §11) — forward this run's tool/turn lifecycle AND the
+    // model's live stream (streaming assistant text + reasoning) the MOMENT it
+    // happens, so the situation room shows the model actually working, not "working…".
+    // Best-effort + a no-op when no sink is wired: a throwing/absent sink can never
+    // break the agent loop. Hoisted here so the `tool_call` gate (below) can name the
+    // tool as it STARTS without a second handler racing the denylist return.
+    const onActivity = config.onActivity;
+    const emit = (record: RoleAgentActivity): void => {
+      if (onActivity === undefined) return;
+      try {
+        onActivity(record);
+      } catch {
+        // a misbehaving sink can never break the agent loop
+      }
+    };
+
     // Owner-tuned sampling, merged onto every outgoing request body. This also arms
     // the per-CALL watchdog: THIS request must return a response within perCallMs or
     // it is a hung socket → abort. (A responding request clears the timer below.)
@@ -672,37 +754,78 @@ export async function runRoleAgent(
     // sink or the step-cap.
     pi.on('tool_call', (e: ToolCallEvent) => {
       toolCalls.push({ name: e.toolName, arguments: e.input });
+      // LIVE: name the tool the MOMENT it starts — the NAMED call + a short arg
+      // summary (web_search → the query, read → the file, bash → the command) so
+      // the transcript/feed show "Searching the web: …" / "Reading …" as the
+      // CURRENT action, not a generic "Used a tool". write/edit are skipped here:
+      // they light the file map from `tool_result` once the file actually exists.
+      if (e.toolName !== 'write' && e.toolName !== 'edit') {
+        const { detail, path } = toolCallDetail(e.toolName, e.input);
+        emit({
+          kind: 'tool',
+          toolName: e.toolName,
+          ...(detail !== undefined ? { detail } : {}),
+          ...(path !== undefined ? { path } : {}),
+        });
+      }
       const denied = bashDenylistGate(e.toolName, e.input);
       if (denied !== undefined) return denied;
       return stepCap?.charge();
     });
 
-    // LIVE ACTIVITY (spec §11) — forward the run's tool/turn lifecycle the MOMENT
-    // it happens so the situation room lights up mid-work. Best-effort: a throwing
-    // sink must never break the run. Absent sink → these are cheap no-ops.
-    const onActivity = config.onActivity;
+    // LIVE ACTIVITY (spec §11) — forward the run's turn/file lifecycle + the model's
+    // live stream the MOMENT they happen so the situation room lights up mid-work.
+    // Registered only when a sink is wired (avoids per-token overhead otherwise).
     if (onActivity !== undefined) {
-      const emit = (record: RoleAgentActivity): void => {
-        try {
-          onActivity(record);
-        } catch {
-          // a misbehaving sink can never break the agent loop
-        }
-      };
       pi.on('turn_start', (e: TurnStartEvent) => {
         emit({ kind: 'turn-start', turnIndex: e.turnIndex });
       });
       pi.on('turn_end', (e: TurnEndEvent) => {
         emit({ kind: 'turn-end', turnIndex: e.turnIndex });
       });
-      // A finished write/edit → the file now exists → a file-touch record. Other
-      // successful tools → a plain `tool` record (a live step signal). Errors are
-      // not forwarded (no file to light, no completed step to show). `tool_result`
-      // fires after execution and carries the tool args (`input`) + `isError`.
+      // A finished write/edit → the file now exists → a file-touch record (the
+      // moment to light the file map). Non-file tools already streamed at
+      // `tool_call` (start), so they are NOT re-emitted here. `tool_result` fires
+      // after execution and carries the tool args (`input`) + `isError`.
       pi.on('tool_result', (e: ToolResultEvent) => {
         if (e.isError) return undefined;
         const fileWrite = fileWriteActivity(e.toolName, e.input, config.cwd, safeStatBytes);
-        emit(fileWrite ?? { kind: 'tool', toolName: e.toolName });
+        if (fileWrite !== undefined) emit(fileWrite);
+        return undefined;
+      });
+      // THE LIVE STREAM — the model producing text / reasoning token by token.
+      // `message_update` carries an `assistantMessageEvent` delta; we forward the
+      // streaming assistant text (`assistant-text`) and the reasoning block
+      // (`thinking`) as start/delta/end so the pane grows the transcript in real
+      // time and can show a genuine "thinking…" state, rather than "working…".
+      // `e` is inferred as the extension `message_update` event from the `pi.on`
+      // overload (the `MessageUpdateEvent` type is not re-exported from the barrel,
+      // so we rely on inference rather than importing it). It carries the streaming
+      // `assistantMessageEvent` delta.
+      pi.on('message_update', (e) => {
+        const ev = e.assistantMessageEvent;
+        switch (ev.type) {
+          case 'text_start':
+            emit({ kind: 'assistant-text', phase: 'start' });
+            break;
+          case 'text_delta':
+            emit({ kind: 'assistant-text', phase: 'delta', delta: ev.delta });
+            break;
+          case 'text_end':
+            emit({ kind: 'assistant-text', phase: 'end', text: ev.content });
+            break;
+          case 'thinking_start':
+            emit({ kind: 'thinking', phase: 'start' });
+            break;
+          case 'thinking_delta':
+            emit({ kind: 'thinking', phase: 'delta', delta: ev.delta });
+            break;
+          case 'thinking_end':
+            emit({ kind: 'thinking', phase: 'end', text: ev.content });
+            break;
+          default:
+            break;
+        }
         return undefined;
       });
     }

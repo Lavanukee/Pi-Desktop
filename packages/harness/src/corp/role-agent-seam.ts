@@ -74,15 +74,24 @@ export function samplingModeForPurpose(purpose: CorpTurnPurpose): SamplingMode {
  */
 export interface RoleAgentActivity {
   /**
-   * What happened. `file-write` = a `write`/`edit` tool finished and its target
-   * now exists (the moment to light the file map); `tool` = any other tool ran;
-   * `turn-start`/`turn-end` = one model turn's boundaries (the node pulse).
+   * What happened.
+   *  - `file-write` = a `write`/`edit` tool finished and its target now exists
+   *    (the moment to light the file map);
+   *  - `tool` = any other tool ran (the app forwards it the moment it STARTS,
+   *    with {@link detail} carrying a short human arg summary from the call);
+   *  - `turn-start`/`turn-end` = one model turn's boundaries (the node pulse);
+   *  - `assistant-text` = the model's LIVE streaming assistant text (a partial
+   *    that grows token by token — the app forwards `start`/`delta`/`end`);
+   *  - `thinking` = the model is inside a reasoning block (same
+   *    `start`/`delta`/`end` phases; `delta` carries streamed reasoning when the
+   *    provider exposes it).
    */
-  readonly kind: 'file-write' | 'tool' | 'turn-start' | 'turn-end';
+  readonly kind: 'file-write' | 'tool' | 'turn-start' | 'turn-end' | 'assistant-text' | 'thinking';
   /** The tool that ran (`tool` / `file-write`). */
   readonly toolName?: string;
   /** The file a `file-write` touched — as the model addressed it (relative to the
-   * run cwd when relative), so it maps 1:1 onto the product-tree slot. */
+   * run cwd when relative), so it maps 1:1 onto the product-tree slot. Also set on
+   * a `tool` read so the app can name the file. */
   readonly path?: string;
   /** UTF-8 byte length of the produced file, when known (`file-write`). */
   readonly bytes?: number;
@@ -90,6 +99,22 @@ export interface RoleAgentActivity {
   readonly linesAdded?: number;
   /** The model turn index (`turn-start`/`turn-end`). */
   readonly turnIndex?: number;
+  /** Streaming phase for `assistant-text` / `thinking`: `start` opens the block,
+   * `delta` appends {@link delta}, `end` closes it (and may carry the final {@link text}). */
+  readonly phase?: 'start' | 'delta' | 'end';
+  /** The incremental text appended in this `delta` (`assistant-text` / `thinking`). */
+  readonly delta?: string;
+  /** The full accumulated block text, when the app has it (typically on `end`). */
+  readonly text?: string;
+  /** A short human arg summary for a `tool` step — the search query, the command,
+   * a grep pattern — extracted from the tool call's arguments at the boundary. The
+   * app leaves the human VERB ("Searched the web") to the coordination layer. */
+  readonly detail?: string;
+  /** Context fullness of the run's session (0..100) at a turn boundary, when the
+   * app impl can read it (`session.getContextUsage().percent`). Carried on
+   * `turn-start`/`turn-end` records so the engine can surface a live context
+   * reading per node without a second polling channel. */
+  readonly contextPercent?: number;
 }
 
 /** One file a role-agent wrote to its workspace (a `write`/`edit` whose target

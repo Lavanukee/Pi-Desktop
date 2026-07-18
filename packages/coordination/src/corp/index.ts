@@ -204,6 +204,23 @@ interface ContractRuntime {
   state: ChecklistItemState;
 }
 
+/**
+ * The INTERNAL mutable mirror of a {@link WorkerTranscriptLine}: the engine grows
+ * a streaming line's `text` in place as deltas arrive (and flips `streaming` off
+ * when the block ends), which the `readonly` DTO forbids. Structurally assignable
+ * to `WorkerTranscriptLine`, so {@link CorpEngine.getWorkerTranscript} returns the
+ * same objects as the readonly view — no copy at the boundary.
+ */
+interface LiveLine {
+  at: number;
+  kind: WorkerTranscriptLine['kind'];
+  text: string;
+  path?: string;
+  label?: string;
+  detail?: string;
+  streaming?: boolean;
+}
+
 interface CorpRuntime {
   readonly taskId: string;
   readonly task: string;
@@ -220,7 +237,17 @@ interface CorpRuntime {
   modules: ModuleRegionView[];
   interfaces: InterfaceSeamView[];
   readonly nodeState: Map<string, OrgNodeState>;
-  readonly lines: Map<string, WorkerTranscriptLine[]>;
+  readonly lines: Map<string, LiveLine[]>;
+  /** Per-node CURRENT action right now ("thinking", "Searching the web: …",
+   * "Writing src/menu.ts"), surfaced on the working org node + the transcript;
+   * cleared the moment the node leaves `working`. */
+  readonly currentAction: Map<string, string>;
+  /** The OPEN streaming transcript line per node (assistant text OR reasoning),
+   * mutated in place as deltas land; removed when the block ends. */
+  readonly openStream: Map<string, { line: LiveLine; kind: 'message' | 'thinking' }>;
+  /** Nodes whose streamed assistant text became a finalized `message` line — so
+   * the chat-path preview line is not appended as a duplicate. */
+  readonly streamedMessage: Set<string>;
   /** Manager attribution cursor (managers run one division at a time, in order). */
   mgrCursor: number;
   mgrRetryPending: boolean;
@@ -304,6 +331,74 @@ function preview(text: string, max = 400): string {
   return t.length > max ? `${t.slice(0, max)}…` : t;
 }
 
+/** Humanize a raw tool name for the neutral fallback ("run_python" → "run python"). */
+function humanizeToolName(name: string): string {
+  const words = name.replace(/[_-]+/g, ' ').trim();
+  return words.length > 0 ? words : name;
+}
+
+/**
+ * The ONE place the corp names a tool for a person: a resolved tool name (+ the
+ * arg detail the app extracted) → a human {@link label}/{@link detail} for the
+ * transcript line PLUS a one-line {@link summary} for the feed + the node's
+ * current action. This is what turns a generic "Used a tool" into "Searched the
+ * web: <query>" / "Reading <file>" / "Ran: <cmd>". Neutral + pure; `write`/`edit`
+ * never reach here (they light the file map via the file-write path). Falls back
+ * to a humanized name for an unknown tool — never a mislabeled file read.
+ */
+export function describeTool(
+  toolName: string,
+  detail: string | undefined,
+  path: string | undefined,
+): { label: string; detail?: string; summary: string } {
+  const d = detail ?? path;
+  const withDetail = (
+    label: string,
+    sep = ' ',
+  ): { label: string; detail?: string; summary: string } =>
+    d !== undefined
+      ? { label, detail: d, summary: `${label}${sep}${d}` }
+      : { label, summary: label };
+  switch (toolName) {
+    case 'web_search':
+    case 'search':
+    case 'search_web':
+      return withDetail('Searched the web', ': ');
+    case 'web_fetch':
+    case 'fetch':
+      return withDetail('Fetched a page', ': ');
+    case 'read':
+    case 'cat':
+    case 'view':
+      return d !== undefined
+        ? { label: 'Reading', detail: d, summary: `Reading ${d}` }
+        : { label: 'Reading', summary: 'Reading a file' };
+    case 'bash':
+    case 'shell':
+    case 'run':
+    case 'exec':
+      return d !== undefined
+        ? { label: 'Ran', detail: d, summary: `Ran: ${d}` }
+        : { label: 'Ran', summary: 'Ran a command' };
+    case 'grep':
+    case 'find':
+    case 'glob':
+    case 'rg':
+      return d !== undefined
+        ? { label: 'Searched the code', detail: d, summary: `Searched the code: ${d}` }
+        : { label: 'Searched the code', summary: 'Searched the code' };
+    case 'ls':
+    case 'list':
+      return { label: 'Looked around', summary: 'Looked around the project' };
+    default: {
+      const nm = humanizeToolName(toolName);
+      return d !== undefined
+        ? { label: `Used ${nm}`, detail: d, summary: `Used ${nm}: ${d}` }
+        : { label: `Used ${nm}`, summary: `Used ${nm}` };
+    }
+  }
+}
+
 const CEO_NODE = 'ceo';
 const SOLO_NODE = 'solo';
 const ARCHITECT_NODE = 'architect';
@@ -349,6 +444,9 @@ export class CorpEngine implements CoordinationEngine {
       interfaces: [],
       nodeState: new Map(),
       lines: new Map(),
+      currentAction: new Map(),
+      openStream: new Map(),
+      streamedMessage: new Set(),
       mgrCursor: 0,
       mgrRetryPending: false,
       liveWrittenPaths: new Set(),
@@ -465,7 +563,18 @@ export class CorpEngine implements CoordinationEngine {
     if (node === undefined) return undefined;
     const lines = rt.lines.get(nodeId) ?? [];
     if (lines.length === 0) return undefined;
-    return { nodeId, role: node.role, briefing: this.briefingFor(rt, node), lines };
+    // LIVE flag: an open stream, or any line still marked streaming — the pane
+    // keeps polling and renders the tail as live rather than a settled log.
+    const streaming = rt.openStream.has(nodeId) || lines.some((l) => l.streaming === true);
+    const currentAction = rt.currentAction.get(nodeId);
+    return {
+      nodeId,
+      role: node.role,
+      briefing: this.briefingFor(rt, node),
+      lines,
+      ...(streaming ? { streaming: true } : {}),
+      ...(currentAction !== undefined ? { currentAction } : {}),
+    };
   }
 
   // --- Observation ---------------------------------------------------------
@@ -589,7 +698,10 @@ export class CorpEngine implements CoordinationEngine {
           for (const d of rt.divisions) this.setNode(rt, d.id, 'idle');
           this.addLine(rt, CEO_NODE, 'message', `Promoting to a team: ${divisions.join(', ')}.`);
           this.emit(rt, { type: 'org-chart', chart: this.buildChart(rt) });
-        } else {
+        } else if (!rt.streamedMessage.has(SOLO_NODE)) {
+          // On the AGENT path the model's answer already streamed into a live message
+          // line — don't append a truncated duplicate. The chat/mock path (no stream)
+          // still gets the preview.
           this.addLine(rt, SOLO_NODE, 'message', preview(result.content));
         }
         break;
@@ -782,9 +894,14 @@ export class CorpEngine implements CoordinationEngine {
     }
   }
 
-  /** Map ONE live {@link RoleAgentActivity} record onto the neutral event stream:
-   * a mid-work file-touch (+ an artifact so peek enables) the instant a file is
-   * written; a light tool-step pulse; keep the node working across each turn. */
+  /**
+   * Map ONE live {@link RoleAgentActivity} record onto the neutral event stream +
+   * the node's live transcript (spec §11): the model's STREAMING assistant text and
+   * reasoning grow the transcript token by token; a NAMED tool step ("Searched the
+   * web: …", "Reading …") lands the instant it starts; a mid-work file-touch (+ an
+   * artifact so peek enables) fires the instant a file is written. Each also updates
+   * the node's CURRENT action, so the tree + feed show what it is doing right now.
+   */
   private mapRoleActivity(
     rt: CorpRuntime,
     nodeId: string | undefined,
@@ -795,9 +912,17 @@ export class CorpEngine implements CoordinationEngine {
       case 'file-write': {
         if (record.path === undefined || record.path === '') return;
         const rel = record.path;
-        // Light the map MID-work: an ACTIVE (phase 'progress') touch, so the region
-        // shows as being written NOW; the role's completion settles it to 'end'.
-        if (nodeId !== undefined) this.addLine(rt, nodeId, 'file-touch', `writing ${rel}`);
+        if (nodeId !== undefined) {
+          this.closeStream(rt, nodeId); // the write ends any open text/reasoning tail
+          // Light the map MID-work: an ACTIVE (phase 'progress') touch, so the region
+          // shows as being written NOW; the role's completion settles it to 'end'.
+          this.addLine(rt, nodeId, 'file-touch', `writing ${rel}`, {
+            path: rel,
+            label: 'Writing',
+            detail: rel,
+          });
+          rt.currentAction.set(nodeId, `Writing ${rel}`);
+        }
         this.emit(rt, liveFileTouch(nodeId, rel, record.linesAdded));
         // The first sight of a path becomes an artifact so the peek button enables
         // and latestArtifact points at the newest file (peek() serves the real content).
@@ -806,13 +931,37 @@ export class CorpEngine implements CoordinationEngine {
       }
       case 'tool': {
         if (nodeId === undefined) return;
+        this.closeStream(rt, nodeId); // a tool starting ends the preceding text tail
         const tool = record.toolName ?? 'tool';
-        // Accumulate the tool call into the node's LIVE transcript (spec §11
-        // click-through, bug 3): getWorkerTranscript reads rt.lines, so recording
-        // each read/grep/bash step here is what makes a clicked running node show
-        // what its agent is ACTUALLY doing — not just a static briefing.
-        this.addLine(rt, nodeId, 'tool-call', tool);
-        this.emit(rt, activity(nodeId, 'tool-call', tool));
+        // Name the ACTUAL tool + its arg (bug 3, click-through): "Searched the web:
+        // <query>", "Reading <file>", "Ran: <cmd>". `text` stays the raw tool name
+        // (the pane maps it to the right icon); label + detail carry the phrasing.
+        const desc = describeTool(tool, record.detail, record.path);
+        this.addLine(rt, nodeId, 'tool-call', tool, {
+          label: desc.label,
+          ...(desc.detail !== undefined ? { detail: desc.detail } : {}),
+          ...(record.path !== undefined ? { path: record.path } : {}),
+        });
+        rt.currentAction.set(nodeId, desc.summary);
+        this.emit(rt, activity(nodeId, 'tool-call', desc.summary));
+        break;
+      }
+      case 'thinking': {
+        if (nodeId === undefined) return;
+        // A real "thinking…" state: open/grow a reasoning line while the model
+        // reasons, and set the current action + a single feed pulse on the open.
+        this.streamInto(rt, nodeId, 'thinking', record);
+        if (record.phase === 'start') {
+          rt.currentAction.set(nodeId, 'thinking');
+          this.emit(rt, activity(nodeId, 'note', 'thinking…'));
+        }
+        break;
+      }
+      case 'assistant-text': {
+        if (nodeId === undefined) return;
+        // The model producing text in real time — the transcript's live tail grows.
+        this.streamInto(rt, nodeId, 'message', record);
+        if (record.phase !== 'end') rt.currentAction.set(nodeId, 'Responding');
         break;
       }
       case 'turn-start': {
@@ -820,15 +969,63 @@ export class CorpEngine implements CoordinationEngine {
           // The node is lit ONLY while its agent is mid-turn (bug 2) — the run's
           // completion boundary (observeEngineerAgentDone / observePost) settles it.
           this.setNode(rt, nodeId, 'working');
-          // A turn marker in the live transcript (the per-turn pulse made legible).
-          if (record.turnIndex !== undefined && record.turnIndex > 0) {
-            this.addLine(rt, nodeId, 'note', `— continued (turn ${record.turnIndex + 1}) —`);
-          }
+          // NOTE: the redundant "— continued (turn N) —" divider is intentionally
+          // NOT emitted — the streaming text/reasoning/tool lines already read as
+          // continuous work, and the owner found the turn labels noise.
         }
         break;
       }
       case 'turn-end':
+        if (nodeId !== undefined) this.closeStream(rt, nodeId);
         break;
+    }
+  }
+
+  /**
+   * Grow the node's OPEN streaming transcript line (assistant text or reasoning)
+   * from a {@link RoleAgentActivity} `start`/`delta`/`end`. `start` opens a fresh
+   * streaming line (closing any prior tail); `delta` appends the increment in
+   * place; `end` sets the final text and clears the streaming flag. Robust to a
+   * missing `start` (a stray delta opens a line). The line objects are the SAME
+   * ones {@link getWorkerTranscript} returns, so a poll mid-stream sees the tail
+   * that has grown since the last read — proving live streaming, not "working…".
+   */
+  private streamInto(
+    rt: CorpRuntime,
+    nodeId: string,
+    kind: 'message' | 'thinking',
+    record: RoleAgentActivity,
+  ): void {
+    if (record.phase === 'start') {
+      this.closeStream(rt, nodeId);
+      const line = this.addLine(rt, nodeId, kind, record.text ?? '', { streaming: true });
+      rt.openStream.set(nodeId, { line, kind });
+      return;
+    }
+    let open = rt.openStream.get(nodeId);
+    if (open === undefined || open.kind !== kind) {
+      this.closeStream(rt, nodeId);
+      const line = this.addLine(rt, nodeId, kind, '', { streaming: true });
+      open = { line, kind };
+      rt.openStream.set(nodeId, open);
+    }
+    if (record.phase === 'delta') {
+      open.line.text += record.delta ?? '';
+      return;
+    }
+    // end
+    if (record.text !== undefined && record.text.length > 0) open.line.text = record.text;
+    open.line.streaming = false;
+    rt.openStream.delete(nodeId);
+    if (kind === 'message' && open.line.text.trim() !== '') rt.streamedMessage.add(nodeId);
+  }
+
+  /** Close a node's open streaming line (flip its live flag off), if any. Idempotent. */
+  private closeStream(rt: CorpRuntime, nodeId: string): void {
+    const open = rt.openStream.get(nodeId);
+    if (open !== undefined) {
+      open.line.streaming = false;
+      rt.openStream.delete(nodeId);
     }
   }
 
@@ -979,6 +1176,12 @@ export class CorpEngine implements CoordinationEngine {
   ): void {
     if (rt.finished) return;
     rt.finished = true;
+    // The run is over: no node has a live action, and any dangling streaming tail is
+    // settled (its live flag off) so a post-run transcript reads as a finished log.
+    rt.currentAction.clear();
+    for (const list of rt.lines.values())
+      for (const line of list) if (line.streaming === true) line.streaming = false;
+    rt.openStream.clear();
     // Settle every node (failed engineers retire; the rest reach finalNodeState).
     for (const key of rt.nodeState.keys()) rt.nodeState.set(key, finalNodeState);
     if (failedContracts !== undefined) {
@@ -1017,13 +1220,35 @@ export class CorpEngine implements CoordinationEngine {
 
   private setNode(rt: CorpRuntime, id: string, state: OrgNodeState): void {
     rt.nodeState.set(id, state);
+    // A node that stops working has no current action and no live tail — clear both
+    // so the tree/transcript never show a stale "thinking…" on a settled node.
+    if (state !== 'working') {
+      rt.currentAction.delete(id);
+      this.closeStream(rt, id);
+    }
   }
 
-  private addLine(rt: CorpRuntime, nodeId: string, kind: Activity['kind'], text: string): void {
+  private addLine(
+    rt: CorpRuntime,
+    nodeId: string,
+    kind: LiveLine['kind'],
+    text: string,
+    extra?: { path?: string; label?: string; detail?: string; streaming?: boolean },
+  ): LiveLine {
     const at = (this.opts.now ?? Date.now)() - rt.startedAt;
+    const line: LiveLine = {
+      at,
+      kind,
+      text,
+      ...(extra?.path !== undefined ? { path: extra.path } : {}),
+      ...(extra?.label !== undefined ? { label: extra.label } : {}),
+      ...(extra?.detail !== undefined ? { detail: extra.detail } : {}),
+      ...(extra?.streaming ? { streaming: true } : {}),
+    };
     const list = rt.lines.get(nodeId) ?? [];
-    list.push({ at, kind, text });
+    list.push(line);
     rt.lines.set(nodeId, list);
+    return line;
   }
 
   private emitChecklist(rt: CorpRuntime): void {
@@ -1111,9 +1336,16 @@ export class CorpEngine implements CoordinationEngine {
         edges.push({ from: c.divisionId, to: c.nodeId });
       }
     }
+    // Attach each WORKING node its live current action ("thinking", "Searching the
+    // web: …", "Writing src/menu.ts") so the tree shows what each worker is doing
+    // this instant. Only working nodes carry it — a settled node clears it (setNode).
+    const withActions = nodes.map((n) => {
+      const action = n.state === 'working' ? rt.currentAction.get(n.id) : undefined;
+      return action !== undefined ? { ...n, currentAction: action } : n;
+    });
     return {
       taskId: rt.taskId,
-      nodes,
+      nodes: withActions,
       edges,
       ...(rt.modules.length > 0 ? { modules: rt.modules } : {}),
       ...(rt.interfaces.length > 0 ? { interfaces: rt.interfaces } : {}),

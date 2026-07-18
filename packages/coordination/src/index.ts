@@ -125,6 +125,15 @@ export interface OrgNodeView {
   /** Parent node id; absent for the root (CEO / solo). */
   readonly parentId?: string;
   readonly state: OrgNodeState;
+  /**
+   * For an actively-running (`working`) node, the CURRENT action right now —
+   * "thinking", "Searching the web: dungeon references", "Writing src/menu.ts".
+   * Lets the situation room show `area · current action` live per node, so the
+   * tree reflects what each worker is doing this instant, not just that it is
+   * busy. Absent for a node that is not producing a live action (idle / done /
+   * blocked, or between actions). Additive: engines without a live action omit it.
+   */
+  readonly currentAction?: string;
 }
 
 /**
@@ -404,15 +413,37 @@ export interface WorkerBriefingView {
   readonly deliverables: readonly string[];
 }
 
-/** One line of a worker's transcript, revealed at `at` ms into the run. A
- * neutral projection of the same {@link Activity} the room already folds — the
- * click-through renders these as messages / tool-step chains. */
+/**
+ * One line of a worker's transcript, revealed at `at` ms into the run. A neutral
+ * projection of the same {@link Activity} the room already folds — the
+ * click-through renders these as messages / tool-step chains.
+ *
+ * Beyond the discrete {@link Activity} kinds, a line may be `'thinking'` (a
+ * reasoning block, whose {@link text} grows while the model reasons) so the pane
+ * can show a real "thinking…" state. For a tool step the line carries a human
+ * {@link label} + {@link detail} ("Searched the web" + the query, "Reading" +
+ * the file) so the pane names the ACTUAL tool instead of a generic "Used a
+ * tool"; {@link text} still holds the raw tool name for icon mapping. A
+ * `'message'` or `'thinking'` line with {@link streaming} `true` is the LIVE
+ * growing tail — its {@link text} is still being produced token by token.
+ */
 export interface WorkerTranscriptLine {
   readonly at: number;
-  readonly kind: Activity['kind'];
+  readonly kind: Activity['kind'] | 'thinking';
+  /** The line's text. For a streaming line it GROWS across reads (the live
+   * assistant text / reasoning so far); for a tool step it is the raw tool name. */
   readonly text: string;
   /** File path when the line touched one (rendered as a file step). */
   readonly path?: string;
+  /** Human verb for a tool/step line ("Searched the web", "Reading", "Ran"),
+   * so the pane names the action instead of echoing a raw tool name. */
+  readonly label?: string;
+  /** Human detail for a tool/step line (the query, file, or command summary). */
+  readonly detail?: string;
+  /** True while this line is the LIVE growing tail: streaming assistant text
+   * still generating, or an in-progress reasoning block. Cleared when the block
+   * finishes. Lets the pane render the stream as live rather than settled. */
+  readonly streaming?: boolean;
 }
 
 /**
@@ -427,6 +458,21 @@ export interface WorkerTranscriptView {
   readonly role: OrgNodeRole;
   readonly briefing: WorkerBriefingView;
   readonly lines: readonly WorkerTranscriptLine[];
+  /**
+   * The node is LIVE right now — its transcript has a streaming tail (assistant
+   * text still generating, or an active reasoning block). Lets the pane show the
+   * stream as live and keep polling; absent/false once the node settles.
+   */
+  readonly streaming?: boolean;
+  /** The node's current action right now (mirrors {@link OrgNodeView.currentAction}):
+   * "thinking", "Searching the web: …", "Writing src/menu.ts". */
+  readonly currentAction?: string;
+  /**
+   * Context fullness of this node's live model session, 0..100, when the engine
+   * knows it (measured at turn boundaries). Lets the app's context ring fill from
+   * the RUN's real usage instead of sitting empty during a coordination task.
+   */
+  readonly contextPercent?: number;
 }
 
 // ---------------------------------------------------------------------------

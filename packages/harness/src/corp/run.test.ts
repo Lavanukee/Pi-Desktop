@@ -165,6 +165,9 @@ describe('runCorp — well-behaved model completes', () => {
     expect(result.terminatedReason).toBe('completed');
     expect(result.divisions).toEqual(['Frontend', 'Backend']);
     expect(result.totalContracts).toBe(4); // 2 divisions × 2 contracts
+    // A pure-logic product (src/*.ts, no renderable/web surface) has no browser entry
+    // to own, so NO integration contract is injected — the plan is unchanged (Part A).
+    expect(result.integrationContractInjected).toBeFalsy();
     expect(result.manifest?.fileCount).toBe(4);
     expect(result.verify?.ok).toBe(true);
     expect(result.ceoDecision?.decision).toBe('approve');
@@ -208,10 +211,11 @@ describe('runCorp — misbehaving models always terminate (the endless-loop catc
     // Retry-on-empty fired ONCE per division (2), never more — bounded.
     expect(result.emptyAfterRetryDivisions).toHaveLength(2);
     expect(mock.callsByPurpose.manager).toBe(4); // 2 divisions × (1 + 1 retry)
-    // The CEO's empty reply defaults to revise (never rubber-stamp), bounded to the cap.
+    // The CEO's empty reply defaults to revise (never rubber-stamp), bounded to the
+    // generalized bounce cap (DEFAULT_BOUNCE_ROUNDS = 3), then the honest state stands.
     expect(result.ceoDecision?.decision).toBe('revise');
     expect(result.revise?.hitCap).toBe(true);
-    expect(result.revise?.revisionsRun).toBe(1);
+    expect(result.revise?.revisionsRun).toBe(3);
     expect(result.budget.exceeded).toBe(false);
   });
 
@@ -634,12 +638,15 @@ describe('runCorp — the review-at-merge phase (spec §8)', () => {
       'thinking-general',
       'thinking-general',
       'thinking-general',
+      'thinking-general',
     ]);
     expect(reviewCalls.every((c) => c.tools.includes('bash') && !c.tools.includes('write'))).toBe(
       true,
     );
+    // The TESTER (build/run/screenshot workability lens) always runs, alongside the code lenses.
     expect(result.review?.lensRuns.map((r) => r.lens)).toEqual([
       'correctness',
+      'tester',
       'security',
       'performance',
     ]);
@@ -661,9 +668,204 @@ describe('runCorp — the review-at-merge phase (spec §8)', () => {
     expect(ceo?.userPrompt).toContain('SPECIALIST REVIEW FINDINGS');
     expect(ceo?.userPrompt).toContain('does not build');
     expect(result.ceoDecision?.decision).toBe('approve');
+    // The tester gate PASSED (the bounce fixed the build), so the CEO could approve.
+    expect(result.review?.testerGatePassed).toBe(true);
 
-    // Bounded: the review turns are counted, and nothing looped.
-    expect(result.turnsByPurpose.review).toBe(3);
+    // Bounded: the review turns are counted (4 lenses), and nothing looped.
+    expect(result.turnsByPurpose.review).toBe(4);
+  });
+
+  it('AUTO-INJECTS a runnable entry (Part A) so a renderable product clears the tester gate and the CEO approves (spec §5/§8)', async () => {
+    // A renderable product (src/app.tsx) — the ground-truth "food with no home" defect.
+    // The corp now AUTO-INJECTS an integration contract that OWNS the runnable entry
+    // (index.html), depending on the division output; the engineer produces it, so the
+    // tester gate CLEARS and the CEO can sign off (before this fix the gate could never
+    // clear — the missing entry mapped to no contract).
+    const { fs, readFs } = memWorkspace();
+    const workspace = '/ws';
+    const runRoleAgent: RunRoleAgentFn = (input): Promise<RoleAgentRunOutput> => {
+      const base = { filesWritten: [], toolCalls: [], terminatedReason: 'stop' } as const;
+      switch (input.purpose) {
+        case 'vision':
+          return Promise.resolve({
+            ...base,
+            finalText: '',
+            toolCalls: [{ name: 'submit_vision', arguments: { brief: VISION_BRIEF } }],
+          });
+        case 'worker':
+          return Promise.resolve({
+            ...base,
+            finalText: '',
+            toolCalls: [
+              { name: CREATE_PRODUCTION_HIERARCHY, arguments: JSON.stringify(PROMOTION_ONE) },
+            ],
+          });
+        case 'architect':
+          return Promise.resolve({
+            ...base,
+            finalText: JSON.stringify({ moduleMap: [], interfaces: [] }),
+          });
+        case 'manager':
+          return Promise.resolve({ ...base, finalText: oneContractJson('src/app.tsx') });
+        case 'engineer': {
+          const slot = /THIS exact path\):\s*(\S+)/.exec(input.userPrompt)?.[1] ?? 'src/app.tsx';
+          const path = writeSlot(workspace, slot, ENGINEER_FILE, fs);
+          return Promise.resolve({
+            ...base,
+            finalText: '',
+            filesWritten: [{ path, bytes: ENGINEER_FILE.length }],
+          });
+        }
+        case 'review':
+          // Every reviewer measures no defect — the product now HAS a runnable entry.
+          return Promise.resolve({
+            ...base,
+            finalText: '',
+            toolCalls: [
+              { name: 'bash', arguments: { command: 'ls' } },
+              { name: SUBMIT_FINDINGS_TOOL, arguments: { findings: [] } },
+            ],
+          });
+        default: // ceo (+ revise)
+          return Promise.resolve({ ...base, finalText: CEO_APPROVE });
+      }
+    };
+
+    const result = await runCorp({
+      task: 'Build a UI',
+      chat: () => ({ content: '' }),
+      runRoleAgent,
+      fs,
+      readFs,
+      workspace,
+    });
+
+    // Part A: the guaranteed integration contract was injected + dispatched.
+    expect(result.integrationContractInjected).toBe(true);
+    expect(result.totalContracts).toBe(2); // the app module + the injected entry
+    expect(result.manifest?.fileCount).toBe(2); // src/app.tsx + index.html
+    // The tester gate CLEARS (there is now a runnable entry, produced up front), no
+    // auditor is needed, and the CEO signs off.
+    expect(result.review?.runnableEntryMissing).toBe(false);
+    expect(result.review?.testerGatePassed).toBe(true);
+    expect(result.review?.auditorDispatched).toBe(false);
+    expect(result.review?.integrationEntryDispatched).toBe(false); // produced up front, not via recovery
+    expect(result.initialCeoDecision?.decision).toBe('approve');
+    expect(result.ceoDecision?.decision).toBe('approve');
+    expect(result.budget.exceeded).toBe(false);
+  });
+
+  it('RECOVERS the runnable entry via the review bounce (Part C) when the injected entry was skipped', async () => {
+    // A renderable product where one module FAILS, so the AUTO-INJECTED entry (which
+    // depends on every module) is SKIPPED and the product ends with no runnable entry.
+    // The review bounce then SYNTHESIZES + DISPATCHES a fresh integration contract that
+    // PRODUCES the entry (pruned deps, shared workspace), and the gate clears on
+    // re-verify — the exact defect the old code could DETECT but never FIX.
+    const { fs, readFs } = memWorkspace();
+    const workspace = '/ws';
+    const promotion = {
+      reason: 'a multi-part UI',
+      divisions: [{ name: 'UI', purpose: 'the interface' }],
+    };
+    const twoContracts = JSON.stringify([
+      {
+        id: 'c1',
+        title: 'App view',
+        ownerNodeId: 'ui-eng-1',
+        input: 'i',
+        output: 'o',
+        slot: 'src/app.tsx',
+        available: { tools: ['write'], imports: [] },
+        reviewRubric: 'r',
+        dependsOn: [],
+        status: 'queued',
+      },
+      {
+        id: 'c2',
+        title: 'Logic',
+        ownerNodeId: 'ui-eng-2',
+        input: 'i',
+        output: 'o',
+        slot: 'src/logic.ts',
+        available: { tools: ['write'], imports: [] },
+        reviewRubric: 'r',
+        dependsOn: [],
+        status: 'queued',
+      },
+    ]);
+    let indexWrites = 0;
+    const runRoleAgent: RunRoleAgentFn = (input): Promise<RoleAgentRunOutput> => {
+      const base = { filesWritten: [], toolCalls: [], terminatedReason: 'stop' } as const;
+      switch (input.purpose) {
+        case 'vision':
+          return Promise.resolve({
+            ...base,
+            finalText: '',
+            toolCalls: [{ name: 'submit_vision', arguments: { brief: VISION_BRIEF } }],
+          });
+        case 'worker':
+          return Promise.resolve({
+            ...base,
+            finalText: '',
+            toolCalls: [
+              { name: CREATE_PRODUCTION_HIERARCHY, arguments: JSON.stringify(promotion) },
+            ],
+          });
+        case 'architect':
+          return Promise.resolve({
+            ...base,
+            finalText: JSON.stringify({ moduleMap: [], interfaces: [] }),
+          });
+        case 'manager':
+          return Promise.resolve({ ...base, finalText: twoContracts });
+        case 'engineer': {
+          const slot = /THIS exact path\):\s*(\S+)/.exec(input.userPrompt)?.[1] ?? '';
+          // src/logic.ts FAILS (writes nothing) → the injected entry (dep on it) is skipped.
+          if (slot === 'src/logic.ts') return Promise.resolve({ ...base, finalText: '' });
+          if (slot === 'index.html') indexWrites += 1;
+          const path = writeSlot(workspace, slot, ENGINEER_FILE, fs);
+          return Promise.resolve({
+            ...base,
+            finalText: '',
+            filesWritten: [{ path, bytes: ENGINEER_FILE.length }],
+          });
+        }
+        case 'review':
+          return Promise.resolve({
+            ...base,
+            finalText: '',
+            toolCalls: [
+              { name: 'bash', arguments: { command: 'ls' } },
+              { name: SUBMIT_FINDINGS_TOOL, arguments: { findings: [] } },
+            ],
+          });
+        default: // ceo (+ revise)
+          return Promise.resolve({ ...base, finalText: CEO_APPROVE });
+      }
+    };
+
+    const result = await runCorp({
+      task: 'Build a UI',
+      chat: () => ({ content: '' }),
+      runRoleAgent,
+      fs,
+      readFs,
+      workspace,
+    });
+
+    // Part A injected the entry, but its dep (c2) failed → it was skipped → the product
+    // had no runnable entry at review time. Part C then PRODUCED it.
+    expect(result.integrationContractInjected).toBe(true);
+    expect(result.review?.integrationEntryDispatched).toBe(true);
+    expect(result.review?.integrationEntryRecovered).toBe(true);
+    // The gate is recomputed against the RE-ASSEMBLED manifest and now clears.
+    expect(result.review?.runnableEntryMissing).toBe(false);
+    expect(result.review?.testerGatePassed).toBe(true);
+    expect(result.ceoDecision?.decision).toBe('approve');
+    // index.html was written exactly once — by the Part C recovery dispatch (the
+    // skipped Part A entry never ran).
+    expect(indexWrites).toBe(1);
+    expect(result.budget.exceeded).toBe(false);
   });
 
   it('the review phase is SKIPPED on the chat-fallback path (no bash, no role-agent)', async () => {

@@ -51,8 +51,9 @@ function escapeHtml(text: string): string {
  * Render a {@link ProductPeek} (the REAL in-progress product tree) as a
  * self-contained HTML page: a file list + each file's content. Falls back to an
  * honest "nothing built yet" note when the peek is null/empty — never a mock stub.
+ * Exported: the inline corp turn's "Build snapshot" (ChatApp.onCorpPeek) reuses it.
  */
-function renderPeekHtml(title: string, peek: ProductPeek | null): string {
+export function renderPeekHtml(title: string, peek: ProductPeek | null): string {
   const head = `<!doctype html><meta charset="utf-8"><body style="font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;padding:24px;color:#ddd;background:#1a1a1a">`;
   if (peek === null || peek.files.length === 0) {
     return `${head}<h2 style="font-family:system-ui">${escapeHtml(title)}</h2><p style="color:#999;font-family:system-ui">The build has no files yet — check back in a moment.</p></body>`;

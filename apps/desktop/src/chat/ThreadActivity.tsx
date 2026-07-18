@@ -66,6 +66,7 @@ export function ThreadActivityChain({
   streaming,
   turnStartedAt,
   tps,
+  onOpenFile,
 }: {
   blocks: ActivityBlock[];
   /** Tool result keyed by tool-call id (owner-scoped by the caller). */
@@ -76,6 +77,13 @@ export function ThreadActivityChain({
   turnStartedAt?: number;
   /** Live throughput (tok/s) used to estimate a thinking-only run's duration. */
   tps?: number;
+  /**
+   * Override the file-op row's "open in canvas" action (read/edit/skill). The
+   * normal chat leaves this unset and opens the file off disk via `fs:read-file`;
+   * the corp feed passes its own opener so a live corp-workspace file opens as a
+   * streaming corp-peek instead (the workspace has no renderer-addressable path).
+   */
+  onOpenFile?: (path: string) => void;
 }): ReactNode {
   const canvas = useCanvasTabs();
   const cwd = usePiStore((s) => s.session?.cwd ?? undefined);
@@ -135,10 +143,15 @@ export function ThreadActivityChain({
       }}
       // A read/edit/skill row's primary click opens that file in the canvas
       // (deliverable A2). The full path lives on `step.detail`; resolve it against
-      // the session cwd when it arrived relative so the IPC read can find it.
+      // the session cwd when it arrived relative so the IPC read can find it. When
+      // the caller supplies an opener (the corp feed), defer to it instead.
       onOpenFile={(step) => {
         const path = step.detail;
         if (path === undefined || path.length === 0) return;
+        if (onOpenFile !== undefined) {
+          onOpenFile(path);
+          return;
+        }
         void openFileInCanvas(canvas.controller, resolveAbsPath(path, cwd), cwd);
       }}
     />

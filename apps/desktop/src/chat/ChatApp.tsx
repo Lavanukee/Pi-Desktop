@@ -32,7 +32,6 @@ import { ChatComposer } from './ChatComposer';
 import { ChatThread } from './ChatThread';
 import { ChatTitle } from './ChatTitle';
 import { CanvasTabsPanel } from './canvas/CanvasTabsPanel';
-import { CorpWorkerPane } from './corp/CorpWorkerPane';
 import { useHarnessTitleSync } from './harness-title';
 import { SessionSidebar, type SidebarStub } from './SessionSidebar';
 import { ToastHost } from './ToastHost';
@@ -111,16 +110,6 @@ export function ChatApp({
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [truncatedNote, setTruncatedNote] = useState(false);
   const [stub, setStub] = useState<SidebarStub | null>(null);
-  // EXPERIMENTAL production harness: the live-followed node (auto-selected the
-  // moment a task starts — the left area is NEVER blank mid-run), the user's
-  // pinned node (a click in the situation room overrides the follow), and the
-  // active corp task id. All null/inert unless the flag routes a prompt
-  // through the CorpEngine.
-  const corpLiveNode = useCorpStore((s) => s.liveNode);
-  const corpPinnedNode = useCorpStore((s) => s.pinnedNode);
-  const corpTaskId = useCorpStore((s) => s.taskId);
-  const corpShownNode = corpPinnedNode ?? corpLiveNode;
-  const userMode = useUserMode();
 
   // Load the persisted project (working folder) first, then spawn the window's
   // pi session rooted at it (so the initial session adopts the active project's
@@ -168,6 +157,8 @@ export function ChatApp({
   // with a clean canvas (session isolation, backlog #2).
   const canvasController = useRef<CanvasController | null>(null);
   if (canvasController.current === null) canvasController.current = createCanvasController();
+  // Drives the situation room's user/power labelling when a run promotes.
+  const userMode = useUserMode();
   useEffect(() => {
     const controller = canvasController.current;
     if (controller === null) return;
@@ -195,35 +186,50 @@ export function ChatApp({
   }, []);
 
   // EXPERIMENTAL production harness: a submitted prompt (flag on) starts a
-  // CorpEngine task and opens the situation-room canvas tab streaming its live
-  // events (replayable so a tab-switch remount rebuilds instantly). The prompt is
-  // still echoed into the thread so the left area shows it until a worker is
-  // clicked. Gated by ChatComposer (only calls this when the flag is on).
+  // CorpEngine task. The chat shows the model's live output inline the whole time
+  // (ChatThread → CorpChatStream), so it reads as the ORIGINAL model answering —
+  // never blanked, never taken over. The situation-room canvas tab only opens when
+  // the model PROMOTES (builds a team of subagents); a solo answer never opens it.
+  // The prompt is echoed as the user's bubble. Gated by ChatComposer.
   const onCorpSubmit = (echo: string, imageUris: string[]) => {
     usePiStore.getState().appendUser(echo, imageUris);
     void startCorpTask(echo, imageUris.length > 0 ? { images: imageUris } : undefined).then(
       (handle) => {
         useCorpStore.getState().setTask(handle.taskId);
+        // A REPLAYABLE stream: this loop folds it into the corp store (drives the
+        // inline chat feed's follow target), and the situation tab — opened late,
+        // on promotion — replays the same buffered events to reconstruct its state.
         const events = replayableEvents(handle.events);
-        // Follow-live: a second (cheap, replayable) pass over the same stream
-        // folds each org-chart snapshot into the corp store, so the left pane
-        // auto-selects the top-most RUNNING node the instant the engine lights
-        // one and keeps following the action (unless the user pins a node).
+        let situationOpened = false;
         void (async () => {
           for await (const event of events) {
             if (useCorpStore.getState().taskId !== handle.taskId) return;
-            if (event.type === 'org-chart') useCorpStore.getState().trackChart(event.chart);
+            // Token-level PUSH: route per-node deltas into the block accumulator the
+            // inline chat feed streams from (never poll). The situation fold ignores
+            // this additive type, so there's no need to also run it through foldEvent.
+            if (event.type === 'worker-activity') {
+              useCorpStore.getState().foldWorkerActivity(event);
+              continue;
+            }
+            useCorpStore.getState().foldEvent(event);
+            if (event.type === 'org-chart') {
+              useCorpStore.getState().trackChart(event.chart);
+              // Promotion = a team exists (root + subagents). Bring up the
+              // situation room ONCE, the moment the corp structure initiates.
+              if (!situationOpened && event.chart.nodes.length > 1) {
+                situationOpened = true;
+                canvasController.current?.upsertTab(`situation:${handle.taskId}`, {
+                  kind: 'situation',
+                  title: 'Situation room',
+                  situationEvents: events,
+                  situationTaskId: handle.taskId,
+                  situationUserMode: userMode,
+                });
+                useCanvasStore.getState().setCanvasOpen(true);
+              }
+            }
           }
         })();
-        const controller = canvasController.current;
-        controller?.upsertTab(`situation:${handle.taskId}`, {
-          kind: 'situation',
-          title: 'Situation room',
-          situationEvents: events,
-          situationTaskId: handle.taskId,
-          situationUserMode: userMode,
-        });
-        useCanvasStore.getState().setCanvasOpen(true);
       },
     );
   };
@@ -299,19 +305,9 @@ export function ChatApp({
                   {flavor === 'claude' ? 'How can I help you today?' : 'What are we building?'}
                 </p>
               </div>
-            ) : corpTaskId !== null && corpShownNode !== null ? (
-              // EXPERIMENTAL: the live view — auto-follows whoever is actually
-              // running (never blank once a task starts); a clicked node pins,
-              // and the pane offers the way back to following live.
-              <div key="lead" className="flex min-h-0 flex-1 flex-col">
-                <CorpWorkerPane
-                  node={corpShownNode}
-                  taskId={corpTaskId}
-                  pinned={corpPinnedNode !== null}
-                  onFollowLive={() => useCorpStore.getState().followLive()}
-                />
-              </div>
             ) : (
+              // The thread is ALWAYS the lead surface — a corp run renders
+              // inline inside it (CorpInlineTurn) instead of swapping it out.
               <div key="lead" className="flex min-h-0 flex-1 flex-col">
                 <ChatThread />
               </div>

@@ -277,6 +277,21 @@ async function readBody(res: Response): Promise<AsyncIterable<Uint8Array>> {
   return res.body as unknown as AsyncIterable<Uint8Array>;
 }
 
+/** Flatten a `Headers` object to a plain record for pi's `onResponse` hook. Best-
+ * effort: a mock/non-standard headers object degrades to an empty record. */
+function headersToRecord(headers: Headers | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (headers === undefined || typeof headers.forEach !== 'function') return out;
+  try {
+    headers.forEach((value, key) => {
+      out[key] = value;
+    });
+  } catch {
+    // non-standard headers object — best-effort empty record
+  }
+  return out;
+}
+
 /**
  * Create the streamSimple function for a llama-server provider.
  * `deps.fixer` / `deps.onTimings` are the seams W5 and the supervisor wire.
@@ -329,13 +344,35 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
       try {
         stream.push({ type: 'start', partial: output });
 
-        const body = buildChatCompletionsRequest(model, context, options);
+        // Build the request body, then give the host a chance to inspect/replace it
+        // via pi's `onPayload` (the `before_provider_request` hook) — the SAME seam
+        // the built-in providers honor. The corp coordination harness relies on this
+        // to (a) merge its owner-tuned qwen sampling (temperature/top_p/top_k/min_p/
+        // penalties + max_tokens) onto the outgoing body and (b) ARM its per-call
+        // hang watchdog. `onPayload` returns the (possibly new) payload, or a value
+        // we ignore unless it is a fresh object; absent (normal chat) → unchanged.
+        let body = buildChatCompletionsRequest(model, context, options);
+        const replaced = await options?.onPayload?.(body, model);
+        if (replaced !== null && typeof replaced === 'object') {
+          body = replaced as Record<string, unknown>;
+        }
         const res = await doFetch(`${model.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...(model.headers ?? {}) },
           body: JSON.stringify(body),
           signal: options?.signal,
         });
+        // A response arrived (headers received, before the body is consumed) → notify
+        // the host via pi's `onResponse` (`after_provider_response`), mirroring the
+        // built-in openai-completions handler. The corp uses this to DISARM its
+        // per-call watchdog: the server responded, so this request is not a hung
+        // socket and the (legitimately long) stream may run unbounded. No-op in
+        // normal chat (no handler). Fired on ANY status so an error response also
+        // clears the watchdog rather than tripping it.
+        await options?.onResponse?.(
+          { status: res.status, headers: headersToRecord(res.headers) },
+          model,
+        );
         if (!res.ok) {
           const detail = await res.text().catch(() => '');
           throw new Error(`llama-server HTTP ${res.status}: ${detail.slice(0, 500)}`);

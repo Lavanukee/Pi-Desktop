@@ -623,8 +623,27 @@ export function mapToolStep(
       return {
         data: { kind, label, status, detail: command, command, output: str(result?.text) },
       };
-    case 'edit':
-      return { data: { kind, label, status, detail: path, filename, diff: editDiff(args) } };
+    case 'edit': {
+      // A tool call that carried its content produces a real diff (±stat derived
+      // from it). A live write reported only as line COUNTS (the corp feed's file
+      // step, which has the growing +N/−N but not the bytes) passes them through
+      // explicit `addedLines`/`removedLines` args so the ±stat still counts up —
+      // real edit tool calls never carry those keys, so normal chat is unchanged.
+      const added = typeof args.addedLines === 'number' ? args.addedLines : undefined;
+      const deleted = typeof args.removedLines === 'number' ? args.removedLines : undefined;
+      return {
+        data: {
+          kind,
+          label,
+          status,
+          detail: path,
+          filename,
+          diff: editDiff(args),
+          ...(added !== undefined ? { added } : {}),
+          ...(deleted !== undefined ? { deleted } : {}),
+        },
+      };
+    }
     case 'search': {
       const { results, note } = parseSearchOutcome(result);
       return {

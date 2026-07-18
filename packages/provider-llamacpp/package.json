@@ -6,7 +6,8 @@
   "license": "MIT",
   "description": "pi provider extension: llama-server streamSimple with repair rungs 1-2 and TPS from timings.",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./repair": "./src/repair.ts"
   },
   "scripts": {
     "lint": "biome check .",

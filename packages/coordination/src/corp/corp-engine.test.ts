@@ -500,3 +500,206 @@ describe('CorpEngine — live progress, node status, and transcript (bugs 1–3)
     expect(doneCounts.some((n) => n > 0 && n < 2)).toBe(true);
   });
 });
+
+/** Await until `cond()` holds, yielding to the event loop between checks. */
+async function waitFor(cond: () => boolean, label: string, tries = 200): Promise<void> {
+  for (let i = 0; i < tries; i++) {
+    if (cond()) return;
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  throw new Error(`waitFor timed out: ${label}`);
+}
+
+/**
+ * The token-level PUSH channel (worker-activity): a role-agent that STREAMS its
+ * assistant text delta-by-delta and writes a file must surface those as
+ * `worker-activity` events on the neutral stream — the additive real-time feed
+ * the renderer folds into a pi-style block (per-token, never a chunky poll) —
+ * WITHOUT disturbing the transcript accumulation the peek/late-join relies on.
+ */
+function streamingRoleAgent(workspace: CorpWorkspace): RunRoleAgentFn {
+  const root = workspace.workspace;
+  const knownSlots = ['src/api/core.ts', 'src/ui/core.tsx'];
+  return (input: RoleAgentRunInput): Promise<RoleAgentRunOutput> => {
+    const emit = input.onActivity;
+    const stop = (partial: Partial<RoleAgentRunOutput>): RoleAgentRunOutput => ({
+      filesWritten: [],
+      finalText: '',
+      toolCalls: [],
+      terminatedReason: 'stop',
+      ...partial,
+    });
+    switch (input.purpose) {
+      case 'vision':
+        return Promise.resolve(stop({ finalText: 'Build a small dashboard.' }));
+      case 'worker':
+        // Stream the answer token-by-token BEFORE returning the promotion decision.
+        emit?.({ kind: 'turn-start', turnIndex: 0 });
+        emit?.({ kind: 'assistant-text', phase: 'start' });
+        emit?.({ kind: 'assistant-text', phase: 'delta', delta: 'Planning ' });
+        emit?.({ kind: 'assistant-text', phase: 'delta', delta: 'the build.' });
+        emit?.({ kind: 'assistant-text', phase: 'end', text: 'Planning the build.' });
+        return Promise.resolve(stop({ finalText: PROMOTION }));
+      case 'architect':
+        return Promise.resolve(stop({ finalText: ARCHITECTURE }));
+      case 'manager':
+        return Promise.resolve(
+          stop({
+            finalText: input.userPrompt.includes('Division: Backend')
+              ? contractsFor('Backend', 'src/api/core.ts')
+              : contractsFor('Frontend', 'src/ui/core.tsx'),
+          }),
+        );
+      case 'engineer': {
+        const slot = knownSlots.find((s) => input.userPrompt.includes(s)) ?? 'src/ui/core.tsx';
+        const content = 'export const core = () => 42;\n';
+        const bytes = new TextEncoder().encode(content).length;
+        emit?.({ kind: 'turn-start', turnIndex: 0 });
+        workspace.fs.writeFile(slotPath(root, slot), content);
+        emit?.({ kind: 'file-write', toolName: 'write', path: slot, bytes, linesAdded: 1 });
+        return Promise.resolve(
+          stop({ finalText: 'wrote it', filesWritten: [{ path: slot, bytes }] }),
+        );
+      }
+      case 'review':
+        return Promise.resolve(
+          stop({ toolCalls: [{ name: 'submit_findings', arguments: { findings: [] } }] }),
+        );
+      case 'ceo':
+      case 'revise':
+        return Promise.resolve(
+          stop({ finalText: JSON.stringify({ decision: 'approve', notes: 'Looks complete.' }) }),
+        );
+      default:
+        return Promise.resolve(stop({}));
+    }
+  };
+}
+
+describe('CorpEngine — worker-activity PUSH (per-token inline chat stream)', () => {
+  it('emits worker-activity for an assistant-text delta and for a file write', async () => {
+    const workspace = createMemoryWorkspace('/corp-wa');
+    const engine = new CorpEngine({
+      chat: () => {
+        throw new Error('chat must not be called on the agent path');
+      },
+      runRoleAgent: streamingRoleAgent(workspace),
+      workspaceFor: () => workspace,
+      limit: 1,
+      maxRevisions: 0,
+    });
+    const handle = engine.startTask('Build me a dashboard app');
+    const events = await collect(handle);
+
+    // Every worker-activity is a valid discriminated-union member (the type was
+    // added to COORDINATION_EVENT_TYPES).
+    const worker = events.filter(
+      (e): e is Extract<CoordinationEvent, { type: 'worker-activity' }> =>
+        e.type === 'worker-activity',
+    );
+    expect(worker.every((e) => isCoordinationEventType(e.type))).toBe(true);
+
+    // Folding an assistant-text delta emitted worker-activity{kind:'text',delta},
+    // attributed to a node, carrying the streamed increment.
+    const textDeltas = worker.filter(
+      (e) => e.kind === 'text' && e.phase === 'delta' && (e.delta?.length ?? 0) > 0,
+    );
+    expect(textDeltas.length).toBeGreaterThanOrEqual(2);
+    expect(textDeltas.map((e) => e.delta).join('')).toBe('Planning the build.');
+    expect(textDeltas.every((e) => typeof e.nodeId === 'string' && e.nodeId.length > 0)).toBe(true);
+    // The stream opened + closed with phase markers (so the accumulator brackets a block).
+    expect(worker.some((e) => e.kind === 'text' && e.phase === 'start')).toBe(true);
+    expect(worker.some((e) => e.kind === 'text' && e.phase === 'end')).toBe(true);
+
+    // A file write emitted worker-activity{kind:'file',addedLines}, pointing at the slot.
+    const fileDeltas = worker.filter((e) => e.kind === 'file' && (e.addedLines ?? 0) > 0);
+    expect(fileDeltas.length).toBeGreaterThan(0);
+    expect(fileDeltas[0]?.path).toBeDefined();
+    expect(fileDeltas[0]?.nodeId.startsWith('eng-')).toBe(true);
+
+    // The additive PUSH did NOT disturb the transcript: the streamed text still
+    // accumulated into the node's transcript line (peek/late-join intact).
+    const solo =
+      engine.getWorkerTranscript(handle, 'ceo') ?? engine.getWorkerTranscript(handle, 'solo');
+    expect(solo).toBeDefined();
+
+    // Terminal, completed.
+    expect(terminal(events).result.outcome).toBe('completed');
+  });
+});
+
+describe('CorpEngine — a hung/aborted turn settles its frozen live line', () => {
+  it('settles an OPEN streaming line (streaming:false) when the abort path emits turn-end', async () => {
+    const workspace = createMemoryWorkspace('/corp-abort');
+    let releaseOpen!: () => void;
+    let releaseSettled!: () => void;
+    const openedGate = new Promise<void>((r) => {
+      releaseOpen = r;
+    });
+    const settledGate = new Promise<void>((r) => {
+      releaseSettled = r;
+    });
+    let danced = false;
+
+    // The FIRST role turn (the CEO vision, attributed to the solo node) opens a live
+    // reasoning stream and then HANGS — its stream is cut, so no thinking_end/turn_end
+    // arrives. It settles the frozen line with a synthetic turn-end (the SAME record
+    // runRoleAgent's abort/error path emits via settleActivitiesOnEnd), staying in
+    // flight (settledGate) so the run's own terminate() cannot be what settled it.
+    const abortingRoleAgent: RunRoleAgentFn = (
+      input: RoleAgentRunInput,
+    ): Promise<RoleAgentRunOutput> => {
+      const emit = input.onActivity;
+      if (danced) {
+        return Promise.resolve({
+          filesWritten: [],
+          finalText: '',
+          toolCalls: [],
+          terminatedReason: 'stop',
+        });
+      }
+      danced = true;
+      emit?.({ kind: 'turn-start', turnIndex: 0 });
+      emit?.({ kind: 'thinking', phase: 'start' });
+      emit?.({ kind: 'thinking', phase: 'delta', delta: 'weighing the approach' });
+      return openedGate.then(() => {
+        emit?.({ kind: 'turn-end', turnIndex: 0 });
+        return settledGate.then(() => ({
+          filesWritten: [],
+          finalText: '',
+          toolCalls: [],
+          terminatedReason: 'error' as const,
+        }));
+      });
+    };
+
+    const engine = new CorpEngine({
+      chat: () => {
+        throw new Error('chat must not be called on the agent path');
+      },
+      runRoleAgent: abortingRoleAgent,
+      workspaceFor: () => workspace,
+      maxRevisions: 0,
+    });
+    const handle = engine.startTask('Do a small thing');
+
+    const thinkingLine = () =>
+      engine.getWorkerTranscript(handle, 'solo')?.lines.find((l) => l.kind === 'thinking');
+
+    // 1) The line opens live — this is the frozen "Thinking…" the bug leaves spinning.
+    await waitFor(() => thinkingLine()?.streaming === true, 'thinking line opens');
+    expect(engine.getWorkerTranscript(handle, 'solo')?.streaming).toBe(true);
+    releaseOpen();
+
+    // 2) The abort's turn-end settles the SAME line — streaming:false — while the run
+    //    is still in flight (blocked on settledGate), so terminate() is NOT what
+    //    closed it: the settle is the abort path's own doing.
+    await waitFor(() => thinkingLine()?.streaming !== true, 'thinking line settles');
+    const settled = engine.getWorkerTranscript(handle, 'solo');
+    expect(settled?.lines.find((l) => l.kind === 'thinking')?.streaming).toBeFalsy();
+    expect(settled?.streaming).toBeFalsy();
+
+    releaseSettled();
+    await collect(handle); // drain to done so the background run tears down cleanly
+  });
+});

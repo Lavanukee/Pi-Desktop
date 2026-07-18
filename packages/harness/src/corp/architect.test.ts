@@ -16,6 +16,15 @@ describe('ARCHITECT_PROMPT', () => {
     expect(ARCHITECT_PROMPT).toContain('DIRECTORY');
     expect(ARCHITECT_PROMPT.toLowerCase()).toContain('not a single file');
   });
+
+  it('reserves the runnable ENTRY as a dedicated final integration step (spec §5/§8)', () => {
+    // The architect must account for how it all RUNS: a single runnable entry that
+    // wires the divisions into a working product, owned by an integration step — not
+    // folded into a feature division.
+    expect(ARCHITECT_PROMPT).toContain('runnable ENTRY');
+    expect(ARCHITECT_PROMPT.toLowerCase()).toContain('index.html');
+    expect(ARCHITECT_PROMPT).toContain('FINAL INTEGRATION');
+  });
 });
 
 describe('buildArchitectPrompt', () => {
@@ -43,6 +52,36 @@ describe('buildArchitectPrompt', () => {
     }
     expect(prompt.toLowerCase()).toContain('json object');
     expect(prompt).toContain('then STOP');
+  });
+
+  it('does NOT splice the delivery constraint for a plain (non-openable) vision', () => {
+    // "Build a browser game." is web but not openable-no-build → no delivery constraint.
+    expect(prompt).not.toContain('DELIVERY CONSTRAINT');
+  });
+});
+
+describe('buildArchitectPrompt — delivery constraint (spec §5/§8, Part B)', () => {
+  const divisions = [
+    { name: 'Engine', purpose: 'game loop + state' },
+    { name: 'UI', purpose: 'the HUD and menus' },
+  ];
+
+  it('threads the openable/no-build constraint from a single-file vision', () => {
+    const prompt = buildArchitectPrompt(
+      'A playable Snake game — ONE index.html that opens directly in a browser without Node.js/npm/build.',
+      divisions,
+    );
+    expect(prompt).toContain('DELIVERY CONSTRAINT');
+    expect(prompt).toContain('opens DIRECTLY');
+    expect(prompt.toLowerCase()).toContain('no build');
+    expect(prompt).toContain('SELF-CONTAINED');
+    // It steers AWAY from a bundler-dependent module graph.
+    expect(prompt.toLowerCase()).toContain('bundler-dependent module graph');
+  });
+
+  it('is derived from the vision text — a neutral vision splices nothing', () => {
+    const prompt = buildArchitectPrompt('Build a CLI tool that sorts numbers.', divisions);
+    expect(prompt).not.toContain('DELIVERY CONSTRAINT');
   });
 });
 

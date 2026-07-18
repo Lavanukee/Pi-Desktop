@@ -124,8 +124,37 @@ export interface ReviewPhaseSummary {
   readonly revisionContractIds: readonly string[];
   /** The bounded revision actually ran a re-dispatch cycle. */
   readonly revisionRan: boolean;
+  /** How many DOWN-and-UP bounce rounds the bounded revision ran (0..maxRevisions) —
+   * the generalized §8 bounce (re-dispatch → re-verify), bounded, never a deadlock. */
+  readonly revisionRounds: number;
   /** The re-verify verdict after the revision (undefined when no revision ran). */
   readonly revisedVerifyOk?: boolean;
+  /** The whole-codebase `auditor` was dispatched as the escape hatch (a blocking
+   * finding whose source did not map to any contract — spec §8/§9 generalized). */
+  readonly auditorDispatched: boolean;
+  /** A synthesized INTEGRATION contract was dispatched to PRODUCE the missing
+   * runnable entry (Part C recovery — the review bounce built the entry no existing
+   * contract owned, rather than flagging it forever). */
+  readonly integrationEntryDispatched: boolean;
+  /** The integration dispatch actually produced a runnable entry — the re-assembled
+   * manifest now HAS one, so the "no runnable entry" gate cleared. */
+  readonly integrationEntryRecovered: boolean;
+  /**
+   * The TESTER GATE verdict (spec §8, generalized) — did the product end the review
+   * phase actually building/running, with no remaining blocking build/run failure?
+   * The CEO's APPROVE is GATED on this in the orchestrator: it cannot sign off a
+   * product that failed to build/run. True when there were no blocking findings, or
+   * the bounded bounce cleared the objective re-verify AND there is a runnable entry.
+   */
+  readonly testerGatePassed: boolean;
+  /** The product is a renderable artifact with no runnable entry/build shell (spec
+   * §8 — "no home"), AS OF THE END OF THE PHASE. A missing entry maps to no existing
+   * contract, so re-dispatching one cannot clear it — but the Part C integration
+   * recovery ({@link DispatchIntegrationContractFn}) can PRODUCE it; when it does,
+   * this is recomputed to `false` against the re-assembled manifest and the gate
+   * clears. It stays `true` only when no recovery seam is wired or the entry could
+   * not be produced. */
+  readonly runnableEntryMissing: boolean;
   /** The review pass was cut short because the global RunBudget was spent. */
   readonly skippedForBudget: boolean;
   /** The transcript-free FINDINGS summary handed to the CEO's final review. */
@@ -138,26 +167,60 @@ export interface ReviewPhaseSummary {
  * — the signal to add the visual-critic + accessibility lenses (render-limited). */
 const RENDERABLE_FILE = /\.(?:html?|tsx|jsx|vue|svelte|css|scss|sass|less)$/i;
 
+/** Files that constitute a runnable ENTRY / build shell — how the tester assembles,
+ * builds, and launches the product. A renderable product with NONE of these has "no
+ * home": nothing to build or serve, so it is not shippable (spec §8 tester gate). */
+const RUNNABLE_ENTRY_FILE =
+  /(?:^|\/)(?:package\.json|index\.html?|main\.[cm]?[jt]sx?|(?:vite|esbuild|webpack|rollup|next|astro|svelte|parcel)\.config\.[cm]?[jt]s)$/i;
+
+/** True when a slot is a renderable artifact (markup, a UI component, or a
+ * stylesheet). The atom under {@link hasRenderableArtifacts}; also reused by the
+ * integration-contract synthesis (integration-contract.ts) to detect a web product
+ * from its contract slots. Pure. */
+export function isRenderableSlot(slot: string): boolean {
+  return RENDERABLE_FILE.test(slot);
+}
+
+/** True when a slot is a runnable ENTRY / build shell (an index.html, a
+ * package.json, a main entry, or a bundler config) — how the tester assembles,
+ * builds, and launches the product. The atom under {@link hasRunnableEntry}; reused
+ * by the integration-contract synthesis to decide whether an entry already exists.
+ * Pure. */
+export function isRunnableEntrySlot(slot: string): boolean {
+  return RUNNABLE_ENTRY_FILE.test(slot);
+}
+
 /** True when the assembled product contains a renderable artifact (markup, a UI
  * component, or a stylesheet) — the visual + accessibility lenses only earn their
  * place then. Pure. */
 export function hasRenderableArtifacts(manifest: ProductManifest): boolean {
-  return manifest.files.some((f) => RENDERABLE_FILE.test(f.slot));
+  return manifest.files.some((f) => isRenderableSlot(f.slot));
+}
+
+/** True when the product has a runnable entry / build shell the tester can build and
+ * launch (an index.html, a package.json, a main entry, or a bundler config). Pure. */
+export function hasRunnableEntry(manifest: ProductManifest): boolean {
+  return manifest.files.some((f) => isRunnableEntrySlot(f.slot));
 }
 
 /**
  * Pick the lenses appropriate to THIS product (spec §8 — "pick lenses appropriate
- * to the product"). Always CORRECTNESS/INTEGRATION (it runs the build/typecheck/
- * tests — the ground truth), plus SECURITY and PERFORMANCE (feasible on the code
- * via bash). VISUAL-CRITIC + ACCESSIBILITY are added ONLY when the product has a
- * renderable artifact, and flagged `renderLimited` (best-effort: no headless
- * browser is wired into the reviewer seam, so they review the DOM/markup structure
- * statically and note the limitation rather than fake a rendered measurement).
- * Deterministic + pure.
+ * to the product", specialists that MEASURE). Always CORRECTNESS/INTEGRATION (types
+ * + tests), the TESTER (the workability lens — it assembles, BUILDS, RUNS headless,
+ * and SCREENSHOTS the product, the ground truth for "does it actually work"), plus
+ * SECURITY and PERFORMANCE (feasible on the code via bash). VISUAL-CRITIC +
+ * ACCESSIBILITY are added ONLY when the product has a renderable artifact; they are
+ * flagged `renderLimited` HERE, but the review phase flips that OFF and lets them
+ * consume the tester's real screenshot when the tester managed to build + run the
+ * product (only when a build genuinely can't be produced do they fall back to the
+ * static structural review). Deterministic + pure. The `auditor` is NOT a standing
+ * lens — it is dispatched ON DEMAND by {@link runReviewPhase} as the escape hatch
+ * when a blocking finding's source is unknown.
  */
 export function selectReviewLenses(manifest: ProductManifest): ReviewLensPlan[] {
   const plans: ReviewLensPlan[] = [
     { lens: 'correctness', renderLimited: false },
+    { lens: 'tester', renderLimited: false },
     { lens: 'security', renderLimited: false },
     { lens: 'performance', renderLimited: false },
   ];
@@ -201,9 +264,24 @@ export function buildReviewSystemPrompt(plan: ReviewLensPlan): string {
     '- When you are done measuring, call `submit_findings` EXACTLY ONCE with your findings ranked by severity, each with its evidence and concrete file:line location. If you measured no problems, call it with an empty list.',
     "- Severity: mark a finding 'blocking' when it means the product does NOT meet its bar as-is — the build/typecheck/tests fail, or a severe defect (a crash, a security hole, data loss). Use 'high'/'medium'/'low' for real but non-blocking issues.",
   ];
+  if (plan.lens === 'tester') {
+    framing.push(
+      '- BUILD + RUN + SCREENSHOT (this is your whole job — do not stop at reading files): assemble the product, BUILD it with its real toolchain via `bash` (npm/pnpm build, vite/esbuild, or tsc), then RUN it — for a web artifact, launch it headless, load its entry, and read the console. Then SCREENSHOT it and confirm the feature the task describes actually appears and works.',
+      '- A missing runnable entry (no index.html / package.json / bundler config to build+serve a web artifact), a build failure, a runtime or console error, or a described feature that does not actually appear is a BLOCKING finding — a product that does not run has not met its bar.',
+    );
+  }
+  if (plan.lens === 'auditor') {
+    framing.push(
+      '- You may read the ENTIRE product tree (you are not scoped to one module). Trace the reported symptom to its cross-module ROOT CAUSE and report the precise fix as a finding a manager can turn into a contract — which file(s) are wrong, the single correct shape, and which module must change to agree. Cite the exact files/lines you compared.',
+    );
+  }
   if (plan.renderLimited) {
     framing.push(
       '- RENDER LIMITATION: no headless browser is available to you in this pass, so you CANNOT render or screenshot the artifact. Do NOT fabricate pixel measurements or contrast ratios you did not compute. Instead review the DOM/markup and stylesheet STRUCTURE statically (semantic elements, roles/labels, focus handling, declared color/spacing tokens), and state in each finding that it is a STATIC STRUCTURAL review, not a rendered measurement.',
+    );
+  } else if (plan.lens === 'visual-critic' || plan.lens === 'accessibility') {
+    framing.push(
+      '- The tester already BUILT and RAN this product and saved a screenshot of the running artifact in your working directory. Read/inspect that screenshot (and the built output) and measure the REAL rendered result — do not restrict yourself to a static markup review when a rendered artifact exists.',
     );
   }
   return `${base}\n${framing.join('\n')}`;
@@ -499,6 +577,31 @@ export function deriveBlockingFromVerify(
   });
 }
 
+/**
+ * The tester gate's MODEL-FREE ground truth (spec §8 — "if none exists, that's a
+ * BLOCKING finding — the product isn't shippable"). A RENDERABLE product (a web/UI
+ * artifact) with NO runnable entry/build shell cannot be assembled, launched, or
+ * screenshotted — the classic "food with no home": working modules that never
+ * compose into a runnable product. That is a BLOCKING tester finding regardless of
+ * what any lens agent reported, and — unlike a build error in an existing file — it
+ * CANNOT be cleared by re-dispatching an existing contract (the missing shell is a
+ * whole new deliverable), so the review phase carries it as a hard gate failure.
+ * A pure-logic product (no renderable artifact) needs no web entry, so this is
+ * empty for it. Pure.
+ */
+export function deriveTesterGateBlocking(manifest: ProductManifest): ReviewFinding[] {
+  if (!hasRenderableArtifacts(manifest) || hasRunnableEntry(manifest)) return [];
+  return [
+    {
+      lens: 'tester',
+      severity: 'blocking',
+      title: 'No runnable entry — the product cannot be built, launched, or screenshotted',
+      evidence:
+        'The product has renderable artifacts but no build/serve entry (no index.html, package.json, or bundler config), so the tester cannot assemble and run it. A web artifact with no home is not shippable.',
+    },
+  ];
+}
+
 /** Merge two finding lists, dropping exact duplicates (same lens+title+location). */
 function dedupeFindings(a: readonly ReviewFinding[], b: readonly ReviewFinding[]): ReviewFinding[] {
   const out: ReviewFinding[] = [];
@@ -575,6 +678,25 @@ export type ReviseForFindingsFn = (input: {
   readonly notes: string;
 }) => Promise<{ readonly ran: boolean; readonly verify: VerifyResult } | undefined>;
 
+/**
+ * CREATE + dispatch a NEW synthesized INTEGRATION contract — the runnable product
+ * entry that wires the modules into a running product — then RE-ASSEMBLE + re-verify
+ * (spec §5/§8, Part C recovery). This is what lets the review bounce PRODUCE the
+ * missing entry the tester gate flags, instead of only flagging it forever: the
+ * missing entry is a NEW deliverable no existing contract owns, so re-running an
+ * existing contract can never conjure it. The seam owns the actual synthesis +
+ * dispatch (run.ts, mirroring {@link ReviseForFindingsFn}); it returns the fresh
+ * manifest so {@link runReviewPhase} can recompute the model-free tester gate against
+ * the RE-ASSEMBLED product. Returns `undefined` when it could not run (budget spent).
+ */
+export type DispatchIntegrationContractFn = (input: {
+  readonly reason: string;
+  readonly notes: string;
+}) => Promise<
+  | { readonly ran: boolean; readonly manifest: ProductManifest; readonly verify: VerifyResult }
+  | undefined
+>;
+
 /** Inputs to {@link runReviewPhase}. */
 export interface ReviewPhaseParams {
   readonly lensPlan: readonly ReviewLensPlan[];
@@ -592,6 +714,11 @@ export interface ReviewPhaseParams {
   /** The bounded revision seam (re-dispatch + re-verify). Absent → findings are
    * recorded but no revision runs (still surfaced to the CEO). */
   readonly reviseForFindings?: ReviseForFindingsFn;
+  /** The integration-entry RECOVERY seam (Part C): synthesize + dispatch a new
+   * integration contract that PRODUCES the runnable entry, then re-assemble. Absent →
+   * a "no runnable entry" gate failure is flagged but not repaired (the pre-fix
+   * behavior — it can never clear). */
+  readonly dispatchIntegrationContract?: DispatchIntegrationContractFn;
   /** Reuse the CEO revise bound for the review-triggered revision (default 1). */
   readonly maxRevisions?: number;
   /** The global backstop: when spent, no further reviewer/revision runs. */
@@ -629,16 +756,78 @@ export function buildReviewAgentInput(
   };
 }
 
+/** Record one lens's run in {@link LensRunSummary} shape (a skipped lens = ran:false). */
+function lensRun(
+  lens: ReviewLens,
+  over: Partial<Omit<LensRunSummary, 'lens'>> = {},
+): LensRunSummary {
+  return {
+    lens,
+    ran: over.ran ?? false,
+    measured: over.measured ?? false,
+    renderLimited: over.renderLimited ?? false,
+    usedBash: over.usedBash ?? false,
+    findingCount: over.findingCount ?? 0,
+    blockingCount: over.blockingCount ?? 0,
+    ...(over.terminatedReason !== undefined ? { terminatedReason: over.terminatedReason } : {}),
+  };
+}
+
+/** The bounce-note the review phase hands DOWN when it re-dispatches a contract to
+ * fix blocking findings (plus the auditor's root-cause notes when it ran). */
+function buildBounceNotes(blocking: readonly ReviewFinding[], auditorNotes: string): string {
+  const lines = [
+    'The reviewers MEASURED BLOCKING problems the product must fix before it can ship:',
+    ...blocking.map(findingLine),
+  ];
+  if (auditorNotes.trim() !== '') {
+    lines.push(
+      '',
+      'The whole-codebase auditor traced the root cause(s) — fix these at the source:',
+      auditorNotes.trim(),
+    );
+  }
+  lines.push('', 'Re-build the affected file(s) to resolve these specific findings.');
+  return lines.join('\n');
+}
+
+/** The bounce-note handed to the Part C integration RECOVERY — the tester gate's
+ * "no runnable entry" evidence + the instruction to PRODUCE the entry that wires the
+ * modules into a running product. Pure. */
+function buildIntegrationBounceNotes(testerGate: readonly ReviewFinding[]): string {
+  return [
+    'The product has renderable modules but NO runnable ENTRY — nothing wires them into a product that opens/builds/runs (the classic "food with no home"). The reviewers measured:',
+    ...testerGate.map(findingLine),
+    '',
+    'Produce that entry NOW: the single runnable entry that loads/mounts every module and launches the working product, then confirm it runs.',
+  ].join('\n');
+}
+
 /**
- * Run the REVIEW-AT-MERGE phase (spec §8): spawn each planned lens as a harnessed
- * reviewer that MEASURES the product, aggregate the findings, and — when a blocking
- * finding is present — run ONE bounded revision (re-dispatch the affected contracts
- * + re-verify, reusing the revise bound). Returns the {@link ReviewPhaseSummary},
- * including the transcript-free findings summary for the CEO. Never throws.
+ * Run the REVIEW-AT-MERGE phase (spec §8, generalized) — the harnessed specialists
+ * that MEASURE, and the bidirectional BOUNCE that keeps the product being re-worked
+ * until it actually builds/runs:
+ *  1. Spawn each planned lens (correctness, TESTER, security, performance, and — for
+ *     a renderable product — visual-critic + accessibility) as a harnessed reviewer.
+ *     The TESTER builds + runs + screenshots; when it managed to build+run, the
+ *     visual/accessibility lenses drop their `renderLimited` flag and consume its
+ *     real screenshot (they fall back to a static review only when no build could be
+ *     produced).
+ *  2. Aggregate the specialists' findings PLUS the model-free ground truth (the
+ *     objective verify failures AND the tester gate's "no runnable entry" blocker).
+ *  3. On a BLOCKING finding, BOUNCE: re-dispatch the affected contracts → re-verify,
+ *     repeating up to `maxRevisions` DOWN-and-UP rounds (the generalized §8 bounce).
+ *     When a blocking finding's SOURCE is unknown (it maps to no contract), the
+ *     whole-codebase `auditor` is dispatched as the escape hatch to trace the
+ *     cross-module root cause, and its findings target the contracts + enrich the
+ *     bounce notes.
+ *  4. Compute the TESTER GATE verdict (did the product end up building/running?) —
+ *     the orchestrator GATES the CEO's APPROVE on it — and the transcript-free
+ *     findings summary for the CEO.
  *
- * Bounded by construction: one review pass (each lens runs once), each reviewer
- * charges the global budget (a spent budget skips the rest), and the revision reuses
- * `maxRevisions` so it can never deadlock. No per-agent caps.
+ * Bounded by construction: each lens runs once, the auditor at most once, the bounce
+ * at most `maxRevisions` rounds, every agent charges the global budget (a spent
+ * budget skips the rest), so it can never deadlock. Never throws. No per-agent caps.
  */
 export async function runReviewPhase(params: ReviewPhaseParams): Promise<ReviewPhaseSummary> {
   const log = params.log ?? (() => {});
@@ -646,104 +835,204 @@ export async function runReviewPhase(params: ReviewPhaseParams): Promise<ReviewP
   let collected: ReviewFinding[] = [];
   let skippedForBudget = false;
 
+  // The model-free gate failure: a renderable product with no runnable entry / build
+  // shell ("no home") — the tester cannot build or launch it, and re-running an
+  // EXISTING contract cannot conjure the missing entry. Part C (below) can PRODUCE it
+  // via the synthesized integration contract, at which point this is recomputed
+  // against the re-assembled manifest; it stays true only when no recovery ran.
+  let runnableEntryMissing = deriveTesterGateBlocking(params.manifest).length > 0;
+  // Did the TESTER manage to build + run the product? (Set after the tester lens.) The
+  // visual/accessibility lenses consume its real screenshot only when it did.
+  let testerBuiltOk = false;
+
+  const budgetSpent = (): boolean => params.budget !== undefined && budgetExceeded(params.budget);
+
   // 1. ONE review pass — each lens runs once, serially (its own memory phase, §8).
   for (const plan of params.lensPlan) {
-    if (params.budget !== undefined && budgetExceeded(params.budget)) {
-      skippedForBudget = true;
-    }
+    // The tester's real screenshot lets the visual/accessibility lenses MEASURE the
+    // rendered artifact; without a successful build they stay statically render-limited.
+    const isRenderLens = plan.lens === 'visual-critic' || plan.lens === 'accessibility';
+    const renderLimited = isRenderLens ? !testerBuiltOk : plan.renderLimited;
+    const effectivePlan: ReviewLensPlan = { lens: plan.lens, renderLimited };
+
+    if (budgetSpent()) skippedForBudget = true;
     if (skippedForBudget) {
-      lensRuns.push({
-        lens: plan.lens,
-        ran: false,
-        measured: false,
-        renderLimited: plan.renderLimited,
-        usedBash: false,
-        findingCount: 0,
-        blockingCount: 0,
-      });
+      lensRuns.push(lensRun(plan.lens, { renderLimited }));
       continue;
     }
-    log(`review lens: ${plan.lens}${plan.renderLimited ? ' (render-limited)' : ''}`);
-    const input = buildReviewAgentInput(plan, params);
-    const out = await params.runReviewAgent(input);
+    log(`review lens: ${plan.lens}${renderLimited ? ' (render-limited)' : ''}`);
+    const out = await params.runReviewAgent(buildReviewAgentInput(effectivePlan, params));
     if (out === undefined) {
       // Budget spent at charge time — record as skipped and stop starting new lenses.
       skippedForBudget = true;
-      lensRuns.push({
-        lens: plan.lens,
-        ran: false,
-        measured: false,
-        renderLimited: plan.renderLimited,
-        usedBash: false,
-        findingCount: 0,
-        blockingCount: 0,
-      });
+      lensRuns.push(lensRun(plan.lens, { renderLimited }));
       continue;
     }
     const findings = parseFindings(plan.lens, out.toolCalls, out.finalText);
     const usedBash = out.toolCalls.some((c) => c.name === 'bash');
+    const blockingCount = findings.filter(isBlocking).length;
     collected = [...collected, ...findings];
-    lensRuns.push({
-      lens: plan.lens,
-      ran: true,
-      measured: !plan.renderLimited,
-      renderLimited: plan.renderLimited,
-      usedBash,
-      findingCount: findings.length,
-      blockingCount: findings.filter(isBlocking).length,
-      ...(out.terminatedReason !== undefined ? { terminatedReason: out.terminatedReason } : {}),
-    });
+    if (plan.lens === 'tester') {
+      // The tester built + ran the product when it actually ran the build (bash) and
+      // measured no blocking failure — and only when the product HAS a home to run in.
+      testerBuiltOk = usedBash && blockingCount === 0 && !runnableEntryMissing;
+    }
+    lensRuns.push(
+      lensRun(plan.lens, {
+        ran: true,
+        measured: !renderLimited,
+        renderLimited,
+        usedBash,
+        findingCount: findings.length,
+        blockingCount,
+        ...(out.terminatedReason !== undefined ? { terminatedReason: out.terminatedReason } : {}),
+      }),
+    );
   }
 
-  // 2. Aggregate — the specialists' findings PLUS the objective verify failures (the
-  // model-free ground truth), deduped and ranked most-severe first.
+  // 2. Aggregate — the specialists' findings PLUS the model-free ground truth: the
+  // objective verify failures AND the tester gate's "no runnable entry" blocker. The
+  // manifest / tester gate are LET-bound: Part C re-assembles the product when it
+  // produces the missing entry, and the gate is recomputed against the fresh manifest.
   const objective = deriveBlockingFromVerify(params.verifyResult, params.contracts);
-  let findings = sortBySeverity(dedupeFindings(collected, objective));
-  const blocking = findings.filter(isBlocking);
+  let currentManifest = params.manifest;
+  let testerGate = deriveTesterGateBlocking(currentManifest);
+  // The specialists' + (later) the auditor's findings — the set that survives a
+  // successful re-verify (the verify-derived blockers are dropped, these stay).
+  let specialistFindings = collected;
+  let findings = sortBySeverity(
+    dedupeFindings(dedupeFindings(specialistFindings, objective), testerGate),
+  );
+  let blocking = findings.filter(isBlocking);
+  const hadBlocking = blocking.length > 0;
 
-  // 3. BLOCKING → ONE bounded revision (re-dispatch the affected contracts + re-verify),
-  // reusing the revise bound. Never deadlocks; each cycle is budget-charged by the seam.
+  // 3. BLOCKING → recovery + the bounded, MULTI-ROUND bounce. Never deadlocks; each
+  // cycle is budget-charged by the seam.
   let revisionTriggered = false;
   let revisionRan = false;
+  let revisionRounds = 0;
   let revisedVerifyOk: boolean | undefined;
   let revisionContractIds: string[] = [];
+  let auditorDispatched = false;
+  let integrationEntryDispatched = false;
+  let integrationEntryRecovered = false;
 
-  if (
-    blocking.length > 0 &&
-    params.reviseForFindings !== undefined &&
-    !(params.budget !== undefined && budgetExceeded(params.budget))
-  ) {
+  if (hadBlocking && !budgetSpent()) {
+    // 3a. MISSING RUNNABLE ENTRY → Part C recovery (spec §5/§8). The tester gate's "no
+    // runnable entry" blocker maps to NO existing contract (the entry is a NEW
+    // deliverable), so the re-dispatch bounce below could never clear it. Synthesize +
+    // DISPATCH an integration contract that PRODUCES the entry, then re-assemble and
+    // recompute the model-free gate against the fresh manifest — so the gate can
+    // actually clear instead of flagging forever.
+    if (
+      runnableEntryMissing &&
+      params.dispatchIntegrationContract !== undefined &&
+      !budgetSpent()
+    ) {
+      log('review: no runnable entry → synthesizing + dispatching an integration contract');
+      const out = await params.dispatchIntegrationContract({
+        reason:
+          'the product has renderable modules but no runnable entry that wires them into a running product',
+        notes: buildIntegrationBounceNotes(testerGate),
+      });
+      if (out === undefined) {
+        skippedForBudget = true;
+      } else if (out.ran) {
+        integrationEntryDispatched = true;
+        currentManifest = out.manifest;
+        revisedVerifyOk = out.verify.ok;
+        // Recompute the MODEL-FREE gate against the RE-ASSEMBLED manifest.
+        testerGate = deriveTesterGateBlocking(currentManifest);
+        runnableEntryMissing = testerGate.length > 0;
+        integrationEntryRecovered = !runnableEntryMissing;
+        // Re-aggregate: the "no runnable entry" blocker is gone once the entry exists.
+        findings = sortBySeverity(
+          dedupeFindings(dedupeFindings(specialistFindings, objective), testerGate),
+        );
+        blocking = findings.filter(isBlocking);
+        log(
+          integrationEntryRecovered
+            ? 'review: integration entry produced — the tester gate re-opened'
+            : 'review: integration dispatch ran but no runnable entry yet',
+        );
+      }
+    }
+  }
+
+  // 3b. The remaining BLOCKING findings (build failures in existing files) → the
+  // bounded, MULTI-ROUND bounce (re-dispatch → re-verify), reusing the revise bound.
+  if (blocking.length > 0 && params.reviseForFindings !== undefined && !budgetSpent()) {
     revisionContractIds = mapFindingsToContractIds(blocking, params.contracts);
-    if (revisionContractIds.length > 0) {
+    let auditorNotes = '';
+
+    // ESCAPE HATCH (spec §8/§9 generalized): the blocking findings map to NO contract
+    // — the SOURCE is unknown — so dispatch the whole-codebase `auditor` to trace the
+    // cross-module root cause, then target the contracts IT cites + carry its notes.
+    if (revisionContractIds.length === 0 && !budgetSpent()) {
+      log('review: blocking source unknown → dispatching the whole-codebase auditor');
+      const auditorPlan: ReviewLensPlan = { lens: 'auditor', renderLimited: false };
+      const auditorOut = await params.runReviewAgent(buildReviewAgentInput(auditorPlan, params));
+      if (auditorOut === undefined) {
+        skippedForBudget = true;
+      } else {
+        auditorDispatched = true;
+        const auditorFindings = parseFindings(
+          'auditor',
+          auditorOut.toolCalls,
+          auditorOut.finalText,
+        );
+        specialistFindings = [...specialistFindings, ...auditorFindings];
+        findings = sortBySeverity(
+          dedupeFindings(dedupeFindings(specialistFindings, objective), testerGate),
+        );
+        const auditorBlocking = auditorFindings.filter(isBlocking);
+        revisionContractIds = mapFindingsToContractIds(
+          [...blocking, ...auditorBlocking],
+          params.contracts,
+        );
+        auditorNotes = auditorFindings.map(findingLine).join('\n');
+        lensRuns.push(
+          lensRun('auditor', {
+            ran: true,
+            measured: true,
+            usedBash: auditorOut.toolCalls.some((c) => c.name === 'bash'),
+            findingCount: auditorFindings.length,
+            blockingCount: auditorBlocking.length,
+            ...(auditorOut.terminatedReason !== undefined
+              ? { terminatedReason: auditorOut.terminatedReason }
+              : {}),
+          }),
+        );
+      }
+    }
+
+    if (revisionContractIds.length > 0 && params.reviseForFindings !== undefined) {
       revisionTriggered = true;
-      const notes = [
-        'The advisory reviewers found BLOCKING problems the product must fix:',
-        ...blocking.map(findingLine),
-        '',
-        'Re-build the affected file(s) to resolve these specific findings.',
-      ].join('\n');
+      const notes = buildBounceNotes(blocking, auditorNotes);
       log(
-        `review: ${blocking.length} blocking finding(s) → bounded revision of [${revisionContractIds.join(', ')}]`,
+        `review: ${blocking.length} blocking finding(s) → bounded bounce of [${revisionContractIds.join(', ')}]`,
       );
       const revise = params.reviseForFindings;
-      // runBoundedRevise caps the re-dispatch at `maxRevisions` (the same bound the
-      // CEO revise loop uses) and re-checks via the OBJECTIVE re-verify each cycle —
-      // it can never deadlock. Its side-effects (revisionRan/revisedVerifyOk) are
-      // captured in the closure below; the returned outcome is not needed here.
-      await runBoundedRevise({
+      // runBoundedRevise caps the re-dispatch at `maxRevisions` DOWN-and-UP rounds
+      // (the same generous bound the CEO revise loop uses) and re-checks via the
+      // OBJECTIVE re-verify each round — it can never deadlock.
+      const outcome = await runBoundedRevise({
         initialDecision: { decision: 'revise', notes } as CeoDecision,
         maxRevisions: params.maxRevisions,
         ...(params.budget !== undefined ? { budget: params.budget } : {}),
-        runRevision: async (): Promise<CeoDecision> => {
-          const result = await revise({ contractIds: revisionContractIds, notes });
+        runRevision: async (round): Promise<CeoDecision> => {
+          const result = await revise({
+            contractIds: revisionContractIds,
+            notes: round.notes ?? notes,
+          });
           if (result === undefined || !result.ran) {
             // Could not re-dispatch (budget/none) — accept the honest state.
             return { decision: 'approve' };
           }
           revisionRan = true;
           revisedVerifyOk = result.verify.ok;
-          // Re-check signal is the OBJECTIVE re-verify (not a second specialist pass —
-          // one review pass): pass → done; still failing → let the bound decide.
+          // The re-check signal is the OBJECTIVE re-verify — the tester gate's per-round
+          // ground truth: pass → the gate clears; still failing → let the bound decide.
           return result.verify.ok
             ? { decision: 'approve' }
             : {
@@ -754,13 +1043,29 @@ export async function runReviewPhase(params: ReviewPhaseParams): Promise<ReviewP
               };
         },
       });
-      // If the revision fixed the objective failures, drop the now-stale verify-derived
-      // blocking findings from what the CEO sees (the specialists' own findings stay).
-      if (revisedVerifyOk === true) {
-        findings = sortBySeverity(dedupeFindings(collected, []));
-      }
+      revisionRounds = outcome.revisionsRun;
     }
   }
+
+  // If any recovery/bounce cleared the OBJECTIVE re-verify, the verify-derived
+  // blockers are stale — drop them from what the CEO sees, keeping the specialists'
+  // findings and the (now-live, possibly cleared) tester gate. Then recompute the
+  // residual blocking set the gate verdict reads.
+  if (revisedVerifyOk === true) {
+    findings = sortBySeverity(dedupeFindings(specialistFindings, testerGate));
+  }
+  blocking = findings.filter(isBlocking);
+
+  // 4. The TESTER GATE verdict (spec §8, generalized — the CEO's APPROVE is gated on
+  // it). It PASSES when the product ends the phase actually building/running: there is
+  // a runnable entry (Part C may have PRODUCED it) AND no blocking failure remains, or
+  // the bounded bounce cleared the objective re-verify. A "no home" product that could
+  // not be given an entry never passes.
+  const testerGatePassed = runnableEntryMissing
+    ? false
+    : blocking.length === 0
+      ? true
+      : revisedVerifyOk === true;
 
   const ceoFindingsSummary = buildFindingsSummary({
     findings,
@@ -771,11 +1076,17 @@ export async function runReviewPhase(params: ReviewPhaseParams): Promise<ReviewP
   return {
     lensRuns,
     findings,
-    blockingCount: findings.filter(isBlocking).length,
+    blockingCount: blocking.length,
     revisionTriggered,
     revisionContractIds,
     revisionRan,
+    revisionRounds,
     ...(revisedVerifyOk !== undefined ? { revisedVerifyOk } : {}),
+    auditorDispatched,
+    integrationEntryDispatched,
+    integrationEntryRecovered,
+    testerGatePassed,
+    runnableEntryMissing,
     skippedForBudget,
     ceoFindingsSummary,
   };

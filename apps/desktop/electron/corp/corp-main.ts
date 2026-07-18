@@ -14,8 +14,9 @@
  * model — only main frames of app-created windows may reach it).
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
-import type { CoordinationEvent, TaskHandle } from '@pi-desktop/coordination';
+import type { CoordinationEvent, TaskHandle, TaskResult } from '@pi-desktop/coordination';
 import { CorpEngine, createNodeWorkspaceFactory } from '@pi-desktop/coordination/corp';
 import type { CorpChatFn } from '@pi-desktop/harness/corp';
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
@@ -46,6 +47,38 @@ const tasks = new Map<string, RunningTask>();
  * here). Isolated per task under the OS temp dir so a run never touches HOME. */
 function corpWorkspaceRoot(): string {
   return path.join(app.getPath('temp'), 'pi-desktop-corp');
+}
+
+/**
+ * Durably record a run's TERMINAL OUTCOME (the CEO verdict + timing) the moment it
+ * lands — independent of the renderer. A run's result must survive the window
+ * navigating away or closing: the `done` event is otherwise only forwarded to the
+ * situation room, so if that view is gone the verdict is lost (and main.log never
+ * had it). We write both a structured log line and a JSON sidecar in the workspace
+ * ROOT (which outlives the per-task workspace that `terminate` cleans up).
+ */
+function recordCorpOutcome(taskId: string, result: TaskResult, elapsedMs: number): void {
+  const record = {
+    taskId,
+    outcome: result.outcome,
+    verdict: result.summary,
+    error: result.error ?? null,
+    elapsedMs,
+    elapsedMin: Math.round((elapsedMs / 60_000) * 10) / 10,
+  };
+  log.info('corp task terminal outcome', record);
+  try {
+    fs.mkdirSync(corpWorkspaceRoot(), { recursive: true });
+    fs.writeFileSync(
+      path.join(corpWorkspaceRoot(), `outcome-${taskId}.json`),
+      JSON.stringify(record, null, 2),
+    );
+  } catch (err) {
+    log.warn('corp: failed to write outcome sidecar', {
+      taskId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**
@@ -138,10 +171,17 @@ async function handleStart(
   tasks.set(handle.taskId, { engine, handle, wc });
 
   // Forward the task's events to the requesting window until the terminal `done`.
+  // We keep DRAINING to the terminal even if the window is gone (destroyed or
+  // navigated away) so the outcome is always recorded — the harness run itself
+  // proceeds in the main process regardless of who is watching.
+  const startedAt = Date.now();
   void (async () => {
     try {
       for await (const event of handle.events) {
-        if (wc.isDestroyed()) break;
+        if (event.type === 'done') {
+          recordCorpOutcome(handle.taskId, event.result, Date.now() - startedAt);
+        }
+        if (wc.isDestroyed()) continue;
         events.send(wc, 'corp:event', { taskId: handle.taskId, event: event as CoordinationEvent });
       }
     } catch (err) {

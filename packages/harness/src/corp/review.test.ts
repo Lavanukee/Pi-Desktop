@@ -8,7 +8,9 @@ import {
   buildReviewSystemPrompt,
   buildReviewUserPrompt,
   deriveBlockingFromVerify,
+  deriveTesterGateBlocking,
   hasRenderableArtifacts,
+  hasRunnableEntry,
   isBlocking,
   mapFindingsToContractIds,
   normalizeSeverity,
@@ -54,16 +56,19 @@ function manifestWith(slots: string[]): ProductManifest {
 const okVerify: VerifyResult = { ok: true, filesChecked: 3, errors: [] };
 
 describe('lens selection (spec §8 — pick lenses appropriate to the product)', () => {
-  it('always runs correctness/security/performance for a code product', () => {
+  it('always runs correctness/tester/security/performance for a code product', () => {
     const plan = selectReviewLenses(manifestWith(['src/a.ts', 'src/b.ts']));
-    expect(plan.map((p) => p.lens)).toEqual(['correctness', 'security', 'performance']);
+    expect(plan.map((p) => p.lens)).toEqual(['correctness', 'tester', 'security', 'performance']);
     expect(plan.every((p) => !p.renderLimited)).toBe(true);
+    // The tester (build/run/screenshot workability lens) always runs (spec §8).
+    expect(plan.some((p) => p.lens === 'tester')).toBe(true);
   });
 
   it('adds visual-critic + accessibility (render-limited) when renderable artifacts exist', () => {
     const plan = selectReviewLenses(manifestWith(['src/app.tsx', 'index.html', 'styles.css']));
     expect(plan.map((p) => p.lens)).toEqual([
       'correctness',
+      'tester',
       'security',
       'performance',
       'visual-critic',
@@ -76,6 +81,13 @@ describe('lens selection (spec §8 — pick lenses appropriate to the product)',
   it('detects renderable artifacts', () => {
     expect(hasRenderableArtifacts(manifestWith(['index.html']))).toBe(true);
     expect(hasRenderableArtifacts(manifestWith(['src/x.ts']))).toBe(false);
+  });
+
+  it('detects a runnable entry / build shell (the tester gate)', () => {
+    expect(hasRunnableEntry(manifestWith(['index.html']))).toBe(true);
+    expect(hasRunnableEntry(manifestWith(['package.json', 'src/app.tsx']))).toBe(true);
+    expect(hasRunnableEntry(manifestWith(['vite.config.ts', 'src/app.tsx']))).toBe(true);
+    expect(hasRunnableEntry(manifestWith(['src/app.tsx', 'styles.css']))).toBe(false);
   });
 });
 
@@ -356,11 +368,15 @@ describe('runReviewPhase (spec §8, bounded)', () => {
       maxTokens: 8192,
       runReviewAgent,
     });
-    expect(seen).toEqual(['correctness', 'security', 'performance']);
-    expect(summary.lensRuns).toHaveLength(3);
+    expect(seen).toEqual(['correctness', 'tester', 'security', 'performance']);
+    expect(summary.lensRuns).toHaveLength(4);
     expect(summary.lensRuns.every((r) => r.ran && r.usedBash)).toBe(true);
     expect(summary.blockingCount).toBe(0);
     expect(summary.revisionTriggered).toBe(false);
+    // A pure-logic product (no renderable artifact) needs no runnable entry, and the
+    // tester measured no failure → the gate PASSES (the CEO may approve).
+    expect(summary.testerGatePassed).toBe(true);
+    expect(summary.runnableEntryMissing).toBe(false);
     expect(summary.ceoFindingsSummary).toContain('no findings');
   });
 
@@ -461,5 +477,334 @@ describe('runReviewPhase (spec §8, bounded)', () => {
     expect(calls).toBe(1);
     expect(summary.skippedForBudget).toBe(true);
     expect(summary.lensRuns.filter((r) => !r.ran).length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// --- The tester gate: build/run ground truth + the bidirectional bounce (spec §8) --
+
+/** A tester-lens output that BUILT + RAN (a bash call) and measured no failure. */
+function testerBuiltCleanly(): RoleAgentRunOutput {
+  return {
+    filesWritten: [],
+    finalText: '',
+    toolCalls: [
+      { name: 'bash', arguments: { command: 'vite build && node screenshot.mjs' } },
+      { name: SUBMIT_FINDINGS_TOOL, arguments: { findings: [] } },
+    ],
+    terminatedReason: 'stop',
+  };
+}
+
+describe('deriveTesterGateBlocking (spec §8 — no runnable entry is BLOCKING)', () => {
+  it('flags a renderable product with no runnable entry as a blocking tester finding', () => {
+    const findings = deriveTesterGateBlocking(manifestWith(['src/app.tsx', 'styles.css']));
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.lens).toBe('tester');
+    expect(findings[0]?.severity).toBe('blocking');
+    expect(findings[0]?.title.toLowerCase()).toContain('no runnable entry');
+  });
+
+  it('does not flag a renderable product that HAS a runnable entry', () => {
+    expect(deriveTesterGateBlocking(manifestWith(['index.html', 'src/app.tsx']))).toEqual([]);
+  });
+
+  it('does not flag a pure-logic product (no renderable artifact needs no web entry)', () => {
+    expect(deriveTesterGateBlocking(manifestWith(['src/lib.ts']))).toEqual([]);
+  });
+});
+
+describe('runReviewPhase — the tester gate (build / run / screenshot)', () => {
+  it('a renderable product with NO runnable entry FAILS the tester gate (BLOCKING)', async () => {
+    const manifest = manifestWith(['src/app.tsx', 'styles.css']);
+    const contracts = [contract('c1', 'src/app.tsx'), contract('c2', 'styles.css')];
+    const summary = await runReviewPhase({
+      lensPlan: selectReviewLenses(manifest),
+      task: 'Build a UI',
+      visionBrief: '',
+      manifest,
+      verifyResult: okVerify, // structural verify passes — but there is no home to run in
+      contracts,
+      workspace: '/ws',
+      maxTokens: 8192,
+      runReviewAgent: async () => findingsCall([]),
+    });
+    // The model-free tester gate blocks it regardless of what the lens agents reported.
+    expect(summary.runnableEntryMissing).toBe(true);
+    expect(summary.testerGatePassed).toBe(false);
+    expect(summary.blockingCount).toBeGreaterThanOrEqual(1);
+    const testerBlock = summary.findings.find(
+      (f) => f.lens === 'tester' && f.severity === 'blocking',
+    );
+    expect(testerBlock?.title.toLowerCase()).toContain('no runnable entry');
+  });
+
+  it("lets visual/accessibility consume the tester's screenshot when the tester built + ran", async () => {
+    const manifest = manifestWith(['index.html', 'src/app.tsx', 'styles.css']);
+    const contracts = [contract('c1', 'index.html'), contract('c2', 'src/app.tsx')];
+    const summary = await runReviewPhase({
+      lensPlan: selectReviewLenses(manifest),
+      task: 't',
+      visionBrief: '',
+      manifest,
+      verifyResult: okVerify,
+      contracts,
+      workspace: '/ws',
+      maxTokens: 8192,
+      runReviewAgent: async () => testerBuiltCleanly(),
+    });
+    const visual = summary.lensRuns.find((r) => r.lens === 'visual-critic');
+    const a11y = summary.lensRuns.find((r) => r.lens === 'accessibility');
+    // Tester produced a real screenshot → the render lenses MEASURE it (not render-limited).
+    expect(visual?.renderLimited).toBe(false);
+    expect(visual?.measured).toBe(true);
+    expect(a11y?.renderLimited).toBe(false);
+    expect(summary.testerGatePassed).toBe(true);
+    expect(summary.runnableEntryMissing).toBe(false);
+  });
+
+  it('falls the render lenses back to render-limited when the tester could not build', async () => {
+    const manifest = manifestWith(['index.html', 'src/app.tsx']);
+    const contracts = [contract('c1', 'index.html'), contract('c2', 'src/app.tsx')];
+    const runReviewAgent = async (input: RoleAgentRunInput): Promise<RoleAgentRunOutput> => {
+      if (input.userPrompt.includes('tester lens')) {
+        // The tester ran the build (bash) but it FAILED → no screenshot produced.
+        return {
+          filesWritten: [],
+          finalText: '',
+          toolCalls: [
+            { name: 'bash', arguments: { command: 'vite build' } },
+            {
+              name: SUBMIT_FINDINGS_TOOL,
+              arguments: {
+                findings: [
+                  {
+                    severity: 'blocking',
+                    title: 'src/app.tsx build failed',
+                    evidence: 'vite: error',
+                    location: 'src/app.tsx',
+                  },
+                ],
+              },
+            },
+          ],
+          terminatedReason: 'stop',
+        };
+      }
+      return findingsCall([]);
+    };
+    const summary = await runReviewPhase({
+      lensPlan: selectReviewLenses(manifest),
+      task: 't',
+      visionBrief: '',
+      manifest,
+      verifyResult: okVerify,
+      contracts,
+      workspace: '/ws',
+      maxTokens: 8192,
+      maxRevisions: 1,
+      runReviewAgent,
+      reviseForFindings: async () => ({
+        ran: true,
+        verify: {
+          ok: false,
+          filesChecked: 2,
+          errors: [{ file: '/ws/src/app.tsx', message: 'err' }],
+        },
+      }),
+    });
+    const visual = summary.lensRuns.find((r) => r.lens === 'visual-critic');
+    expect(visual?.renderLimited).toBe(true); // no build → static structural review
+    expect(summary.testerGatePassed).toBe(false);
+  });
+
+  it('bounces MULTIPLE rounds and terminates at the bound against a stays-blocking product', async () => {
+    let revisionCalls = 0;
+    const failVerify: VerifyResult = {
+      ok: false,
+      filesChecked: 2,
+      errors: [{ file: '/ws/src/index.ts', message: 'unbalanced bracket' }],
+    };
+    const summary = await runReviewPhase({
+      lensPlan: [{ lens: 'tester', renderLimited: false }],
+      task: 't',
+      visionBrief: '',
+      manifest: MANIFEST,
+      verifyResult: failVerify, // objective failure → guaranteed blocking, mapped to c2
+      contracts: CONTRACTS,
+      workspace: '/ws',
+      maxTokens: 8192,
+      maxRevisions: 3, // the generalized bounce bound
+      runReviewAgent: async () => findingsCall([]),
+      reviseForFindings: async () => {
+        revisionCalls += 1;
+        return { ran: true, verify: failVerify }; // never fixes it
+      },
+    });
+    // Exactly 3 DOWN-and-UP rounds, then the honest state stands — bounded, no deadlock.
+    expect(summary.revisionTriggered).toBe(true);
+    expect(revisionCalls).toBe(3);
+    expect(summary.revisionRounds).toBe(3);
+    expect(summary.testerGatePassed).toBe(false); // never built/ran → gate stays failed
+  });
+
+  it('dispatches the AUDITOR when a blocking finding maps to no contract (source unknown)', async () => {
+    let revisedIds: readonly string[] = [];
+    const runReviewAgent = async (input: RoleAgentRunInput): Promise<RoleAgentRunOutput> => {
+      if (input.userPrompt.includes('correctness lens')) {
+        // A blocking SYMPTOM whose source is unknown (cites no contract slot).
+        return findingsCall([
+          {
+            severity: 'blocking',
+            title: 'the app crashes on load',
+            evidence: 'a type appears to be defined twice somewhere',
+            location: 'unknown',
+          },
+        ]);
+      }
+      if (input.userPrompt.includes('auditor lens')) {
+        // The whole-codebase auditor traces it to a concrete file → its contract.
+        return findingsCall([
+          {
+            severity: 'blocking',
+            title: 'GameState defined twice with different shapes',
+            evidence: 'two modules define GameState — reconcile them',
+            location: 'src/index.ts:1',
+          },
+        ]);
+      }
+      return findingsCall([]);
+    };
+    const summary = await runReviewPhase({
+      lensPlan: selectReviewLenses(MANIFEST),
+      task: 't',
+      visionBrief: '',
+      manifest: MANIFEST,
+      verifyResult: okVerify,
+      contracts: CONTRACTS,
+      workspace: '/ws',
+      maxTokens: 8192,
+      runReviewAgent,
+      reviseForFindings: async ({ contractIds }) => {
+        revisedIds = contractIds;
+        return { ran: true, verify: okVerify };
+      },
+    });
+    expect(summary.auditorDispatched).toBe(true);
+    expect(summary.lensRuns.some((r) => r.lens === 'auditor')).toBe(true);
+    // The auditor's cited file → its contract is what gets re-dispatched.
+    expect(revisedIds).toContain('c2');
+    expect(summary.revisionTriggered).toBe(true);
+  });
+});
+
+describe('runReviewPhase — the integration-entry recovery (Part C, spec §5/§8)', () => {
+  it('synthesizes + dispatches an integration contract when the entry is missing, and the gate clears on re-verify', async () => {
+    // A renderable product with NO runnable entry — the "food with no home". With the
+    // recovery seam wired, the review bounce PRODUCES the entry and re-assembles; the
+    // fresh manifest now HAS one, so the tester gate clears (before this fix it flagged
+    // forever, since the missing entry mapped to no existing contract).
+    const manifest = manifestWith(['src/app.tsx', 'styles.css']);
+    const contracts = [contract('c1', 'src/app.tsx'), contract('c2', 'styles.css')];
+    let dispatchCalls = 0;
+    let dispatchNotes = '';
+    const summary = await runReviewPhase({
+      lensPlan: selectReviewLenses(manifest),
+      task: 'Build a UI',
+      visionBrief: '',
+      manifest,
+      verifyResult: okVerify,
+      contracts,
+      workspace: '/ws',
+      maxTokens: 8192,
+      runReviewAgent: async () => findingsCall([]),
+      dispatchIntegrationContract: async ({ notes }) => {
+        dispatchCalls += 1;
+        dispatchNotes = notes;
+        // The integration engineer produced the entry → the re-assembled manifest HAS one.
+        return {
+          ran: true,
+          manifest: manifestWith(['src/app.tsx', 'styles.css', 'index.html']),
+          verify: okVerify,
+        };
+      },
+    });
+    expect(dispatchCalls).toBe(1);
+    expect(dispatchNotes.toLowerCase()).toContain('runnable entry');
+    expect(summary.integrationEntryDispatched).toBe(true);
+    expect(summary.integrationEntryRecovered).toBe(true);
+    // Recomputed against the re-assembled manifest: the "no home" blocker is gone.
+    expect(summary.runnableEntryMissing).toBe(false);
+    expect(summary.testerGatePassed).toBe(true);
+    expect(summary.findings.some((f) => f.lens === 'tester' && f.severity === 'blocking')).toBe(
+      false,
+    );
+  });
+
+  it('stays a gate failure when the recovery dispatch could not produce the entry', async () => {
+    const manifest = manifestWith(['src/app.tsx', 'styles.css']);
+    const contracts = [contract('c1', 'src/app.tsx'), contract('c2', 'styles.css')];
+    const summary = await runReviewPhase({
+      lensPlan: selectReviewLenses(manifest),
+      task: 'Build a UI',
+      visionBrief: '',
+      manifest,
+      verifyResult: okVerify,
+      contracts,
+      workspace: '/ws',
+      maxTokens: 8192,
+      runReviewAgent: async () => findingsCall([]),
+      // The dispatch ran but the entry still isn't present (the engineer did not produce it).
+      dispatchIntegrationContract: async () => ({
+        ran: true,
+        manifest: manifestWith(['src/app.tsx', 'styles.css']),
+        verify: okVerify,
+      }),
+    });
+    expect(summary.integrationEntryDispatched).toBe(true);
+    expect(summary.integrationEntryRecovered).toBe(false);
+    expect(summary.runnableEntryMissing).toBe(true);
+    expect(summary.testerGatePassed).toBe(false);
+  });
+
+  it('without a recovery seam, a missing entry stays a hard gate failure (the pre-fix behavior)', async () => {
+    const manifest = manifestWith(['src/app.tsx', 'styles.css']);
+    const contracts = [contract('c1', 'src/app.tsx'), contract('c2', 'styles.css')];
+    const summary = await runReviewPhase({
+      lensPlan: selectReviewLenses(manifest),
+      task: 'Build a UI',
+      visionBrief: '',
+      manifest,
+      verifyResult: okVerify,
+      contracts,
+      workspace: '/ws',
+      maxTokens: 8192,
+      runReviewAgent: async () => findingsCall([]),
+      // No dispatchIntegrationContract seam.
+    });
+    expect(summary.integrationEntryDispatched).toBe(false);
+    expect(summary.runnableEntryMissing).toBe(true);
+    expect(summary.testerGatePassed).toBe(false);
+  });
+});
+
+describe('reviewer prompts — the tester + auditor framing (spec §8)', () => {
+  it('the tester system prompt demands BUILD + RUN + SCREENSHOT and blocks on no runnable entry', () => {
+    const sys = buildReviewSystemPrompt({ lens: 'tester', renderLimited: false });
+    expect(sys).toContain('BUILD');
+    expect(sys).toContain('RUN');
+    expect(sys).toContain('SCREENSHOT');
+    expect(sys.toLowerCase()).toContain('missing runnable entry');
+  });
+
+  it('a non-render-limited visual lens is told to consume the tester screenshot', () => {
+    const sys = buildReviewSystemPrompt({ lens: 'visual-critic', renderLimited: false });
+    expect(sys).toContain('tester already BUILT and RAN');
+    expect(sys).not.toContain('RENDER LIMITATION');
+  });
+
+  it('the auditor system prompt frames whole-tree root-cause tracing', () => {
+    const sys = buildReviewSystemPrompt({ lens: 'auditor', renderLimited: false });
+    expect(sys).toContain('ENTIRE product tree');
+    expect(sys).toContain('ROOT CAUSE');
   });
 });

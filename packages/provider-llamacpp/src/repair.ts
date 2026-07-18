@@ -662,7 +662,43 @@ function fromEnvelope(
   return undefined;
 }
 
-/** Strategy B1 — `<function=NAME>{…}</function>` (Llama-style tag). */
+/**
+ * Parse Hermes/Qwen-style `<parameter=KEY>VALUE</parameter>` (or
+ * `<parameter name="KEY">VALUE</parameter>`) argument tags out of a
+ * `<function=NAME>…</function>` body into an args object. This is the shape a qwen
+ * chat template emits when its tool-call grammar fails and the whole call lands in
+ * assistant CONTENT instead of a structured `tool_calls` frame — e.g.
+ * `<function=web_fetch><parameter=url>https://x/</parameter></function>`. The
+ * inline-JSON path ({@link scanJsonObjects}) can't see these values, so WITHOUT
+ * this the call reconstructs with EMPTY args (the url/path/body is lost). Values
+ * are captured verbatim and trimmed of the surrounding whitespace the template
+ * pads them with; they are deliberately NOT JSON-coerced (a url / path / file body
+ * stays a string — the downstream schema + fixer ladder handles any numeric or
+ * boolean coercion, and coercing here would corrupt a JSON-valued file body).
+ * Returns undefined when the body carries no `<parameter …>` tag, so the caller
+ * falls back to JSON scanning (and the pre-existing `<function=NAME>{…}</function>`
+ * behavior is unchanged).
+ */
+function parseParameterTags(body: string): Record<string, unknown> | undefined {
+  const re =
+    /<parameter(?:\s*=\s*|\s+name\s*=\s*)["']?([a-zA-Z0-9_.-]+)["']?\s*>([\s\S]*?)<\/parameter\s*>/g;
+  const args: Record<string, unknown> = {};
+  let found = false;
+  for (const m of body.matchAll(re)) {
+    const key = m[1];
+    const value = m[2];
+    if (key === undefined || value === undefined) continue;
+    args[key] = value.trim();
+    found = true;
+  }
+  return found ? args : undefined;
+}
+
+/**
+ * Strategy B1 — `<function=NAME>…</function>` (Llama/Qwen tag). Handles BOTH an
+ * inline JSON body (`{…}`) and Hermes/Qwen `<parameter=KEY>VALUE</parameter>` arg
+ * tags ({@link parseParameterTags}).
+ */
 function fromFunctionTag(
   content: string,
   registered: readonly string[],
@@ -672,6 +708,21 @@ function fromFunctionTag(
     const rawName = m[1];
     const body = m[2];
     if (rawName === undefined || body === undefined) continue;
+    // Prefer explicit <parameter=…> tags: they are unambiguous, and reading them
+    // FIRST avoids mis-parsing a brace inside a code-valued parameter (e.g. a
+    // `write` whose content is TS with `{…}`) as the args JSON via scanJsonObjects.
+    const paramArgs = parseParameterTags(body);
+    if (paramArgs !== undefined) {
+      const built = reconstruct(
+        rawName,
+        JSON.stringify(paramArgs),
+        paramArgs,
+        registered,
+        'function-tag',
+      );
+      if (built !== undefined) return built;
+    }
+    // Else an inline JSON object `<function=NAME>{…}</function>`.
     const objText = scanJsonObjects(body)[0];
     const built = reconstruct(
       rawName,

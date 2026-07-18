@@ -38,11 +38,12 @@ export const CEO_REVIEW_PROMPT = `You are the CEO of this project, giving the FI
 
 Your job is one judgment: does this finished product meet the standard the original task set?
 
-- Weigh the product manifest and the verification evidence against the original task. The verification pass is objective ground truth — if it reports errors, the product does not meet the bar yet, however complete the manifest looks.
-- Do not rubber-stamp. You are the cure for false completion: a build that reports itself "done" still has to actually meet the vision.
+- It must ACTUALLY BUILD AND RUN. The tester's measured evidence (a build log, a headless run, a screenshot) and the objective verification pass are ground truth: if the product failed to build, threw at runtime, has a console error, has no runnable entry, or the described feature does not actually appear, then it does NOT meet the bar — however complete the manifest looks. A pile of files is not a working product.
+- Weigh the product manifest, the tester/specialist findings, and the verification evidence against the original task. Confirm from that measured evidence that it works before you approve.
+- Do not rubber-stamp. You are the cure for false completion: a build that reports itself "done" still has to actually meet the vision and actually run.
 - Make your decision unambiguous. Begin your reply with a single word on its own line — APPROVE or REVISE:
-  - APPROVE — the product meets the standard; it ships.
-  - REVISE — it does not yet. Follow the word with specific, actionable notes addressed to the exact gap (which deliverable, what is wrong, what "done" looks like). Vague dissatisfaction is not a note.`;
+  - APPROVE — the product builds, runs, and meets the standard; it ships.
+  - REVISE — it does not yet. Follow the word with specific, actionable notes addressed to the exact gap (which deliverable, what is wrong — a build/runtime failure, a missing feature, off styling — and what "done" looks like). Vague dissatisfaction is not a note.`;
 
 /** The (at most four) inputs to a CEO review — the clean artifact, never the build
  * transcript. The absence of any transcript field IS the §8 guardrail; the optional
@@ -117,7 +118,7 @@ export function buildCeoReviewPrompt(input: CeoReviewInput): string {
     ...verifyLines(input.verifyResult),
     ...(findings !== undefined && findings !== '' ? ['', findings] : []),
     '',
-    'Does this finished product meet the standard the original task set? Begin your reply with APPROVE or REVISE on its own line; if REVISE, add specific notes addressed to the exact gap.',
+    'Does this finished product ACTUALLY BUILD AND RUN, and meet the standard the original task set? Use the tester/specialist findings and the verification evidence above as ground truth — do not APPROVE a product that failed to build or run, has no runnable entry, or is missing the described feature. Begin your reply with APPROVE or REVISE on its own line; if REVISE, add specific notes addressed to the exact gap.',
   ].join('\n');
 }
 
@@ -231,4 +232,29 @@ export function parseCeoDecision(text: string): CeoDecision {
   }
   const endIndex = revise !== null ? revise.index + revise[0].length : text.length;
   return finalize('revise', remainderNotes(text, endIndex) ?? text.trim());
+}
+
+/** The note attached when a CEO APPROVE is downgraded because the tester gate is
+ * blocking (spec §8, generalized — the CEO cannot sign off a product that failed to
+ * build/run). It routes DOWN as the revision feedback. */
+export const TESTER_GATE_BLOCK_NOTE =
+  "The tester's measured evidence shows this product does not actually build and run (a build/runtime/console error, or no runnable entry/build shell). A product that does not run cannot be approved, however complete the manifest looks — the specific build/run failures the reviewers measured must be fixed first.";
+
+/**
+ * GATE the CEO's verdict on the tester gate (spec §8, generalized — "the CEO's
+ * APPROVE must be GATED on the tester gate passing; it cannot sign off a product
+ * that failed to build/run"). When the tester gate did NOT pass, an APPROVE is
+ * DOWNGRADED to REVISE (carrying {@link TESTER_GATE_BLOCK_NOTE} + any CEO notes) so
+ * the work bounces back DOWN; a REVISE is returned unchanged, and when the gate
+ * passed the CEO's verdict stands untouched. This never UP-grades a verdict — it
+ * only ever holds back an approval of a product that does not run. Pure.
+ */
+export function applyTesterGate(decision: CeoDecision, testerGatePassed: boolean): CeoDecision {
+  if (testerGatePassed || decision.decision !== 'approve') return decision;
+  const existing = decision.notes?.trim();
+  const notes =
+    existing !== undefined && existing !== ''
+      ? `${TESTER_GATE_BLOCK_NOTE}\n\n${existing}`
+      : TESTER_GATE_BLOCK_NOTE;
+  return { decision: 'revise', notes };
 }

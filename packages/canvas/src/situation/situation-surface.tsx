@@ -1,19 +1,21 @@
 /**
  * The situation room — the live canvas view of the coordination harness
- * working (docs/harness-architecture.md §11). Engagement, not a spinner: the
- * work tree grows with orchestrated motion as the plan forms, the file map
- * lights up as files land (with live +/− deltas for power users), the plan
- * checks itself off from real task state, the ETA is an honest narrowing
- * range, and when the run exercises its own work (browse / test / run) a
- * prominent activity panel slides in so the user SEES it.
+ * working (docs/harness-architecture.md §11). A CLEAN subagent navigator:
+ * a header (phase gem + plain-language phase line + honest task progress +
+ * ETA range + peek button over the progress rail) above exactly two
+ * collapsible sections —
  *
- * LAYOUT (the long-watch pass): the room is a column of self-contained,
- * individually collapsible SECTIONS — the team tree, the live activity feed,
- * the file map, and the plan — stacked in one scroll column so nothing ever
- * overlaps or clips at any panel size. The room measures its own width and
- * adapts: wide, the plan sits in a side rail; narrow, it restacks into the
- * column; tight, the heavier sections auto-collapse (a user toggle always
- * wins). Collapsed sections keep an honest one-line live summary.
+ *  - "Subagents": one clickable row per subagent (bold name + its live
+ *    current action, rendered with the chat's activity-row visual — the
+ *    branded spinner + shimmering action while working, a soft check +
+ *    muted "done" when finished, muted "queued" while waiting). Clicking a
+ *    row routes that worker's live stream to the app's left pane.
+ *  - "Plan": the checklist, checked off from real contract state.
+ *
+ * The room measures its own width and adapts: wide, the plan sits in a side
+ * rail; narrow, it restacks into the column; tight, the plan auto-collapses
+ * (a user toggle always wins). Collapsed sections keep an honest one-line
+ * live summary.
  *
  * All user-facing copy says what is happening TO THE USER'S PROJECT — plain
  * language, never the harness's internal org vocabulary.
@@ -29,22 +31,24 @@ import type {
   ExerciseSessionView,
   OrgNodeView,
 } from '@pi-desktop/coordination';
-import { Button, IconCheck, IconChevronDown, IconEye, ShimmerText, Spinner } from '@pi-desktop/ui';
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import {
+  ActivityRow,
+  Button,
+  IconCheck,
+  IconChevronDown,
+  IconEye,
+  ShimmerText,
+  Spinner,
+} from '@pi-desktop/ui';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { ExercisePanel } from './exercise-panel.tsx';
-import { ModuleMapPanel } from './module-map-panel.tsx';
-import { type DivisionProgress, SituationOrgChart } from './org-chart-panel.tsx';
 import { PlanPanel } from './plan-panel.tsx';
 import {
-  type ActionFeedRow,
   contractProgress,
-  fillModuleRegions,
   formatEta,
-  groupChecklist,
   initialSituation,
   reduceSituation,
   type SituationState,
-  workingCount,
 } from './situation-model.ts';
 
 /** The app's experience level (round-12 userMode): gates raw-path detail. */
@@ -54,7 +58,7 @@ export interface SituationRoomSurfaceProps {
   state: SituationState;
   /** Open the current best artifact ("peek at what we have so far"). */
   onPeek?: (artifact: ArtifactRef) => void;
-  /** Power users see file paths + line deltas; everyone else the calm view. */
+  /** Accepted for API stability; the simplified room has no raw-path detail to gate. */
   userMode?: SituationUserMode;
   /** Clicking a worker routes its live stream to the app (left chat area). */
   onSelectNode?: (node: OrgNodeView) => void;
@@ -94,17 +98,28 @@ function phaseLabel(state: SituationState): string {
 const LIVE_STATUSES = new Set(['starting', 'planning', 'working', 'reviewing']);
 
 /** The room's collapsible sections (each gets its own expand/collapse). */
-type SectionId = 'team' | 'feed' | 'files' | 'plan';
+type SectionId = 'agents' | 'plan';
 
 /** Below this room width the plan restacks from the side rail into the column. */
 const STACK_WIDTH = 640;
-/** Below this room width the heavier sections auto-collapse (toggle wins). */
+/** Below this room width the plan auto-collapses (a user toggle always wins). */
 const TIGHT_WIDTH = 460;
+
+/**
+ * The subagents the navigator lists: every chart node EXCEPT the single root
+ * (CEO / solo) — the root is the "you" node, the agent the user is already
+ * talking to in the chat pane, not one of its own subagents. Managers,
+ * specialists, work areas and builders all list.
+ */
+function subagentNodes(nodes: readonly OrgNodeView[]): readonly OrgNodeView[] {
+  return nodes.filter(
+    (n) => !(n.parentId === undefined && (n.role === 'ceo' || n.role === 'solo')),
+  );
+}
 
 export function SituationRoomSurface({
   state,
   onPeek,
-  userMode = 'user',
   onSelectNode,
   selectedNodeId,
   className,
@@ -113,10 +128,6 @@ export function SituationRoomSurface({
   const live = LIVE_STATUSES.has(state.status);
   const eta = live ? formatEta(state.eta) : '';
   const peekTarget = latestArtifact(state);
-
-  const divisionProgress: DivisionProgress = Object.fromEntries(
-    groupChecklist(state.checklist).map((g) => [g.name, { done: g.done, total: g.items.length }]),
-  );
 
   // Adaptive layout: the room watches its OWN width (it lives in a resizable
   // rail) and restacks/auto-collapses sections to stay legible at any size.
@@ -139,7 +150,7 @@ export function SituationRoomSurface({
   // tight); a user toggle overrides the automatics until toggled back.
   const [secOverride, setSecOverride] = useState<Partial<Record<SectionId, boolean>>>({});
   const secOpen = (id: SectionId): boolean => {
-    const auto = id === 'files' || id === 'plan' ? !tight : true;
+    const auto = id === 'plan' ? !tight : true;
     return secOverride[id] ?? auto;
   };
   const toggleSec = (id: SectionId) => {
@@ -148,14 +159,9 @@ export function SituationRoomSurface({
   };
 
   // Honest live summaries for collapsed (and quiet) section headers.
-  const busy = workingCount(state.chart);
-  const teamSummary = busy > 0 ? `${busy} at work` : undefined;
-  const latestAction = state.actionFeed[state.actionFeed.length - 1];
-  const feedSummary =
-    !secOpen('feed') && latestAction
-      ? `${latestAction.area} · ${actionText(latestAction.action)}`
-      : undefined;
-  const filesSummary = state.files.length > 0 ? `${state.files.length} files` : undefined;
+  const subagents = subagentNodes(state.chart.nodes);
+  const busy = subagents.filter((n) => n.state === 'working').length;
+  const agentsSummary = busy > 0 ? `${busy} at work` : undefined;
   const planSummary = progress.total > 0 ? `${progress.done}/${progress.total}` : undefined;
 
   // Exercise panel lifecycle: slide in while a session RUNS; on a terminal
@@ -273,41 +279,17 @@ export function SituationRoomSurface({
       <div className="pd-sitroom-body">
         <div className="pd-sitroom-main pd-scroll">
           <RoomSection
-            id="team"
-            title="The team"
-            summary={teamSummary}
+            id="agents"
+            title="Subagents"
+            summary={agentsSummary}
             live={busy > 0}
-            open={secOpen('team')}
+            open={secOpen('agents')}
             onToggle={toggleSec}
           >
-            <SituationOrgChart
-              chart={state.chart}
-              progress={divisionProgress}
-              userMode={userMode}
+            <SubagentList
+              nodes={subagents}
               onSelectNode={onSelectNode}
               selectedNodeId={selectedNodeId}
-            />
-          </RoomSection>
-          <RoomSection
-            id="feed"
-            title="Live activity"
-            summary={feedSummary}
-            open={secOpen('feed')}
-            onToggle={toggleSec}
-          >
-            <ActivityFeed rows={state.actionFeed} />
-          </RoomSection>
-          <RoomSection
-            id="files"
-            title={userMode === 'power' ? 'The files' : 'The work'}
-            summary={filesSummary}
-            open={secOpen('files')}
-            onToggle={toggleSec}
-          >
-            <ModuleMapPanel
-              regions={fillModuleRegions(state)}
-              variant={userMode}
-              progress={divisionProgress}
             />
           </RoomSection>
           {stacked ? planSection : null}
@@ -371,86 +353,110 @@ function RoomSection({ id, title, summary, live, open, onToggle, children }: Roo
 }
 
 // ---------------------------------------------------------------------------
-// Activity feed — live "Area · current action" rows (spinner → done check)
+// Subagent navigator — one clickable row per subagent (bold name + the live
+// current action, in the chat's activity-row visual)
 // ---------------------------------------------------------------------------
-
-/** How many action rows the feed shows (the tail; older rows have slid away). */
-const FEED_ROWS = 6;
 
 /** The engine's raw "thinking" action reads as a live "thinking…" to a person. */
 function actionText(action: string): string {
   return action === 'thinking' ? 'thinking…' : action;
 }
 
-/**
- * The live-activity feed: one row per action — `Area · <what it is doing right
- * now>` — with a SPINNER on the left while the action runs and a done CHECK once
- * it settles. New actions slide in at the bottom; when a row finishes, the stack
- * SLIDES up smoothly (a FLIP glide over the offset chain, skipped under
- * prefers-reduced-motion) instead of snapping.
- */
-function ActivityFeed({ rows }: { rows: readonly ActionFeedRow[] }) {
-  const tail = rows.slice(-FEED_ROWS);
-  const lastSeq = tail[tail.length - 1]?.seq ?? 0;
-
-  // FLIP glide: keyed rows measure their offsetTop each render; a shifted row
-  // animates from its previous position to the new one (smooth slide-up).
-  const rowRefs = useRef(new Map<number, HTMLDivElement | null>());
-  const prevTops = useRef(new Map<number, number>());
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure on every rows change (the FLIP trigger); refs only inside
-  useLayoutEffect(() => {
-    const next = new Map<number, number>();
-    for (const [seq, el] of rowRefs.current) {
-      if (el !== null && el.isConnected) next.set(seq, el.offsetTop);
-    }
-    const reduced =
-      typeof window.matchMedia === 'function' &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (!reduced && typeof Element.prototype.animate === 'function') {
-      for (const [seq, top] of next) {
-        const prev = prevTops.current.get(seq);
-        const el = rowRefs.current.get(seq);
-        if (prev === undefined || el === null || el === undefined) continue;
-        const dy = prev - top;
-        if (Math.abs(dy) < 1) continue;
-        el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], {
-          duration: 320,
-          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-        });
+/** The one-line status a subagent row shows for its node's live state —
+ * exactly the chat's wording (CorpInlineTurn's rowStatusLine). */
+function agentStatusLine(node: OrgNodeView): string {
+  switch (node.state) {
+    case 'working':
+      // A lead's "work" is coordination — say so instead of echoing an action.
+      if (node.role === 'ceo' || node.role === 'manager') {
+        return 'waiting for other subagents to finish';
       }
-    }
-    prevTops.current = next;
-  }, [rows]);
+      return node.currentAction !== undefined ? actionText(node.currentAction) : 'working…';
+    case 'done':
+      return 'done';
+    case 'blocked':
+      return 'blocked';
+    case 'retired':
+      return 'stopped';
+    default:
+      return 'queued';
+  }
+}
 
-  const setRowRef = (seq: number) => (el: HTMLDivElement | null) => {
-    if (el === null) rowRefs.current.delete(seq);
-    else rowRefs.current.set(seq, el);
-  };
+/** Active rows on top (the chat's order): working → blocked → queued → done → stopped. */
+const STATE_RANK: Record<OrgNodeView['state'], number> = {
+  working: 0,
+  blocked: 1,
+  idle: 2,
+  done: 3,
+  retired: 4,
+};
 
+/** Stable ordering: rank by state, keep the chart's order within a rank. */
+function orderSubagents(nodes: readonly OrgNodeView[]): readonly OrgNodeView[] {
+  return nodes
+    .map((node, index) => ({ node, index }))
+    .sort((a, b) => STATE_RANK[a.node.state] - STATE_RANK[b.node.state] || a.index - b.index)
+    .map((entry) => entry.node);
+}
+
+/** The row's icon-slot glyph: the chat activity row's own marks — Spinner
+ * while working (ActivityRow's running visual), a check when done, a quiet
+ * hollow ring while queued / blocked / stopped. */
+function agentGlyph(state: OrgNodeView['state']): ReactNode {
+  if (state === 'working') return <Spinner size={13} />;
+  if (state === 'done') return <IconCheck size={13} />;
+  return <span className="pd-sitroom-agent-dot" />;
+}
+
+interface SubagentListProps {
+  nodes: readonly OrgNodeView[];
+  onSelectNode?: (node: OrgNodeView) => void;
+  selectedNodeId?: string;
+}
+
+/**
+ * The subagent navigator: one {@link ActivityRow} per subagent — the SAME
+ * component (icon slot + shimmering label) the chat thread renders activity
+ * with — prefixed by the subagent's bold name. The whole row is the button:
+ * clicking routes that worker's live stream to the app's left pane (the
+ * row does not expand in place, so the expander chevron is suppressed in CSS).
+ */
+function SubagentList({ nodes, onSelectNode, selectedNodeId }: SubagentListProps) {
+  const ordered = orderSubagents(nodes);
+  if (ordered.length === 0) {
+    return <div className="pd-sitroom-feed-empty">Waiting for the work to start…</div>;
+  }
   return (
-    <div className="pd-sitroom-actionfeed" aria-live="polite">
-      {tail.length === 0 ? (
-        <div className="pd-sitroom-feed-empty">Waiting for the work to start…</div>
-      ) : (
-        tail.map((row) => (
-          <div
-            className="pd-sitroom-action"
-            key={row.seq}
-            ref={setRowRef(row.seq)}
-            data-done={row.done || undefined}
-            data-age={row.done ? Math.min(3, lastSeq - row.seq) : 0}
-          >
-            <span className="pd-sitroom-action-mark" data-done={row.done || undefined} aria-hidden>
-              {row.done ? <IconCheck size={10} /> : <Spinner size={11} />}
-            </span>
-            <span className="pd-sitroom-action-area">{row.area}</span>
-            <span className="pd-sitroom-action-sep" aria-hidden>
-              ·
-            </span>
-            <span className="pd-sitroom-action-text">{actionText(row.action)}</span>
-          </div>
-        ))
-      )}
+    <div className="pd-sitroom-agents" data-testid="subagent-list">
+      {ordered.map((node) => {
+        const working = node.state === 'working';
+        const line = agentStatusLine(node);
+        return (
+          <ActivityRow
+            key={node.id}
+            className="pd-sitroom-agent"
+            data-testid="subagent-row"
+            data-node-id={node.id}
+            data-state={node.state}
+            data-selected={selectedNodeId === node.id || undefined}
+            aria-expanded={undefined}
+            title={onSelectNode !== undefined ? `Watch ${node.name} live` : undefined}
+            icon={agentGlyph(node.state)}
+            label={
+              <>
+                <strong className="pd-sitroom-agent-name">{node.name}</strong>
+                {working ? (
+                  <ShimmerText className="pd-sitroom-agent-action">{line}</ShimmerText>
+                ) : (
+                  <span className="pd-sitroom-agent-action">{line}</span>
+                )}
+              </>
+            }
+            onClick={() => onSelectNode?.(node)}
+          />
+        );
+      })}
     </div>
   );
 }

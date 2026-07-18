@@ -444,6 +444,11 @@ export interface WorkerTranscriptLine {
    * still generating, or an in-progress reasoning block. Cleared when the block
    * finishes. Lets the pane render the stream as live rather than settled. */
   readonly streaming?: boolean;
+  /** Lines this file step added, when known — the live `+N` readout on a file
+   * row (mirrors {@link Activity.linesAdded}). Set on a `file-touch` line. */
+  readonly addedLines?: number;
+  /** Lines this file step removed, when known — the live `−N` readout. */
+  readonly removedLines?: number;
 }
 
 /**
@@ -529,6 +534,48 @@ export interface ExerciseEvent {
   readonly session: ExerciseSessionView;
 }
 
+/**
+ * A per-node LIVE activity delta — the token-level PUSH the situation room's
+ * inline chat feed folds into a pi-style streaming block, so a watched agent
+ * streams PER TOKEN exactly like the normal chat (never a chunky poll, never a
+ * dead "Responding" gap). Additive to the spec §1 set: an engine without
+ * token-level streaming simply never emits them, and a consumer that doesn't
+ * know the type ignores it ({@link reduceSituation}'s `default`). The engine
+ * ALSO keeps its per-node transcript accumulation ({@link WorkerTranscriptView})
+ * for peek / late-join; this event is the additive real-time channel.
+ *
+ *  - `text` / `thinking` carry a streamed {@link delta} plus a {@link phase} so
+ *    the accumulator opens a block (`start`), grows it (`delta`), and closes it
+ *    (`end`) — mirroring the normal chat's `appendTextDelta`/`appendThinkingDelta`.
+ *  - `tool` names a tool step the moment it starts ({@link toolName} for the
+ *    icon; {@link label}/{@link detail} for the human phrasing; {@link path} when
+ *    it touched a file).
+ *  - `file` lights a live file edit — {@link path} plus the {@link addedLines} /
+ *    {@link removedLines} that tick the +N/−N readout up in real time.
+ */
+export interface WorkerActivityEvent {
+  readonly type: 'worker-activity';
+  /** The node this delta belongs to — its accumulated block grows. */
+  readonly nodeId: string;
+  readonly kind: 'text' | 'thinking' | 'tool' | 'file';
+  /** Streamed increment for a `text`/`thinking` block (a token or few). On
+   * `start` it seeds the block; on `end` it may carry the authoritative full text. */
+  readonly delta?: string;
+  /** Block lifecycle for `text`/`thinking`: `start` opens, `delta` grows, `end` closes. */
+  readonly phase?: 'start' | 'delta' | 'end';
+  /** Raw tool name (`tool`) — the feed maps it to an icon. */
+  readonly toolName?: string;
+  /** Human verb for a `tool`/`file` step ("Searched the web", "Writing"). */
+  readonly label?: string;
+  /** Human detail for a `tool` step (the query / command / file). */
+  readonly detail?: string;
+  /** File path a `file`/`tool` step touched. */
+  readonly path?: string;
+  /** Lines this `file` chunk added / removed (the live +N/−N readout). */
+  readonly addedLines?: number;
+  readonly removedLines?: number;
+}
+
 /** Terminal event — always the last event on a stream. */
 export interface DoneEvent {
   readonly type: 'done';
@@ -548,6 +595,7 @@ export type CoordinationEvent =
   | EtaEvent
   | PermissionEvent
   | ExerciseEvent
+  | WorkerActivityEvent
   | DoneEvent;
 
 /** Every event `type` discriminant, in the spec §1 order (+ additive ones). */
@@ -560,6 +608,7 @@ export const COORDINATION_EVENT_TYPES = [
   'eta',
   'permission',
   'exercise',
+  'worker-activity',
   'done',
 ] as const;
 

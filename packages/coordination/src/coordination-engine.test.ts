@@ -34,6 +34,7 @@ describe('CoordinationEvent DTOs', () => {
       'eta',
       'permission',
       'exercise',
+      'worker-activity',
       'done',
     ]);
   });

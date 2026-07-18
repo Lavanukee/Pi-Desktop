@@ -16,10 +16,12 @@
  * pure bits (sampling-mode merge, result shaping, step-cap counter) are
  * unit-testable, and the AgentSession run is covered by the real-server smoke.
  *
- * This module is ADDITIVE: it does NOT touch the app's llamacpp-stream provider
- * (it registers its own in-process `corp-local` `openai-completions` provider so
- * the `before_provider_request` sampling hook actually fires) and it does NOT
- * yet rewire runCorp/dispatch — that is the next stage.
+ * This module is ADDITIVE: it does NOT touch the app's llamacpp-stream provider (it
+ * registers its OWN in-process `corp-local` provider under a distinct api, running
+ * provider-llamacpp's custom streamSimple so it gets the SAME tool-call repair ladder
+ * as the normal chat while its `before_provider_request`/`after_provider_response`
+ * hooks still carry the owner's sampling + the per-call hang watchdog — see
+ * {@link createCorpModelProvider}).
  *
  * Kept as a SINGLE FILE (types + impl) with no relative value-imports so the
  * real-server smoke can load it directly under Node's TS type-stripping.
@@ -454,6 +456,24 @@ export function deriveTerminatedReason(flags: {
   return 'stop';
 }
 
+/**
+ * The LIVE-activity records to emit when a run ends ABNORMALLY — a per-call
+ * network abort / watchdog timeout ({@link timedOut}) or a thrown/aborted prompt
+ * ({@link promptError}). A hung/aborted/errored call CUTS the model stream, so the
+ * provider's `thinking_end` / `text_end` / `turn_end` never fire and the pane's
+ * live line (a "Thinking…" block or a streaming message) would stay frozen
+ * `streaming:true` until the whole task ends. Emitting a synthetic `turn-end`
+ * settles any OPEN streaming line for the node — exactly the record a clean
+ * `turn_end` emits, which the coordination layer maps to `closeStream` (its live
+ * flag off). Fabricates NO content. Returns [] on a clean stop (the real end
+ * events already settled the line). Pure + unit-tested. */
+export function settleActivitiesOnEnd(flags: {
+  readonly promptError: boolean;
+  readonly timedOut: boolean;
+}): RoleAgentActivity[] {
+  return flags.promptError || flags.timedOut ? [{ kind: 'turn-end' }] : [];
+}
+
 /** A minimal structural message shape for turn/token roll-ups. */
 interface UsageMessage {
   readonly role?: string;
@@ -503,20 +523,48 @@ export interface CorpModelProviderConfig {
   readonly contextWindow?: number;
   /** Max output tokens to advertise (default 8192). */
   readonly maxTokens?: number;
+  /**
+   * INJECTABLE fetch (tests only). Threaded into `createLlamaCppStream`'s
+   * `deps.fetchImpl` so a unit test can feed a mock SSE `ReadableStream` (and
+   * capture the outgoing request body) without a live llama-server. Absent → the
+   * provider's default global `fetch` (production).
+   */
+  readonly fetchImpl?: typeof fetch;
 }
 
 /** The registered provider name — corp-local, distinct from the app provider. */
 export const CORP_LOCAL_PROVIDER = 'corp-local';
+
+/**
+ * The pi `api` the corp's `streamSimple` registers under. DISTINCT from the app's
+ * `llamacpp-stream` (provider-llamacpp/index.ts) on purpose: pi-ai's api registry is
+ * a MODULE-GLOBAL `Map` keyed by the `api` string (last-write-wins), so reusing
+ * `llamacpp-stream` here could clobber the normal chat's handler if both ever share
+ * a process. A unique id binds the corp's handler to ONLY the corp's model.
+ */
+export const CORP_LOCAL_API = 'corp-local-stream';
 
 const DEFAULT_CONTEXT_WINDOW = 16384;
 const DEFAULT_MAX_TOKENS = 8192;
 
 /**
  * Build a fresh in-memory {@link AuthStorage} + {@link ModelRegistry} and register
- * a keyless `corp-local` `openai-completions` provider against `baseUrl`, then
- * resolve the model. This provider is REGISTERED IN-PROCESS and is deliberately
- * separate from the app's llamacpp-stream provider — talking OpenAI-completions
- * here is what lets the `before_provider_request` sampling hook fire.
+ * a keyless `corp-local` provider against `baseUrl`, then resolve the model.
+ *
+ * The provider runs provider-llamacpp's custom `streamSimple` ({@link
+ * createLlamaCppStream}) — the SAME tool-call repair ladder the normal chat uses, so
+ * a call the model writes as raw `<tool_call>` XML in its content is salvaged (RUNG 0)
+ * into a STRUCTURED, executed call instead of rendering as inert text. It registers
+ * under a DISTINCT api ({@link CORP_LOCAL_API}) so it can never clobber the app's
+ * `llamacpp-stream` handler in pi-ai's module-global api registry.
+ *
+ * The owner's per-purpose sampling AND the per-call hang watchdog are NOT lost: they
+ * still ride `corpExt`'s `before_provider_request` / `after_provider_response` hooks
+ * (see {@link runRoleAgent}), which `createLlamaCppStream` now fires via pi's
+ * `onPayload` / `onResponse` seam — so sampling is merged onto the outgoing body and
+ * the watchdog is armed/disarmed exactly as before, per SESSION (concurrency-safe;
+ * each role's session carries its own hooks). The model keeps `apiKey:'none'` keyless
+ * auth and `compat.thinkingFormat:'qwen-chat-template'`.
  */
 export async function createCorpModelProvider(
   config: CorpModelProviderConfig,
@@ -527,6 +575,12 @@ export async function createCorpModelProvider(
   registry.registerProvider(CORP_LOCAL_PROVIDER, {
     baseUrl: config.baseUrl,
     apiKey: 'none',
+    // Stock `openai-completions` handler (in pi-ai, loaded via pi-coding-agent).
+    // NB the RUNG-0 tool-call EXECUTION repair (provider-llamacpp/createLlamaCppStream)
+    // was reverted: bundling provider-llamacpp (source-only, ESM) into the CJS main
+    // dead-ended pi-ai at runtime (empty turns). Tool-call-as-text still renders as a
+    // proper activity via the renderer-side reconstruction; execution-repair needs a
+    // runtime-viable approach (deferred).
     api: 'openai-completions',
     models: [
       {
@@ -541,8 +595,8 @@ export async function createCorpModelProvider(
       },
     ],
   });
-  // Belt-and-suspenders for the keyless streamFn (the openai-completions path
-  // still resolves a request key even when the endpoint needs none).
+  // Belt-and-suspenders for the keyless streamFn (the SDK still resolves a request
+  // key via getApiKeyAndHeaders before dispatching, even when the endpoint needs none).
   auth.setRuntimeApiKey(CORP_LOCAL_PROVIDER, 'none');
   const model = registry.find(CORP_LOCAL_PROVIDER, config.model);
   if (model === undefined) {
@@ -920,6 +974,20 @@ export async function runRoleAgent(
     promptError = true;
   } finally {
     clearCallTimer();
+  }
+
+  // A hung/aborted/errored call CUT the model stream, so its `thinking_end` /
+  // `text_end` / `turn_end` never fired — leaving the pane's live line a frozen
+  // "Thinking…" until the whole task ends. Settle it now with the SAME synthetic
+  // turn-end a clean turn emits (coordination's closeStream flips the live flag
+  // off). Fabricates NO content. Best-effort — a throwing sink can never break
+  // teardown, mirroring the corpExt `emit` swallow.
+  for (const record of settleActivitiesOnEnd({ promptError, timedOut: callTimedOut })) {
+    try {
+      config.onActivity?.(record);
+    } catch {
+      // a misbehaving sink can never break the run
+    }
   }
 
   // --- gather results before disposing ---

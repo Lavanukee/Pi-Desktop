@@ -34,9 +34,16 @@ export interface RunBudgetOptions {
   /** Hard cap on model turns. Default {@link MAX_TURNS_FLOOR}; raise per plan via
    * {@link fitBudgetToPlan}. Non-finite/≤0 falls back to the floor. */
   readonly maxTurns?: number;
-  /** Hard cap on wall-clock milliseconds. Default {@link DEFAULT_MAX_WALL_CLOCK_MS}.
-   * Non-finite/≤0 falls back to the default. */
+  /** ABSOLUTE hard cap on wall-clock milliseconds — DISABLED by default. Pass a
+   * positive finite value ONLY to impose a hard ceiling (e.g. a snappy low-effort
+   * mode); omit / non-finite / ≤0 leaves it OFF (no absolute truncation), so a
+   * max-effort run is bounded by the turn cap + the {@link stallWindowMs} watchdog,
+   * not an arbitrary clock. */
   readonly maxWallClockMs?: number;
+  /** No-progress WATCHDOG window in ms. Default {@link DEFAULT_STALL_WINDOW_MS}.
+   * The run terminates if {@link markProgress} has not been called for this long.
+   * Non-finite/≤0 DISABLES the watchdog (rely on the turn cap alone). */
+  readonly stallWindowMs?: number;
   /** Clock seam (ms epoch). Injected in tests so wall-clock termination is
    * deterministic; defaults to {@link Date.now}. */
   readonly now?: () => number;
@@ -51,10 +58,18 @@ export interface RunBudgetOptions {
 export interface RunBudget {
   /** Hard cap on model turns (may be raised by {@link fitBudgetToPlan}, never lowered). */
   maxTurns: number;
-  /** Hard cap on wall-clock milliseconds from {@link startedAt}. */
+  /** ABSOLUTE hard cap on wall-clock ms from {@link startedAt}. `Infinity` = disabled
+   * (the default) — the run is bounded by the turn cap + the {@link stallWindowMs}
+   * watchdog instead of an arbitrary clock. */
   readonly maxWallClockMs: number;
+  /** No-progress watchdog window in ms. `Infinity` = disabled. The run terminates if
+   * {@link now}`() - `{@link lastProgressAt} reaches this. */
+  readonly stallWindowMs: number;
   /** Epoch ms the budget was created (the run's start), from {@link now}. */
   readonly startedAt: number;
+  /** Epoch ms of the last forward progress ({@link markProgress}); starts at
+   * {@link startedAt}. Reset whenever a builder writes a file or a stage turn lands. */
+  lastProgressAt: number;
   /** How many model turns have been charged so far. */
   turnsUsed: number;
   /** Clock seam (ms epoch) — the same one used for {@link startedAt}. */
@@ -70,10 +85,27 @@ export interface RunBudget {
  */
 export const MAX_TURNS_FLOOR = 24;
 
-/** The default wall-clock cap: 90 minutes. Generous enough that a normal run never
- * hits it locally, tight enough that a runaway cascade (even one that keeps the
- * turn count technically legal) cannot run "for a year". */
+/**
+ * A wall-clock value that a caller may pass as an ABSOLUTE hard ceiling. It is NOT
+ * the default any more: an absolute time cap only ever truncates legitimate long
+ * work (the "max effort" run that genuinely needs the time), and the run is already
+ * bounded without it — the plan-scaled TURN cap ({@link fitBudgetToPlan}) times a
+ * per-call network abort makes even a misbehaving model terminate. So the absolute
+ * cap defaults to DISABLED (see {@link newRunBudget}); this constant is kept for the
+ * odd caller (a snappier low-effort mode) that wants a hard ceiling, and for tests.
+ */
 export const DEFAULT_MAX_WALL_CLOCK_MS = 90 * 60 * 1000;
+
+/**
+ * The no-progress WATCHDOG window: 30 minutes. This is the honest replacement for
+ * the old absolute cap. Instead of "stop the run at T minutes however it is going",
+ * the watchdog stops it only when it has made NO FORWARD PROGRESS — no file written
+ * by a builder, no stage turn completed — for this long. A run that is genuinely
+ * grinding forward (max effort on a big job) is never truncated; a run that is
+ * actually stuck (a hung seam that slipped its own per-call abort) still terminates.
+ * Generous enough that a slow-but-advancing sequential build never false-positives.
+ */
+export const DEFAULT_STALL_WINDOW_MS = 30 * 60 * 1000;
 
 /** Turns budgeted per plan "unit" (a contract or a division). ~3 covers a
  * contract's draft + self-review + an occasional retry-on-empty, and a division's
@@ -111,28 +143,64 @@ export function newRunBudget(options: RunBudgetOptions = {}): RunBudget {
     options.maxTurns !== undefined && Number.isFinite(options.maxTurns) && options.maxTurns > 0
       ? Math.floor(options.maxTurns)
       : MAX_TURNS_FLOOR;
+  // ABSOLUTE cap: OFF by default. Only an explicit positive finite value enables it;
+  // omit / non-finite / ≤0 leaves it disabled (Infinity) — no arbitrary truncation.
   const maxWallClockMs =
     options.maxWallClockMs !== undefined &&
     Number.isFinite(options.maxWallClockMs) &&
     options.maxWallClockMs > 0
       ? options.maxWallClockMs
-      : DEFAULT_MAX_WALL_CLOCK_MS;
-  return { maxTurns, maxWallClockMs, startedAt: now(), turnsUsed: 0, now };
+      : Number.POSITIVE_INFINITY;
+  // Watchdog: ON by default (DEFAULT_STALL_WINDOW_MS); an explicit ≤0/non-finite
+  // value disables it (Infinity), leaving the turn cap as the sole net.
+  const stallWindowMs =
+    options.stallWindowMs === undefined
+      ? DEFAULT_STALL_WINDOW_MS
+      : Number.isFinite(options.stallWindowMs) && options.stallWindowMs > 0
+        ? options.stallWindowMs
+        : Number.POSITIVE_INFINITY;
+  const startedAt = now();
+  return {
+    maxTurns,
+    maxWallClockMs,
+    stallWindowMs,
+    startedAt,
+    lastProgressAt: startedAt,
+    turnsUsed: 0,
+    now,
+  };
 }
 
-/** Which cap a budget has hit, or `undefined` if it still has room. */
-export type BudgetExceededReason = 'turns' | 'wall-clock';
+/** Which net a budget has hit, or `undefined` if it still has room. */
+export type BudgetExceededReason = 'turns' | 'stalled' | 'wall-clock';
 
 /**
- * The reason a budget is exhausted — `turns` (the turn cap is reached) or
- * `wall-clock` (the time cap is reached) — or `undefined` when it still has room.
- * Turns are checked first so an over-turn run reports `turns` even at the wall.
- * Pure (reads the injected clock).
+ * The reason a budget is exhausted, or `undefined` when it still has room:
+ *  - `turns` — the plan-scaled turn cap is reached (the primary finite net).
+ *  - `stalled` — no {@link markProgress} for {@link RunBudget.stallWindowMs} (the
+ *    no-progress watchdog: the run is stuck, not advancing).
+ *  - `wall-clock` — the ABSOLUTE ceiling is reached (disabled unless a caller opts
+ *    in, so this normally never fires).
+ * Turns are checked first (an over-turn run reports `turns`), then the watchdog,
+ * then the absolute ceiling. Pure (reads the injected clock).
  */
 export function budgetExceededReason(budget: RunBudget): BudgetExceededReason | undefined {
   if (budget.turnsUsed >= budget.maxTurns) return 'turns';
+  const elapsedSinceProgress = budget.now() - budget.lastProgressAt;
+  if (elapsedSinceProgress >= budget.stallWindowMs) return 'stalled';
   if (budget.now() - budget.startedAt >= budget.maxWallClockMs) return 'wall-clock';
   return undefined;
+}
+
+/**
+ * Record FORWARD PROGRESS — resets the no-progress watchdog. Call this whenever the
+ * run genuinely advances the work: a builder writes a file, a stage turn completes.
+ * A run that keeps calling this is, by definition, not stuck, and the watchdog never
+ * fires it; a run that stops calling it for {@link RunBudget.stallWindowMs} is stuck
+ * and terminates. Mutates {@link RunBudget.lastProgressAt}.
+ */
+export function markProgress(budget: RunBudget): void {
+  budget.lastProgressAt = budget.now();
 }
 
 /** True when the budget is exhausted on EITHER cap (turns or wall-clock). Reads,

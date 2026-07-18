@@ -36,19 +36,24 @@ import {
   type ProductManifest,
 } from './assemble.js';
 import {
+  type BudgetExceededReason,
   budgetExceeded,
+  budgetExceededReason,
   chargeTurn,
   fitBudgetToPlan,
+  markProgress,
   newRunBudget,
   type RunBudget,
 } from './budget.js';
 import {
+  applyTesterGate,
   buildCeoReviewPrompt,
   CEO_REVIEW_PROMPT,
   type CeoDecision,
   parseCeoDecision,
 } from './ceo.js';
 import { buildManagerContractPrompt, parseManagerContracts } from './contracts.js';
+import { deriveDeliveryShape } from './delivery.js';
 import {
   type DispatchReport,
   dispatchContracts,
@@ -75,6 +80,7 @@ import {
   runBoundedEscalation,
 } from './escalate.js';
 import { type DivisionContracts, resolveInterfaceHandles } from './integrate.js';
+import { buildIntegrationContract, ensureIntegrationContract } from './integration-contract.js';
 import type { Contract, ContractStatus, OrgChart, OrgNode } from './org-chart.js';
 import { buildOrgChartQueueWithReport } from './plan.js';
 import {
@@ -95,7 +101,7 @@ import {
   runReviewPhase,
   selectReviewLenses,
 } from './review.js';
-import { type ReviseOutcome, runBoundedRevise } from './revise.js';
+import { DEFAULT_BOUNCE_ROUNDS, type ReviseOutcome, runBoundedRevise } from './revise.js';
 import {
   type RoleAgentCustomTool,
   type RoleAgentRunInput,
@@ -199,7 +205,8 @@ export interface RunCorpOptions {
   /** Run up to this many engineer jobs concurrently, bounded by the contract DAG
    * (dispatch.ts). Default 1 = the sequential walk, byte-for-byte. */
   readonly concurrency?: number;
-  /** Cap on CEO revise cycles (revise.ts); default 1. */
+  /** Cap on bounce rounds for BOTH the review-at-merge tester bounce and the CEO
+   * revise loop (revise.ts); default {@link DEFAULT_BOUNCE_ROUNDS}. */
   readonly maxRevisions?: number;
   /** Base generation cap for judgment turns (default 8192); manager + engineer
    * turns floor at 16k regardless (config robustness — see docs). */
@@ -279,9 +286,13 @@ export interface VisionSummary {
 /** The budget's final state for the result. */
 export interface BudgetSummary {
   readonly maxTurns: number;
+  /** The absolute wall-clock ceiling; `Infinity` when disabled (the default). */
   readonly maxWallClockMs: number;
   readonly turnsUsed: number;
   readonly exceeded: boolean;
+  /** WHICH net terminated the run, when `exceeded` — `turns` / `stalled` /
+   * `wall-clock` — else `undefined` (the run finished on its own). */
+  readonly exceededReason?: BudgetExceededReason;
 }
 
 /** The recorded terminal state of a whole run — never a hang, never a throw. */
@@ -296,6 +307,10 @@ export interface CorpRunResult {
   /** The solo (unpromoted) direct answer preview, when the worker stayed solo. */
   readonly directAnswerPreview?: string;
   readonly architecture?: { readonly moduleCount: number; readonly interfaceCount: number };
+  /** A guaranteed INTEGRATION contract that owns the runnable product entry was
+   * AUTO-INJECTED into the plan (spec §5/§8 — a web/renderable product always gets a
+   * final contract that wires the modules into a running product). */
+  readonly integrationContractInjected?: boolean;
   readonly totalContracts: number;
   readonly emptyAfterRetryDivisions: readonly string[];
   readonly contractsDispatched: number;
@@ -570,6 +585,12 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
   const concurrency = options.concurrency;
   const log = options.log ?? (() => {});
   const engineerThinking = roleThinkingEnabled('engineer');
+  // The generalized BOUNCE bound (spec §8 review→merge→CEO + §9, generalized): the
+  // default number of full DOWN-and-UP rounds for BOTH the review-at-merge tester
+  // bounce AND the CEO revise loop. Raised from 1 to a generous-but-finite default so
+  // work bounces up and down until the product actually builds/runs; the RunBudget
+  // remains the hard net under it. An explicit `maxRevisions` (e.g. a test) overrides.
+  const bounceRounds = options.maxRevisions ?? DEFAULT_BOUNCE_ROUNDS;
 
   const turnsByPurpose = zeroTurns();
   const errors: { purpose: string; message: string }[] = [];
@@ -585,7 +606,9 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
     }
     turnsByPurpose[request.purpose] += 1;
     try {
-      return await options.chat(request);
+      const res = await options.chat(request);
+      markProgress(budget); // a completed stage turn is forward progress
+      return res;
     } catch (err) {
       errors.push({ purpose: request.purpose, message: errorMessage(err) });
       return { content: '' };
@@ -645,6 +668,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         throw new Error(`engineer produced empty content for ${request.contract.id} after retry`);
       }
       const path = writeSlot(options.workspace, request.contract.slot, result.value, options.fs);
+      markProgress(budget); // a builder wrote its slot file — real DAG progress
       return [{ path, bytes: byteLength(result.value) }];
     };
 
@@ -675,7 +699,9 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
     }
     turnsByPurpose[input.purpose] += 1;
     try {
-      return await runRoleAgent(input);
+      const out = await runRoleAgent(input);
+      markProgress(budget); // a completed role-agent stage turn is forward progress
+      return out;
     } catch (err) {
       errors.push({ purpose: input.purpose, message: errorMessage(err) });
       return { filesWritten: [], finalText: '', toolCalls: [], terminatedReason: 'error' };
@@ -723,6 +749,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         ...(extraNotes !== undefined ? { extraNotes } : {}),
       });
       const out = await runRoleAgent({ ...input, onConsult });
+      if (out.filesWritten.length > 0) markProgress(budget); // a builder produced files
       return out.filesWritten.map((f) => ({ path: f.path, bytes: f.bytes }));
     };
 
@@ -739,6 +766,11 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
   let architectureModuleCount = 0;
   let architectureInterfaceCount = 0;
   let hasArchitecture = false;
+  let integrationContractInjected = false;
+  // The delivery shape the vision implies (openable/web) — derived once and threaded
+  // into BOTH the guaranteed integration contract (Part A) and the review-recovery
+  // synthesis (Part C). Set in the promoted branch from the working task.
+  let deliveryShape = deriveDeliveryShape(options.task);
   let totalContracts = 0;
   const emptyAfterRetryDivisions: string[] = [];
   let chart: OrgChart | undefined;
@@ -952,6 +984,27 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         contracts: contractsByDivision[i] ?? [],
       }));
       const { contracts: resolvedContracts } = resolveInterfaceHandles(byDivision, architecture);
+
+      // GUARANTEE the runnable product ENTRY (spec §5 integration layer / §8 tester
+      // gate). A web/renderable product needs a FINAL integration contract that wires
+      // every division's module + exposed interface into the actual running product
+      // (for an openable web artifact, the root index.html). The architect/managers may
+      // not author one, so AUTO-INJECT it: a synthesized contract that DEPENDS on every
+      // division output (runs LAST, sees real code), owned by an integration engineer,
+      // verified + bounced like any other contract. Threaded with the DELIVERY SHAPE so
+      // an openable-no-build vision steers the entry to a self-contained openable file.
+      // A pure-logic product has no browser entry to own, so none is injected.
+      deliveryShape = deriveDeliveryShape(workingTask);
+      const integration = ensureIntegrationContract({
+        contracts: resolvedContracts,
+        architecture,
+        deliveryShape,
+        vision: workingTask,
+        ownerParentNodeId: 'manager',
+      });
+      integrationContractInjected = integration.injected !== undefined;
+      if (integrationContractInjected) log('injected the runnable-entry integration contract');
+
       const baseChart = applyCreateHierarchy(
         null,
         { reason: promotionArgs.reason, divisions },
@@ -959,19 +1012,24 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
       );
       // Materialize an engineer node per contract owner so the dispatcher composes
       // each engineer's system prompt division-specifically (archetype base + the
-      // division purpose extension) instead of falling back to the generic base.
+      // division purpose extension) instead of falling back to the generic base — plus
+      // the integration engineer node (Part A), when one was injected.
       const engineerNodes = buildEngineerNodes(baseChart, divisions, contractsByDivision);
+      const allEngineerNodes =
+        integration.ownerNode !== undefined
+          ? [...engineerNodes, integration.ownerNode]
+          : engineerNodes;
       const withEngineers: OrgChart = {
         ...baseChart,
-        nodes: [...baseChart.nodes, ...engineerNodes],
+        nodes: [...baseChart.nodes, ...allEngineerNodes],
         nodeStatus: {
           ...baseChart.nodeStatus,
-          ...Object.fromEntries(engineerNodes.map((n) => [n.id, 'idle' as const])),
+          ...Object.fromEntries(allEngineerNodes.map((n) => [n.id, 'idle' as const])),
         },
       };
       const { chart: queued } = buildOrgChartQueueWithReport({
         ...withEngineers,
-        contracts: resolvedContracts,
+        contracts: integration.contracts,
         architecture,
       });
       chart = queued;
@@ -1195,6 +1253,72 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         return { ran: ranAny, verify };
       };
 
+      // The INTEGRATION-ENTRY recovery seam (Part C, spec §5/§8): when the tester gate
+      // reports "no runnable entry" and it maps to no existing contract, SYNTHESIZE a
+      // fresh integration contract (pruned deps + shared workspace, so the single
+      // dispatch reads whatever the divisions already produced while it wires the
+      // entry), dispatch it through the SAME engineer path, fold the result back into
+      // chart/dispatchReport, then RE-ASSEMBLE the manifest + re-verify. runReviewPhase
+      // recomputes the model-free gate against that fresh manifest so it can clear.
+      const dispatchIntegrationContract = async (integInput: {
+        reason: string;
+        notes: string;
+      }): Promise<
+        { ran: boolean; manifest: ProductManifest; verify: VerifyResult } | undefined
+      > => {
+        if (chart === undefined || dispatchReport === undefined) return undefined;
+        if (budgetExceeded(budget)) return undefined;
+        const synth = buildIntegrationContract({
+          divisionContracts: chart.contracts,
+          architecture: chart.architecture ?? { moduleMap: [], interfaces: [] },
+          deliveryShape,
+          vision: visionBrief !== '' ? visionBrief : options.task,
+          dependsOn: [],
+          extraNotes: integInput.notes,
+        });
+        // Pruned deps + shared workspace so it runs standalone AND reads the produced
+        // tree (mirrors the reviseForFindings rework-contract shape).
+        const reworkContract: Contract = {
+          ...synth,
+          status: 'queued' as ContractStatus,
+          workspace: 'shared',
+          dependsOn: [],
+        };
+        let report: DispatchReport;
+        try {
+          report = await dispatchContracts({
+            orgChart: { ...chart, contracts: [reworkContract], queue: [] },
+            runEngineer: makeEngineerSeam(integInput.notes),
+            readFs: options.readFs,
+            workspace: options.workspace,
+            ...(useAgentEngineer ? {} : { captureReviews: true }),
+            ...(concurrency !== undefined ? { concurrency } : {}),
+          });
+        } catch {
+          return undefined;
+        }
+        const produced = report.done.includes(synth.id);
+        if (produced) {
+          // UPSERT the integration contract into chart.contracts so the re-assembled
+          // manifest INCLUDES its entry file (buildProductManifest reads each
+          // contract's slot). Replaces a skipped Part A entry of the same id, if any.
+          const done: Contract = { ...synth, status: 'in-review' as ContractStatus };
+          const contracts = chart.contracts.some((c) => c.id === synth.id)
+            ? chart.contracts.map((c) => (c.id === synth.id ? done : c))
+            : [...chart.contracts, done];
+          chart = { ...chart, contracts };
+          dispatchReport = {
+            ...dispatchReport,
+            done: [...new Set([...dispatchReport.done, synth.id])],
+            chart,
+          };
+        }
+        const ran = produced || report.failed.includes(synth.id);
+        const manifest = buildProductManifest(chart, options.workspace, options.readFs);
+        const verify = verifyProduct(options.workspace, options.readFs, options.fileCheck);
+        return { ran, manifest, verify };
+      };
+
       log(`review-at-merge — lenses: ${lensPlan.map((p) => p.lens).join(', ')}`);
       reviewSummary = await runReviewPhase({
         lensPlan,
@@ -1207,7 +1331,11 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         maxTokens: baseMaxTokens,
         runReviewAgent,
         reviseForFindings,
-        ...(options.maxRevisions !== undefined ? { maxRevisions: options.maxRevisions } : {}),
+        // Part C recovery: PRODUCE the missing runnable entry instead of flagging it.
+        dispatchIntegrationContract,
+        // The generalized bounce bound (spec §8) — the tester bounce re-dispatches
+        // and re-verifies up to this many DOWN-and-UP rounds before the honest state.
+        maxRevisions: bounceRounds,
         budget,
         log,
       });
@@ -1215,15 +1343,33 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
       if (reviewSummary.skippedForBudget) terminatedReason ??= 'budget-exceeded';
     }
 
+    // THE TESTER GATE (spec §8, generalized — "the CEO's APPROVE must be GATED on the
+    // tester gate passing; it cannot sign off a product that failed to build/run"):
+    //  - No review phase (chat-fallback, no bash) → no gate.
+    //  - A renderable product with NO runnable entry ("no home") → a HARD gate the
+    //    re-dispatch loop can never clear; the CEO can never approve it.
+    //  - Otherwise the review-at-merge tester bounce is the authoritative verdict; a
+    //    later CEO re-dispatch that clears the OBJECTIVE verify (recomputed by every
+    //    ceoReview) re-opens the approve path (a genuine fix un-gates it).
+    const testerGateOk = (): boolean => {
+      if (reviewSummary === undefined) return true;
+      if (reviewSummary.runnableEntryMissing) return false;
+      if (reviewSummary.testerGatePassed) return true;
+      return verifyResult?.ok === true;
+    };
+
     log('CEO final review');
-    initialCeoDecision = await ceoReview('ceo');
+    // GATE the CEO's first verdict: an APPROVE of a product that did not build/run is
+    // downgraded to REVISE, bouncing the specific build/run failures back DOWN.
+    initialCeoDecision = applyTesterGate(await ceoReview('ceo'), testerGateOk());
 
     // BOUNDED REVISE: re-work the flagged (failed) contracts addressing the notes,
-    // then re-review — capped at maxRevisions, and stopped early if the budget is
-    // spent. A never-satisfied CEO terminates at the cap (or the budget).
+    // then re-review — capped at the generalized bounce bound, and stopped early if
+    // the budget is spent. A never-satisfied CEO (or a never-clearing tester gate)
+    // terminates at the cap (or the budget) with the honest final state.
     const revise: ReviseOutcome = await runBoundedRevise({
       initialDecision: initialCeoDecision,
-      maxRevisions: options.maxRevisions,
+      maxRevisions: bounceRounds,
       budget,
       runRevision: async ({ notes }) => {
         // Re-dispatch the concrete gaps (the failed contracts) with the notes in
@@ -1267,13 +1413,16 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
             };
           }
         }
-        return ceoReview('revise');
+        // Re-review the re-worked product, GATED on the tester gate again — the CEO
+        // still cannot approve a product that does not build/run (the gate clears only
+        // when the objective re-verify above passes, or the review gate had passed).
+        return applyTesterGate(await ceoReview('revise'), testerGateOk());
       },
     });
     finalCeoDecision = revise.finalDecision;
     reviseSummary = {
       revisionsRun: revise.revisionsRun,
-      maxRevisions: options.maxRevisions ?? 1,
+      maxRevisions: bounceRounds,
       hitCap: revise.hitCap,
       approved: revise.approved,
       stoppedForBudget: revise.stoppedForBudget,
@@ -1382,6 +1531,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
           },
         }
       : {}),
+    ...(integrationContractInjected ? { integrationContractInjected } : {}),
     totalContracts,
     emptyAfterRetryDivisions,
     contractsDispatched:
@@ -1418,6 +1568,9 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
       maxWallClockMs: budget.maxWallClockMs,
       turnsUsed: budget.turnsUsed,
       exceeded: budgetExceeded(budget),
+      ...(budgetExceededReason(budget) !== undefined
+        ? { exceededReason: budgetExceededReason(budget) }
+        : {}),
     },
     turnsByPurpose,
     errors,

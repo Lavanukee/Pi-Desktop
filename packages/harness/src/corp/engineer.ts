@@ -330,8 +330,27 @@ export function buildSubmitContractTool(contract: Contract): RoleAgentCustomTool
       },
       required: [],
     },
-    submitReview: { slot: contract.slot, reviewPrompt: buildSelfReviewPrompt(contract) },
+    submitReview: { slot: contract.slot, reviewPrompt: buildEngineerSubmitGate(contract) },
   };
+}
+
+/**
+ * The engineer's first-submit GATE (spec §7, strengthened — owner: "verify, don't
+ * just re-read"). Returned on the FIRST `submit_contract` call so the engineer must
+ * actually CHECK its work — compile it, exercise it if it renders/runs, confirm the
+ * contract — and improve it before finalizing on the second call. The agent has
+ * read/write/bash + its dependency files, so these are REAL checks it runs, not a
+ * rhetorical re-read. It stays honest when the local sandbox lacks a full toolchain
+ * (check what you can) — the manager/CEO build+run gate downstream is the backstop.
+ */
+export function buildEngineerSubmitGate(contract: Contract): string {
+  return [
+    'NOT final yet — VERIFY your work before you finalize; do not just re-read it:',
+    `1. COMPILE / TYPECHECK it. Run a real check with bash on ${contract.slot} together with the dependency files you were given — e.g. \`npx tsc --noEmit\` (or \`node --check\`, a lint, or a quick \`node\` run — whatever the sandbox supports). Confirm NO errors, especially that every type/interface/import you use actually EXISTS in your dependency files and matches their real shape (do not assume an interface — open the file and check). If it fails, FIX the file (write it again) and re-check.`,
+    `2. BEHAVIOR / VISUAL check, if applicable. If your contract produces something runnable or renderable, exercise it to the extent you can (a tiny smoke test via bash) and confirm it does what the contract says. Skip only if there is genuinely nothing to run.`,
+    `3. CONTRACT check. Does the file fully meet the input → output for ${contract.slot} and the review rubric (${contract.reviewRubric})? Fix any correctness bug, missed edge case, or drift.`,
+    'If ANYTHING failed or could be improved, WRITE the file again FIRST. Only call submit_contract a second time once you have CONFIRMED it compiles against its real dependencies and fulfils the contract to the best of your ability.',
+  ].join('\n');
 }
 
 /**

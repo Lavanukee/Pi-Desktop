@@ -477,12 +477,18 @@ export function followTarget(chart: OrgChartView, currentId?: string): OrgNodeVi
   const current = currentId !== undefined ? chart.nodes.find((n) => n.id === currentId) : undefined;
   const working = chart.nodes.filter((n) => n.state === 'working');
   if (working.length === 0) return current;
+  // Follow the DEEPEST working node — the one actually producing output (an
+  // engineer streaming code, or a manager mid-turn), not a lead that stays
+  // "working" while it idly coordinates. This keeps the chat streaming live output
+  // the whole run instead of sitting on the CEO's finished turn. (Before promotion
+  // the only worker IS the CEO/root, so it still leads with the original model.)
   let best = working[0] as OrgNodeView;
   for (const node of working) {
-    if (tierOf(node.role) < tierOf(best.role)) best = node;
+    if (tierOf(node.role) > tierOf(best.role)) best = node;
   }
-  // Sticky: keep the current node unless something strictly higher went live.
-  if (current?.state === 'working' && tierOf(current.role) <= tierOf(best.role)) return current;
+  // Sticky: stay on the current node unless something strictly DEEPER went live, so
+  // the view doesn't thrash between peers but does descend into the active producer.
+  if (current?.state === 'working' && tierOf(current.role) >= tierOf(best.role)) return current;
   return best;
 }
 

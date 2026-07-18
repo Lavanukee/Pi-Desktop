@@ -6,6 +6,7 @@ import {
   buildBumpContinuePrompt,
   buildConsultTools,
   buildEngineerPrompt,
+  buildEngineerSubmitGate,
   buildSelfReviewPrompt,
   buildSubmitContractTool,
   CALL_PEER_TOOL,
@@ -222,10 +223,13 @@ describe('buildSubmitContractTool (§164 submission interceptor)', () => {
     const tool = buildSubmitContractTool(c);
     expect(tool.name).toBe(SUBMIT_CONTRACT_TOOL);
     expect(tool.name).toBe('submit_contract');
-    // The §164 payload: the slot to verify + the self-review bounce prompt.
+    // The §164 payload: the slot to verify + the strengthened submit GATE prompt.
     expect(tool.submitReview?.slot).toBe('src/game/physics.ts');
-    expect(tool.submitReview?.reviewPrompt).toBe(buildSelfReviewPrompt(c));
+    expect(tool.submitReview?.reviewPrompt).toBe(buildEngineerSubmitGate(c));
     expect(tool.submitReview?.reviewPrompt).toContain(c.reviewRubric);
+    // The gate DEMANDS real verification (compile + check deps), not a re-read.
+    expect(tool.submitReview?.reviewPrompt).toContain('COMPILE');
+    expect(tool.submitReview?.reviewPrompt.toLowerCase()).toContain('dependency files');
     // The description frames the one-review-then-final flow.
     expect(tool.description).toContain('src/game/physics.ts');
     expect(tool.description.toLowerCase()).toContain('improve');

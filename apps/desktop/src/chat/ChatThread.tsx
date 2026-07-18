@@ -26,18 +26,17 @@ import {
   MessageActions,
   MessageRow,
   ScrollArea,
+  Spinner,
   Thread,
 } from '@pi-desktop/ui';
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useCorpStore } from '../state/corp-store';
 import { useLlmStore } from '../state/llm-store';
 import { forkAndReprompt, sendPrompt, switchBranch } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
-import { generatedImageSrc, segmentGroup } from './activity-mapping';
-import { InlineArtifact } from './canvas/InlineArtifacts';
+import { AssistantGroup } from './AssistantGroup';
+import { CorpChatStream } from './corp/CorpChatStream';
 import { HarnessChecklistPanel, ThreadStatusIndicator } from './HarnessStatus';
-import { Markdown } from './markdown';
-import { ThreadActivityChain } from './ThreadActivity';
-import { ThreadImage } from './ThreadImage';
 
 /** Concatenated visible text of an assistant response group (for copy). */
 function groupPlainText(group: AssistantMsg[]): string {
@@ -81,92 +80,24 @@ function toRenderItems(messages: ChatMsg[], claimed: Set<string>): RenderItem[] 
   return items;
 }
 
-function AssistantGroup({
-  group,
-  resultByCallId,
-  runningToolCalls,
-  tps,
-}: {
-  group: AssistantMsg[];
-  resultByCallId: Map<string, ToolResultMsg>;
-  runningToolCalls: string[];
-  /** Current throughput from the inference supervisor (assistant footnote). */
-  tps: number | undefined;
-}): ReactNode {
-  const streaming = group.some((m) => m.isStreaming === true);
-  // Owner-scoped result per tool-call id (avoids a bare-id collision with a
-  // provider-reused toolCallId in a later user turn).
-  const resultForBlock = new Map<string, ToolResultMsg>();
-  for (const m of group) {
-    for (const b of m.blocks) {
-      if (b.type !== 'toolCall') continue;
-      const r = resultByCallId.get(`${m.id}:${b.id}`) ?? resultByCallId.get(b.id);
-      if (r !== undefined) resultForBlock.set(b.id, r);
-    }
-  }
-
-  const segments = segmentGroup(group);
-  const lastSegment = segments[segments.length - 1];
-  const groupId = group[0]?.id ?? 'g';
-  const errorMessage = group.find((m) => m.errorMessage !== undefined)?.errorMessage;
-  let textN = 0;
-  let activityN = 0;
-  return (
-    // min-w-0 so this flex child can shrink below its content's intrinsic width
-    // and the prose reflows when the canvas narrows the column (blindtest #9).
-    <div className="flex min-w-0 flex-col gap-2">
-      {segments.map((seg) => {
-        if (seg.kind === 'text') {
-          return <Markdown key={`${groupId}-t${textN++}`} text={seg.text} />;
-        }
-        if (seg.kind === 'artifact') {
-          return <InlineArtifact key={seg.artifact.id} artifact={seg.artifact} />;
-        }
-        // Round-6 UNIFY: a tool chain AND a thinking-only run both render through
-        // ONE ActivityChain, so every thought gets the chain chrome (clock icon +
-        // connector line + "Done ✓"). ONE shared counter keys both kinds, so a run
-        // that starts thinking-only and later gains a tool call keeps the SAME
-        // component instance (no remount → the expand/collapse rolls smoothly).
-        // Generated images a chain produced render INLINE beneath it (round-5 #7);
-        // a thinking-only run never has tool calls, so it contributes none.
-        const chainImages =
-          seg.kind === 'chain'
-            ? seg.blocks
-                .filter(
-                  (b): b is Extract<ContentBlock, { type: 'toolCall' }> => b.type === 'toolCall',
-                )
-                .map((b) => ({ id: b.id, src: generatedImageSrc(b, resultForBlock.get(b.id)) }))
-                .filter((x): x is { id: string; src: string } => x.src !== undefined)
-            : [];
-        return (
-          <div key={`${groupId}-a${activityN++}`} className="flex min-w-0 flex-col gap-2">
-            <ThreadActivityChain
-              blocks={seg.blocks}
-              resultForBlock={resultForBlock}
-              runningToolCalls={runningToolCalls}
-              streaming={streaming && seg === lastSegment}
-              turnStartedAt={group[0]?.timestamp}
-              tps={tps}
-            />
-            {chainImages.map((img) => (
-              <ThreadImage key={img.id} src={img.src} />
-            ))}
-          </div>
-        );
-      })}
-      {errorMessage !== undefined ? (
-        <div className="text-footnote text-status-danger-fg">{errorMessage}</div>
-      ) : null}
-    </div>
-  );
-}
-
 export function ChatThread() {
   const messages = usePiStore((s) => s.messages);
   const runningToolCalls = usePiStore((s) => s.runningToolCalls);
   const historyTruncated = usePiStore((s) => s.historyTruncated);
   const branches = usePiStore((s) => s.branches);
   const tps = useLlmStore((s) => s.status.metrics?.avgTps ?? s.status.metrics?.lastTps);
+
+  // EXPERIMENTAL production harness: while a corp run is live, the model's output
+  // streams INLINE after the user's prompt — the shown agent's real feed (the
+  // CEO/root before it builds a team, then the live worker, or a subagent the user
+  // pinned from the situation room). The prompt bubble stays; the chat is never
+  // blanked or taken over. shownNode = pinned ?? live ?? the root, so it shows the
+  // original model streaming from the very first event.
+  const corpTaskId = useCorpStore((s) => s.taskId);
+  const corpSituation = useCorpStore((s) => s.situation);
+  const corpLiveNode = useCorpStore((s) => s.liveNode);
+  const corpPinnedNode = useCorpStore((s) => s.pinnedNode);
+  const shownCorpNode = corpPinnedNode ?? corpLiveNode ?? corpSituation?.chart.nodes[0] ?? null;
 
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -421,6 +352,23 @@ export function ChatThread() {
               </ActivityRow>
             );
           })}
+
+          {/* The corp run's live model output, as the assistant's answer:
+              rendered AFTER the user's prompt bubble, inside the scroll flow, so it
+              reads as Pi replying — never a takeover pane. Shows the CEO/root while
+              it plans, then follows the live worker (or a subagent pinned from the
+              situation room). The subagent NAVIGATOR + checklist live in the
+              situation-room canvas tab, which opens when the model builds a team. */}
+          {corpTaskId !== null && shownCorpNode !== null ? (
+            <CorpChatStream taskId={corpTaskId} node={shownCorpNode} />
+          ) : corpTaskId !== null ? (
+            // Bridge the moment between submit and the first agent appearing so the
+            // chat is never blank — the model is spinning up, not gone.
+            <div className="pd-corpchat-starting" data-testid="corp-chat-starting">
+              <Spinner size={13} />
+              <span>Getting started…</span>
+            </div>
+          ) : null}
 
           {/* The ONE live status indicator (jedd blind-test #1): a single
                 thread-rendered element that reads "Thinking" while the model

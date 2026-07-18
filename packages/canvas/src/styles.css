@@ -2007,6 +2007,97 @@
   text-overflow: ellipsis;
 }
 
+/* -- subagent navigator: one clickable row per subagent ------------------
+   The chat's activity-row visual (the ui package's .pd-activity-row: icon
+   slot + label + hover voice) with the subagent's bold name in front. The
+   whole row is a button that routes that worker's live stream to the left
+   pane — it never expands in place, so the expander chevron is suppressed. */
+
+.pd-sitroom-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--pd-space-xs) var(--pd-space-md) var(--pd-space-sm);
+}
+
+.pd-sitroom-agent.pd-activity-row {
+  width: 100%;
+  min-width: 0;
+  padding: 3px var(--pd-space-sm);
+  border-radius: var(--pd-radius-sm);
+  font-size: var(--pd-font-size-caption);
+}
+
+.pd-sitroom-agent.pd-activity-row:hover {
+  background: var(--pd-bg-hover);
+}
+
+.pd-sitroom-agent[data-selected] {
+  background: var(--pd-bg-selected);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--pd-accent-primary) 45%, transparent);
+}
+
+.pd-sitroom-agent .pd-activity-row-chevron {
+  display: none;
+}
+
+/* The icon slot: the accent spinner while live, the soft success check once
+   done (the live-activity feed's exact palette). */
+.pd-sitroom-agent .pd-activity-row-icon {
+  width: 16px;
+  justify-content: center;
+  color: color-mix(in srgb, var(--pd-accent-primary) 80%, var(--pd-text-secondary));
+}
+
+.pd-sitroom-agent[data-state="done"] .pd-activity-row-icon {
+  color: var(--pd-status-success-fg);
+}
+
+/* Label wrapper (ActivityRow's label span): bold static name, then the
+   action — ellipsized so a long file path never wraps the row. */
+.pd-sitroom-agent > span:not(.pd-activity-row-icon):not(.pd-activity-row-chevron) {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.pd-sitroom-agent-name {
+  flex: none;
+  font-weight: var(--pd-font-weight-medium);
+  color: var(--pd-text-primary);
+}
+
+.pd-sitroom-agent-action {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Settled rows read muted ("done" / "queued" / "stopped"); a blocked row
+   carries the warning voice so it asks for attention. */
+.pd-sitroom-agent:not([data-state="working"]) .pd-sitroom-agent-action {
+  color: var(--pd-text-muted);
+}
+
+.pd-sitroom-agent[data-state="blocked"] .pd-sitroom-agent-action {
+  color: var(--pd-status-warning-fg);
+}
+
+/* Queued / blocked / stopped: a quiet hollow ring in the icon slot. */
+.pd-sitroom-agent-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--pd-radius-full);
+  border: 1.5px solid var(--pd-text-ghost);
+}
+
+.pd-sitroom-agent[data-state="blocked"] .pd-sitroom-agent-dot {
+  border-color: var(--pd-status-warning-fg);
+}
+
 /* -- module map: the codebase filling in ------------------------------- */
 
 .pd-sitroom-map {
@@ -3223,6 +3314,49 @@
   font-size: var(--pd-font-size-caption);
   color: var(--pd-text-muted);
   line-height: 1.55;
+}
+
+/* A settled structured-output (JSON) message: a LARGE payload tucks into a
+   collapsed reveal — the way the chat tucks big tool args away — instead of
+   dominating the feed. The body is the ordinary fenced-code Markdown block. */
+.pd-workerpane-json > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-muted);
+  -webkit-user-select: none;
+  user-select: none;
+  transition: color var(--pd-duration-fast) var(--pd-easing-standard);
+}
+
+.pd-workerpane-json > summary:hover {
+  color: var(--pd-text-secondary);
+}
+
+.pd-workerpane-json > summary::-webkit-details-marker {
+  display: none;
+}
+
+.pd-workerpane-json > summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform var(--pd-duration-fast) var(--pd-easing-standard);
+}
+
+.pd-workerpane-json[open] > summary {
+  margin-bottom: 6px;
+  color: var(--pd-text-secondary);
+}
+
+.pd-workerpane-json[open] > summary::before {
+  transform: rotate(90deg);
 }
 
 /* The live tail while the agent is mid-turn. */

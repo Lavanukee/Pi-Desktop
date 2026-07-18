@@ -403,6 +403,125 @@ describe('createLlamaCppStream — rung 0 (text-content reconstruction)', () => 
   });
 });
 
+// This is the EXACT corp failure this whole change targets: llama-server's jinja
+// grammar fails and the model writes its call as raw `<tool_call>` XML into the
+// assistant CONTENT (Hermes/Qwen `<function=…><parameter=…>` form) with NO
+// structured tool_calls frame — under the STOCK openai-completions handler it would
+// render as inert XML and never execute. Routing the corp through createLlamaCppStream
+// runs RUNG 0, which salvages it into a structured, executable call.
+describe('createLlamaCppStream — rung 0 (corp raw-XML tool call from content)', () => {
+  const webTools: Context['tools'] = [
+    {
+      name: 'web_fetch',
+      description: 'fetch a url',
+      parameters: Type.Object({ url: Type.String() }),
+    },
+  ];
+  const writeTools: Context['tools'] = [
+    {
+      name: 'write',
+      description: 'write a file',
+      parameters: Type.Object({ path: Type.String(), content: Type.String() }),
+    },
+  ];
+
+  it('reconstructs a <function=web_fetch><parameter=url> call streamed as CONTENT deltas', async () => {
+    // The offending shape, streamed across several content deltas, no tool_calls frame.
+    const { fetchImpl } = sseFetch([
+      { choices: [{ delta: { content: '<tool_call>\n<function=web_fetch>\n' } }] },
+      { choices: [{ delta: { content: '<parameter=url>\nhttps://x/\n</parameter>\n' } }] },
+      { choices: [{ delta: { content: '</function>\n</tool_call>' } }] },
+      { choices: [{ delta: {}, finish_reason: 'stop' }] },
+    ]);
+    const onRepair = vi.fn();
+    const stream = createLlamaCppStream({ fetchImpl, onRepair })(
+      makeModel(),
+      emptyContext(webTools),
+    );
+    const { events, final } = await consume(stream);
+
+    // RUNG 0 fired: a STRUCTURED tool call was synthesized and finalized.
+    expect(events.some((e) => e.type === 'toolcall_end')).toBe(true);
+    const call = final.content.find((c) => c.type === 'toolCall');
+    expect(call?.type).toBe('toolCall');
+    expect(call?.type === 'toolCall' && call.name).toBe('web_fetch');
+    expect(call?.type === 'toolCall' && call.arguments).toEqual({ url: 'https://x/' });
+    // The message ENDS WITH the structured toolCall block (text first, call last).
+    const last = final.content.at(-1);
+    expect(last?.type).toBe('toolCall');
+    expect(final.stopReason).toBe('toolUse');
+    expect(onRepair).toHaveBeenCalledWith({ toolName: 'web_fetch', rung: 0, ok: true });
+  });
+
+  it('reconstructs a <function=write> call whose <parameter=content> is TS with braces', async () => {
+    const tsBody = 'export function f() { return { a: 1, b: { c: 2 } }; }';
+    const { fetchImpl } = sseFetch([
+      { choices: [{ delta: { content: `<function=write>\n<parameter=path>\nsrc/foo.ts\n</parameter>\n` } }] },
+      { choices: [{ delta: { content: `<parameter=content>\n${tsBody}\n</parameter>\n</function>` } }] },
+      { choices: [{ delta: {}, finish_reason: 'stop' }] },
+    ]);
+    const stream = createLlamaCppStream({ fetchImpl })(makeModel(), emptyContext(writeTools));
+    const { final } = await consume(stream);
+
+    const call = final.content.find((c) => c.type === 'toolCall');
+    expect(call?.type === 'toolCall' && call.name).toBe('write');
+    // Braces in the code body survive intact (not mis-parsed as the args JSON).
+    expect(call?.type === 'toolCall' && call.arguments).toEqual({
+      path: 'src/foo.ts',
+      content: tsBody,
+    });
+  });
+});
+
+// The seam that lets the corp keep its sampling + hang watchdog while running through
+// createLlamaCppStream: it now honors pi's `onPayload` (before_provider_request) and
+// `onResponse` (after_provider_response) hooks, exactly like the built-in providers.
+describe('createLlamaCppStream — onPayload / onResponse hooks', () => {
+  it('sends the body onPayload returns (sampling merge lands on the wire)', async () => {
+    const { fetchImpl, calls } = sseFetch([
+      { choices: [{ delta: { content: 'ok' } }] },
+      { choices: [{ delta: {}, finish_reason: 'stop' }] },
+    ]);
+    // A stand-in for corpExt's before_provider_request: merge extra sampling params.
+    const onPayload = vi.fn((payload: unknown) => {
+      const p = payload as Record<string, unknown>;
+      p.temperature = 0.6;
+      p.top_p = 0.95;
+      p.top_k = 20;
+      p.min_p = 0;
+      p.presence_penalty = 0;
+      p.max_tokens = 1234;
+      return p;
+    });
+    const stream = createLlamaCppStream({ fetchImpl })(makeModel(), emptyContext(), { onPayload });
+    await consume(stream);
+
+    expect(onPayload).toHaveBeenCalledOnce();
+    const sent = JSON.parse(String(calls[0]?.body)) as Record<string, unknown>;
+    expect(sent).toMatchObject({
+      temperature: 0.6,
+      top_p: 0.95,
+      top_k: 20,
+      min_p: 0,
+      presence_penalty: 0,
+      max_tokens: 1234,
+    });
+  });
+
+  it('calls onResponse with the response status once the response arrives', async () => {
+    const { fetchImpl } = sseFetch([
+      { choices: [{ delta: { content: 'ok' } }] },
+      { choices: [{ delta: {}, finish_reason: 'stop' }] },
+    ]);
+    const onResponse = vi.fn();
+    const stream = createLlamaCppStream({ fetchImpl })(makeModel(), emptyContext(), { onResponse });
+    await consume(stream);
+
+    expect(onResponse).toHaveBeenCalledOnce();
+    expect(onResponse.mock.calls[0]?.[0]).toMatchObject({ status: 200 });
+  });
+});
+
 describe('createLlamaCppStream — fuzzy tool-name correction', () => {
   const tools: Context['tools'] = [
     { name: 'read', description: 'read a file', parameters: Type.Object({ path: Type.String() }) },

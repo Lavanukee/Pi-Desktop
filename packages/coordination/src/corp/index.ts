@@ -71,6 +71,7 @@ import type {
   TaskContext,
   TaskHandle,
   TaskResult,
+  WorkerActivityEvent,
   WorkerBriefingView,
   WorkerTranscriptLine,
   WorkerTranscriptView,
@@ -942,6 +943,17 @@ export class CorpEngine implements CoordinationEngine {
             detail: rel,
           });
           rt.currentAction.set(nodeId, `Writing ${rel}`);
+          // PUSH the live file edit as a per-node worker-activity so the inline chat
+          // feed lights the +N/−N readout in real time (mirrors the transcript line).
+          this.emit(
+            rt,
+            workerActivity(nodeId, {
+              kind: 'file',
+              path: rel,
+              label: 'Writing',
+              ...(record.linesAdded !== undefined ? { addedLines: record.linesAdded } : {}),
+            }),
+          );
         }
         this.emit(rt, liveFileTouch(nodeId, rel, record.linesAdded));
         // The first sight of a path becomes an artifact so the peek button enables
@@ -964,6 +976,17 @@ export class CorpEngine implements CoordinationEngine {
         });
         rt.currentAction.set(nodeId, desc.summary);
         this.emit(rt, activity(nodeId, 'tool-call', desc.summary));
+        // PUSH the named tool step so the inline chat feed lands the row live.
+        this.emit(
+          rt,
+          workerActivity(nodeId, {
+            kind: 'tool',
+            toolName: tool,
+            label: desc.label,
+            ...(desc.detail !== undefined ? { detail: desc.detail } : {}),
+            ...(record.path !== undefined ? { path: record.path } : {}),
+          }),
+        );
         break;
       }
       case 'thinking': {
@@ -1024,6 +1047,10 @@ export class CorpEngine implements CoordinationEngine {
     kind: 'message' | 'thinking',
     record: RoleAgentActivity,
   ): void {
+    // PUSH the same delta the transcript line accumulates, as a per-node
+    // worker-activity, so the inline chat feed grows this block PER TOKEN (the
+    // real-time channel) while the transcript stays the peek/late-join record.
+    this.emitStreamDelta(rt, nodeId, kind, record);
     if (record.phase === 'start') {
       this.closeStream(rt, nodeId);
       const line = this.addLine(rt, nodeId, kind, record.text ?? '', { streaming: true });
@@ -1046,6 +1073,32 @@ export class CorpEngine implements CoordinationEngine {
     open.line.streaming = false;
     rt.openStream.delete(nodeId);
     if (kind === 'message' && open.line.text.trim() !== '') rt.streamedMessage.add(nodeId);
+  }
+
+  /**
+   * Emit ONE `worker-activity` for a streamed text/reasoning delta — the additive
+   * per-token PUSH the renderer's accumulator folds into a pi-style block. Carries
+   * the same `phase` + increment the transcript line grows from: `start` seeds the
+   * block (with the record's initial text, usually empty), `delta` appends the
+   * increment, `end` closes it (with the authoritative full text, so a provider
+   * that only reports on `end` still lands the whole block). `message` → `text`.
+   */
+  private emitStreamDelta(
+    rt: CorpRuntime,
+    nodeId: string,
+    kind: 'message' | 'thinking',
+    record: RoleAgentActivity,
+  ): void {
+    const wkKind = kind === 'message' ? 'text' : 'thinking';
+    const delta = record.phase === 'delta' ? record.delta : record.text;
+    this.emit(
+      rt,
+      workerActivity(nodeId, {
+        kind: wkKind,
+        ...(record.phase !== undefined ? { phase: record.phase } : {}),
+        ...(delta !== undefined && delta !== '' ? { delta } : {}),
+      }),
+    );
   }
 
   /** Close a node's open streaming line (flip its live flag off), if any. Idempotent. */
@@ -1460,6 +1513,16 @@ function soloNode(state: OrgNodeState): OrgNodeView {
 
 function activity(nodeId: string, kind: Activity['kind'], summary: string): CoordinationEvent {
   return { type: 'activity', activity: { nodeId, kind, summary, timestamp: Date.now() } };
+}
+
+/** A per-node live delta PUSH ({@link WorkerActivityEvent}) — the real-time channel
+ * the inline chat feed folds into a streaming block. `nodeId` is required (an
+ * un-owned role's activity streams only into the transcript, never here). */
+function workerActivity(
+  nodeId: string,
+  fields: Omit<WorkerActivityEvent, 'type' | 'nodeId'>,
+): CoordinationEvent {
+  return { type: 'worker-activity', nodeId, ...fields };
 }
 
 function fileTouch(nodeId: string, path: string, linesAdded: number): CoordinationEvent {

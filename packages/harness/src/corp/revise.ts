@@ -23,8 +23,20 @@ import { budgetExceeded, type RunBudget } from './budget.js';
 import type { CeoDecision } from './ceo.js';
 
 /** Default number of revision cycles: one. A single focused re-work pass, then the
- * honest final state stands (spec §8 — do not chase "perfect"). */
+ * honest final state stands (spec §8 — do not chase "perfect"). This is the bound
+ * for a bare {@link runBoundedRevise} caller that passes no explicit cap. */
 export const DEFAULT_MAX_REVISIONS = 1;
+
+/**
+ * The generalized BOUNCE bound (spec §8 review→merge→CEO + §9, generalized): how
+ * many full DOWN-and-UP rounds the review→revise→re-review loop runs before the
+ * honest final state stands. Set GENEROUSLY (a real 4B rarely gets a whole product
+ * workable in one pass, and the owner's mandate is that work bounces up AND down
+ * until the product actually builds/runs) but still FINITE — the {@link
+ * RunBudget} remains the hard net under it. The orchestrator (run.ts) applies this
+ * as the default for BOTH the review-at-merge tester bounce and the CEO revise loop
+ * when the caller passes no explicit `maxRevisions`. */
+export const DEFAULT_BOUNCE_ROUNDS = 3;
 
 /** The input handed to one revision cycle. */
 export interface ReviseRoundInput {

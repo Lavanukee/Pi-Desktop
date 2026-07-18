@@ -1,0 +1,242 @@
+/* ------------------------------------------------------------------ */
+/* CorpInlineTurn — a corp run rendered as a normal assistant turn.    */
+/* Mirrors the ActivityChain collapsed-summary look and the situation  */
+/* room's honest progress rail / status gems, entirely on the shared   */
+/* --pd-* tokens so light and dark themes both hold.                   */
+/* ------------------------------------------------------------------ */
+
+.pd-corpturn {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pd-space-md);
+  min-width: 0;
+  color: var(--pd-text-primary);
+}
+
+/* The assistant gem leads the turn (WorkerPaneShell's head gem). */
+.pd-corpturn-gem {
+  width: 12px;
+  height: 12px;
+  margin-top: 6px;
+  color: var(--pd-status-success-fg);
+}
+
+.pd-corpturn-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--pd-space-xs);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* -- the collapsed summary (the pd-chain-summary look) --------------- */
+
+.pd-corpturn-headrow {
+  display: flex;
+  align-items: center;
+  gap: var(--pd-space-sm);
+  min-width: 0;
+}
+
+.pd-corpturn-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 4px;
+  border: none;
+  border-radius: var(--pd-radius-xs);
+  background: transparent;
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-body);
+  line-height: var(--pd-leading-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pd-corpturn-summary:hover {
+  color: var(--pd-text-secondary);
+}
+
+.pd-corpturn-summary-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-corpturn-donecheck {
+  display: inline-flex;
+  flex: none;
+  color: var(--pd-status-success-fg);
+}
+
+.pd-corpturn-eta {
+  flex: none;
+  font-size: var(--pd-font-size-footnote);
+  color: var(--pd-text-muted);
+  white-space: nowrap;
+}
+
+.pd-corpturn-chevron {
+  display: inline-flex;
+  flex: none;
+  opacity: 0;
+  transition:
+    opacity var(--pd-duration-base) var(--pd-easing-standard),
+    rotate var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-corpturn-summary:hover .pd-corpturn-chevron,
+.pd-corpturn-summary:focus-visible .pd-corpturn-chevron,
+.pd-corpturn-chevron[data-expanded="true"] {
+  opacity: 1;
+}
+
+.pd-corpturn-chevron[data-expanded="true"] {
+  rotate: 90deg;
+}
+
+/* -- the honest progress rail (the situation room's) ----------------- */
+
+.pd-corpturn-rail {
+  position: relative;
+  flex: 0 0 auto;
+  height: 2px;
+  margin: 0 4px;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-border-subtle);
+  overflow: hidden;
+}
+
+.pd-corpturn-rail-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: var(--pd-radius-full);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--pd-accent-primary) 72%, transparent),
+    var(--pd-accent-primary)
+  );
+  transition: width var(--pd-duration-slow) var(--pd-easing-standard);
+}
+
+/* -- the subagent rows (State B) ------------------------------------- */
+
+.pd-corpturn-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: var(--pd-space-xs) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pd-corpturn-rowwrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pd-corpturn-row {
+  display: flex;
+  align-items: center;
+  gap: var(--pd-space-sm);
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 3px 6px;
+  border: none;
+  border-radius: var(--pd-radius-sm);
+  background: transparent;
+  color: var(--pd-text-secondary);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-snug, 1.4);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pd-corpturn-row:hover {
+  background: var(--pd-bg-hover);
+}
+
+.pd-corpturn-row[aria-expanded="true"] {
+  background: var(--pd-bg-selected, var(--pd-bg-hover));
+}
+
+.pd-corpturn-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
+.pd-corpturn-glyph[data-state="done"] {
+  color: var(--pd-text-muted);
+}
+
+.pd-corpturn-glyph-hollow {
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--pd-border-strong);
+  border-radius: var(--pd-radius-full);
+}
+
+.pd-corpturn-glyph[data-state="retired"] .pd-corpturn-glyph-hollow {
+  border-style: dashed;
+}
+
+.pd-corpturn-row-name {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pd-text-primary);
+  font-weight: var(--pd-font-weight-medium);
+}
+
+.pd-corpturn-row-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--pd-text-muted);
+}
+
+/* Settled rows read muted all the way through. */
+.pd-corpturn-row[data-state="done"] .pd-corpturn-row-name,
+.pd-corpturn-row[data-state="retired"] .pd-corpturn-row-name,
+.pd-corpturn-row[data-state="idle"] .pd-corpturn-row-name {
+  color: var(--pd-text-muted);
+  font-weight: var(--pd-font-weight-regular, 400);
+}
+
+.pd-corpturn-row-spinner {
+  flex: none;
+  color: var(--pd-text-muted);
+}
+
+/* -- the inline worker feed (State C) -------------------------------- */
+
+.pd-corpturn-rowfeed {
+  margin: 2px 0 var(--pd-space-sm) 18px;
+  padding: var(--pd-space-sm) var(--pd-space-md);
+  border-left: 1px solid var(--pd-border-subtle);
+  min-width: 0;
+}
+
+/* The feed is the worker pane's; keep its thread compact inline. */
+.pd-corpturn-rowfeed .pd-thread {
+  max-width: none;
+  padding: 0;
+}

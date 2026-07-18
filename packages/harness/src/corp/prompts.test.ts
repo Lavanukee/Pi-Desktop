@@ -146,14 +146,18 @@ describe('ROLE_THINKING (per-role thinking control knob)', () => {
 
 describe('ROLE_TIER (role → capability tier, model-agnostic)', () => {
   it('maps reasoning/judgment roles to intelligent and code-execution roles to balanced', () => {
-    // Reasoning/judgment: CEO, manager, architect, every advisory specialist.
+    // Reasoning/judgment: CEO, manager, architect, and every advisory specialist —
+    // EXCEPT the tester, which is tool-heavy (build/run/screenshot) → balanced.
     expect(tierForRole('ceo')).toBe('intelligent');
     expect(tierForRole('manager')).toBe('intelligent');
     expect(tierForRole('architect')).toBe('intelligent');
-    for (const kind of SPECIALIST_KINDS) expect(tierForRole(kind)).toBe('intelligent');
-    // Code execution: engineer + division-head.
+    for (const kind of SPECIALIST_KINDS) {
+      expect(tierForRole(kind)).toBe(kind === 'tester' ? 'balanced' : 'intelligent');
+    }
+    // Code execution: engineer + division-head (+ the tool-heavy tester).
     expect(tierForRole('engineer')).toBe('balanced');
     expect(tierForRole('division-head')).toBe('balanced');
+    expect(tierForRole('tester')).toBe('balanced');
   });
 
   it('only ever names a tier, never a concrete model', () => {
@@ -177,6 +181,50 @@ describe('ROLE_THINKING — the architect', () => {
   it('runs the architect thinking-OFF like the manager (it emits structured JSON)', () => {
     expect(roleThinkingEnabled('architect')).toBe(false);
     expect(ROLE_THINKING.architect).toBe(false);
+  });
+});
+
+describe('the two measuring specialists — tester + auditor (spec §4/§8)', () => {
+  it('both are registered specialist kinds', () => {
+    expect(isSpecialistKind('tester')).toBe(true);
+    expect(isSpecialistKind('auditor')).toBe(true);
+    expect(SPECIALIST_KINDS).toContain('tester');
+    expect(SPECIALIST_KINDS).toContain('auditor');
+  });
+
+  it('resolve tier + thinking: tester=balanced (tool-heavy), auditor=intelligent, both thinking-ON', () => {
+    expect(tierForRole('tester')).toBe('balanced');
+    expect(tierForRole('auditor')).toBe('intelligent');
+    expect(roleThinkingEnabled('tester')).toBe(true);
+    expect(roleThinkingEnabled('auditor')).toBe(true);
+  });
+
+  it('resolve a PROMPT_LIBRARY entry framing what they MEASURE', () => {
+    const tester = getRolePrompt('tester');
+    expect(tester.kind).toBe('specialist');
+    // The tester builds + runs + screenshots and blocks on a missing runnable entry.
+    expect(tester.prompt).toContain('BUILD');
+    expect(tester.prompt).toContain('RUN');
+    expect(tester.prompt).toContain('SCREENSHOT');
+    expect(tester.prompt.toLowerCase()).toContain('runnable entry');
+
+    const auditor = getRolePrompt('auditor');
+    expect(auditor.kind).toBe('specialist');
+    // The auditor reads the WHOLE tree and traces a cross-module root cause.
+    expect(auditor.prompt).toContain('ENTIRE product tree');
+    expect(auditor.prompt).toContain('ROOT CAUSE');
+    // Both resolve by untyped id too (persisted OrgNode.promptId path).
+    expect(getPromptById('tester')?.id).toBe('tester');
+    expect(getPromptById('auditor')?.id).toBe('auditor');
+  });
+});
+
+describe('MANAGER_PROMPT — merge-time verify (spec §8)', () => {
+  it('confirms workability from tester evidence and names the auditor escape hatch', () => {
+    const manager = getRolePrompt('manager').prompt;
+    expect(manager).toContain('At MERGE');
+    expect(manager.toLowerCase()).toContain('tester');
+    expect(manager).toContain('auditor');
   });
 });
 

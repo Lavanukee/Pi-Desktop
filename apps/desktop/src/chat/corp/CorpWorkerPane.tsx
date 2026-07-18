@@ -4,173 +4,45 @@
  * the moment a task starts (the lead forming the vision, then whoever is
  * actually running) — or a node the user clicked/pinned in the situation room.
  *
- * The body is the node's REAL activity, STREAMED: the engine's per-node live
- * transcript (`corp:worker-transcript`, backed by `getWorkerTranscript`) is
- * polled while the agent is mid-turn, and
+ * The body is the node's REAL activity, rendered through the SAME pipeline the
+ * normal chat uses: a {@link WorkerTranscriptView} is converted to pi-slice
+ * `AssistantMsg` blocks ({@link transcriptToAssistantView}) and handed to
+ * {@link AssistantGroup} — so the corp feed IS the normal chat's `segmentGroup`
+ * → `Markdown` + `ThreadActivityChain` render:
  *
- *  - the growing `streaming` tail renders as live assistant text that types on
- *    SMOOTHLY (the shown length eases toward the live target each frame, so it
- *    reads continuously, not in poll-sized jumps), or a force-open reasoning
- *    block ("Thinking…") whose content grows as the model reasons,
- *  - tool steps render NAMED ("Searched the web: <query>", "Reading <file>",
- *    "Ran: <cmd>") through the app's ActivityChain — never "Used a tool",
- *  - between streams the tail shows the node's real `currentAction` with the
- *    branded spinner — never a bare "working…" void,
+ *  - message text renders through the app's `<Markdown>` (code fences, lists,
+ *    inline code); a JSON payload fences to a ```json code block; a written tool
+ *    call the local model streamed as TEXT splits out into a real activity row,
+ *  - tool / file steps render as the chain's NAMED rows ("Searched the web:
+ *    <query>", "Reading <file>", the "Editing a file" +N row) — never raw markup,
+ *  - a thinking run is an ActivityChain (its rail shows WHILE it streams), and a
+ *    new block APPENDS in place (append-stable segment keys) instead of
+ *    re-mounting the whole chain (no scroll-to-top),
  *  - the head carries a context ring filled from the RUN's real usage.
  *
  * NOTHING here is invented: a node that has produced no activity yet says so
- * honestly. Only reachable behind the experimental production-harness flag.
- * {@link WorkerPaneShell} + {@link CorpWorkerFeed} are shared with the demo
- * route's pane so the demo renders EXACTLY what a live run renders.
+ * honestly. {@link WorkerPaneShell} + {@link CorpWorkerFeed} are shared with the
+ * demo route's pane so the demo renders EXACTLY what a live run renders.
  */
 import { TaskBriefingBubble } from '@pi-desktop/canvas';
 import type { OrgNodeView, WorkerTranscriptView } from '@pi-desktop/coordination';
-import {
-  ActivityChain,
-  type ActivityStepData,
-  ContextGauge,
-  MessageRow,
-  ShimmerText,
-  Spinner,
-  ThinkingBlock,
-  Thread,
-} from '@pi-desktop/ui';
+import { ContextGauge, MessageRow, ShimmerText, Spinner, Thread } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
 import { fetchWorkerTranscript } from '../../state/corp-connect';
 import { useCorpStore } from '../../state/corp-store';
+import { AssistantGroup } from '../AssistantGroup';
+import { transcriptToAssistantView } from './corp-blocks';
 
-/** Live-transcript poll cadence: fast while text is streaming in, calm otherwise. */
+/** Live-transcript poll cadence: fast while text is streaming in, calm otherwise.
+ * The streaming interval is tight so a growing message tail reads continuous,
+ * not chunky — the feed re-renders the whole (larger) text each poll, which is
+ * the normal chat's incremental-parse behavior. */
 const POLL_MS = 900;
-const POLL_STREAMING_MS = 350;
-
-type TranscriptLine = WorkerTranscriptView['lines'][number];
-
-/** The last path segment (the filename shown on a collapsed step row). */
-function baseName(path: string): string {
-  return path.split(/[/\\]/).pop() || path;
-}
+const POLL_STREAMING_MS = 120;
 
 /** The engine's raw "thinking" action reads as a live "thinking…" to a person. */
 function actionText(action: string): string {
   return action === 'thinking' ? 'thinking…' : action;
-}
-
-/** The raw tool name → the step's ICON kind (the engine supplies the human label
- * + detail on the line; here we only pick the glyph). NEVER the file read for an
- * unknown tool — it falls to the neutral `tool` glyph. */
-function toolIconKind(tool: string): ActivityStepData['kind'] {
-  switch (tool) {
-    case 'read':
-    case 'cat':
-    case 'view':
-      return 'read';
-    case 'write':
-    case 'edit':
-      return 'edit';
-    case 'bash':
-    case 'shell':
-    case 'run':
-    case 'exec':
-      return 'bash';
-    case 'web_search':
-    case 'search':
-    case 'search_web':
-      return 'search';
-    case 'web_fetch':
-    case 'fetch':
-      return 'browser-navigate';
-    case 'ls':
-    case 'list':
-      return 'read';
-    default:
-      return 'tool';
-  }
-}
-
-/** One renderable row of the live feed. */
-type FeedRow =
-  | { kind: 'message'; text: string; streaming: boolean }
-  | { kind: 'thinking-live'; text: string }
-  | { kind: 'note'; text: string }
-  | { kind: 'step'; step: ActivityStepData };
-
-/** A humanized fallback verb for a tool line missing its engine label. */
-function fallbackToolLabel(rawTool: string): string {
-  const words = rawTool.replace(/[_-]+/g, ' ').trim();
-  return words.length > 0 ? `Used ${words}` : 'Running a step';
-}
-
-function lineToRow(line: TranscriptLine): FeedRow | null {
-  switch (line.kind) {
-    case 'file-touch': {
-      // Engine lines read "writing <path>" — surface the path as a file step.
-      const path = line.path ?? line.text.replace(/^writing\s+/i, '');
-      return {
-        kind: 'step',
-        step: { kind: 'edit', label: line.label ?? 'Writing', detail: path, filename: path },
-      };
-    }
-    case 'tool-call': {
-      // The engine names the tool (label) + its arg (detail); `text` is the raw
-      // tool name we map to a glyph. "Searched the web: <query>", "Reading <file>".
-      const kind = toolIconKind(line.text);
-      return {
-        kind: 'step',
-        step: {
-          kind,
-          label: line.label ?? fallbackToolLabel(line.text),
-          ...(line.detail !== undefined ? { detail: line.detail } : {}),
-          ...(line.path !== undefined ? { filename: baseName(line.path) } : {}),
-        },
-      };
-    }
-    case 'thinking':
-      // The LIVE reasoning stream renders as a force-open block whose content
-      // grows; a settled thought folds into the chain as a "Thought" step.
-      if (line.streaming === true) return { kind: 'thinking-live', text: line.text };
-      return {
-        kind: 'step',
-        step: {
-          kind: 'thinking',
-          label: 'Thought',
-          ...(line.text.length > 0 ? { thought: line.text } : {}),
-        },
-      };
-    case 'consult':
-      return { kind: 'step', step: { kind: 'tool', label: 'Consulted', detail: line.text } };
-    case 'note': {
-      // Legacy turn markers ("— continued (turn 2) —") are pure noise — dropped.
-      if (/^—\s*.+\s*—$/.test(line.text)) return null;
-      return { kind: 'note', text: line.text };
-    }
-    default:
-      return {
-        kind: 'message',
-        text: line.text,
-        streaming: line.streaming === true,
-      };
-  }
-}
-
-/** Group consecutive steps into one ActivityChain; other rows pass through. */
-type RenderGroup =
-  | { kind: 'message'; text: string; streaming: boolean; key: string }
-  | { kind: 'thinking-live'; text: string; key: string }
-  | { kind: 'note'; text: string; key: string }
-  | { kind: 'chain'; steps: ActivityStepData[]; key: string };
-
-function groupRows(rows: readonly FeedRow[]): RenderGroup[] {
-  const groups: RenderGroup[] = [];
-  for (const [i, row] of rows.entries()) {
-    if (row.kind === 'step') {
-      const last = groups[groups.length - 1];
-      if (last !== undefined && last.kind === 'chain') last.steps.push({ ...row.step });
-      else groups.push({ kind: 'chain', steps: [{ ...row.step }], key: `c${i}` });
-      continue;
-    }
-    groups.push({ ...row, key: `${row.kind[0]}${i}` });
-  }
-  return groups;
 }
 
 /** Honest empty-state line for a node with no captured activity yet. */
@@ -190,7 +62,8 @@ function emptyLine(state: OrgNodeView['state']): string {
 }
 
 // ---------------------------------------------------------------------------
-// The shared feed — renders a WorkerTranscriptView as a live stream
+// The shared feed — renders a WorkerTranscriptView through the normal chat's
+// AssistantGroup so a watched corp agent looks IDENTICAL to a Pi reply.
 // ---------------------------------------------------------------------------
 
 export interface CorpWorkerFeedProps {
@@ -200,22 +73,33 @@ export interface CorpWorkerFeedProps {
   loading: boolean;
   /** The node's chart state, for the honest empty line. */
   nodeState: OrgNodeView['state'];
+  /** Open a file step (read/edit) in the canvas — wired by the inline chat stream
+   * to the live corp-peek file view. Omitted where there's no canvas (demo/pane). */
+  onOpenFile?: (path: string) => void;
 }
 
-/** The live feed body: briefing card + streamed rows + the current-action tail. */
-export function CorpWorkerFeed({ transcript, working, loading, nodeState }: CorpWorkerFeedProps) {
+/** The live feed body: briefing card + the streamed AssistantGroup + tail. */
+export function CorpWorkerFeed({
+  transcript,
+  working,
+  loading,
+  nodeState,
+  onOpenFile,
+}: CorpWorkerFeedProps) {
   const hasLines = transcript !== null && transcript.lines.length > 0;
-  const rows =
-    transcript !== null
-      ? transcript.lines.map(lineToRow).filter((r): r is FeedRow => r !== null)
-      : [];
-  const groups = groupRows(rows);
-  const lastGroup = groups[groups.length - 1];
-  const lastIsChain = lastGroup !== undefined && lastGroup.kind === 'chain';
-  // A LIVE text/reasoning tail is on screen — the tail row would be redundant.
-  const streamingTail =
-    lastGroup !== undefined &&
-    ((lastGroup.kind === 'message' && lastGroup.streaming) || lastGroup.kind === 'thinking-live');
+  // The node's activity as ONE streamed assistant group (the normal chat's shape).
+  const view =
+    hasLines && transcript !== null ? transcriptToAssistantView(transcript, working) : null;
+
+  // Anti-void tail: a SETTLED answer paragraph while the node is still working
+  // shows no live indicator of its own (the chains/thoughts have collapsed), so
+  // name the node's current action beneath it — the only case AssistantGroup
+  // doesn't already surface a live tail (streaming text / a shimmering step).
+  const lastLine = transcript?.lines[transcript.lines.length - 1];
+  const settledTextTail =
+    lastLine !== undefined &&
+    (lastLine.kind === 'message' || lastLine.kind === 'note') &&
+    lastLine.streaming !== true;
   const currentAction = transcript?.currentAction;
 
   return (
@@ -223,50 +107,18 @@ export function CorpWorkerFeed({ transcript, working, loading, nodeState }: Corp
       {transcript !== null ? (
         <TaskBriefingBubble briefing={transcript.briefing} collapsible />
       ) : null}
-      {groups.map((group, i) => {
-        if (group.kind === 'message') {
-          return (
-            <MessageRow key={group.key} kind="assistant">
-              <StreamedText text={group.text} live={group.streaming} />
-            </MessageRow>
-          );
-        }
-        if (group.kind === 'thinking-live') {
-          // The model reasoning RIGHT NOW: force-open, content growing live.
-          return (
-            <ThinkingBlock key={group.key} status="running" active>
-              {group.text}
-            </ThinkingBlock>
-          );
-        }
-        if (group.kind === 'note') {
-          return (
-            <div key={group.key} className="pd-workerpane-note">
-              {group.text}
-            </div>
-          );
-        }
-        const isLast = lastIsChain && i === groups.length - 1;
-        const steps =
-          isLast && working
-            ? group.steps.map((step, s) =>
-                s === group.steps.length - 1 ? { ...step, status: 'running' as const } : step,
-              )
-            : group.steps;
-        return (
-          <ActivityChain
-            key={group.key}
-            steps={steps}
-            defaultExpanded={false}
-            active={isLast && working}
+      {view !== null ? (
+        <MessageRow kind="assistant">
+          <AssistantGroup
+            group={view.group}
+            resultByCallId={view.resultByCallId}
+            runningToolCalls={[]}
+            tps={undefined}
+            {...(onOpenFile !== undefined ? { onOpenFile } : {})}
           />
-        );
-      })}
-      {/* The current-action tail: what the node is doing THIS instant, with the
-          branded spinner — the anti-void row. Shown only when nothing above
-          already reads as live (no streaming text tail, no active chain whose
-          last step is shimmering) so it fills gaps instead of duplicating. */}
-      {working && hasLines && !streamingTail && !lastIsChain && currentAction !== undefined ? (
+        </MessageRow>
+      ) : null}
+      {working && hasLines && settledTextTail && currentAction !== undefined ? (
         <div className="pd-workerpane-action" data-testid="corp-current-action">
           <Spinner size={12} />
           <span className="pd-workerpane-action-text">{actionText(currentAction)}</span>
@@ -284,55 +136,6 @@ export function CorpWorkerFeed({ transcript, working, loading, nodeState }: Corp
       ) : null}
     </Thread>
   );
-}
-
-/**
- * Smoothly-revealed streaming assistant text. While `live`, the shown length
- * EASES toward the growing target every animation frame (catching up faster the
- * further behind, with a floor so a steady stream always makes visible
- * progress) — so the text types on continuously instead of jumping in poll-sized
- * chunks. Settled text renders whole, as does everything under reduced motion.
- */
-function StreamedText({ text, live }: { text: string; live: boolean }) {
-  const reduced =
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const animate = live && !reduced;
-
-  const [shown, setShown] = useState(animate ? 0 : text.length);
-  const shownRef = useRef(shown);
-  shownRef.current = shown;
-  const targetRef = useRef(text.length);
-  targetRef.current = text.length;
-
-  useEffect(() => {
-    if (!animate) {
-      setShown(targetRef.current);
-      return undefined;
-    }
-    let raf = 0;
-    let last = performance.now();
-    const tick = (now: number) => {
-      const dt = Math.min(0.05, (now - last) / 1000);
-      last = now;
-      const target = targetRef.current;
-      const cur = shownRef.current;
-      if (cur < target) {
-        const gap = target - cur;
-        // Exponential ease toward the target, floored to ~90 chars/s so a steady
-        // stream never stalls; ceil guarantees at least one glyph per frame.
-        const step = Math.max(gap * (1 - Math.exp(-14 * dt)), 90 * dt);
-        setShown(Math.min(target, cur + Math.max(1, Math.ceil(step))));
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [animate]);
-
-  const count = animate ? Math.min(shown, text.length) : text.length;
-  return <span className="whitespace-pre-wrap">{text.slice(0, count)}</span>;
 }
 
 // ---------------------------------------------------------------------------

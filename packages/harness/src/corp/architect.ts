@@ -27,6 +27,7 @@
  * assembly (integrate.ts).
  */
 
+import { deliveryConstraintLines, deriveDeliveryShape } from './delivery.js';
 import {
   type Architecture,
   type InterfaceHandle,
@@ -48,12 +49,21 @@ You produce exactly two things:
 - The canonical MODULE MAP: the directory layout of the project, carved into regions — ONE clear area per division, with NO overlaps. Each region is a DIRECTORY (e.g. "src/engine/", "src/assets/"), NOT a single file: a division owns that directory namespace and fills it with MANY files. Give every division one directory region (a couple only if it genuinely spans distinct areas); no two divisions own the same path. This is the single source of truth for where work goes, so a division never has to invent its own structure (and two divisions can never each build the same thing at different paths).
 - The key typed INTERFACES: the seams where one division's work is consumed by another. For each, name it, say which division exposes it, at which specific FILE path (a file inside that division's directory region), a one-line typed summary of what it provides, and which divisions consume it. Expose only the genuine cross-division seams — the handful of contracts that other divisions truly depend on — not every internal detail.
 
+Account for how it all RUNS. The product needs a single runnable ENTRY that wires every division's exposed interface together into the actual working product — for a web artifact the root index.html (plus whatever it mounts), otherwise a top-level src/main entry. Treat that entry as a dedicated FINAL INTEGRATION step that CONSUMES the interfaces: do not fold it into a feature division's region, and do not let a feature division claim the root entry. The divisions build the modules; the entry makes them a product that opens and runs.
+
 Keep it small and concrete. A tight map of real regions and a few real interfaces beats an exhaustive one. Use the exact division names you are given.`;
 
 /**
  * Build the architect's USER turn: the vision + the divisions (name + purpose)
  * and the exact {@link Architecture} JSON shape to emit. Pairs with
  * {@link ARCHITECT_PROMPT}. Pure string composition.
+ *
+ * DELIVERY CONSTRAINT (spec §5/§8): when the vision demands a single openable
+ * artifact with no build step (a browser opens it directly), the constraint is
+ * derived from the vision text (delivery.ts) and spliced in, so the architect
+ * steers toward a SELF-CONTAINED openable entry instead of a bundler-dependent
+ * module graph that can never open directly. A neutral vision splices nothing, so
+ * the output is unchanged for it.
  */
 export function buildArchitectPrompt(
   vision: string,
@@ -61,10 +71,12 @@ export function buildArchitectPrompt(
 ): string {
   const divisionLines = divisions.map((d) => `- ${d.name}: ${d.purpose}`).join('\n');
   const names = divisions.map((d) => d.name).join(', ');
+  const deliveryLines = deliveryConstraintLines(deriveDeliveryShape(vision));
   return [
     'Define the shared architecture this project is built against.',
     '',
     `Overall vision:\n${vision.trim()}`,
+    ...(deliveryLines.length > 0 ? ['', ...deliveryLines] : []),
     '',
     'Divisions (use these exact names for every "owner", "exposedBy", and "consumedBy" value):',
     divisionLines,

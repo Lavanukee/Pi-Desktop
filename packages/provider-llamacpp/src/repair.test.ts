@@ -304,6 +304,29 @@ describe('rung 0 — text-content tool-call reconstructor', () => {
     expect(r).toMatchObject({ toolName: 'read', arguments: { path: '/z' }, shape: 'function-tag' });
   });
 
+  it('reconstructs a <function=NAME><parameter=…> call (Hermes/Qwen XML args)', () => {
+    // The corp's exact llama-server jinja-grammar failure: the call lands in content
+    // as parameter tags, NOT inline JSON — the value must be captured, not dropped.
+    const content =
+      '<tool_call>\n<function=web_fetch>\n<parameter=url>\nhttps://x/\n</parameter>\n</function>\n</tool_call>';
+    const r = reconstructToolCallFromContent(content, ['web_fetch', 'read']);
+    expect(r).toMatchObject({
+      toolName: 'web_fetch',
+      arguments: { url: 'https://x/' },
+      shape: 'function-tag',
+    });
+  });
+
+  it('keeps braces intact for a <parameter=content> code body (no JSON mis-parse)', () => {
+    const body = 'export function f() { return { a: 1, b: { c: 2 } }; }';
+    const content = `<function=write>\n<parameter=path>\nsrc/foo.ts\n</parameter>\n<parameter=content>\n${body}\n</parameter>\n</function>`;
+    const r = reconstructToolCallFromContent(content, ['write', 'read']);
+    expect(r).toMatchObject({
+      toolName: 'write',
+      arguments: { path: 'src/foo.ts', content: body },
+    });
+  });
+
   it('reconstructs a <NAME>{…}</NAME> tag for a registered tool', () => {
     const r = reconstructToolCallFromContent('<read>{"path":"/n"}</read>', registered);
     expect(r).toMatchObject({ toolName: 'read', arguments: { path: '/n' }, shape: 'name-tag' });

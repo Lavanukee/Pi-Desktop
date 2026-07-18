@@ -18,6 +18,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   statSync,
 } from 'node:fs';
@@ -32,9 +33,10 @@ const electronBinary = require('electron');
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 const PROMPT =
+  process.env.OBS_PROMPT ??
   'Build a production-ready 3D browser game using Three.js and TypeScript. ' +
-  'It should have a start menu, multiple levels, a scoring system, and sound effects.';
-const CAP_MS = Number(process.env.OBS_CAP_MIN ?? 100) * 60 * 1000; // safety net above the 90-min budget
+    'It should have a start menu, multiple levels, a scoring system, and sound effects.';
+const CAP_MS = Number(process.env.OBS_CAP_MIN ?? 100) * 60 * 1000; // launcher safety net (not the run budget)
 const POLL_MS = Number(process.env.OBS_POLL_SEC ?? 30) * 1000;
 
 const OUT = process.env.OBS_OUT ?? path.join(homedir(), 'Desktop', 'pi-3d-observed-run');
@@ -94,6 +96,41 @@ function fileTree(root, base = root, acc = []) {
   }
   return acc;
 }
+// The DURABLE terminal signal, independent of the renderer: main writes
+// outcome-<taskId>.json to the workspace ROOT the moment the run terminates
+// (the CEO verdict + timing). This is the source of truth for completion — the
+// DOM polls below are best-effort narration that survive the window navigating.
+function newestOutcome(sinceMs) {
+  if (!existsSync(corpRoot)) return null;
+  const files = readdirSync(corpRoot)
+    .filter((f) => f.startsWith('outcome-') && f.endsWith('.json'))
+    .map((f) => path.join(corpRoot, f))
+    .filter((p) => {
+      try {
+        return statSync(p).mtimeMs >= sinceMs;
+      } catch {
+        return false;
+      }
+    })
+    .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+  return files[0] ?? null;
+}
+function readOutcome(file) {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+function wsFileCount() {
+  const ws = newestWorkspace();
+  if (!ws) return 0;
+  try {
+    return fileTree(ws).length;
+  } catch {
+    return 0;
+  }
+}
 
 // ── launch (HEADED) ──────────────────────────────────────────────────────────
 const userDataDir = mkdtempSync(path.join(tmpdir(), 'pi-observed-udd-'));
@@ -108,12 +145,16 @@ proc.stdout?.on('data', (d) => appendFileSync(MAIN_LOG, d));
 proc.stderr?.on('data', (d) => appendFileSync(MAIN_LOG, d));
 
 function readRoom() {
-  const room = document.querySelector('[data-testid="situation-room"]');
+  // The corp run streams inline in the chat (the model's live output) and, once it
+  // promotes, the situation room opens in the canvas with a clickable subagent list.
+  const starting = document.querySelector('[data-testid="corp-chat-starting"]');
+  const stream = document.querySelector('[data-testid="corp-chat-stream"]');
+  const subagents = document.querySelectorAll('[data-testid="subagent-row"]');
   return {
-    status: room?.getAttribute('data-status') ?? null,
-    phase: document.querySelector('.pd-sitroom-phase')?.textContent?.trim() ?? null,
-    contracts: document.querySelector('.pd-sitroom-contracts')?.textContent?.trim() ?? null,
-    nodes: document.querySelectorAll('.pd-sitroom-node').length,
+    status: stream !== null ? 'streaming' : starting !== null ? 'starting' : null,
+    phase: null,
+    contracts: null,
+    nodes: subagents.length, // subagents listed in the situation room (>0 ⇒ promoted)
   };
 }
 
@@ -133,31 +174,65 @@ try {
   logline({ ev: 'prompt-typed' });
   await input.press('Enter');
 
-  // The situation room takes over the canvas. If Enter didn't submit, click Send.
-  try {
-    await page.waitForSelector('[data-testid="situation-room"]', { timeout: 20000 });
-  } catch {
-    logline({ ev: 'enter-no-submit', note: 'falling back to composer-send click' });
-    const send = page.locator('[data-testid="composer-send"]');
-    if ((await send.count()) > 0) await send.click();
-    await page.waitForSelector('[data-testid="situation-room"]', { timeout: 30000 });
+  // The corp turn renders inline once the FIRST event is folded — that follows the
+  // server boot + the run's first emit, so it can take 30-90s (not the instant the
+  // old canvas takeover appeared). A fresh corp workspace dir is an equally good
+  // "it started" signal that shows up even before the first event. Wait for EITHER,
+  // generously, and only fall back to a send-click if NEITHER appears (so we never
+  // double-submit an already-running task).
+  let started = false;
+  const startDeadline = Date.now() + 150000;
+  while (Date.now() < startDeadline) {
+    const hasTurn = await page
+      .locator('[data-testid="corp-chat-stream"], [data-testid="corp-chat-starting"]')
+      .count()
+      .then((n) => n > 0)
+      .catch(() => false);
+    const ws = newestWorkspace();
+    const freshWs = ws !== null && (() => { try { return statSync(ws).mtimeMs >= t0; } catch { return false; } })();
+    if (hasTurn || freshWs) { started = true; break; }
+    await page.waitForTimeout(2000);
   }
-  logline({ ev: 'situation-room-open', ...(await page.evaluate(readRoom)) });
+  if (!started) {
+    logline({ ev: 'no-start-signal', note: 'Enter may not have submitted — clicking composer-send once' });
+    const send = page.locator('[data-testid="composer-send"]');
+    if ((await send.count()) > 0) await send.click().catch(() => {});
+    // Give the fallback a moment to take.
+    await page.waitForTimeout(5000);
+  }
+  logline({ ev: 'corp-started', started, ...(await page.evaluate(readRoom).catch(() => ({}))) });
 
   // ── monitor to terminal or cap ─────────────────────────────────────────────
+  // Completion is decided by the OUTCOME SIDECAR (durable, renderer-independent),
+  // not the DOM — so navigating the window away can no longer strand the monitor
+  // at the cap. The DOM read is best-effort narration; the workspace file count is
+  // real progress that keeps ticking even when the situation room is off-screen.
   let i = 0;
   let lastPhase = null;
+  let outcomeFile = null;
   while (Date.now() - t0 < CAP_MS) {
     await page.waitForTimeout(POLL_MS);
     i += 1;
-    const snap = await page.evaluate(readRoom);
+    const snap = await page.evaluate(readRoom).catch(() => ({ status: null, phase: null }));
+    const files = wsFileCount();
     const elapsedMin = Number(((Date.now() - t0) / 60000).toFixed(1));
-    logline({ ev: 'poll', i, elapsedMin, ...snap });
-    await page.screenshot({ path: path.join(OUT, `poll-${String(i).padStart(3, '0')}.png`) });
+    logline({ ev: 'poll', i, elapsedMin, files, ...snap });
+    await page
+      .screenshot({ path: path.join(OUT, `poll-${String(i).padStart(3, '0')}.png`) })
+      .catch(() => {});
     if (snap.phase && snap.phase !== lastPhase) {
       lastPhase = snap.phase;
       logline({ ev: 'phase-change', elapsedMin, phase: snap.phase, status: snap.status });
     }
+    // Durable terminal signal.
+    outcomeFile = newestOutcome(t0);
+    if (outcomeFile) {
+      const oc = readOutcome(outcomeFile);
+      terminal = oc?.outcome === 'failed' ? 'error' : 'done';
+      logline({ ev: 'outcome-sidecar', elapsedMin, ...(oc ?? {}) });
+      break;
+    }
+    // DOM fallback (only if the room is still mounted).
     if (snap.status === 'done' || snap.status === 'error' || snap.status === 'aborted') {
       terminal = snap.status;
       break;
@@ -168,9 +243,17 @@ try {
   }
 
   const finalElapsedMin = Number(((Date.now() - t0) / 60000).toFixed(1));
-  await page.screenshot({ path: path.join(OUT, 'final.png') });
-  const final = await page.evaluate(readRoom);
-  logline({ ev: terminal ? 'TERMINAL' : 'CAP', terminal, finalElapsedMin, ...final });
+  await page.screenshot({ path: path.join(OUT, 'final.png') }).catch(() => {});
+  const final = await page.evaluate(readRoom).catch(() => ({}));
+  const outcome = outcomeFile ? readOutcome(outcomeFile) : null;
+  logline({
+    ev: terminal ? 'TERMINAL' : 'CAP',
+    terminal,
+    finalElapsedMin,
+    verdict: outcome?.verdict ?? null,
+    runElapsedMin: outcome?.elapsedMin ?? null,
+    ...final,
+  });
 
   // Capture the produced game from the corp workspace.
   const ws = newestWorkspace();
@@ -188,8 +271,12 @@ try {
     logline({ ev: 'workspace', ws: null, note: 'no corp workspace found' });
   }
 
-  // Brief grace so the concluded room is visible, then close.
-  await page.waitForTimeout(15000);
+  // Grace so the concluded room stays visible for the observer, then close. The
+  // evidence (verdict sidecar + copied game) is already captured, so this is purely
+  // watch-time; raise OBS_DONE_GRACE_MIN to leave it up longer.
+  const graceMs = Number(process.env.OBS_DONE_GRACE_MIN ?? 12) * 60 * 1000;
+  logline({ ev: 'grace', graceMin: graceMs / 60000, note: 'window stays open; evidence captured' });
+  await page.waitForTimeout(graceMs);
 } catch (err) {
   logline({ ev: 'ERROR', error: err?.message ?? String(err) });
   try {

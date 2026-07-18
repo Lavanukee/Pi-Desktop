@@ -312,9 +312,16 @@ describe('followTarget (the never-blank auto-follow)', () => {
     expect(followTarget(c, 'e2')?.id).toBe('e2');
   });
 
-  it('a node higher in the tree going live pulls the view up', () => {
+  it('stays on the producing builder while the lead idly coordinates (always streaming)', () => {
+    // The lead staying "working" (coordinating) must NOT pull the pane off the
+    // engineer that is actually producing output — otherwise the chat goes static.
     const c = chart([node('root', 'ceo', 'working'), node('e1', 'engineer', 'working')]);
-    expect(followTarget(c, 'e1')?.id).toBe('root');
+    expect(followTarget(c, 'e1')?.id).toBe('e1');
+  });
+
+  it('descends into the builder even from the lead (follows the deepest producer)', () => {
+    const c = chart([node('root', 'ceo', 'working'), node('e1', 'engineer', 'working')]);
+    expect(followTarget(c, 'root')?.id).toBe('e1');
   });
 
   it('keeps the previous node when nothing is running (never blank)', () => {

@@ -1,0 +1,17 @@
+/* The corp run's inline live feed + the pre-first-agent "getting started" bridge.
+   Uses existing --pd-* tokens so it tracks light/dark like the rest of the chat. */
+
+.pd-corpchat-stream {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pd-corpchat-starting {
+  display: flex;
+  align-items: center;
+  gap: var(--pd-space-2, 0.5rem);
+  padding: var(--pd-space-2, 0.5rem) 0;
+  color: var(--pd-text-muted, #8a8f98);
+  font-size: var(--pd-text-body, 0.9375rem);
+}

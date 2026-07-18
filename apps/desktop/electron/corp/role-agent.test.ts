@@ -11,6 +11,7 @@ import {
   type RoleAgentToolCall,
   SAMPLING_MODES,
   type SamplingMode,
+  settleActivitiesOnEnd,
   type StripMessage,
   stripPriorThinking,
 } from './role-agent';
@@ -365,6 +366,24 @@ describe('deriveTerminatedReason — the backstop precedence', () => {
     expect(deriveTerminatedReason({ timedOut: false, stepCapHit: false, promptError: true })).toBe(
       'error',
     );
+  });
+});
+
+describe('settleActivitiesOnEnd — close the frozen live line on abort/error', () => {
+  it('emits a turn-end to settle the open line when the prompt aborted/errored', () => {
+    expect(settleActivitiesOnEnd({ promptError: true, timedOut: false })).toEqual([
+      { kind: 'turn-end' },
+    ]);
+  });
+
+  it('emits a turn-end when the per-call watchdog fired (network timeout)', () => {
+    expect(settleActivitiesOnEnd({ promptError: false, timedOut: true })).toEqual([
+      { kind: 'turn-end' },
+    ]);
+  });
+
+  it('emits nothing on a CLEAN stop — the real end events already settled the line', () => {
+    expect(settleActivitiesOnEnd({ promptError: false, timedOut: false })).toEqual([]);
   });
 });
 

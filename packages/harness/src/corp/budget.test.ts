@@ -4,30 +4,42 @@ import {
   budgetExceededReason,
   chargeTurn,
   DEFAULT_MAX_WALL_CLOCK_MS,
+  DEFAULT_STALL_WINDOW_MS,
   defaultMaxTurns,
   fitBudgetToPlan,
+  markProgress,
   MAX_TURNS_FLOOR,
   newRunBudget,
   TURNS_PER_UNIT,
 } from './budget.js';
 
 describe('newRunBudget', () => {
-  it('applies sensible defaults (floor turns, 90-minute wall clock)', () => {
+  it('applies sensible defaults (floor turns, NO absolute cap, watchdog on)', () => {
     const clock = () => 1000;
     const budget = newRunBudget({ now: clock });
     expect(budget.maxTurns).toBe(MAX_TURNS_FLOOR);
-    expect(budget.maxWallClockMs).toBe(DEFAULT_MAX_WALL_CLOCK_MS);
+    // The absolute wall-clock cap is OFF by default — no arbitrary truncation.
+    expect(budget.maxWallClockMs).toBe(Number.POSITIVE_INFINITY);
+    expect(budget.stallWindowMs).toBe(DEFAULT_STALL_WINDOW_MS);
     expect(budget.startedAt).toBe(1000);
+    expect(budget.lastProgressAt).toBe(1000);
     expect(budget.turnsUsed).toBe(0);
   });
 
-  it('honors explicit caps and rejects non-finite/non-positive ones', () => {
+  it('honors explicit caps; disables the absolute cap on garbage/omission', () => {
     expect(newRunBudget({ maxTurns: 5, maxWallClockMs: 10 }).maxTurns).toBe(5);
     expect(newRunBudget({ maxTurns: 5, maxWallClockMs: 10 }).maxWallClockMs).toBe(10);
-    // Garbage falls back to the defaults, never a broken (0 / NaN) cap.
+    // Garbage turns fall back to the floor, never a broken (0 / NaN) cap.
     expect(newRunBudget({ maxTurns: 0 }).maxTurns).toBe(MAX_TURNS_FLOOR);
     expect(newRunBudget({ maxTurns: Number.NaN }).maxTurns).toBe(MAX_TURNS_FLOOR);
-    expect(newRunBudget({ maxWallClockMs: -1 }).maxWallClockMs).toBe(DEFAULT_MAX_WALL_CLOCK_MS);
+    // The absolute cap is enabled ONLY by an explicit positive value.
+    expect(newRunBudget({}).maxWallClockMs).toBe(Number.POSITIVE_INFINITY);
+    expect(newRunBudget({ maxWallClockMs: -1 }).maxWallClockMs).toBe(Number.POSITIVE_INFINITY);
+    expect(newRunBudget({ maxWallClockMs: DEFAULT_MAX_WALL_CLOCK_MS }).maxWallClockMs).toBe(
+      DEFAULT_MAX_WALL_CLOCK_MS,
+    );
+    // The watchdog can be turned off with a non-positive window.
+    expect(newRunBudget({ stallWindowMs: 0 }).stallWindowMs).toBe(Number.POSITIVE_INFINITY);
   });
 });
 
@@ -78,8 +90,8 @@ describe('chargeTurn / budgetExceeded (turn cap)', () => {
   });
 });
 
-describe('budgetExceeded (wall-clock cap, injected clock)', () => {
-  it('refuses once wall-clock time is spent, even with turns remaining', () => {
+describe('budgetExceeded (opt-in absolute wall-clock cap, injected clock)', () => {
+  it('refuses once an explicit wall-clock cap is spent, even with turns remaining', () => {
     let t = 0;
     const budget = newRunBudget({ maxTurns: 1000, maxWallClockMs: 100, now: () => t });
     expect(chargeTurn(budget)).toBe(true);
@@ -94,6 +106,51 @@ describe('budgetExceeded (wall-clock cap, injected clock)', () => {
   it('reports the turn cap first when both are exhausted', () => {
     let t = 0;
     const budget = newRunBudget({ maxTurns: 1, maxWallClockMs: 100, now: () => t });
+    chargeTurn(budget);
+    t = 1000;
+    expect(budgetExceededReason(budget)).toBe('turns');
+  });
+});
+
+describe('no-progress watchdog (markProgress + injected clock)', () => {
+  it('terminates a stalled run after the window, with turns and wall-clock to spare', () => {
+    let t = 0;
+    const budget = newRunBudget({ maxTurns: 1000, stallWindowMs: 100, now: () => t });
+    expect(chargeTurn(budget)).toBe(true);
+    t = 99;
+    expect(budgetExceeded(budget)).toBe(false); // just short of the window
+    t = 100; // no progress for the whole window
+    expect(budgetExceededReason(budget)).toBe('stalled');
+    expect(chargeTurn(budget)).toBe(false);
+    expect(budget.turnsUsed).toBeLessThan(budget.maxTurns); // not the turn cap
+  });
+
+  it('markProgress resets the window — a run that keeps advancing never stalls', () => {
+    let t = 0;
+    const budget = newRunBudget({ maxTurns: 1000, stallWindowMs: 100, now: () => t });
+    // Advance for well past one window, marking progress every 50ms.
+    for (let step = 0; step < 20; step += 1) {
+      t += 50;
+      markProgress(budget);
+      expect(budgetExceeded(budget)).toBe(false);
+    }
+    expect(budget.now() - budget.startedAt).toBeGreaterThan(100); // ran far past one window
+    // Then stop advancing → it stalls exactly one window later.
+    t += 100;
+    expect(budgetExceededReason(budget)).toBe('stalled');
+  });
+
+  it('an explicit non-positive window disables the watchdog (turn cap only)', () => {
+    let t = 0;
+    const budget = newRunBudget({ maxTurns: 1000, stallWindowMs: 0, now: () => t });
+    expect(budget.stallWindowMs).toBe(Number.POSITIVE_INFINITY);
+    t = 10 ** 12; // an eternity with no progress
+    expect(budgetExceeded(budget)).toBe(false); // never stalls
+  });
+
+  it('reports the turn cap first when turns AND stall both trip', () => {
+    let t = 0;
+    const budget = newRunBudget({ maxTurns: 1, stallWindowMs: 100, now: () => t });
     chargeTurn(budget);
     t = 1000;
     expect(budgetExceededReason(budget)).toBe('turns');

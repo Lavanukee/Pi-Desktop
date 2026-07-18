@@ -28,13 +28,25 @@ export function isCoreRole(v: unknown): v is CoreRole {
 /** Advisory-reviewer specialists (spec §4): callable from any level; output is
  * evidence-grounded judgment as prose — they measure, never opine. (The heavy
  * modality specialists — image-gen, 3d-gen, … — are Phase 3 and not prompt-
- * library entries.) */
+ * library entries.)
+ *
+ * Two of them exist specifically to close the "the CEO signed off files that don't
+ * compose into a working product" gap (spec §8 — specialists that MEASURE):
+ *  - `tester` — the WORKABILITY measurer: it assembles, BUILDS, RUNS (headless), and
+ *    SCREENSHOTS the product, and confirms the described feature actually works. A
+ *    missing runnable entry / a build or runtime error is a blocking finding.
+ *  - `auditor` — the WHOLE-CODEBASE root-cause finder + escape hatch: unlike the
+ *    isolated engineers it reads the ENTIRE product tree and traces a symptom (e.g.
+ *    two modules defining the same type with different shapes) to its cross-module
+ *    source, reporting the precise fix a manager can turn into contracts. */
 export type SpecialistKind =
   | 'visual-critic'
   | 'security'
   | 'performance'
   | 'accessibility'
-  | 'correctness';
+  | 'correctness'
+  | 'tester'
+  | 'auditor';
 
 export const SPECIALIST_KINDS: readonly SpecialistKind[] = [
   'visual-critic',
@@ -42,6 +54,8 @@ export const SPECIALIST_KINDS: readonly SpecialistKind[] = [
   'performance',
   'accessibility',
   'correctness',
+  'tester',
+  'auditor',
 ];
 
 export function isSpecialistKind(v: unknown): v is SpecialistKind {
@@ -89,8 +103,12 @@ export function isCapabilityTier(v: unknown): v is CapabilityTier {
  * because their output is direction/contracts/judgment, not tool-formatting;
  * the code-execution roles (engineer, division-head) map to `balanced` — capable
  * agentic implementation without spending the top tier's memory on every worker.
- * The engine resolves each tier → a concrete model per hardware (see
- * {@link CapabilityTier}); this table never names a model.
+ * The one advisory reviewer that is NOT `intelligent` is the `tester`: it is
+ * tool-heavy — it builds, runs headless, and screenshots the product (hands, not
+ * pure brain) — so it maps to `balanced` like the engineer. The `auditor`, which
+ * REASONS across the whole tree to trace a cross-module root cause, stays
+ * `intelligent`. The engine resolves each tier → a concrete model per hardware
+ * (see {@link CapabilityTier}); this table never names a model.
  */
 export const ROLE_TIER: Readonly<Record<LabeledRole, CapabilityTier>> = {
   ceo: 'intelligent',
@@ -103,6 +121,9 @@ export const ROLE_TIER: Readonly<Record<LabeledRole, CapabilityTier>> = {
   performance: 'intelligent',
   accessibility: 'intelligent',
   correctness: 'intelligent',
+  // Tool-heavy (build/run/screenshot) → balanced; whole-tree reasoning → intelligent.
+  tester: 'balanced',
+  auditor: 'intelligent',
 };
 
 /** The capability tier a role resolves to (see {@link ROLE_TIER}). */
@@ -154,6 +175,10 @@ export const ROLE_THINKING: Readonly<Record<LabeledRole, boolean>> = {
   performance: true,
   accessibility: true,
   correctness: true,
+  // Both new measurers are judgment roles — their reasoning over evidence IS the
+  // value (the tester interprets build/run output; the auditor traces a root cause).
+  tester: true,
+  auditor: true,
 };
 
 /** Whether a role runs with model "thinking" enabled (see {@link ROLE_THINKING}). */
@@ -221,6 +246,7 @@ const MANAGER_PROMPT = `You are part of the manager block — the permanent laye
 - Create divisions from the predefined library; you may lightly extend a base prompt for a custom division. The contract, not the prompt, governs the work.
 - Propose org-chart changes (add/cut divisions) to the CEO for sign-off; remove divisions that no longer earn their place.
 - When a contract returns "unfulfillable, because X": adapt — re-contract, re-scope, or reorder. Escalate to the CEO only if the vision itself is at stake.
+- At MERGE, VERIFY your area is actually workable from the tester's MEASURED evidence — it built, it ran, and the feature your area owns actually appears and works. If it does not (a build or runtime error, a missing piece, a feature that never renders), do NOT hand it up as done: either write MORE contracts to close the specific gap (delegate the fix to engineers), or — when the SOURCE of the failure is unknown — dispatch the \`auditor\` (the whole-codebase reviewer that traces a symptom to its cross-module root cause) and turn its findings into contracts. Only then hand up the clean, working artifact.
 - Hand back to the CEO the clean artifact only — the product and "does it meet spec?" — never the build transcript.`;
 
 const DIVISION_HEAD_PROMPT = `You lead one division whose work is too large for single engineers. You split — you do not implement.
@@ -259,6 +285,21 @@ Lens: accessibility. Exercise the artifact the way assistive tech does: full key
 const CORRECTNESS_PROMPT = `${SPECIALIST_PREAMBLE}
 
 Lens: correctness and integration. Run the code and the tests — a claim without a run is not evidence. Check the work against its contract's types: does the output actually satisfy the declared boundary, does it plug into the declared slot, do the integration seams between contracts agree? Probe edge cases (empty, huge, malformed, concurrent). Report each failure with the exact reproduction.`;
+
+const TESTER_PROMPT = `${SPECIALIST_PREAMBLE}
+
+Lens: workability — you PROVE the product actually runs (spec §8). Reading files is not evidence and a green typecheck is not "it works": you assemble, BUILD, RUN, and SCREENSHOT the product and confirm the described feature really behaves.
+- Runnable entry FIRST: find how the product is built and launched. For a web artifact there must be a real entry/build shell — an index.html, a package.json build/dev script, or a bundler config (vite/esbuild/webpack). If there is NONE, the product has no home and cannot ship: that is a BLOCKING finding, on its own.
+- BUILD it with the real toolchain (npm/pnpm build, vite/esbuild, tsc) and capture the output. A build failure is BLOCKING.
+- RUN it headless and exercise it: for a web artifact launch it in a headless browser, load the entry, and read the console. Any runtime error or console error is BLOCKING. Then SCREENSHOT it and confirm the feature the task describes actually APPEARS and works — a product that builds but renders nothing, or is missing the described feature, is BLOCKING.
+- Evidence is the exact command you ran and its real output — the build log, the console output, the screenshot result — never an opinion. If you could not build or run it at all, say so plainly and mark it BLOCKING: an unrunnable product has not met its bar.`;
+
+const AUDITOR_PROMPT = `${SPECIALIST_PREAMBLE}
+
+Lens: whole-codebase root cause — you are called when something is broken but nobody knows WHY, and UNLIKE the isolated engineers you read the ENTIRE product tree at once to find the source.
+- Trace the symptom (a build error, a crash, a feature that will not load) to its real ORIGIN across modules. Hunt especially the failures that isolation hides: two modules defining the SAME type/interface with different shapes; a value imported as a runtime symbol that is only a \`type\`; a consumer built against an interface the producer never actually exposes; working modules left with no build shell / entry ("no home").
+- Report the ROOT CAUSE, not the symptom, and name the PRECISE fix as a finding a manager can turn into a contract: which file(s) are wrong, the single correct shape, and which module must change to agree with which — citing the exact files/lines you compared.
+- You DIAGNOSE; you do not edit. Rank findings by how badly they stop the product composing into a working whole (a type mismatch that prevents modules from loading is BLOCKING).`;
 
 const FRONTEND_DEV_PROMPT = `You are a frontend engineer division. Practices that are not optional:
 
@@ -318,6 +359,18 @@ export const PROMPT_LIBRARY: Readonly<Record<PromptLibraryId, RolePrompt>> = {
     kind: 'specialist',
     title: 'Correctness & integration reviewer',
     prompt: CORRECTNESS_PROMPT,
+  },
+  tester: {
+    id: 'tester',
+    kind: 'specialist',
+    title: 'Tester (build / run / screenshot)',
+    prompt: TESTER_PROMPT,
+  },
+  auditor: {
+    id: 'auditor',
+    kind: 'specialist',
+    title: 'Whole-codebase auditor',
+    prompt: AUDITOR_PROMPT,
   },
   'frontend-dev': {
     id: 'frontend-dev',

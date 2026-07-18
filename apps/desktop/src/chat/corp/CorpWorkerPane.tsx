@@ -8,9 +8,10 @@
  * transcript (`corp:worker-transcript`, backed by `getWorkerTranscript`) is
  * polled while the agent is mid-turn, and
  *
- *  - the growing `streaming` tail renders as live text with a typing caret
- *    (assistant text) or a force-open reasoning block ("Thinking…") whose
- *    content grows as the model reasons,
+ *  - the growing `streaming` tail renders as live assistant text that types on
+ *    SMOOTHLY (the shown length eases toward the live target each frame, so it
+ *    reads continuously, not in poll-sized jumps), or a force-open reasoning
+ *    block ("Thinking…") whose content grows as the model reasons,
  *  - tool steps render NAMED ("Searched the web: <query>", "Reading <file>",
  *    "Ran: <cmd>") through the app's ActivityChain — never "Used a tool",
  *  - between streams the tail shows the node's real `currentAction` with the
@@ -226,10 +227,7 @@ export function CorpWorkerFeed({ transcript, working, loading, nodeState }: Corp
         if (group.kind === 'message') {
           return (
             <MessageRow key={group.key} kind="assistant">
-              <span className="whitespace-pre-wrap">
-                {group.text}
-                {group.streaming ? <span className="pd-stream-caret" aria-hidden /> : null}
-              </span>
+              <StreamedText text={group.text} live={group.streaming} />
             </MessageRow>
           );
         }
@@ -286,6 +284,55 @@ export function CorpWorkerFeed({ transcript, working, loading, nodeState }: Corp
       ) : null}
     </Thread>
   );
+}
+
+/**
+ * Smoothly-revealed streaming assistant text. While `live`, the shown length
+ * EASES toward the growing target every animation frame (catching up faster the
+ * further behind, with a floor so a steady stream always makes visible
+ * progress) — so the text types on continuously instead of jumping in poll-sized
+ * chunks. Settled text renders whole, as does everything under reduced motion.
+ */
+function StreamedText({ text, live }: { text: string; live: boolean }) {
+  const reduced =
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const animate = live && !reduced;
+
+  const [shown, setShown] = useState(animate ? 0 : text.length);
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+  const targetRef = useRef(text.length);
+  targetRef.current = text.length;
+
+  useEffect(() => {
+    if (!animate) {
+      setShown(targetRef.current);
+      return undefined;
+    }
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const target = targetRef.current;
+      const cur = shownRef.current;
+      if (cur < target) {
+        const gap = target - cur;
+        // Exponential ease toward the target, floored to ~90 chars/s so a steady
+        // stream never stalls; ceil guarantees at least one glyph per frame.
+        const step = Math.max(gap * (1 - Math.exp(-14 * dt)), 90 * dt);
+        setShown(Math.min(target, cur + Math.max(1, Math.ceil(step))));
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [animate]);
+
+  const count = animate ? Math.min(shown, text.length) : text.length;
+  return <span className="whitespace-pre-wrap">{text.slice(0, count)}</span>;
 }
 
 // ---------------------------------------------------------------------------

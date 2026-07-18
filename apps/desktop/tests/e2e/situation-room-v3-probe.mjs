@@ -1,7 +1,7 @@
 /**
  * Situation-room v3 probe — the owner's watch-feedback polish:
- *   1. the click-through actually STREAMS: live assistant text with a typing
- *      caret, a real "Thinking…" block growing, NAMED tool rows — and never
+ *   1. the click-through actually STREAMS: live assistant text that types on
+ *      smoothly, a real "Thinking…" block growing, NAMED tool rows — and never
  *      "Used a tool" / "turn N" / a bare "working…" void;
  *   2. the top card is a plain user-message-style ask (no "TASK BRIEFING"
  *      label) with the deliverables embedded as Plan-style checklist rows;
@@ -97,8 +97,13 @@ try {
   const briefText = await page.locator('[data-testid="task-briefing"]').textContent();
   assert(!/task briefing/i.test(briefText ?? ''), 'the card must not say "TASK BRIEFING"');
 
-  // (1a) The live text tail: a streaming message with the typing caret.
-  await page.waitForSelector('[data-testid="worker-pane"] .pd-stream-caret', { timeout: 6000 });
+  // (1a) The live text tail: a streaming message that types on SMOOTHLY.
+  await page.waitForSelector('[data-testid="worker-pane"] .pd-msg--assistant', { timeout: 6000 });
+  // A caret / pole-sign cursor must never render on the streaming tail.
+  assert(
+    (await page.locator('[data-testid="worker-pane"] .pd-stream-caret').count()) === 0,
+    'the streaming tail must have no caret cursor',
+  );
   const streamedEarly = await page
     .locator('[data-testid="worker-pane"] .pd-msg--assistant')
     .last()

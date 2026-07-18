@@ -171,7 +171,7 @@ async function main() {
   const mod = await import(pathToFileURL(ROLE_AGENT_TS).href);
   const { createCorpModelProvider, runRoleAgent, SAMPLING_MODES } = mod;
 
-  const handle = createCorpModelProvider({ baseUrl: BASE_URL, model: MODEL_ID });
+  const handle = await createCorpModelProvider({ baseUrl: BASE_URL, model: MODEL_ID });
 
   log('running engineer role-agent…');
   const t0 = Date.now();

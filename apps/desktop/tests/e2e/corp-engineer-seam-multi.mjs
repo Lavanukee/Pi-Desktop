@@ -187,7 +187,7 @@ async function main() {
   } = corp;
   const ra = await import(pathToFileURL(ROLE_AGENT_TS).href);
   const { createCorpModelProvider, runRoleAgent } = ra;
-  const handle = createCorpModelProvider({ baseUrl: BASE_URL, model: MODEL_ID });
+  const handle = await createCorpModelProvider({ baseUrl: BASE_URL, model: MODEL_ID });
 
   const base = getPromptById('engineer') ?? getRolePrompt('engineer');
   const systemPrompt = `${composeNodePrompt(base, undefined)}\n\n${ENGINEERING_HANDBOOK}\n\n${AGENT_ENGINEER_ADDENDUM}`;

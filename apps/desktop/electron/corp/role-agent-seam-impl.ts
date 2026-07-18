@@ -426,10 +426,15 @@ export interface RunRoleAgentConfig {
  * — a misbehaving turn surfaces as a recorded terminal state.
  */
 export function createRunRoleAgent(config: RunRoleAgentConfig): RunRoleAgentFn {
-  const handle = createCorpModelProvider({ baseUrl: config.baseUrl, model: config.model });
+  // Build the provider handle ONCE and reuse it across contracts. It is now async
+  // (createCorpModelProvider dynamic-imports the ESM-only pi SDK — the boot-crash
+  // fix), so keep the PROMISE here and await it inside the returned run fn;
+  // createRunRoleAgent itself stays synchronous, so corp-main's wiring is unchanged.
+  const handlePromise = createCorpModelProvider({ baseUrl: config.baseUrl, model: config.model });
   const webResearchFactory = config.webResearchFactory;
 
   return async (input: RoleAgentRunInput): Promise<RoleAgentRunOutput> => {
+    const handle = await handlePromise;
     // ISOLATED WORKSPACE (spec §91): seed a fresh dir with the engineer's deps and
     // run there; else run directly in the shared tree.
     const iso =

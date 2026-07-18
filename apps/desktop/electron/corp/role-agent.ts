@@ -28,23 +28,25 @@
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {
+// TYPE-ONLY import of the pi SDK — erased at build, so it emits NO runtime code.
+// `AuthStorage`/`ModelRegistry` double as VALUE constructors; they are pulled from
+// the dynamic loader below at runtime, and named here only for the type positions
+// (the `CorpModelHandle` shape + the `CorpModel` alias). The other value symbols
+// (`createAgentSession`, `DefaultResourceLoader`, `SessionManager`, `SettingsManager`)
+// are used as values ONLY, so they live solely on the dynamic loader.
+import type {
   AuthStorage,
-  type BeforeProviderRequestEvent,
-  type ContextEvent,
-  createAgentSession,
-  DefaultResourceLoader,
-  type ExtensionAPI,
-  type ExtensionFactory,
+  BeforeProviderRequestEvent,
+  ContextEvent,
+  ExtensionAPI,
+  ExtensionFactory,
   ModelRegistry,
-  SessionManager,
-  type SessionStats,
-  SettingsManager,
-  type ToolCallEvent,
-  type ToolDefinition,
-  type ToolResultEvent,
-  type TurnEndEvent,
-  type TurnStartEvent,
+  SessionStats,
+  ToolCallEvent,
+  ToolDefinition,
+  ToolResultEvent,
+  TurnEndEvent,
+  TurnStartEvent,
 } from '@mariozechner/pi-coding-agent';
 // Type-only: the corp turn taxonomy + the neutral live-activity record (both
 // stripped at runtime, so no cross-package value import — keeps this file loadable
@@ -58,6 +60,24 @@ import type { CorpTurnPurpose, RoleAgentActivity } from '@pi-desktop/harness/cor
 // the permissions default is a static denylist flagged BY RULE — no LLM reviewer
 // in the loop.
 import { checkScaryBash } from '@pi-desktop/harness/permissions';
+
+// ---------------------------------------------------------------------------
+// LAZY pi-SDK loader — the boot-crash fix.
+// ---------------------------------------------------------------------------
+
+/**
+ * Load the pi SDK via a cached dynamic `import()`. `@mariozechner/pi-coding-agent`
+ * is ESM-only (`"type":"module"`, and its `exports` define ONLY the `import`
+ * condition — NO `require`). The packaged electron-main bundle is CJS, so a STATIC
+ * value import would compile to `require('@mariozechner/pi-coding-agent')`, which at
+ * boot throws `ERR_PACKAGE_PATH_NOT_EXPORTED` → "App threw an error during load" →
+ * NO WINDOW. A dynamic `import()` loads the ESM package from CJS at runtime instead
+ * (Node supports `import()` from CJS), and the SDK stays EXTERNAL (never bundled).
+ * The promise is cached so the module resolves once and is shared across every run.
+ */
+type PiModule = typeof import('@mariozechner/pi-coding-agent');
+let _pi: Promise<PiModule> | undefined;
+const loadPi = (): Promise<PiModule> => (_pi ??= import('@mariozechner/pi-coding-agent'));
 
 // ---------------------------------------------------------------------------
 // Sampling modes — the owner's qwen params, keyed by role behaviour.
@@ -432,7 +452,10 @@ const DEFAULT_MAX_TOKENS = 8192;
  * separate from the app's llamacpp-stream provider — talking OpenAI-completions
  * here is what lets the `before_provider_request` sampling hook fire.
  */
-export function createCorpModelProvider(config: CorpModelProviderConfig): CorpModelHandle {
+export async function createCorpModelProvider(
+  config: CorpModelProviderConfig,
+): Promise<CorpModelHandle> {
+  const { AuthStorage, ModelRegistry } = await loadPi();
   const auth = AuthStorage.inMemory();
   const registry = ModelRegistry.create(auth);
   registry.registerProvider(CORP_LOCAL_PROVIDER, {
@@ -684,6 +707,11 @@ export async function runRoleAgent(
       });
     }
   };
+
+  // Pull the pi-SDK value constructors from the cached dynamic loader (boot-crash
+  // fix — see `loadPi`). The module is already resolved after the first run.
+  const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } =
+    await loadPi();
 
   const settings = SettingsManager.inMemory();
   const loader = new DefaultResourceLoader({

@@ -659,6 +659,10 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
   });
 
   // -- Phase B: the shared project layout ----------------------------------- --
+  // HONEST lighting: the vision is formed, so the lead's turn is OVER — the
+  // room lights the layout specialist (the one actually running) and only it.
+  b.setNodeState('root', 'idle');
+  b.setNodeState('mgr', 'idle');
   b.node({
     id: 'arch',
     role: 'specialist',
@@ -743,6 +747,8 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
     });
     b.setNodeState(d.id, 'idle');
   }
+  // The planner's own turn: sequencing the queue before dispatch rolls.
+  b.setNodeState('mgr', 'working');
   b.chart(14900);
   b.activity(15300, {
     nodeId: 'mgr',
@@ -751,6 +757,8 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
   });
   b.eta(15400, 22, 40, 'medium');
   b.status(15650, 'working', 'Building it');
+  // Dispatch takes over — the planner's turn ends (next chart broadcasts it).
+  b.setNodeState('mgr', 'idle');
 
   // -- Phase D: dispatch — files land, checklist fills, ETA narrows -------- --
   // Contracts OVERLAP in time (3–5 in flight at once, like a real DAG
@@ -760,7 +768,6 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
   const dispatchStart = 16000;
   const stagger = 540;
   const engineerCursor = new Map<string, number>(); // division id → next slot
-  const inFlight = new Map<string, number>(); // division id → running count
 
   const etaByCompletion = new Map<number, [number, number, 'medium' | 'high']>([
     [6, [18, 30, 'medium']],
@@ -826,10 +833,11 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
           state: 'idle',
         });
       }
-      inFlight.set(division.id, (inFlight.get(division.id) ?? 0) + 1);
       b.setItem(contractId, 'in-progress');
+      // HONEST: only the BUILDER actually running lights up — the area card
+      // derives its collective glow from its working crew in the renderer,
+      // exactly as it does for a real engine's running-only statuses.
       b.setNodeState(engineerId, 'working');
-      b.setNodeState(division.id, 'working');
       b.checklist(at);
       b.chart(at + 20);
       // The file lights up the moment work on it begins (phase start).
@@ -879,11 +887,6 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
     schedule(start + duration, (at) => {
       b.setItem(contractId, 'done');
       b.setNodeState(engineerId, 'idle');
-      const left = (inFlight.get(division.id) ?? 1) - 1;
-      inFlight.set(division.id, left);
-      // A division rests only when nothing of its work remains in flight — the
-      // stagger keeps most divisions lit, which is honest: they ARE busy.
-      if (left === 0) b.setNodeState(division.id, 'idle');
       b.checklist(at);
       b.chart(at + 20);
 
@@ -950,6 +953,8 @@ export function buildMockCorpRunScript(): readonly TimedCoordinationEvent[] {
 
   // -- Phase E: the work gets checked, then shipped -------------------------- --
   b.status(dispatchEnd + 200, 'reviewing', 'Checking the work');
+  // The lead steps back in for review — ITS turn, so it lights again.
+  b.setNodeState('root', 'working');
   b.activity(dispatchEnd + 350, {
     nodeId: 'root',
     kind: 'note',

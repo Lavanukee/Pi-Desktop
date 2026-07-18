@@ -61,7 +61,16 @@ function groupEntries(entries: readonly WorkerStreamEntry[]): RenderGroup[] {
   return groups;
 }
 
-export function WorkerStreamPane({ node }: { node: OrgNodeView | undefined }) {
+export function WorkerStreamPane({
+  node,
+  pinned = false,
+  onFollowLive,
+}: {
+  node: OrgNodeView | undefined;
+  /** The user pinned this node; shows the "follow live" way back. */
+  pinned?: boolean;
+  onFollowLive?: () => void;
+}) {
   const stream = useMemo(() => (node ? mockWorkerStreamFor(node) : undefined), [node]);
   const lastAt = stream?.entries.at(-1)?.at ?? 0;
   const elapsed = useReplayClock(lastAt);
@@ -70,8 +79,8 @@ export function WorkerStreamPane({ node }: { node: OrgNodeView | undefined }) {
     return (
       <div className="pd-workerpane" data-testid="worker-pane">
         <div className="pd-workerpane-empty">
-          <span>Click a worker in the situation room</span>
-          <span>to watch its live stream here.</span>
+          <span>The run is getting started —</span>
+          <span>the live view appears the moment work begins.</span>
         </div>
       </div>
     );
@@ -92,11 +101,29 @@ export function WorkerStreamPane({ node }: { node: OrgNodeView | undefined }) {
         </span>
         <span className="pd-workerpane-title">{node.name}</span>
         <span>{streaming ? 'live' : 'caught up'}</span>
+        <span className="pd-workerpane-mode">
+          {pinned ? (
+            <>
+              <span>pinned</span>
+              <button
+                type="button"
+                className="pd-workerpane-follow pd-focusable"
+                data-testid="corp-follow-live"
+                title="Go back to watching whoever is working right now"
+                onClick={onFollowLive}
+              >
+                ⇄ Follow live
+              </button>
+            </>
+          ) : (
+            <span data-testid="corp-following">following live</span>
+          )}
+        </span>
       </div>
       <div className="pd-workerpane-body pd-elastic-scroll">
         <Thread>
           {/* The leading "user turn" is the worker's TASK — visibly a briefing. */}
-          <TaskBriefingBubble briefing={stream.briefing} />
+          <TaskBriefingBubble briefing={stream.briefing} collapsible />
           {groups.map((group) => {
             const isLast = group === lastGroup;
             if (group.kind === 'message') {

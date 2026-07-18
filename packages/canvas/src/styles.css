@@ -1408,7 +1408,15 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-width: 0;
+  /* Keeps a readable stub of the phase at tiny widths (ellipsis after). */
+  min-width: 56px;
+}
+
+/* Tiny room: the ETA pill yields before the phase line does. */
+@container (max-width: 430px) {
+  .pd-sitroom-eta {
+    display: none;
+  }
 }
 
 .pd-sitroom-header-spacer {
@@ -1472,9 +1480,14 @@
   transition: width var(--pd-duration-slow) var(--pd-easing-standard);
 }
 
-/* -- body layout ----------------------------------------------------- */
+/* -- body layout ------------------------------------------------------ */
+/* The room is a single SCROLL COLUMN of collapsible sections (+ an optional
+   side rail for the plan when wide). Sections stack — they can never overlap
+   or clip each other; anything that doesn't fit scrolls. The body is the
+   positioning context for the slide-in exercise panel. */
 
 .pd-sitroom-body {
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
@@ -1486,15 +1499,9 @@
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-}
-
-/* Positioning context for the tree + the sliding exercise panel. */
-.pd-sitroom-stage {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: var(--pd-space-md);
 }
 
 .pd-sitroom-side {
@@ -1506,40 +1513,129 @@
   border-left: 1px solid var(--pd-border-subtle);
 }
 
-.pd-sitroom-side-title {
+/* -- collapsible sections ---------------------------------------------- */
+
+.pd-sitroom-sec {
   flex: 0 0 auto;
-  padding: var(--pd-space-sm) var(--pd-space-lg) var(--pd-space-xs);
+  border-top: 1px solid var(--pd-border-subtle);
+}
+
+.pd-sitroom-main > .pd-sitroom-sec:first-child {
+  border-top: none;
+}
+
+.pd-sitroom-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px var(--pd-space-lg) 6px;
+  border: none;
+  background: transparent;
+  color: var(--pd-text-muted);
+  font: inherit;
   font-size: var(--pd-font-size-caption);
   font-weight: var(--pd-font-weight-semibold);
   letter-spacing: 0.02em;
-  color: var(--pd-text-muted);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color var(--pd-duration-fast) var(--pd-easing-standard),
+    background var(--pd-duration-fast) var(--pd-easing-standard);
 }
 
-@container (max-width: 640px) {
-  .pd-sitroom-body {
-    flex-direction: column;
-  }
-  .pd-sitroom-side {
-    width: auto;
-    max-height: 42%;
-    border-left: none;
-    border-top: 1px solid var(--pd-border-subtle);
-  }
+.pd-sitroom-sec-head:hover {
+  color: var(--pd-text-primary);
+  background: var(--pd-bg-hover);
+}
+
+.pd-sitroom-sec-chevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--pd-text-ghost);
+  transform: rotate(-90deg);
+  transition: transform var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-sitroom-sec-chevron[data-open] {
+  transform: rotate(0deg);
+}
+
+.pd-sitroom-sec-title {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.pd-sitroom-sec-gem {
+  width: 9px;
+  height: 9px;
+  margin-left: 2px;
+}
+
+.pd-sitroom-sec-summary {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--pd-font-weight-regular);
+  letter-spacing: 0;
+  color: var(--pd-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* the signature grid-rows 0fr↔1fr roll */
+.pd-sitroom-sec-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-sitroom-sec-body[data-collapsed] {
+  grid-template-rows: 0fr;
+}
+
+.pd-sitroom-sec-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* The side-rail plan section fills the rail and scrolls inside itself. */
+.pd-sitroom-side > .pd-sitroom-sec {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  border-top: none;
+}
+
+.pd-sitroom-side .pd-sitroom-sec-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pd-sitroom-side .pd-sitroom-sec-inner {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
 }
 
 /* -- the living work tree -------------------------------------------- */
 
 .pd-sitroom-chart {
   position: relative;
-  flex: 1 1 auto;
-  min-height: 216px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 24px;
-  padding: var(--pd-space-lg) var(--pd-space-lg) 34px;
-  overflow: hidden;
+  padding: var(--pd-space-md) var(--pd-space-lg) 30px;
+}
+
+.pd-sitroom-chart[data-empty] {
+  min-height: 96px;
+  justify-content: center;
 }
 
 .pd-sitroom-chart::before {
@@ -1665,7 +1761,11 @@
   min-width: 128px;
 }
 
-.pd-sitroom-node[data-state="working"] {
+/* HONEST lighting: ONLY a node whose agent is actually running — or an area
+   card whose CREW is mid-turn (`data-crew-active`) — carries the working tint
+   + breathing glow. Queued / idle / parallel-not-yet-running cards stay dim. */
+.pd-sitroom-node[data-state="working"],
+.pd-sitroom-node[data-crew-active] {
   border-color: color-mix(in srgb, var(--pd-accent-primary) 38%, var(--pd-border-default));
   background: linear-gradient(
     180deg,
@@ -1674,7 +1774,8 @@
   );
 }
 
-.pd-sitroom-node[data-state="working"]::after {
+.pd-sitroom-node[data-state="working"]::after,
+.pd-sitroom-node[data-crew-active]::after {
   opacity: 1;
   animation: pd-sitroom-breathe 3.2s var(--pd-easing-standard) infinite;
 }
@@ -1758,10 +1859,11 @@
 
 .pd-sitroom-crew-dot {
   appearance: none;
+  position: relative;
   margin: 0;
   padding: 0;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: var(--pd-radius-full);
   border: 1px solid var(--pd-border-strong);
   background: transparent;
@@ -1773,13 +1875,37 @@
     box-shadow var(--pd-duration-base) var(--pd-easing-standard);
 }
 
+/* A RUNNING builder is a thin spinning arc + soft under-glow (the same
+   premium tell as the gems/plan rows — never a flat pulsing dot). Only
+   `working` gets it: queued crew stays a dim outline. */
 .pd-sitroom-crew-dot[data-state="working"] {
-  border-color: color-mix(in srgb, var(--pd-accent-primary) 85%, transparent);
-  background: color-mix(in srgb, var(--pd-accent-primary) 24%, transparent);
+  border-color: transparent;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--pd-accent-primary) 30%, transparent) 0%,
+    transparent 68%
+  );
   box-shadow: 0 0 8px -1px color-mix(in srgb, var(--pd-accent-primary) 70%, transparent);
-  animation:
-    pd-sitroom-fade-up var(--pd-duration-slow) var(--pd-easing-enter) both,
-    pd-sitroom-breathe 2.2s var(--pd-easing-standard) infinite;
+}
+
+.pd-sitroom-crew-dot[data-state="working"]::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: var(--pd-radius-full);
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 120deg,
+    color-mix(in srgb, var(--pd-accent-primary) 92%, transparent) 330deg,
+    transparent 360deg
+  );
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 1.5px),
+    #000 calc(100% - 1.25px)
+  );
+  mask: radial-gradient(farthest-side, transparent calc(100% - 1.5px), #000 calc(100% - 1.25px));
+  animation: pd-sitroom-orbit 1.4s linear infinite;
 }
 
 .pd-sitroom-crew-dot[data-state="done"] {
@@ -1806,7 +1932,6 @@
   gap: 3px;
   min-height: 84px;
   padding: var(--pd-space-xs) var(--pd-space-lg) var(--pd-space-sm);
-  border-top: 1px solid var(--pd-border-subtle);
   overflow: hidden;
 }
 
@@ -2142,6 +2267,12 @@
   padding: 0 var(--pd-space-sm) var(--pd-space-lg);
 }
 
+/* Restacked into the scroll column, the plan caps itself instead of fighting
+   the column's scroll with a full-height nested one. */
+.pd-sitroom-main .pd-sitroom-plan {
+  max-height: 320px;
+}
+
 .pd-sitroom-plan[data-empty] {
   display: flex;
   align-items: center;
@@ -2366,7 +2497,8 @@
   position: absolute;
   inset: 10px 14px auto;
   max-height: min(560px, calc(100% - 20px));
-  min-height: 300px;
+  /* Never taller than the room itself — a short panel gets a short overlay. */
+  min-height: min(300px, calc(100% - 20px));
   z-index: 3;
   display: flex;
   flex-direction: column;
@@ -2857,6 +2989,58 @@
   color: color-mix(in srgb, var(--pd-accent-primary) 80%, var(--pd-text-secondary));
 }
 
+/* Collapsible briefing: the eyebrow row doubles as the toggle; collapsed, the
+   bubble keeps only the eyebrow + title (grid-rows roll on the detail). */
+.pd-taskbrief-toggle {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 10px;
+  font-weight: var(--pd-font-weight-semibold);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--pd-accent-primary) 80%, var(--pd-text-secondary));
+  text-align: left;
+  cursor: pointer;
+}
+
+.pd-taskbrief-chevron {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--pd-text-muted);
+  transform: rotate(0deg);
+  transition: transform var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-taskbrief-chevron[data-collapsed] {
+  transform: rotate(-90deg);
+}
+
+.pd-taskbrief-detail {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-taskbrief-detail[data-collapsed] {
+  grid-template-rows: 0fr;
+}
+
+.pd-taskbrief-detail-inner {
+  overflow: hidden;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .pd-taskbrief-mark {
   flex: 0 0 auto;
   width: 6px;
@@ -2974,6 +3158,80 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+/* Follow-live ⇄ pinned: the pane's subtle mode affordance. Following renders
+   as a quiet status word; pinned renders as a small button back to the action. */
+.pd-workerpane-mode {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-muted);
+  white-space: nowrap;
+}
+
+.pd-workerpane-follow {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 10px;
+  border: 1px solid var(--pd-border-default);
+  border-radius: var(--pd-radius-full);
+  background: transparent;
+  font: inherit;
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-secondary);
+  cursor: pointer;
+  transition:
+    color var(--pd-duration-fast) var(--pd-easing-standard),
+    border-color var(--pd-duration-fast) var(--pd-easing-standard),
+    background var(--pd-duration-fast) var(--pd-easing-standard);
+}
+
+.pd-workerpane-follow:hover {
+  color: var(--pd-text-primary);
+  border-color: color-mix(in srgb, var(--pd-accent-primary) 45%, var(--pd-border-default));
+  background: color-mix(in srgb, var(--pd-accent-primary) 7%, transparent);
+}
+
+/* A turn boundary in the live feed — a quiet ruled divider, not a message. */
+.pd-workerpane-turn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--pd-text-ghost);
+  white-space: nowrap;
+}
+
+.pd-workerpane-turn::before,
+.pd-workerpane-turn::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--pd-border-subtle);
+}
+
+/* Worker narration (notes): quieter than an assistant message. */
+.pd-workerpane-note {
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-muted);
+  line-height: 1.55;
+}
+
+/* The live tail while the agent is mid-turn. */
+.pd-workerpane-tail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-muted);
 }
 
 /* -- keyframes ---------------------------------------------------------- */
@@ -3259,7 +3517,9 @@
   .pd-sitroom-gem-ring,
   .pd-sitroom-gem-glow,
   .pd-sitroom-node[data-state="working"]::after,
+  .pd-sitroom-node[data-crew-active]::after,
   .pd-sitroom-crew-dot[data-state="working"],
+  .pd-sitroom-crew-dot[data-state="working"]::after,
   .pd-sitroom-page[data-active],
   .pd-sitroom-task-ring,
   .pd-sitroom-testrun-spin,
@@ -3274,7 +3534,14 @@
   }
 
   /* Working glows settle to a static presence instead of breathing. */
-  .pd-sitroom-node[data-state="working"]::after {
+  .pd-sitroom-node[data-state="working"]::after,
+  .pd-sitroom-node[data-crew-active]::after {
     opacity: 0.8;
+  }
+
+  /* Collapse/expand rolls settle instantly instead of animating. */
+  .pd-sitroom-sec-body,
+  .pd-taskbrief-detail {
+    transition: none;
   }
 }

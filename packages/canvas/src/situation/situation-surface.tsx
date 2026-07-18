@@ -7,6 +7,14 @@
  * range, and when the run exercises its own work (browse / test / run) a
  * prominent activity panel slides in so the user SEES it.
  *
+ * LAYOUT (the long-watch pass): the room is a column of self-contained,
+ * individually collapsible SECTIONS — the team tree, the live activity feed,
+ * the file map, and the plan — stacked in one scroll column so nothing ever
+ * overlaps or clips at any panel size. The room measures its own width and
+ * adapts: wide, the plan sits in a side rail; narrow, it restacks into the
+ * column; tight, the heavier sections auto-collapse (a user toggle always
+ * wins). Collapsed sections keep an honest one-line live summary.
+ *
  * All user-facing copy says what is happening TO THE USER'S PROJECT — plain
  * language, never the harness's internal org vocabulary.
  *
@@ -26,6 +34,7 @@ import {
   Button,
   IconChat,
   IconCheck,
+  IconChevronDown,
   IconEye,
   IconFile,
   IconPuzzle,
@@ -33,7 +42,7 @@ import {
   IconTerminal,
   ShimmerText,
 } from '@pi-desktop/ui';
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { ExercisePanel } from './exercise-panel.tsx';
 import { ModuleMapPanel } from './module-map-panel.tsx';
 import { type DivisionProgress, SituationOrgChart } from './org-chart-panel.tsx';
@@ -46,6 +55,7 @@ import {
   initialSituation,
   reduceSituation,
   type SituationState,
+  workingCount,
 } from './situation-model.ts';
 
 /** The app's experience level (round-12 userMode): gates raw-path detail. */
@@ -94,6 +104,14 @@ function phaseLabel(state: SituationState): string {
 
 const LIVE_STATUSES = new Set(['starting', 'planning', 'working', 'reviewing']);
 
+/** The room's collapsible sections (each gets its own expand/collapse). */
+type SectionId = 'team' | 'feed' | 'files' | 'plan';
+
+/** Below this room width the plan restacks from the side rail into the column. */
+const STACK_WIDTH = 640;
+/** Below this room width the heavier sections auto-collapse (toggle wins). */
+const TIGHT_WIDTH = 460;
+
 export function SituationRoomSurface({
   state,
   onPeek,
@@ -110,6 +128,43 @@ export function SituationRoomSurface({
   const divisionProgress: DivisionProgress = Object.fromEntries(
     groupChecklist(state.checklist).map((g) => [g.name, { done: g.done, total: g.items.length }]),
   );
+
+  // Adaptive layout: the room watches its OWN width (it lives in a resizable
+  // rail) and restacks/auto-collapses sections to stay legible at any size.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState<number | null>(null);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w !== undefined) setWidth(w);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  const stacked = width !== null && width < STACK_WIDTH;
+  const tight = width !== null && width < TIGHT_WIDTH;
+
+  // Per-section collapse: `undefined` = automatic (open, unless the room is
+  // tight); a user toggle overrides the automatics until toggled back.
+  const [secOverride, setSecOverride] = useState<Partial<Record<SectionId, boolean>>>({});
+  const secOpen = (id: SectionId): boolean => {
+    const auto = id === 'files' || id === 'plan' ? !tight : true;
+    return secOverride[id] ?? auto;
+  };
+  const toggleSec = (id: SectionId) => {
+    const next = !secOpen(id);
+    setSecOverride((prev) => ({ ...prev, [id]: next }));
+  };
+
+  // Honest live summaries for collapsed (and quiet) section headers.
+  const busy = workingCount(state.chart);
+  const teamSummary = busy > 0 ? `${busy} at work` : undefined;
+  const latestActivity = state.activities[state.activities.length - 1];
+  const feedSummary = !secOpen('feed') && latestActivity ? latestActivity.summary : undefined;
+  const filesSummary = state.files.length > 0 ? `${state.files.length} files` : undefined;
+  const planSummary = progress.total > 0 ? `${progress.done}/${progress.total}` : undefined;
 
   // Exercise panel lifecycle: slide in while a session RUNS; on a terminal
   // status hold the verdict briefly, then slide away. A session that is
@@ -139,9 +194,27 @@ export function SituationRoomSurface({
     };
   }, [session]);
 
+  const planSection = (
+    <RoomSection
+      id="plan"
+      title="Plan"
+      summary={planSummary}
+      open={secOpen('plan')}
+      onToggle={toggleSec}
+    >
+      <PlanPanel items={state.checklist} />
+    </RoomSection>
+  );
+
   const rootClass = ['pd-sitroom', className].filter(Boolean).join(' ');
   return (
-    <div className={rootClass} data-status={state.status} data-testid="situation-room">
+    <div
+      className={rootClass}
+      ref={rootRef}
+      data-status={state.status}
+      data-stacked={stacked || undefined}
+      data-testid="situation-room"
+    >
       <header className="pd-sitroom-header">
         <span
           className="pd-sitroom-status pd-sitroom-gem"
@@ -206,8 +279,15 @@ export function SituationRoomSurface({
       </div>
 
       <div className="pd-sitroom-body">
-        <div className="pd-sitroom-main">
-          <div className="pd-sitroom-stage">
+        <div className="pd-sitroom-main pd-scroll">
+          <RoomSection
+            id="team"
+            title="The team"
+            summary={teamSummary}
+            live={busy > 0}
+            open={secOpen('team')}
+            onToggle={toggleSec}
+          >
             <SituationOrgChart
               chart={state.chart}
               progress={divisionProgress}
@@ -215,23 +295,86 @@ export function SituationRoomSurface({
               onSelectNode={onSelectNode}
               selectedNodeId={selectedNodeId}
             />
-            {shownSession !== undefined ? (
-              <ExercisePanel session={shownSession} leaving={leaving} />
-            ) : null}
-          </div>
-          <ActivityFeed state={state} userMode={userMode} />
-          <ModuleMapPanel
-            regions={fillModuleRegions(state)}
-            variant={userMode}
-            progress={divisionProgress}
-          />
+          </RoomSection>
+          <RoomSection
+            id="feed"
+            title="Live activity"
+            summary={feedSummary}
+            open={secOpen('feed')}
+            onToggle={toggleSec}
+          >
+            <ActivityFeed state={state} userMode={userMode} />
+          </RoomSection>
+          <RoomSection
+            id="files"
+            title={userMode === 'power' ? 'The files' : 'The work'}
+            summary={filesSummary}
+            open={secOpen('files')}
+            onToggle={toggleSec}
+          >
+            <ModuleMapPanel
+              regions={fillModuleRegions(state)}
+              variant={userMode}
+              progress={divisionProgress}
+            />
+          </RoomSection>
+          {stacked ? planSection : null}
         </div>
-        <aside className="pd-sitroom-side">
-          <div className="pd-sitroom-side-title">Plan</div>
-          <PlanPanel items={state.checklist} />
-        </aside>
+        {!stacked ? <aside className="pd-sitroom-side">{planSection}</aside> : null}
+        {/* The exercise panel overlays the BODY (not the scroll column), so the
+            headline moment stays in view regardless of scroll or collapse. */}
+        {shownSession !== undefined ? (
+          <ExercisePanel session={shownSession} leaving={leaving} />
+        ) : null}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Room sections — self-contained, collapsible, never-overlapping
+// ---------------------------------------------------------------------------
+
+interface RoomSectionProps {
+  id: SectionId;
+  title: string;
+  /** One-line live summary shown beside the title (honest, never invented). */
+  summary?: string;
+  /** Puts the tiny live gem beside the title while work is actually running. */
+  live?: boolean;
+  open: boolean;
+  onToggle: (id: SectionId) => void;
+  children: ReactNode;
+}
+
+/** One collapsible slice of the room: a premium header row (chevron + title +
+ * live summary) over a grid-rows 0fr↔1fr body roll (the app's signature). */
+function RoomSection({ id, title, summary, live, open, onToggle, children }: RoomSectionProps) {
+  return (
+    <section className="pd-sitroom-sec" data-sec={id} data-testid={`sitroom-section-${id}`}>
+      <button
+        type="button"
+        className="pd-sitroom-sec-head pd-focusable"
+        aria-expanded={open}
+        onClick={() => onToggle(id)}
+      >
+        <span className="pd-sitroom-sec-chevron" data-open={open || undefined} aria-hidden="true">
+          <IconChevronDown size={12} />
+        </span>
+        <span className="pd-sitroom-sec-title">{title}</span>
+        {live ? (
+          <span className="pd-sitroom-gem pd-sitroom-sec-gem" data-state="working" aria-hidden>
+            <span className="pd-sitroom-gem-glow" />
+            <span className="pd-sitroom-gem-ring" />
+            <span className="pd-sitroom-gem-core" />
+          </span>
+        ) : null}
+        {summary !== undefined ? <span className="pd-sitroom-sec-summary">{summary}</span> : null}
+      </button>
+      <div className="pd-sitroom-sec-body" data-collapsed={!open || undefined}>
+        <div className="pd-sitroom-sec-inner">{children}</div>
+      </div>
+    </section>
   );
 }
 

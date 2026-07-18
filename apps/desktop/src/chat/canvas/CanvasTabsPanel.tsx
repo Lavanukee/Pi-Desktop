@@ -250,17 +250,22 @@ export function CanvasTabsPanel() {
   );
 
   // EXPERIMENTAL production harness: clicking a worker node in the situation room
-  // routes its REAL stream into the LEFT chat area (via the corp store, read by
-  // ChatApp) and highlights the node in the room. Inert unless a corp run is on.
-  const onSituationNodeSelect = useCallback(
-    (tabId: string, node: OrgNodeView) => {
-      useCorpStore.getState().selectNode(node);
-      controller.updateTab(tabId, {
-        situationSelectedNodeId: useCorpStore.getState().selectedNode?.id,
-      });
-    },
-    [controller],
-  );
+  // PINS it — its real live stream routes into the LEFT chat area (via the corp
+  // store, read by ChatApp); clicking the pinned node again resumes follow-live.
+  // Inert unless a corp run is on.
+  const onSituationNodeSelect = useCallback((_tabId: string, node: OrgNodeView) => {
+    useCorpStore.getState().selectNode(node);
+  }, []);
+
+  // Keep the room's highlight on the node the left pane is SHOWING — pinned or
+  // live-followed — so the lit card in the tree is always the one streaming.
+  const corpTaskId = useCorpStore((s) => s.taskId);
+  const corpShownId = useCorpStore((s) => (s.pinnedNode ?? s.liveNode)?.id);
+  useEffect(() => {
+    if (corpTaskId === null) return;
+    const tab = controller.getState().tabs.find((t) => t.key === `situation:${corpTaskId}`);
+    if (tab !== undefined) controller.updateTab(tab.id, { situationSelectedNodeId: corpShownId });
+  }, [controller, corpTaskId, corpShownId]);
 
   // "Peek at the build" (spec §11 safety valve): fetch the REAL in-progress product
   // tree for the live task and open it in its own tab. DTO-only — the renderer never

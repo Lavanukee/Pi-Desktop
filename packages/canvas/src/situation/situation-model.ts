@@ -20,6 +20,7 @@ import type {
   EtaRange,
   ExerciseSessionView,
   OrgChartView,
+  OrgNodeView,
   TaskResult,
 } from '@pi-desktop/coordination';
 
@@ -278,6 +279,59 @@ export function fillModuleRegions(state: SituationState): readonly ModuleRegionF
     if (region) region.files.push(file);
   }
   return regions;
+}
+
+// ---------------------------------------------------------------------------
+// Follow-live: which node the left pane should watch (never blank)
+// ---------------------------------------------------------------------------
+
+/** Chart tier of a role — smaller is higher in the tree (the "top-most" order). */
+function tierOf(role: OrgNodeView['role']): number {
+  switch (role) {
+    case 'solo':
+    case 'ceo':
+      return 0;
+    case 'manager':
+      return 1;
+    case 'specialist':
+      return 2;
+    case 'division':
+    case 'division-head':
+      return 3;
+    case 'engineer':
+      return 4;
+  }
+}
+
+/**
+ * The node the left pane should FOLLOW right now (the never-blank auto-select):
+ * the TOP-MOST node actually running — the lead forming the vision first, then
+ * the planning tier, then the active builders. Sticky by design:
+ *
+ *  - while the currently-followed node is still `working`, a SIBLING starting
+ *    up does not steal the pane (no lateral hopping between parallel builders);
+ *    only a node HIGHER in the tree going live pulls the view up;
+ *  - when nothing is running (gaps between turns, the run settling), the
+ *    previously-followed node is kept — the pane never goes blank mid-run.
+ *
+ * Pure: same chart + same current id → same answer.
+ */
+export function followTarget(chart: OrgChartView, currentId?: string): OrgNodeView | undefined {
+  const current = currentId !== undefined ? chart.nodes.find((n) => n.id === currentId) : undefined;
+  const working = chart.nodes.filter((n) => n.state === 'working');
+  if (working.length === 0) return current;
+  let best = working[0] as OrgNodeView;
+  for (const node of working) {
+    if (tierOf(node.role) < tierOf(best.role)) best = node;
+  }
+  // Sticky: keep the current node unless something strictly higher went live.
+  if (current?.state === 'working' && tierOf(current.role) <= tierOf(best.role)) return current;
+  return best;
+}
+
+/** How many nodes are actually running — the collapsed-section live summary. */
+export function workingCount(chart: OrgChartView): number {
+  return chart.nodes.filter((n) => n.state === 'working').length;
 }
 
 /** The honest ETA line: a range, never a countdown. Empty until one arrives. */

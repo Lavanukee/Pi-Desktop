@@ -111,11 +111,15 @@ export function ChatApp({
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [truncatedNote, setTruncatedNote] = useState(false);
   const [stub, setStub] = useState<SidebarStub | null>(null);
-  // EXPERIMENTAL production harness: the selected situation-room worker node (its
-  // REAL stream shows in the left area) + the active corp task id. Both null and
-  // inert unless the flag routes a prompt through the CorpEngine.
-  const corpNode = useCorpStore((s) => s.selectedNode);
+  // EXPERIMENTAL production harness: the live-followed node (auto-selected the
+  // moment a task starts — the left area is NEVER blank mid-run), the user's
+  // pinned node (a click in the situation room overrides the follow), and the
+  // active corp task id. All null/inert unless the flag routes a prompt
+  // through the CorpEngine.
+  const corpLiveNode = useCorpStore((s) => s.liveNode);
+  const corpPinnedNode = useCorpStore((s) => s.pinnedNode);
   const corpTaskId = useCorpStore((s) => s.taskId);
+  const corpShownNode = corpPinnedNode ?? corpLiveNode;
   const userMode = useUserMode();
 
   // Load the persisted project (working folder) first, then spawn the window's
@@ -200,11 +204,22 @@ export function ChatApp({
     void startCorpTask(echo, imageUris.length > 0 ? { images: imageUris } : undefined).then(
       (handle) => {
         useCorpStore.getState().setTask(handle.taskId);
+        const events = replayableEvents(handle.events);
+        // Follow-live: a second (cheap, replayable) pass over the same stream
+        // folds each org-chart snapshot into the corp store, so the left pane
+        // auto-selects the top-most RUNNING node the instant the engine lights
+        // one and keeps following the action (unless the user pins a node).
+        void (async () => {
+          for await (const event of events) {
+            if (useCorpStore.getState().taskId !== handle.taskId) return;
+            if (event.type === 'org-chart') useCorpStore.getState().trackChart(event.chart);
+          }
+        })();
         const controller = canvasController.current;
         controller?.upsertTab(`situation:${handle.taskId}`, {
           kind: 'situation',
           title: 'Situation room',
-          situationEvents: replayableEvents(handle.events),
+          situationEvents: events,
           situationTaskId: handle.taskId,
           situationUserMode: userMode,
         });
@@ -284,11 +299,17 @@ export function ChatApp({
                   {flavor === 'claude' ? 'How can I help you today?' : 'What are we building?'}
                 </p>
               </div>
-            ) : corpNode !== null ? (
-              // EXPERIMENTAL: a clicked situation-room worker routes its REAL
-              // stream into the left area (the spec §11 click-through).
+            ) : corpTaskId !== null && corpShownNode !== null ? (
+              // EXPERIMENTAL: the live view — auto-follows whoever is actually
+              // running (never blank once a task starts); a clicked node pins,
+              // and the pane offers the way back to following live.
               <div key="lead" className="flex min-h-0 flex-1 flex-col">
-                <CorpWorkerPane node={corpNode} taskId={corpTaskId} />
+                <CorpWorkerPane
+                  node={corpShownNode}
+                  taskId={corpTaskId}
+                  pinned={corpPinnedNode !== null}
+                  onFollowLive={() => useCorpStore.getState().followLive()}
+                />
               </div>
             ) : (
               <div key="lead" className="flex min-h-0 flex-1 flex-col">

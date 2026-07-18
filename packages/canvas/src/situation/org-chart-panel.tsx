@@ -179,7 +179,19 @@ export function SituationOrgChart({
     const container = containerRef.current;
     if (!container) return;
     const nodeById = new Map(chart.nodes.map((n) => [n.id, n]));
+    // HONEST lighting: energy flows only toward nodes whose agent is actually
+    // running. A division whose CREW is mid-turn counts — its builders ARE its
+    // running work — but queued / parallel-not-yet-running nodes never light.
     const working = new Set(chart.nodes.filter((n) => n.state === 'working').map((n) => n.id));
+    for (const n of chart.nodes) {
+      if (
+        (n.role === 'engineer' || n.role === 'division-head') &&
+        n.state === 'working' &&
+        n.parentId !== undefined
+      ) {
+        working.add(n.parentId);
+      }
+    }
     const divisionNodes = chart.nodes.filter((n) => n.role === 'division');
     const anchor = (id: string) => {
       const el = cardRefs.current.get(id);
@@ -381,6 +393,10 @@ export function SituationOrgChart({
               userMode === 'power'
                 ? (module?.path ?? roleLabel(division))
                 : (module?.purpose ?? roleLabel(division));
+            // The area card carries the working glow while any of ITS builders
+            // is actually mid-turn (the honest collective read); a division
+            // whose crew is all queued stays dim.
+            const crewActive = engineers.some((e) => e.state === 'working');
             return (
               <NodeCard
                 key={division.id}
@@ -389,6 +405,7 @@ export function SituationOrgChart({
                 caption={caption}
                 captionMono={userMode === 'power' && module?.path !== undefined}
                 meta={p && p.total > 0 ? `${p.done}/${p.total}` : undefined}
+                crewActive={crewActive}
                 enterDelay={enterDelay.get(division.id)}
                 selected={selectedNodeId === division.id}
                 onSelect={onSelectNode}
@@ -429,6 +446,8 @@ interface NodeCardProps {
   /** Small trailing metric ("7/11"). */
   meta?: string;
   promoted?: boolean;
+  /** An area card whose builders are mid-turn — carries the working glow. */
+  crewActive?: boolean;
   /** Materialize-in stagger (ms) when this card is new in a snapshot burst. */
   enterDelay?: number;
   selected?: boolean;
@@ -443,6 +462,7 @@ function NodeCard({
   captionMono,
   meta,
   promoted,
+  crewActive,
   enterDelay,
   selected,
   onSelect,
@@ -457,6 +477,7 @@ function NodeCard({
       ref={ref}
       data-role={node.role}
       data-state={node.state}
+      data-crew-active={crewActive || undefined}
       data-promoted={promoted || undefined}
       data-selected={selected || undefined}
       data-clickable={clickable || undefined}

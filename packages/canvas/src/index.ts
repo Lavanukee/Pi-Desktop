@@ -83,10 +83,12 @@ export {
   contractProgress,
   crossGroupWaits,
   fillModuleRegions,
+  followTarget,
   formatEta,
   groupChecklist,
   initialSituation,
   reduceSituation,
+  workingCount,
 } from './situation/situation-model.ts';
 export type {
   SituationRoomHostProps,

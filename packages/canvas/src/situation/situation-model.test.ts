@@ -1,14 +1,22 @@
-import type { Activity, ChecklistItem, CoordinationEvent } from '@pi-desktop/coordination';
+import type {
+  Activity,
+  ChecklistItem,
+  CoordinationEvent,
+  OrgChartView,
+  OrgNodeView,
+} from '@pi-desktop/coordination';
 import { describe, expect, it } from 'vitest';
 import {
   contractProgress,
   crossGroupWaits,
   fillModuleRegions,
+  followTarget,
   formatEta,
   groupChecklist,
   initialSituation,
   reduceSituation,
   type SituationState,
+  workingCount,
 } from './situation-model.ts';
 
 function fold(events: readonly CoordinationEvent[], start?: SituationState): SituationState {
@@ -169,5 +177,65 @@ describe('derived readings', () => {
     expect(formatEta({ lowMinutes: 12, highMinutes: 18 })).toBe('~12–18 min left');
     expect(formatEta({ lowMinutes: 3, highMinutes: 3 })).toBe('~3 min left');
     expect(formatEta({ lowMinutes: 0.2, highMinutes: 0.8 })).toBe('under a minute left');
+  });
+});
+
+describe('followTarget (the never-blank auto-follow)', () => {
+  const node = (
+    id: string,
+    role: OrgNodeView['role'],
+    state: OrgNodeView['state'],
+    parentId?: string,
+  ): OrgNodeView => ({
+    id,
+    role,
+    name: id,
+    state,
+    ...(parentId !== undefined ? { parentId } : {}),
+  });
+
+  const chart = (nodes: OrgNodeView[]): OrgChartView => ({
+    taskId: 't1',
+    nodes,
+    edges: [],
+  });
+
+  it('picks the top-most working node (the lead forming the vision first)', () => {
+    const c = chart([node('root', 'solo', 'working')]);
+    expect(followTarget(c)?.id).toBe('root');
+  });
+
+  it('moves down to the running builder once the lead goes idle', () => {
+    const c = chart([
+      node('root', 'ceo', 'idle'),
+      node('div-a', 'division', 'idle', 'root'),
+      node('e1', 'engineer', 'working', 'div-a'),
+    ]);
+    expect(followTarget(c, 'root')?.id).toBe('e1');
+  });
+
+  it('is sticky: a parallel sibling starting does not steal the pane', () => {
+    const c = chart([node('e1', 'engineer', 'working'), node('e2', 'engineer', 'working')]);
+    expect(followTarget(c, 'e2')?.id).toBe('e2');
+  });
+
+  it('a node higher in the tree going live pulls the view up', () => {
+    const c = chart([node('root', 'ceo', 'working'), node('e1', 'engineer', 'working')]);
+    expect(followTarget(c, 'e1')?.id).toBe('root');
+  });
+
+  it('keeps the previous node when nothing is running (never blank)', () => {
+    const c = chart([node('root', 'ceo', 'idle'), node('e1', 'engineer', 'idle')]);
+    expect(followTarget(c, 'e1')?.id).toBe('e1');
+    expect(followTarget(chart([]), undefined)).toBeUndefined();
+  });
+
+  it('counts only actually-working nodes for the live summary', () => {
+    const c = chart([
+      node('root', 'ceo', 'idle'),
+      node('e1', 'engineer', 'working'),
+      node('e2', 'engineer', 'done'),
+    ]);
+    expect(workingCount(c)).toBe(1);
   });
 });

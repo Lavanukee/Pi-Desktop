@@ -353,3 +353,146 @@ describe('CorpEngine — agent-path LIVE activity + peek (spec §11)', () => {
     expect(engine.peek({ taskId: 'nope', events: (async function* () {})() })).toBeNull();
   });
 });
+
+/**
+ * The agent path with LIVE tool activity: each engineer streams a read → bash →
+ * write sequence via `onActivity`, so the situation room can (bug 1) tick "X of N"
+ * up as each contract completes, (bug 2) light ONLY the running node, and (bug 3)
+ * expose the running node's real tool calls through getWorkerTranscript.
+ */
+function liveRoleAgent(workspace: CorpWorkspace): RunRoleAgentFn {
+  const root = workspace.workspace;
+  const knownSlots = ['src/api/core.ts', 'src/ui/core.tsx'];
+  return (input: RoleAgentRunInput): Promise<RoleAgentRunOutput> => {
+    const emit = input.onActivity;
+    const stop = (partial: Partial<RoleAgentRunOutput>): RoleAgentRunOutput => ({
+      filesWritten: [],
+      finalText: '',
+      toolCalls: [],
+      terminatedReason: 'stop',
+      ...partial,
+    });
+    switch (input.purpose) {
+      case 'vision':
+        return Promise.resolve(stop({ finalText: 'Build a small dashboard.' }));
+      case 'worker':
+        return Promise.resolve(stop({ finalText: PROMOTION }));
+      case 'architect':
+        return Promise.resolve(stop({ finalText: ARCHITECTURE }));
+      case 'manager':
+        // Key off the unambiguous "Division: X" marker — the shared architecture
+        // also names Backend (interface exposedBy), so a bare `includes('Backend')`
+        // would misfire on the Frontend manager's prompt and dedup to one contract.
+        return Promise.resolve(
+          stop({
+            finalText: input.userPrompt.includes('Division: Backend')
+              ? contractsFor('Backend', 'src/api/core.ts')
+              : contractsFor('Frontend', 'src/ui/core.tsx'),
+          }),
+        );
+      case 'engineer': {
+        const slot = knownSlots.find((s) => input.userPrompt.includes(s)) ?? 'src/ui/core.tsx';
+        const content = 'export const core = () => 42;\n';
+        const bytes = new TextEncoder().encode(content).length;
+        // Stream a real read → bash → write tool sequence, THEN write the slot.
+        emit?.({ kind: 'turn-start', turnIndex: 0 });
+        emit?.({ kind: 'tool', toolName: 'read' });
+        emit?.({ kind: 'tool', toolName: 'bash' });
+        workspace.fs.writeFile(slotPath(root, slot), content);
+        emit?.({ kind: 'file-write', toolName: 'write', path: slot, bytes, linesAdded: 1 });
+        return Promise.resolve(
+          stop({ finalText: 'wrote it', filesWritten: [{ path: slot, bytes }] }),
+        );
+      }
+      case 'review':
+        return Promise.resolve(
+          stop({ toolCalls: [{ name: 'submit_findings', arguments: { findings: [] } }] }),
+        );
+      case 'ceo':
+      case 'revise':
+        return Promise.resolve(
+          stop({ finalText: JSON.stringify({ decision: 'approve', notes: 'Looks complete.' }) }),
+        );
+      default:
+        return Promise.resolve(stop({}));
+    }
+  };
+}
+
+describe('CorpEngine — live progress, node status, and transcript (bugs 1–3)', () => {
+  it('ticks progress up, lights only the running node, and exposes live tool calls', async () => {
+    const workspace = createMemoryWorkspace('/corp-live');
+    const engine = new CorpEngine({
+      chat: () => {
+        throw new Error('chat must not be called on the agent path');
+      },
+      runRoleAgent: liveRoleAgent(workspace),
+      workspaceFor: () => workspace,
+      maxRevisions: 0,
+    });
+    const handle = engine.startTask('Build me a dashboard app');
+
+    // Captured at the FIRST engineer's mid-work file-touch (order-agnostic).
+    // Transcript lines only ever GROW, so reading them here is race-free even though
+    // the synchronous mock advances the node's status forward immediately after.
+    let runningNodeId: string | undefined;
+    let liveToolLines = 0;
+    const events: CoordinationEvent[] = [];
+    for await (const event of handle.events) {
+      if (
+        event.type === 'activity' &&
+        event.activity.kind === 'file-touch' &&
+        event.activity.phase === 'progress' &&
+        event.activity.nodeId?.startsWith('eng-') &&
+        runningNodeId === undefined
+      ) {
+        runningNodeId = event.activity.nodeId;
+        // Bug 3: the running node's transcript already carries its real tool calls.
+        const transcript = engine.getWorkerTranscript(handle, runningNodeId);
+        liveToolLines = (transcript?.lines ?? []).filter((l) => l.kind === 'tool-call').length;
+      }
+      events.push(event);
+    }
+
+    expect(terminal(events).result.outcome).toBe('completed');
+
+    // Bug 2: from the EMITTED org-chart snapshots (immutable — not read-forward),
+    // (a) some snapshot lit exactly one engineer while >=1 sibling stayed dim, and
+    // (b) no snapshot ever lit two engineers at once (sequential dispatch → exactly
+    // the one running node is 'working', never a queued one).
+    const engineerWorkCounts = events
+      .filter((e): e is Extract<CoordinationEvent, { type: 'org-chart' }> => e.type === 'org-chart')
+      .map((e) => {
+        const eng = e.chart.nodes.filter((n) => n.role === 'engineer');
+        return { working: eng.filter((n) => n.state === 'working').length, total: eng.length };
+      });
+    expect(engineerWorkCounts.some((c) => c.working === 1 && c.total > 1)).toBe(true);
+    expect(engineerWorkCounts.every((c) => c.working <= 1)).toBe(true);
+
+    // Bug 3: the click-through transcript held LIVE tool-call lines (read + bash),
+    // not just a briefing.
+    expect(liveToolLines).toBeGreaterThanOrEqual(2);
+    const finalTranscript = engine.getWorkerTranscript(handle, runningNodeId ?? '');
+    const toolNames = (finalTranscript?.lines ?? [])
+      .filter((l) => l.kind === 'tool-call')
+      .map((l) => l.text);
+    expect(toolNames).toContain('read');
+    expect(toolNames).toContain('bash');
+
+    // Bug 1: "X of N" climbed DURING the run — an intermediate checklist showed at
+    // least one contract 'done' BEFORE the terminal event, and it grew.
+    const doneCounts = events
+      .filter((e): e is Extract<CoordinationEvent, { type: 'checklist' }> => e.type === 'checklist')
+      .map((e) => e.items.filter((i) => i.state === 'done').length);
+    const terminalIdx = events.findIndex((e) => e.type === 'done');
+    const preTerminalChecklists = events
+      .slice(0, terminalIdx)
+      .filter(
+        (e): e is Extract<CoordinationEvent, { type: 'checklist' }> => e.type === 'checklist',
+      );
+    expect(preTerminalChecklists.some((e) => e.items.some((i) => i.state === 'done'))).toBe(true);
+    // The count is monotonic non-decreasing and reaches the full total (2 contracts).
+    expect(Math.max(...doneCounts)).toBe(2);
+    expect(doneCounts.some((n) => n > 0 && n < 2)).toBe(true);
+  });
+});

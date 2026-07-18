@@ -489,7 +489,11 @@ export class CorpEngine implements CoordinationEngine {
     };
   }
 
-  private observePre(rt: CorpRuntime, req: CorpChatRequest): void {
+  private observePre(
+    rt: CorpRuntime,
+    req: CorpChatRequest,
+    engineerContract?: ContractRuntime,
+  ): void {
     switch (req.purpose) {
       case 'vision':
         // The CEO's first turn — form the vision before anyone builds (spec §4).
@@ -528,7 +532,10 @@ export class CorpEngine implements CoordinationEngine {
       }
       case 'engineer': {
         this.setStatus(rt, 'working');
-        const c = this.attributeEngineer(rt, req);
+        // On the AGENT path the caller resolves the contract ONCE at the run's
+        // invocation boundary and threads it in, so pre/live/done all attribute to
+        // the SAME node even under parallel dispatch; the chat path attributes here.
+        const c = engineerContract ?? this.attributeEngineer(rt, req);
         if (c !== undefined) {
           this.setNode(rt, c.nodeId, 'working');
           if (c.state === 'queued' || c.state === 'ready') c.state = 'in-progress';
@@ -624,8 +631,10 @@ export class CorpEngine implements CoordinationEngine {
         if (c !== undefined && content.trim() !== '') {
           const added = content.split('\n').length;
           this.setNode(rt, c.nodeId, 'done');
-          c.state = 'in-review';
-          this.addLine(rt, c.nodeId, 'message', `Wrote ${c.slot} — in review.`);
+          // DONE the instant the engineer submits, so the "X of N" progress ticks
+          // up live (bug 1) rather than jumping from 0 only at the terminal reconcile.
+          c.state = 'done';
+          this.addLine(rt, c.nodeId, 'message', `Wrote ${c.slot} — done.`);
           this.emit(rt, fileTouch(c.nodeId, c.slot, added));
           this.emitChecklist(rt);
           this.emitEta(rt);
@@ -650,7 +659,17 @@ export class CorpEngine implements CoordinationEngine {
         return c;
       }
     }
-    return rt.contracts.find((c) => c.state !== 'done' && c.state !== 'in-review');
+    // Fallback (the prompt named no contract): the first one that is neither
+    // finished NOR already mid-run — so several engineers dispatched in parallel
+    // never collide on the same "first unfinished" and light a node that is not
+    // the one actually running (bug 2). Only if every unfinished contract is
+    // already 'working' do we fall back to any unfinished one.
+    return (
+      rt.contracts.find(
+        (c) =>
+          c.state !== 'done' && c.state !== 'in-review' && rt.nodeState.get(c.nodeId) !== 'working',
+      ) ?? rt.contracts.find((c) => c.state !== 'done' && c.state !== 'in-review')
+    );
   }
 
   // --- Role-agent observation (the AGENT path — spec §11 live activity) --------
@@ -690,8 +709,18 @@ export class CorpEngine implements CoordinationEngine {
       thinking: input.thinking,
       maxTokens: input.maxTokens ?? 0,
     };
+
+    // Resolve the engineer's contract ONCE, HERE at the runRoleAgent invocation
+    // boundary, and thread the SAME contract through pre / live-activity / done. This
+    // is what makes exactly the actively-running node light (bug 2) — parallel
+    // engineer runs each claim their own contract instead of racing on the shared
+    // "first unfinished" fallback — and lets the done propagation (bug 1) settle the
+    // very node that was lit.
+    const engineerContract =
+      input.purpose === 'engineer' ? this.attributeEngineer(rt, syntheticReq) : undefined;
+
     try {
-      this.observePre(rt, syntheticReq);
+      this.observePre(rt, syntheticReq, engineerContract);
       // A per-role-turn pulse: broadcast the chart so the just-activated node shows
       // as `working` (the situation room pulses working nodes).
       this.emit(rt, { type: 'org-chart', chart: this.buildChart(rt) });
@@ -701,7 +730,10 @@ export class CorpEngine implements CoordinationEngine {
 
     // The chart node this run's live activity attributes to (undefined for a role
     // with no node — e.g. an advisory reviewer; its tool steps still stream un-owned).
-    const liveNodeId = this.roleRunNodeId(rt, syntheticReq);
+    const liveNodeId =
+      engineerContract !== undefined
+        ? engineerContract.nodeId
+        : this.roleRunNodeId(rt, syntheticReq);
     const onActivity = (record: RoleAgentActivity): void => {
       try {
         this.mapRoleActivity(rt, liveNodeId, record);
@@ -714,7 +746,7 @@ export class CorpEngine implements CoordinationEngine {
 
     try {
       if (input.purpose === 'engineer') {
-        this.observeEngineerAgentDone(rt, syntheticReq, out);
+        this.observeEngineerAgentDone(rt, out, engineerContract);
       } else {
         // Reuse observePost: a chat-shaped result carries the role's finalText as
         // content plus its recorded tool calls, so promotion / architecture /
@@ -774,11 +806,25 @@ export class CorpEngine implements CoordinationEngine {
       }
       case 'tool': {
         if (nodeId === undefined) return;
-        this.emit(rt, activity(nodeId, 'tool-call', record.toolName ?? 'tool'));
+        const tool = record.toolName ?? 'tool';
+        // Accumulate the tool call into the node's LIVE transcript (spec §11
+        // click-through, bug 3): getWorkerTranscript reads rt.lines, so recording
+        // each read/grep/bash step here is what makes a clicked running node show
+        // what its agent is ACTUALLY doing — not just a static briefing.
+        this.addLine(rt, nodeId, 'tool-call', tool);
+        this.emit(rt, activity(nodeId, 'tool-call', tool));
         break;
       }
       case 'turn-start': {
-        if (nodeId !== undefined) this.setNode(rt, nodeId, 'working');
+        if (nodeId !== undefined) {
+          // The node is lit ONLY while its agent is mid-turn (bug 2) — the run's
+          // completion boundary (observeEngineerAgentDone / observePost) settles it.
+          this.setNode(rt, nodeId, 'working');
+          // A turn marker in the live transcript (the per-turn pulse made legible).
+          if (record.turnIndex !== undefined && record.turnIndex > 0) {
+            this.addLine(rt, nodeId, 'note', `— continued (turn ${record.turnIndex + 1}) —`);
+          }
+        }
         break;
       }
       case 'turn-end':
@@ -786,20 +832,37 @@ export class CorpEngine implements CoordinationEngine {
     }
   }
 
-  /** The AGENT engineer's completion (its files ARE its submission — there is no
-   * reply to parse, unlike the chat path's observePost). Mark the contract done and
-   * settle each produced file's touch to `phase: 'end'`. */
+  /**
+   * The AGENT engineer's completion (its files ARE its submission — there is no
+   * reply to parse, unlike the chat path's observePost). `c` is the contract claimed
+   * for THIS run at its invocation boundary (so completion settles the very node that
+   * was lit). Two terminal outcomes:
+   *  - COMPLETED (files harvested): mark the contract DONE the instant the engineer
+   *    finishes, emit the checklist so the situation-room "X of N" ticks up live (bug
+   *    1), and settle the node working → done (bug 2).
+   *  - NO DELIVERABLE (declared unfulfillable / errored — zero files): the run is
+   *    over, so the node must NOT stay lit (bug 2). Settle it dim (blocked) and mark
+   *    the contract blocked so the honest denominator counts it finished-not-done;
+   *    dispatch owns the real failure/skip cascade and finish() reconciles the rest.
+   */
   private observeEngineerAgentDone(
     rt: CorpRuntime,
-    req: CorpChatRequest,
     out: RoleAgentRunOutput,
+    c: ContractRuntime | undefined,
   ): void {
-    const c = this.attributeEngineer(rt, req);
-    if (c === undefined || out.filesWritten.length === 0) return; // no file → dispatch handles the gap
+    if (c === undefined) return;
+    if (out.filesWritten.length === 0) {
+      this.setNode(rt, c.nodeId, 'blocked');
+      c.state = 'blocked';
+      this.addLine(rt, c.nodeId, 'note', `Finished without producing ${c.slot}.`);
+      this.emitChecklist(rt);
+      this.emit(rt, { type: 'org-chart', chart: this.buildChart(rt) });
+      return;
+    }
     this.setNode(rt, c.nodeId, 'done');
-    c.state = 'in-review';
+    c.state = 'done';
     for (const f of out.filesWritten) {
-      this.addLine(rt, c.nodeId, 'message', `Wrote ${f.path} — in review.`);
+      this.addLine(rt, c.nodeId, 'message', `Wrote ${f.path} — done.`);
       this.emit(rt, endFileTouch(c.nodeId, f.path));
       this.surfaceArtifact(rt, c.nodeId, f.path);
     }
@@ -986,6 +1049,28 @@ export class CorpEngine implements CoordinationEngine {
 
   // --- View builders -------------------------------------------------------
 
+  /**
+   * A division node is lit ('working') ONLY while one of its builders is mid-run
+   * (bug 2) — NOT for the whole dispatch just because the manager's planning turn
+   * once set it 'working'. Derived from its contracts: any builder currently
+   * 'working' → 'working'; every contract done → 'done'; any blocked (and none
+   * running) → 'blocked'; otherwise dim ('idle'). Before any contract exists the
+   * manager is still planning, so the raw node state carries through (working during
+   * that turn, idle otherwise).
+   */
+  private divisionState(
+    rt: CorpRuntime,
+    div: DivisionRuntime,
+    raw: (id: string) => OrgNodeState,
+  ): OrgNodeState {
+    const contracts = rt.contracts.filter((c) => c.divisionId === div.id);
+    if (contracts.length === 0) return raw(div.id);
+    if (contracts.some((c) => rt.nodeState.get(c.nodeId) === 'working')) return 'working';
+    if (contracts.every((c) => c.state === 'done')) return 'done';
+    if (contracts.some((c) => c.state === 'blocked')) return 'blocked';
+    return 'idle';
+  }
+
   private buildChart(rt: CorpRuntime): OrgChartView {
     const nodes: OrgNodeView[] = [];
     const edges: OrgEdgeView[] = [];
@@ -1011,7 +1096,7 @@ export class CorpEngine implements CoordinationEngine {
           role: 'division',
           name: d.name,
           parentId: CEO_NODE,
-          state: state(d.id),
+          state: this.divisionState(rt, d, state),
         });
         edges.push({ from: CEO_NODE, to: d.id });
       }

@@ -1145,10 +1145,39 @@
 /* ── File surface ────────────────────────────────────────────────────── */
 
 .pd-file {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
+}
+
+/* Live +N/−N diff badge (a corp worker writing the file NOW) — a small monospace
+ * chip floated over the surface's top-right. Inert for ordinary chat file tabs. */
+.pd-file-diff-badge {
+  position: absolute;
+  top: var(--pd-space-xs);
+  right: var(--pd-space-sm);
+  z-index: 2;
+  display: inline-flex;
+  gap: var(--pd-space-xs);
+  align-items: center;
+  padding: 2px var(--pd-space-xs);
+  border: 1px solid var(--pd-border-subtle);
+  border-radius: var(--pd-radius-sm);
+  background: var(--pd-bg-raised);
+  font-family: var(--pd-font-mono);
+  font-size: var(--pd-font-size-footnote);
+  line-height: 1;
+  pointer-events: none;
+}
+
+.pd-file-diff-add {
+  color: var(--pd-diff-added-fg, #3fb950);
+}
+
+.pd-file-diff-del {
+  color: var(--pd-diff-deleted-fg, #f85149);
 }
 
 .pd-file-name {

@@ -127,6 +127,27 @@ export interface FileSurfaceProps {
   /** Slot for future inline editing UI (overlaid below the viewer). */
   children?: ReactNode;
   className?: string;
+  /**
+   * Live line-diff counts (a corp worker writing this file NOW): a small +N/−N
+   * badge overlays the surface. Both unset/zero → no badge (an ordinary chat file
+   * tab shows nothing), so this stays inert outside a corp run.
+   */
+  addedLines?: number;
+  removedLines?: number;
+}
+
+/** The +N/−N diff badge shown while a file streams in (corp file tabs). Renders
+ * nothing when there is no line delta to report. */
+function FileDiffBadge({ added, removed }: { added?: number; removed?: number }) {
+  const a = added ?? 0;
+  const r = removed ?? 0;
+  if (a <= 0 && r <= 0) return null;
+  return (
+    <div className="pd-file-diff-badge" data-testid="file-diff-badge" aria-hidden="true">
+      {a > 0 ? <span className="pd-file-diff-add">+{a}</span> : null}
+      {r > 0 ? <span className="pd-file-diff-del">−{r}</span> : null}
+    </div>
+  );
 }
 
 /**
@@ -149,6 +170,8 @@ export function FileSurface({
   onSave,
   children,
   className,
+  addedLines,
+  removedLines,
 }: FileSurfaceProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const view = mode ?? defaultFileViewMode(content);
@@ -160,6 +183,7 @@ export function FileSurface({
   const rootClass = ['pd-file', className].filter(Boolean).join(' ');
   return (
     <div className={rootClass}>
+      <FileDiffBadge added={addedLines} removed={removedLines} />
       {showFilename && filename ? <div className="pd-file-name">{filename}</div> : null}
       <div ref={bodyRef} className="pd-file-body">
         {rendered ? (

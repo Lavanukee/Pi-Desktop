@@ -21,16 +21,24 @@ function baseName(path: string): string {
   return path.split(/[/\\]/).pop() ?? path;
 }
 
+/** Live +N/−N line counts for a corp file tab's diff badge (from the file block). */
+export interface CorpFileCounts {
+  addedLines: number;
+  removedLines: number;
+}
+
 /**
  * Open (or refresh) the canvas file tab for `relPath`, reading the current bytes
  * out of the run's product peek. Best-effort: a peek miss shows an empty surface
- * (the file may not have landed yet), never throws.
+ * (the file may not have landed yet), never throws. When `counts` is given, the
+ * tab carries a live +N/−N diff badge (the file surface renders it).
  */
 export async function openCorpFileInCanvas(
   controller: CanvasController,
   taskId: string,
   relPath: string,
   working: boolean,
+  counts?: CorpFileCounts,
 ): Promise<void> {
   if (relPath.length === 0) return;
   const peek = await peekCorpTask(taskId);
@@ -47,5 +55,8 @@ export async function openCorpFileInCanvas(
     breadcrumb: relPath.split(/[/\\]/).filter(Boolean),
     streaming: working,
     artifact: fileArtifactFromText(relPath, file?.content ?? ''),
+    ...(counts !== undefined
+      ? { addedLines: counts.addedLines, removedLines: counts.removedLines }
+      : {}),
   });
 }

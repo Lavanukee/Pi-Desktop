@@ -314,6 +314,19 @@ export function summarizeCommand(command: string, max = 60): string {
   return squeezed.length > max ? `${squeezed.slice(0, max - 1)}…` : squeezed;
 }
 
+/** Recent-tail cap for a captured bash result (~8KB) — a noisy build streams a lot,
+ * but the live terminal mirror only needs its tail, and the event must stay small. */
+export const BASH_OUTPUT_CAP = 8 * 1024;
+
+/** Join a tool result's content blocks into plain text (drops image blocks), then
+ * clip to the last {@link BASH_OUTPUT_CAP} chars with a note. Pure; never throws. */
+export function toolResultText(content: ToolResultEvent['content']): string {
+  const joined = content.map((c) => (c.type === 'text' ? c.text : '')).join('');
+  if (joined.length <= BASH_OUTPUT_CAP) return joined;
+  const hidden = joined.length - BASH_OUTPUT_CAP;
+  return `…(${hidden} earlier chars hidden)\n${joined.slice(-BASH_OUTPUT_CAP)}`;
+}
+
 /**
  * Extract the SHORT human arg summary + file path from a tool call's arguments at
  * the `tool_call` boundary, so the live transcript can name the ACTUAL work: a
@@ -859,6 +872,20 @@ export async function runRoleAgent(
       // `tool_call` (start), so they are NOT re-emitted here. `tool_result` fires
       // after execution and carries the tool args (`input`) + `isError`.
       pi.on('tool_result', (e: ToolResultEvent) => {
+        // A bash command's RESULT text → mirror it into the live terminal tab. This
+        // is a SECOND `tool` record paired with the command's own step (same
+        // toolName + detail), so coordination folds the output onto that row instead
+        // of adding a duplicate. Captured even on a NON-zero exit (a failed build's
+        // output is the point) — so it runs BEFORE the isError early-out below.
+        if (e.toolName === 'bash') {
+          const { detail } = toolCallDetail('bash', e.input);
+          emit({
+            kind: 'tool',
+            toolName: 'bash',
+            ...(detail !== undefined ? { detail } : {}),
+            output: toolResultText(e.content),
+          });
+        }
         if (e.isError) return undefined;
         const fileWrite = fileWriteActivity(e.toolName, e.input, config.cwd, safeStatBytes);
         if (fileWrite !== undefined) emit(fileWrite);

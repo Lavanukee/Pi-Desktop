@@ -963,8 +963,24 @@ export class CorpEngine implements CoordinationEngine {
       }
       case 'tool': {
         if (nodeId === undefined) return;
-        this.closeStream(rt, nodeId); // a tool starting ends the preceding text tail
         const tool = record.toolName ?? 'tool';
+        // An OUTPUT update for an already-started tool step (a bash command's
+        // captured result): forward the growing output into the live feed WITHOUT a
+        // second transcript line / feed pulse — the START already landed those. The
+        // renderer folds it onto the SAME tool row (matched by toolName + detail).
+        if (record.output !== undefined) {
+          this.emit(
+            rt,
+            workerActivity(nodeId, {
+              kind: 'tool',
+              toolName: tool,
+              ...(record.detail !== undefined ? { detail: record.detail } : {}),
+              output: record.output,
+            }),
+          );
+          break;
+        }
+        this.closeStream(rt, nodeId); // a tool starting ends the preceding text tail
         // Name the ACTUAL tool + its arg (bug 3, click-through): "Searched the web:
         // <query>", "Reading <file>", "Ran: <cmd>". `text` stays the raw tool name
         // (the pane maps it to the right icon); label + detail carry the phrasing.

@@ -75,6 +75,26 @@ describe('FileSurface', () => {
     expect(container.querySelector('.pd-file-name')).toBeNull();
   });
 
+  it('shows a +N/−N diff badge while a corp worker writes the file', async () => {
+    const { container } = await render(
+      <FileSurface content={text('x')} filename="x.ts" streaming addedLines={5} removedLines={1} />,
+    );
+    const badge = container.querySelector('[data-testid="file-diff-badge"]');
+    expect(badge).not.toBeNull();
+    expect(badge?.querySelector('.pd-file-diff-add')?.textContent).toBe('+5');
+    expect(badge?.querySelector('.pd-file-diff-del')?.textContent).toBe('−1');
+  });
+
+  it('shows no badge for an ordinary chat file tab (no counts)', async () => {
+    const { container } = await render(<FileSurface content={text('x')} filename="x.ts" />);
+    expect(container.querySelector('[data-testid="file-diff-badge"]')).toBeNull();
+    // …and none when the deltas are zero.
+    const { container: zero } = await render(
+      <FileSurface content={text('x')} filename="x.ts" addedLines={0} removedLines={0} />,
+    );
+    expect(zero.querySelector('[data-testid="file-diff-badge"]')).toBeNull();
+  });
+
   it('sticks to the newest line while the user is pinned at the bottom', async () => {
     const { container, rerender } = await render(
       <FileSurface content={text('line 1')} filename="log.txt" streaming />,

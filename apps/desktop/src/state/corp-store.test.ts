@@ -118,6 +118,38 @@ describe('appendWorkerActivity (the PUSH block accumulator)', () => {
     expect(blocks).toEqual([{ kind: 'file', path: 'src/x.ts', addedLines: 5, removedLines: 1 }]);
   });
 
+  it('folds a bash command’s streamed output onto the SAME tool row (no duplicate)', () => {
+    let blocks: CorpBlock[] = [];
+    // The command lands first (no output), then its result arrives (partial → final)
+    // — all folded onto ONE bash row whose `output` is replaced in place as it grows.
+    blocks = appendWorkerActivity(
+      blocks,
+      wa({ kind: 'tool', toolName: 'bash', detail: 'npm run build' }),
+    );
+    blocks = appendWorkerActivity(
+      blocks,
+      wa({ kind: 'tool', toolName: 'bash', detail: 'npm run build', output: 'compiling…' }),
+    );
+    blocks = appendWorkerActivity(
+      blocks,
+      wa({
+        kind: 'tool',
+        toolName: 'bash',
+        detail: 'npm run build',
+        output: 'compiling…\nBuild OK',
+      }),
+    );
+    expect(blocks).toEqual([
+      { kind: 'tool', toolName: 'bash', detail: 'npm run build', output: 'compiling…\nBuild OK' },
+    ]);
+  });
+
+  it('seeds a tool row from an output update that outran its start', () => {
+    // If the result arrives with no matching row yet, a row is created carrying it.
+    const blocks = appendWorkerActivity([], wa({ kind: 'tool', toolName: 'bash', output: 'hi' }));
+    expect(blocks).toEqual([{ kind: 'tool', toolName: 'bash', output: 'hi' }]);
+  });
+
   it('foldWorkerActivity keys blocks by nodeId and gives a fresh array per delta', () => {
     useCorpStore.getState().setTask('t1');
     const fold = useCorpStore.getState().foldWorkerActivity;

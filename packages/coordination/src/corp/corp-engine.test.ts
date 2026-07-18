@@ -555,6 +555,16 @@ function streamingRoleAgent(workspace: CorpWorkspace): RunRoleAgentFn {
         const content = 'export const core = () => 42;\n';
         const bytes = new TextEncoder().encode(content).length;
         emit?.({ kind: 'turn-start', turnIndex: 0 });
+        // A bash command STARTS (its command, no output yet) then its RESULT arrives
+        // as a second `tool` record carrying the captured output — the terminal
+        // mirror shows command + output.
+        emit?.({ kind: 'tool', toolName: 'bash', detail: 'npm run build' });
+        emit?.({
+          kind: 'tool',
+          toolName: 'bash',
+          detail: 'npm run build',
+          output: 'Build OK in 3.2s',
+        });
         workspace.fs.writeFile(slotPath(root, slot), content);
         emit?.({ kind: 'file-write', toolName: 'write', path: slot, bytes, linesAdded: 1 });
         return Promise.resolve(
@@ -622,6 +632,15 @@ describe('CorpEngine — worker-activity PUSH (per-token inline chat stream)', (
     const solo =
       engine.getWorkerTranscript(handle, 'ceo') ?? engine.getWorkerTranscript(handle, 'solo');
     expect(solo).toBeDefined();
+
+    // A bash step surfaced BOTH its command (a `tool` worker-activity, no output)
+    // and its captured result (a `tool` worker-activity carrying `output`) — the
+    // pair the terminal mirror folds into one row (command + output).
+    const bashActivity = worker.filter((e) => e.kind === 'tool' && e.toolName === 'bash');
+    expect(bashActivity.some((e) => e.output === undefined)).toBe(true);
+    const withOutput = bashActivity.find((e) => e.output !== undefined);
+    expect(withOutput?.output).toContain('Build OK');
+    expect(withOutput?.nodeId.startsWith('eng-')).toBe(true);
 
     // Terminal, completed.
     expect(terminal(events).result.outcome).toBe('completed');

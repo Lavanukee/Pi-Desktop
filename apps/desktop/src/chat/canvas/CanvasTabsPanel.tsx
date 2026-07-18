@@ -26,6 +26,11 @@ import { usePiStore } from '../../state/pi-slice';
 import { artifactToPayload } from './artifacts';
 import { useBrowserAgent } from './browser-agent';
 import { useCanvasStateReporter } from './canvas-state-report';
+import {
+  focusSituationTab,
+  selectCorpNodeAndFocus,
+  useCorpCanvasRouting,
+} from './corp-canvas-routing';
 import { openProjectFileTree, useFileTabRefresh, useFileWriteCanvasRouting } from './file-tabs';
 import { useNativeSurfaces } from './native-surfaces';
 import { createCanvasDragResize } from './resize-collapse';
@@ -112,6 +117,10 @@ export function CanvasTabsPanel() {
   // blindtest #10) — re-reads from disk when an EMPTY file tab gains focus.
   useFileTabRefresh();
   useBashTerminalCanvasRouting();
+  // Corp (multi-agent) mirror of the two chat routers above: a running task's bash
+  // steps → live terminal tabs, its file writes → live file tabs (+N), and a
+  // delegation → the situation room. Inert unless a corp task is active.
+  useCorpCanvasRouting(controller);
 
   useEffect(() => {
     if (IS_E2E) window.__pi_canvas = () => controller;
@@ -229,6 +238,11 @@ export function CanvasTabsPanel() {
   // blank "untitled" file (the previous bug).
   const onNewTab = useCallback(
     (kind: NewTabKind) => {
+      // During an ACTIVE corp run the "Subagents" affordance means the situation
+      // room (the real team view), not the empty chat-subagent surface.
+      if (kind === 'subagent' && focusSituationTab(controller, useCorpStore.getState().taskId)) {
+        return;
+      }
       if (kind === 'terminal') controller.openTab({ kind: 'terminal', title: 'Terminal' });
       else if (kind === 'browser') controller.openTab({ kind: 'browser', title: 'New tab' });
       else if (kind === 'subagent')
@@ -239,11 +253,13 @@ export function CanvasTabsPanel() {
     [controller, cwd, setCanvasOpen],
   );
 
-  // Clicking a subagent row focuses the (live) subagent tab. Only the summary of
-  // each child returns to chat, so there is no separate per-subagent transcript
-  // surface to open — focusing keeps the list in view.
+  // Clicking a subagent row focuses the (live) subagent tab. During an active corp
+  // run, route to the situation room instead (the chat-subagent surface is empty
+  // then). Only the summary of each child returns to chat, so there is no separate
+  // per-subagent transcript surface to open — focusing keeps the list in view.
   const onSubagentSelect = useCallback(
     (tabId: string) => {
+      if (focusSituationTab(controller, useCorpStore.getState().taskId)) return;
       controller.focusTab(tabId);
       setCanvasOpen(true);
     },
@@ -252,11 +268,14 @@ export function CanvasTabsPanel() {
 
   // EXPERIMENTAL production harness: clicking a worker node in the situation room
   // PINS it — its real live stream routes into the LEFT chat area (via the corp
-  // store, read by ChatApp); clicking the pinned node again resumes follow-live.
-  // Inert unless a corp run is on.
-  const onSituationNodeSelect = useCallback((_tabId: string, node: OrgNodeView) => {
-    useCorpStore.getState().selectNode(node);
-  }, []);
+  // store, read by ChatApp) — AND brings the situation room forward (STEP 4);
+  // clicking the pinned node again resumes follow-live. Inert unless a corp run is on.
+  const onSituationNodeSelect = useCallback(
+    (_tabId: string, node: OrgNodeView) => {
+      selectCorpNodeAndFocus(controller, useCorpStore.getState().taskId, node);
+    },
+    [controller],
+  );
 
   // Keep the room's highlight on the node the left pane is SHOWING — pinned or
   // live-followed — so the lit card in the tree is always the one streaming.

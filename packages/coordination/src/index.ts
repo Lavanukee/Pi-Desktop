@@ -569,6 +569,11 @@ export interface WorkerActivityEvent {
   readonly label?: string;
   /** Human detail for a `tool` step (the query / command / file). */
   readonly detail?: string;
+  /** Captured RESULT text for a `tool` step (a bash command's output), CAPPED to a
+   * recent tail — the live terminal mirror shows the command plus this output. A
+   * bash step lands its command first (no `output`) then one or more `output`
+   * updates as its result arrives; the accumulator replaces the row's output. */
+  readonly output?: string;
   /** File path a `file`/`tool` step touched. */
   readonly path?: string;
   /** Lines this `file` chunk added / removed (the live +N/−N readout). */

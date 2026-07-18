@@ -37,7 +37,16 @@ import { create } from 'zustand';
 export type CorpBlock =
   | { kind: 'text'; text: string; streaming: boolean }
   | { kind: 'thinking'; text: string; streaming: boolean }
-  | { kind: 'tool'; toolName: string; label?: string; detail?: string; path?: string }
+  | {
+      kind: 'tool';
+      toolName: string;
+      label?: string;
+      detail?: string;
+      path?: string;
+      /** Captured RESULT text (a bash command's output) — replaced in place as it
+       * grows, so a terminal tab can mirror the command + its live output. */
+      output?: string;
+    }
   | { kind: 'file'; path: string; label?: string; addedLines: number; removedLines: number };
 
 /** Settle the trailing text/thinking block (its live flag off), if any — the
@@ -100,6 +109,32 @@ export function appendWorkerActivity(
       return blocks;
     }
     case 'tool': {
+      // An OUTPUT update for an already-open tool row (a bash command streaming its
+      // result): fold it onto the most recent row of the same tool — replacing its
+      // captured output in place — rather than pushing a duplicate row. A partial
+      // then a final output both land on the SAME row this way.
+      if (event.output !== undefined) {
+        for (let i = blocks.length - 1; i >= 0; i--) {
+          const b = blocks[i];
+          if (
+            b !== undefined &&
+            b.kind === 'tool' &&
+            b.toolName === (event.toolName ?? b.toolName)
+          ) {
+            blocks[i] = { ...b, output: event.output };
+            return blocks;
+          }
+        }
+        // No matching row yet (the output outran its start) — seed a row for it.
+        closeTrailingStream(blocks);
+        blocks.push({
+          kind: 'tool',
+          toolName: event.toolName ?? 'tool',
+          ...(event.detail !== undefined ? { detail: event.detail } : {}),
+          output: event.output,
+        });
+        return blocks;
+      }
       closeTrailingStream(blocks);
       blocks.push({
         kind: 'tool',

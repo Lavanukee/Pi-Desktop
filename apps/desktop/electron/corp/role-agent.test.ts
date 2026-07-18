@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applySamplingMode,
+  BASH_OUTPUT_CAP,
   bashDenylistGate,
   collectFilesWritten,
   countAssistantTurns,
@@ -11,10 +12,32 @@ import {
   type RoleAgentToolCall,
   SAMPLING_MODES,
   type SamplingMode,
-  settleActivitiesOnEnd,
   type StripMessage,
+  settleActivitiesOnEnd,
   stripPriorThinking,
+  toolResultText,
 } from './role-agent';
+
+describe('toolResultText — captured bash result, text-only + tail-capped', () => {
+  it('joins text blocks and drops non-text (image) blocks', () => {
+    const text = toolResultText([
+      { type: 'text', text: 'line 1\n' },
+      { type: 'image', data: 'zzz', mimeType: 'image/png' },
+      { type: 'text', text: 'line 2' },
+    ] as unknown as Parameters<typeof toolResultText>[0]);
+    expect(text).toBe('line 1\nline 2');
+  });
+
+  it('clips a noisy result to the last BASH_OUTPUT_CAP chars with a note', () => {
+    const big = 'x'.repeat(BASH_OUTPUT_CAP + 500);
+    const out = toolResultText([{ type: 'text', text: big }] as unknown as Parameters<
+      typeof toolResultText
+    >[0]);
+    expect(out.length).toBeLessThan(big.length);
+    expect(out).toContain('earlier chars hidden');
+    expect(out.endsWith('x'.repeat(80))).toBe(true); // the TAIL is preserved
+  });
+});
 
 describe('SAMPLING_MODES — the owner qwen params, verbatim', () => {
   it('thinking-general', () => {

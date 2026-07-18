@@ -685,6 +685,9 @@ function DefaultSurface({
           onCopy={onCopy}
           editable={editable}
           onSave={editable ? (text) => handlers?.onFileSave?.(id, text) : undefined}
+          // Live +N/−N badge while a corp worker writes the file (unset otherwise).
+          addedLines={tab.addedLines}
+          removedLines={tab.removedLines}
         />
       );
     }

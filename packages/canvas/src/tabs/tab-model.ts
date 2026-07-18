@@ -116,6 +116,13 @@ export interface CanvasTab {
   openApps?: OpenWithApp[];
   /** Persisted raw↔rendered preference for the file view (per-tab). */
   rawRendered?: FileViewMode;
+  /**
+   * Live line-diff counts for a file being written NOW (a corp worker's edit) —
+   * the file surface shows a small +N/−N badge fed from these. Left unset for an
+   * ordinary chat file tab, which shows no badge.
+   */
+  addedLines?: number;
+  removedLines?: number;
 
   // browser surface state (app-updated via controller.updateTab)
   url?: string;

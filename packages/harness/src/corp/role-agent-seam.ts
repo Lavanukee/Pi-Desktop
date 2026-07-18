@@ -110,6 +110,12 @@ export interface RoleAgentActivity {
    * a grep pattern — extracted from the tool call's arguments at the boundary. The
    * app leaves the human VERB ("Searched the web") to the coordination layer. */
   readonly detail?: string;
+  /** Captured RESULT text for a `tool` step whose output is worth mirroring live —
+   * a bash command's stdout/stderr. Emitted as a SECOND `tool` record paired with
+   * the command's own step (same {@link toolName} + {@link detail}); the app CAPS
+   * it to a recent tail so a noisy build can't bloat the event. Absent on a tool
+   * START and on tools whose result is not mirrored. */
+  readonly output?: string;
   /** Context fullness of the run's session (0..100) at a turn boundary, when the
    * app impl can read it (`session.getContextUsage().percent`). Carried on
    * `turn-start`/`turn-end` records so the engine can surface a live context

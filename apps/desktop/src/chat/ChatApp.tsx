@@ -101,6 +101,9 @@ export function ChatApp({
 }) {
   const messageCount = usePiStore((s) => s.messages.length);
   const windowTitle = usePiStore((s) => s.windowTitle);
+  // Remount the composer on each session boundary so its editor text + attachments
+  // don't leak across chats (BUG: switching chats retained the input state).
+  const sessionEpoch = usePiStore((s) => s.sessionEpoch);
   const modelId = usePiStore((s) => s.agent.model?.id ?? null);
 
   // Consume the harness's auto-generated conversation title → session title
@@ -254,12 +257,13 @@ export function ChatApp({
   const title = windowTitle ?? (messageCount > 0 ? 'Chat' : 'New chat');
   const empty = messageCount === 0;
 
-  // ONE composer instance across the empty→thread transition: a stable `key` +
-  // a stable DOM parent (the keyed composer slot below) keep React from
-  // unmounting it, so focus survives the first send (adversarial finding).
+  // ONE composer instance ACROSS the empty→thread transition (same session → stable
+  // key → focus survives the first send), but a FRESH instance per session: keying on
+  // `sessionEpoch` (bumped only on a session boundary, never on empty→thread) remounts
+  // it on new/switch, clearing its editor text + attachments so nothing leaks chats.
   const composer = (
     <ChatComposer
-      key="composer"
+      key={`composer-${sessionEpoch}`}
       piModels={piModels}
       onOpenModels={() => onOpenSettings('models')}
       onCorpSubmit={onCorpSubmit}

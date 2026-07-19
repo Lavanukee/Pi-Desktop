@@ -59,6 +59,11 @@ interface PiSliceState {
   messages: ChatMsg[];
   agent: PiAgentStatus;
   session: SessionChangeInfo | null;
+  /** Bumped on every session boundary (new / switch / rehydrate — every
+   * `setMessagesExternal`). The composer keys its mount on it so its local editor +
+   * attachment state is CLEARED across chats, and a send captures it to detect a
+   * switch that raced its dispatch (so a message can't land in the wrong chat). */
+  sessionEpoch: number;
   /** Tool calls currently executing (spinner state for W3 rows). */
   runningToolCalls: string[];
   extensionStatus: Record<string, string>;
@@ -139,6 +144,7 @@ export const usePiStore = create<PiSliceState>((set) => ({
   messages: [],
   agent: initialAgent,
   session: null,
+  sessionEpoch: 0,
   runningToolCalls: [],
   extensionStatus: {},
   widgets: {},
@@ -175,6 +181,9 @@ export const usePiStore = create<PiSliceState>((set) => ({
     set((s) => ({
       messages,
       historyTruncated: truncated,
+      // A session boundary — bump the epoch so the composer remounts (clearing its
+      // editor text + attachments) and an in-flight send can detect the switch.
+      sessionEpoch: s.sessionEpoch + 1,
       runningToolCalls: [],
       uiRequests: [],
       bridgeExited: null,

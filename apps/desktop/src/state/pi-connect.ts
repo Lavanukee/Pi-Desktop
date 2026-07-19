@@ -222,27 +222,50 @@ export async function sendPrompt(
   forcedClass?: TaskClass,
 ) {
   usePiStore.getState().appendUser(message, imageDataUris);
+  // Capture the session boundary: the awaits below can hard-restart llama (a vision
+  // relaunch or an Auto tier switch), and if the user switches / starts a new chat
+  // during that window, this prompt must NOT land in the new chat (BUG: sent message
+  // appeared in a freshly-started chat).
+  const epochAtSend = usePiStore.getState().sessionEpoch;
+
+  // Did the on-demand vision relaunch fail to give us a model that can SEE? (Only
+  // relevant on an image turn.) If so, we must not dispatch the image — a text-only
+  // llama-server just drops the request → a bare "fetch failed".
+  let visionUnavailable = false;
+  let visionReason: string | undefined;
   if (messageNeedsVision({ imageDataUris })) {
-    // Round-12 on-demand VISION (ask #3): an image upload needs a multimodal
-    // model. Relaunch the current model (or a vision-capable pick) in vision mode
-    // BEFORE dispatch — sticky, restart-based, honest about the MTP tradeoff.
-    // This takes precedence over Auto tier-routing so an image turn does exactly
-    // ONE restart, not two. Awaited; never throws.
-    //
-    // Gated by the in-flight lock: a vision relaunch is a hard llama restart too,
-    // so it must not fire while a turn is streaming/queued — the composer routes
-    // an in-flight send to `steerPrompt` (no restart), and any other in-flight
-    // caller holds the current model until the next idle boundary.
-    if (!agentInFlight()) await ensureVisionMode();
+    // Round-12 on-demand VISION (ask #3): an image needs a multimodal model. Relaunch
+    // the current model (or a vision-capable pick) BEFORE dispatch — sticky, restart-
+    // based. Gated by the in-flight lock (a vision relaunch is a hard restart; the
+    // composer routes an in-flight send to steerPrompt instead). The result is now
+    // CHECKED (previously ignored, which is why images 'fetch failed' on a text model):
+    // ok:false covers both "no vision model" and "the mmproj download/relaunch failed".
+    if (!agentInFlight()) {
+      const vision = await ensureVisionMode();
+      visionUnavailable = !vision.ok;
+      visionReason = vision.reason;
+    }
   } else {
-    // Round-12 Auto router (W3): when the selection is Auto, classify this prompt
-    // and (per the hysteresis) switch the running model to the routed tier BEFORE
-    // dispatch, so the turn runs on the picked model. Awaited so the send waits on
-    // the (surfaced) restart; a no-op unless mode==='auto'; never throws. A
-    // composer "+" force-action passes `forcedClass` so the routed model matches
-    // the pinned task class (e.g. "+ → Generate video" → advanced-video tier).
+    // Round-12 Auto router (W3): when the selection is Auto, classify this prompt and
+    // switch the running model to the routed tier BEFORE dispatch. Awaited; no-op
+    // unless mode==='auto'; never throws.
     await maybeRouteAuto(agentMessage ?? message, { hasImages: false, forcedClass });
   }
+
+  // ONE guard after all the awaits: a session switch raced us → drop this send (the
+  // echo was appended to the now-cleared old session; do NOT dispatch into the new one).
+  if (usePiStore.getState().sessionEpoch !== epochAtSend) return;
+
+  if (visionUnavailable) {
+    const detail = visionReason !== undefined && visionReason !== '' ? ` (${visionReason})` : '';
+    usePiStore
+      .getState()
+      .appendAssistantText(
+        `I can't see images right now${detail}. Download a vision-capable model in Settings → Models and resend, or send the message without the image.`,
+      );
+    return;
+  }
+
   const images = imageDataUris
     .map(dataUriToImage)
     .filter((img): img is ImageContent => img !== null);

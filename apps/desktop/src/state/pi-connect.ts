@@ -74,8 +74,36 @@ export function connectPi(): () => void {
   // Subscribing at module-init time (pre-mount) — the preload event hub
   // buffers anything main pushed before this point and flushes it here.
   const unsubscribe = window.piDesktop.onEvent('pi:event', (event) => router.handleEvent(event));
+
+  // Drain queued sends on the in-flight → idle edge. A message typed while a turn
+  // was in-flight is held in the store (ChatComposer) and dispatched here as its
+  // OWN sequential turn once the current one ends, so [msg1, reply1, msg2, reply2]
+  // instead of both user echoes stacking above a single reply. FIFO, one at a
+  // time — sendPrompt re-sets promptInFlight, so the next drain waits for it.
+  let draining = false;
+  const unsubscribeQueue = usePiStore.subscribe((state, prev) => {
+    const inFlight = state.agent.isStreaming || state.promptInFlight;
+    const wasInFlight = prev.agent.isStreaming || prev.promptInFlight;
+    if (draining || inFlight || !wasInFlight) return;
+    const head = state.queuedSends[0];
+    if (head === undefined) return;
+    draining = true;
+    usePiStore.setState({ queuedSends: state.queuedSends.slice(1) });
+    void sendPrompt(
+      head.text,
+      head.images,
+      head.agentMessage,
+      head.taskClass as TaskClass | undefined,
+    )
+      .catch(() => {})
+      .finally(() => {
+        draining = false;
+      });
+  });
+
   disconnect = () => {
     unsubscribe();
+    unsubscribeQueue();
     disconnect = null;
   };
   return disconnect;
@@ -222,6 +250,12 @@ export async function sendPrompt(
   forcedClass?: TaskClass,
 ) {
   usePiStore.getState().appendUser(message, imageDataUris);
+  // Mark in-flight the instant we accept the send (before the awaits below, which
+  // can be a multi-second vision relaunch). This bridges the dispatch→agent_start
+  // gap so a 2nd message sent during it STEERS instead of racing in as a fresh
+  // send (which reorders the echoes ahead of the first assistant turn). Cleared by
+  // agent_start / agent_end, and on every early return below.
+  usePiStore.setState({ promptInFlight: true });
   // Capture the session boundary: the awaits below can hard-restart llama (a vision
   // relaunch or an Auto tier switch), and if the user switches / starts a new chat
   // during that window, this prompt must NOT land in the new chat (BUG: sent message
@@ -254,9 +288,13 @@ export async function sendPrompt(
 
   // ONE guard after all the awaits: a session switch raced us → drop this send (the
   // echo was appended to the now-cleared old session; do NOT dispatch into the new one).
-  if (usePiStore.getState().sessionEpoch !== epochAtSend) return;
+  if (usePiStore.getState().sessionEpoch !== epochAtSend) {
+    usePiStore.setState({ promptInFlight: false });
+    return;
+  }
 
   if (visionUnavailable) {
+    usePiStore.setState({ promptInFlight: false });
     const detail = visionReason !== undefined && visionReason !== '' ? ` (${visionReason})` : '';
     usePiStore
       .getState()
@@ -284,6 +322,9 @@ export async function steerPrompt(message: string, agentMessage?: string) {
 }
 
 export async function abortPi() {
+  // Stopping interrupts the current turn AND drops anything queued behind it —
+  // the user asked to halt, so pending messages must not fire after the abort.
+  usePiStore.setState({ queuedSends: [] });
   return window.piDesktop.invoke('pi:abort', undefined);
 }
 

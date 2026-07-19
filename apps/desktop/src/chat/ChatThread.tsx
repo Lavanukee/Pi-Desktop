@@ -88,6 +88,7 @@ function toRenderItems(messages: ChatMsg[], claimed: Set<string>): RenderItem[] 
 
 export function ChatThread() {
   const messages = usePiStore((s) => s.messages);
+  const queuedSends = usePiStore((s) => s.queuedSends);
   const runningToolCalls = usePiStore((s) => s.runningToolCalls);
   const historyTruncated = usePiStore((s) => s.historyTruncated);
   const branches = usePiStore((s) => s.branches);
@@ -419,6 +420,30 @@ export function ChatThread() {
                 reasons and "Working" while it acts, with the harness stage folded
                 in subtly. No duplicate label, no footer status, no stray spinner. */}
           <ThreadStatusIndicator />
+
+          {/* Messages the user sent while this turn was still in-flight — held
+              and shown as dimmed pending bubbles BELOW the live reply, so they
+              read as "these send next" rather than reordering ahead of the reply
+              (the message-ordering fix). They convert to real bubbles as the
+              queue drains, one turn at a time. */}
+          {queuedSends.map((q, i) => (
+            <MessageRow key={`queued-${i}`} kind="user" data-testid="queued-message">
+              <div className="flex flex-col gap-2 opacity-55">
+                {q.images.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {q.images.map((src) => (
+                      // biome-ignore lint/a11y/useAltText: user attachment thumbnail
+                      <img key={src} src={src} className="max-h-32 rounded-md" />
+                    ))}
+                  </div>
+                ) : null}
+                {q.text.length > 0 ? (
+                  <span className="whitespace-pre-wrap">{q.text}</span>
+                ) : null}
+                <span className="text-footnote text-text-muted">Queued · sends after this reply</span>
+              </div>
+            </MessageRow>
+          ))}
           {/* Breathing room so the last message/thought is never jammed against
               the composer — the user can scroll it up clear of the input bar. */}
           <div className="h-28 shrink-0" aria-hidden />

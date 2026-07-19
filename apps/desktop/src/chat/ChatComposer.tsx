@@ -26,7 +26,6 @@ import {
   getCommands,
   runBash,
   sendPrompt,
-  steerPrompt,
 } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { productionHarnessEnabled } from '../state/settings-store';
@@ -462,8 +461,24 @@ export function ChatComposer({
       return;
     }
 
-    if (usePiStore.getState().agent.isStreaming) await steerPrompt(echo, agentMessage);
-    else await sendPrompt(echo, imageUris, agentMessage, pinnedClass ?? undefined);
+    // While a turn is in-flight (streaming OR still in the dispatch→agent_start
+    // gap), QUEUE this message rather than inject it into the running turn.
+    // Appending a 2nd user echo mid-turn — as a steer OR a fresh send — lands it
+    // ahead of the first turn's reply (the assistant row is created only at
+    // turn_start and streams in at the end), which is the "response pushed below
+    // my new message" reorder. Queued messages drain as their own sequential
+    // turns once the current one ends → [msg1, reply1, msg2, reply2].
+    const piState = usePiStore.getState();
+    if (piState.agent.isStreaming || piState.promptInFlight) {
+      piState.enqueueSend({
+        text: echo,
+        images: imageUris,
+        agentMessage,
+        taskClass: pinnedClass ?? undefined,
+      });
+      return;
+    }
+    await sendPrompt(echo, imageUris, agentMessage, pinnedClass ?? undefined);
   };
 
   // THEME 4 click-target fix: clicking any blank area of the composer focuses
@@ -490,7 +505,7 @@ export function ChatComposer({
   // the empty composer from looking oversized (the old 3-line jargon overflowed
   // and faded, inflating the card).
   const placeholder = isStreaming
-    ? 'Send another to steer…'
+    ? 'Send — it goes right after this reply…'
     : bashMode
       ? 'Run a shell command…'
       : 'Ask Pi anything…';

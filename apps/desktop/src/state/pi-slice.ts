@@ -55,6 +55,24 @@ export interface BranchGroup {
   active: number;
 }
 
+/**
+ * A message the user sent while a turn was still in-flight. Rather than inject
+ * it into the running turn (which reorders it ahead of the in-flight reply), we
+ * hold it here and dispatch it as its OWN sequential turn once the current turn
+ * ends — so a rapid "hi" then "what are you doing" renders [hi, reply, what,
+ * reply] instead of stacking both user rows above a single reply. Drained by the
+ * in-flight→idle subscription in pi-connect.
+ */
+export interface QueuedSend {
+  /** The visible user echo (also the fallback message body). */
+  text: string;
+  images: string[];
+  /** Full body sent to the agent (may fold in attached text-file contents). */
+  agentMessage?: string;
+  /** Pinned task class (Auto-router override), passed straight to sendPrompt. */
+  taskClass?: string;
+}
+
 interface PiSliceState {
   messages: ChatMsg[];
   agent: PiAgentStatus;
@@ -64,6 +82,20 @@ interface PiSliceState {
    * attachment state is CLEARED across chats, and a send captures it to detect a
    * switch that raced its dispatch (so a message can't land in the wrong chat). */
   sessionEpoch: number;
+  /** True from the instant the renderer dispatches a `pi:prompt` until the run
+   * ends (or `agent_start` flips `isStreaming` true). Bridges the latency gap
+   * between dispatch and `agent_start` — on a cold first message that gap is
+   * seconds, and without this flag a 2nd message sent in it is routed as a
+   * fresh send, so both user echoes land BEFORE the first assistant turn
+   * (`beginAssistantTurn` appends at the end). The composer routes on
+   * `isStreaming || promptInFlight` so an in-flight 2nd message is queued (not
+   * merged into the running turn). */
+  promptInFlight: boolean;
+  /** Messages the user sent while a turn was in-flight, awaiting sequential
+   * dispatch (FIFO). See {@link QueuedSend}. */
+  queuedSends: QueuedSend[];
+  /** Queue a send for after the current turn ends (composer → drain). */
+  enqueueSend: (item: QueuedSend) => void;
   /** Tool calls currently executing (spinner state for W3 rows). */
   runningToolCalls: string[];
   extensionStatus: Record<string, string>;
@@ -145,6 +177,9 @@ export const usePiStore = create<PiSliceState>((set) => ({
   agent: initialAgent,
   session: null,
   sessionEpoch: 0,
+  promptInFlight: false,
+  queuedSends: [],
+  enqueueSend: (item) => set((s) => ({ queuedSends: [...s.queuedSends, item] })),
   runningToolCalls: [],
   extensionStatus: {},
   widgets: {},
@@ -184,6 +219,11 @@ export const usePiStore = create<PiSliceState>((set) => ({
       // A session boundary — bump the epoch so the composer remounts (clearing its
       // editor text + attachments) and an in-flight send can detect the switch.
       sessionEpoch: s.sessionEpoch + 1,
+      // A switch/new-chat abandons any in-flight dispatch of the OLD session — clear
+      // the bridge flag + any messages queued behind it so neither leaks into the
+      // fresh chat.
+      promptInFlight: false,
+      queuedSends: [],
       runningToolCalls: [],
       uiRequests: [],
       bridgeExited: null,
@@ -337,10 +377,14 @@ export function createPiSink(
 ): StoreSink {
   const set = store.setState;
   return {
-    agentStart: () => set({ bridgeExited: null }),
+    // `agent_start` flips isStreaming true (that now governs steer-routing), so
+    // the renderer-side in-flight bridge has done its job — clear it.
+    agentStart: () => set({ bridgeExited: null, promptInFlight: false }),
     // Blocking dialogs cannot outlive the run that raised them — drop any
     // stragglers so a stale dialog never sits over the finished conversation.
-    agentEnd: () => set({ runningToolCalls: [], uiRequests: [] }),
+    // Clearing promptInFlight here is the belt-and-suspenders exit (a run that
+    // errored before agent_start still releases the flag).
+    agentEnd: () => set({ runningToolCalls: [], uiRequests: [], promptInFlight: false }),
 
     beginAssistantTurn: (id) =>
       set((s) => ({

@@ -443,3 +443,30 @@ describe('pi-slice — dialog lifecycle (pi auto-resolves expired dialogs silent
     expect(usePiStore.getState().bridgeExited).toEqual({ code: 1, signal: null });
   });
 });
+
+describe('in-flight bridge + queued sends (message-ordering fix)', () => {
+  it('agent_start / agent_end clear the renderer promptInFlight bridge', () => {
+    usePiStore.setState({ promptInFlight: true });
+    route([{ type: 'agent_start' }]);
+    expect(usePiStore.getState().promptInFlight).toBe(false);
+
+    usePiStore.setState({ promptInFlight: true });
+    const router = createEventRouter(createPiSink(), { nextId: (p) => `${p}-t` });
+    router.handleEvent({ type: 'agent_end', messages: [] } as unknown as PiBridgeEvent);
+    expect(usePiStore.getState().promptInFlight).toBe(false);
+  });
+
+  it('enqueueSend accumulates FIFO; a session boundary clears the queue + bridge', () => {
+    const s = usePiStore.getState();
+    s.enqueueSend({ text: 'first', images: [] });
+    s.enqueueSend({ text: 'second', images: [], agentMessage: 'second (full)' });
+    usePiStore.setState({ promptInFlight: true });
+    expect(usePiStore.getState().queuedSends.map((q) => q.text)).toEqual(['first', 'second']);
+
+    // A new/switched session must drop the queue AND the in-flight bridge so
+    // neither leaks into the fresh chat.
+    usePiStore.getState().setMessagesExternal([]);
+    expect(usePiStore.getState().queuedSends).toEqual([]);
+    expect(usePiStore.getState().promptInFlight).toBe(false);
+  });
+});

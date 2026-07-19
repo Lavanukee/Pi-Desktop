@@ -107,6 +107,7 @@ import {
   type HierarchyDivisionSpec,
   type OpenAiFunctionTool,
   PROMOTION_SYSTEM_PROMPT,
+  SOLO_EXECUTION_PROMPT,
 } from './promotion.js';
 import { composeNodePrompt, getRolePrompt, roleThinkingEnabled } from './prompts.js';
 import { isBlankFile, MANAGER_EMPTY_RETRY_NUDGE, withRetryOnEmpty } from './retry.js';
@@ -233,6 +234,14 @@ export interface RunCorpOptions {
    * faster and merge cleanly. Threaded into the CEO vision turn (vision.ts) + the
    * architect prompt (architect.ts). */
   readonly decompositionGranularity?: DecompositionGranularity;
+  /**
+   * Whether the CEO is OFFERED the create_production_hierarchy tool at all (effort
+   * gate). `true` (default) is the full flow: a vision turn, then a promote-or-solo
+   * judgment turn WITH the hierarchy tool. `false` (the two lower effort levels) never
+   * presents the hierarchy — there is no ceremony: a SINGLE capable agent does the
+   * task directly (read/write/bash/web), the regular-chat behavior. Threaded from the
+   * effort slider (only the top two levels offer the corporation). */
+  readonly promotionAllowed?: boolean;
   /** Base generation cap for judgment turns (default 8192); manager + engineer
    * turns floor at 16k regardless (config robustness — see docs). */
   readonly maxTokens?: number;
@@ -828,6 +837,10 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
   // turn + the architect prompt. Default COARSE (`xhigh`): the architect over-splits
   // otherwise, which collapses the merge; fewer, larger contracts build faster.
   const granularity = options.decompositionGranularity ?? DEFAULT_DECOMPOSITION_GRANULARITY;
+  // EFFORT GATE: only the top two effort levels OFFER the corporation (the CEO gets
+  // create_production_hierarchy). Below that there is no ceremony — no vision turn, no
+  // hierarchy tool — just a single capable agent doing the task (regular chat).
+  const promotionAllowed = options.promotionAllowed ?? true;
   let totalContracts = 0;
   const emptyAfterRetryDivisions: string[] = [];
   let chart: OrgChart | undefined;
@@ -848,8 +861,11 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
     // it runs in an ISOLATED SCRATCH workspace (harvest OFF) so its mockup never
     // enters the product tree; on the chat-fallback path it is a plain completion
     // whose text IS the brief. A blank/failed turn falls back to the raw task.
-    log('CEO vision turn');
-    if (runRoleAgent !== undefined) {
+    // The vision turn runs ONLY when the corporation is on offer (top two effort
+    // levels). Below that there is no ceremony — the solo execution turn below does the
+    // task directly, so visionBrief stays '' and the working task is the raw request.
+    if (promotionAllowed && runRoleAgent !== undefined) {
+      log('CEO vision turn');
       const out = await agentRoleTurn({
         purpose: 'vision',
         systemPrompt: CEO_VISION_PROMPT,
@@ -893,7 +909,8 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         filesWritten: out.filesWritten.length,
         ...(out.turns !== undefined ? { turns: out.turns } : {}),
       };
-    } else {
+    } else if (promotionAllowed) {
+      log('CEO vision turn');
       const res = await workTurn({
         purpose: 'vision',
         messages: [
@@ -916,22 +933,28 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
     const workingTask = visionBrief !== '' ? visionBrief : options.task;
     log(visionBrief !== '' ? 'vision formed' : 'vision empty — using raw task');
 
-    // 1. WORKER → promote-or-not. Thinking ON — the promote-or-not judgment is the
-    // value. On the agent path the promotion tool is a CUSTOM tool, so calling it
-    // surfaces in toolCalls (detectPromotion reads it; falls back to finalText).
-    log('worker turn');
+    // 1. WORKER → promote-or-not (top two effort levels) OR solo execution (lower
+    // levels — the effort gate). When promotion is on offer the turn is a pure
+    // judgment turn WITH the create_production_hierarchy tool; otherwise it is a
+    // capable SOLO turn WITH real tools (read/write/bash/web) and NO hierarchy — a
+    // single agent doing the task directly. Thinking ON either way.
+    const workerSystemPrompt = promotionAllowed ? PROMOTION_SYSTEM_PROMPT : SOLO_EXECUTION_PROMPT;
+    const workerTools: string[] = promotionAllowed
+      ? [CREATE_PRODUCTION_HIERARCHY]
+      : ['read', 'write', 'bash', ...BROWSER_TOOL_NAMES, 'web_search', 'web_fetch'];
+    log(promotionAllowed ? 'worker turn (promote-or-solo)' : 'solo execution turn (effort gate)');
     let workerRes: CorpChatResult;
     if (runRoleAgent !== undefined) {
       const out = await agentRoleTurn({
         purpose: 'worker',
-        systemPrompt: PROMOTION_SYSTEM_PROMPT,
+        systemPrompt: workerSystemPrompt,
         userPrompt: workingTask,
-        // The tool allowlist gates CUSTOM tools too (createAgentSession maps `tools`
-        // → allowedToolNames), so the promotion tool's NAME must be listed here or
-        // it is never offered to the model. No builtin file tools — a pure judgment
-        // turn: promote (call the tool) or answer directly (stay solo).
-        tools: [CREATE_PRODUCTION_HIERARCHY],
-        customTools: [promotionCustomTool],
+        // Promotion path: the allowlist gates CUSTOM tools too (createAgentSession maps
+        // `tools` → allowedToolNames), so the hierarchy tool's NAME must be listed or it
+        // is never offered — a pure judgment turn (promote or stay solo). Solo path: the
+        // real file/web tools so the single agent can actually build/answer.
+        tools: workerTools,
+        ...(promotionAllowed ? { customTools: [promotionCustomTool] } : {}),
         cwd: options.workspace,
         thinking: true,
         samplingMode: samplingModeForPurpose('worker'),
@@ -944,12 +967,12 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
       workerRes = await workTurn({
         purpose: 'worker',
         messages: [
-          { role: 'system', content: PROMOTION_SYSTEM_PROMPT },
+          { role: 'system', content: workerSystemPrompt },
           { role: 'user', content: workingTask },
         ],
         thinking: true,
         maxTokens: baseMaxTokens,
-        tools: [CREATE_PRODUCTION_HIERARCHY_TOOL],
+        ...(promotionAllowed ? { tools: [CREATE_PRODUCTION_HIERARCHY_TOOL] } : {}),
       });
     }
     const promotion = detectPromotion(workerRes);

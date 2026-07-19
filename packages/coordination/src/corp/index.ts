@@ -36,6 +36,7 @@ import {
   type CorpChatRequest,
   type CorpChatResult,
   type CorpRunResult,
+  type DecompositionGranularity,
   makeNodeWorkspaceFs,
   makeNodeWorkspaceReadFs,
   parseArchitecture,
@@ -175,6 +176,13 @@ export interface CorpEngineOptions {
   readonly concurrency?: number;
   /** CEO revise cycle cap (passed to runCorp; default 1). */
   readonly maxRevisions?: number;
+  /** EFFORT GATE (passed to runCorp): whether the CEO is offered the
+   * create_production_hierarchy tool. `false` (the two lower effort levels) runs a
+   * single capable solo agent — no vision, no hierarchy. Default `true`. */
+  readonly promotionAllowed?: boolean;
+  /** Decomposition granularity when promotion runs (`'xhigh'` coarse / `'max'` fine),
+   * mapped from the effort level. Passed to runCorp; default coarse. */
+  readonly decompositionGranularity?: DecompositionGranularity;
   /** Base generation cap for judgment turns (passed to runCorp). */
   readonly maxTokens?: number;
   /** Global backstop caps (passed to runCorp). */
@@ -498,6 +506,12 @@ export class CorpEngine implements CoordinationEngine {
       ...(this.opts.limit !== undefined ? { limit: this.opts.limit } : {}),
       ...(this.opts.concurrency !== undefined ? { concurrency: this.opts.concurrency } : {}),
       ...(this.opts.maxRevisions !== undefined ? { maxRevisions: this.opts.maxRevisions } : {}),
+      ...(this.opts.promotionAllowed !== undefined
+        ? { promotionAllowed: this.opts.promotionAllowed }
+        : {}),
+      ...(this.opts.decompositionGranularity !== undefined
+        ? { decompositionGranularity: this.opts.decompositionGranularity }
+        : {}),
       ...(this.opts.maxTokens !== undefined ? { maxTokens: this.opts.maxTokens } : {}),
       ...(this.opts.maxTurns !== undefined ? { maxTurns: this.opts.maxTurns } : {}),
       ...(this.opts.maxWallClockMs !== undefined

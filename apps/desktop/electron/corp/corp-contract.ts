@@ -18,12 +18,15 @@ import type {
   TaskContext,
   WorkerTranscriptView,
 } from '@pi-desktop/coordination';
+import type { EffortLevel } from '../settings/settings-contract';
 
 export type CorpInvokeMap = {
   /** Start a coordination task; returns its stable id. Events stream on
    * `corp:event` (filtered by this taskId) until a terminal `done`. */
   'corp:start': {
-    request: { prompt: string; ctx?: TaskContext };
+    /** `effort` is the resolved slider level — only the top two ('high'/'max') offer
+     * the corporation; lower levels run a single solo agent (no hierarchy). */
+    request: { prompt: string; ctx?: TaskContext; effort?: EffortLevel };
     response: { taskId: string };
   };
   /** Mid-run steering to the lead (no faked user turn). Fire-and-forget. */

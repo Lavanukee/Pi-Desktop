@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { newRunBudget } from './budget.js';
-import { CREATE_PRODUCTION_HIERARCHY } from './promotion.js';
+import {
+  CREATE_PRODUCTION_HIERARCHY,
+  PROMOTION_SYSTEM_PROMPT,
+  SOLO_EXECUTION_PROMPT,
+} from './promotion.js';
 import { SUBMIT_FINDINGS_TOOL } from './review.js';
 import type { RoleAgentRunInput, RoleAgentRunOutput, RunRoleAgentFn } from './role-agent-seam.js';
 import { type CorpChatFn, type CorpChatResult, type CorpTurnPurpose, runCorp } from './run.js';
@@ -183,6 +187,81 @@ describe('runCorp — well-behaved model completes', () => {
     expect(mock.callsByPurpose.ceo).toBe(1);
     expect(mock.callsByPurpose.revise).toBe(0);
     expect(totalCalls(mock.callsByPurpose)).toBeLessThanOrEqual(result.budget.maxTurns);
+  });
+});
+
+// --- The effort gate: only the top levels OFFER the corporation --------------
+
+describe('runCorp — effort gate (promotionAllowed)', () => {
+  it('promotionAllowed=false → no vision, no hierarchy tool, a single solo turn', async () => {
+    const { fs, readFs } = memWorkspace();
+    let visionCalls = 0;
+    let workerSystem = '';
+    let workerTools: unknown;
+    const chat: CorpChatFn = (req) => {
+      if (req.purpose === 'vision') {
+        visionCalls += 1;
+        return { content: 'VISION' };
+      }
+      if (req.purpose === 'worker') {
+        workerSystem = req.messages.find((m) => m.role === 'system')?.content ?? '';
+        workerTools = req.tools;
+        // No hierarchy tool is offered, so the model can only answer directly.
+        return { content: 'Here is the finished thing, built directly.' };
+      }
+      return { content: '' };
+    };
+    const result = await runCorp({
+      task: 'Build a small thing',
+      chat,
+      fs,
+      readFs,
+      workspace: '/ws',
+      promotionAllowed: false,
+    });
+
+    expect(result.promoted).toBe(false);
+    expect(result.terminatedReason).toBe('solo');
+    // No vision ceremony ran.
+    expect(visionCalls).toBe(0);
+    // The worker turn was a SOLO execution turn — the solo prompt, and the hierarchy
+    // tool was NOT offered.
+    expect(workerSystem).toBe(SOLO_EXECUTION_PROMPT);
+    expect(workerSystem).not.toBe(PROMOTION_SYSTEM_PROMPT);
+    expect(workerTools).toBeUndefined();
+  });
+
+  it('promotionAllowed=true (default) still offers the hierarchy tool + runs the vision', async () => {
+    const { fs, readFs } = memWorkspace();
+    let visionCalls = 0;
+    let workerSystem = '';
+    let workerToolNames: string[] = [];
+    const chat: CorpChatFn = (req) => {
+      if (req.purpose === 'vision') {
+        visionCalls += 1;
+        return { content: 'VISION' };
+      }
+      if (req.purpose === 'worker') {
+        workerSystem = req.messages.find((m) => m.role === 'system')?.content ?? '';
+        workerToolNames = (req.tools ?? []).map((t) => t.function.name);
+        return { content: 'Direct answer, staying solo.' }; // no promotion → solo, but the tool WAS offered
+      }
+      return { content: '' };
+    };
+    const result = await runCorp({
+      task: 'Build a thing',
+      chat,
+      fs,
+      readFs,
+      workspace: '/ws',
+      promotionAllowed: true,
+    });
+
+    expect(visionCalls).toBe(1);
+    expect(workerSystem).toBe(PROMOTION_SYSTEM_PROMPT);
+    expect(workerToolNames).toContain(CREATE_PRODUCTION_HIERARCHY);
+    // (It stayed solo only because this mock chose not to call the offered tool.)
+    expect(result.terminatedReason).toBe('solo');
   });
 });
 

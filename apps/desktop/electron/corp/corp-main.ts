@@ -25,6 +25,7 @@ import { type BrowserSearchFn, registerWebTools } from '@pi-desktop/web-tools';
 import { app, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
 import { ensureCorpInferenceServer } from '../inference/llm-main';
 import type { AppEventMap } from '../ipc-contract';
+import type { EffortLevel } from '../settings/settings-contract';
 import { isTrustedIpcEvent } from '../trusted-senders';
 import { corpConcurrencyForHost } from './concurrency';
 import { createLlamaCorpChat } from './corp-chat';
@@ -132,6 +133,25 @@ async function resolveCorpChat(parallel: number): Promise<ResolvedCorpChat> {
  * engine terminates via `startUnavailable` without running the harness. */
 const noopCorpChat: CorpChatFn = () => ({ content: '' });
 
+/**
+ * Map the resolved effort slider level to the corp run's params (the effort gate).
+ * Only the TOP TWO levels OFFER the corporation: 'max' → full decomposition ('max'),
+ * 'high' → coarse ('xhigh'). 'low'/'medium' run a SINGLE capable solo agent (no
+ * vision, no create_production_hierarchy). An absent effort (old client) preserves the
+ * prior behavior — the corporation, coarse.
+ */
+function corpParamsForEffort(effort: EffortLevel | undefined): {
+  promotionAllowed: boolean;
+  decompositionGranularity: 'xhigh' | 'max';
+} {
+  if (effort === 'max') return { promotionAllowed: true, decompositionGranularity: 'max' };
+  if (effort === 'low' || effort === 'medium') {
+    return { promotionAllowed: false, decompositionGranularity: 'xhigh' };
+  }
+  // 'high' or undefined → the corporation, coarse decomposition.
+  return { promotionAllowed: true, decompositionGranularity: 'xhigh' };
+}
+
 async function handleStart(
   wc: WebContents,
   req: CorpInvokeMap['corp:start']['request'],
@@ -194,6 +214,7 @@ async function handleStart(
     ...(runRoleAgent !== undefined ? { runRoleAgent } : {}),
     workspaceFor: createNodeWorkspaceFactory(corpWorkspaceRoot()),
     concurrency,
+    ...corpParamsForEffort(req.effort),
   });
   const handle = resolved.ok
     ? engine.startTask(req.prompt, req.ctx)

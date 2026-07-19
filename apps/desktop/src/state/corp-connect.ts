@@ -16,6 +16,10 @@ import type {
   TaskContext,
   WorkerTranscriptView,
 } from '@pi-desktop/coordination';
+import { parseHarnessStatus } from '../chat/harness-status';
+import { resolveEffort } from './model-selection';
+import { usePiStore } from './pi-slice';
+import { useSettingsStore } from './settings-store';
 
 /** A minimal single-consumer async iterable the situation room drains. */
 class PushStream<T> implements AsyncIterable<T> {
@@ -99,9 +103,16 @@ export interface CorpTaskHandle {
  */
 export async function startCorpTask(prompt: string, ctx?: TaskContext): Promise<CorpTaskHandle> {
   connectCorp();
+  // The EFFECTIVE effort the user has selected (the slider level, or the tier-derived
+  // level in Auto mode) — the harness gates the corporation on it (only 'high'/'max'
+  // offer create_production_hierarchy; lower levels run a single solo agent).
+  const activeTier =
+    parseHarnessStatus(usePiStore.getState().extensionStatus.harness)?.activeTier ?? null;
+  const effort = resolveEffort(useSettingsStore.getState().settings, activeTier);
   const { taskId } = await window.piDesktop.invoke('corp:start', {
     prompt,
     ...(ctx ? { ctx } : {}),
+    effort,
   });
   const inbox = inboxFor(taskId);
   const stream = new PushStream<CoordinationEvent>();

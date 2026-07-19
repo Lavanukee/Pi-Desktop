@@ -33,6 +33,17 @@ If the task is genuinely small enough to finish well in ONE focused pass, just d
 
 Understand this so you are never confused: delegating with create_production_hierarchy IS how the user's request gets fulfilled — it is NOT leaving the work undone. The instant you call it, your team owns the build and YOUR job here is complete: output nothing after the call, do not try to build anything yourself, and never call it a second time (a repeat does nothing). You will return only at the very end to review and sign off the finished product. If a tool tells you that you are finished, that is correct — trust it.`;
 
+/**
+ * The system prompt for the SOLO EXECUTION turn — the two lower effort levels, where
+ * the corporation is NOT on offer (the create_production_hierarchy tool is withheld).
+ * There is no ceremony and no delegation: a single capable agent does the task
+ * directly with its tools, the regular-chat behavior. Paired with a full tool
+ * allowlist (read/write/bash/web) instead of the hierarchy tool.
+ */
+export const SOLO_EXECUTION_PROMPT = `You are a highly capable assistant working directly for the user. Do exactly what they asked — completely — using your tools (read, write, bash, and web research) as needed, and produce the finished result in the current workspace.
+
+If it is a build, create the real, working files and make sure they actually run. If it is a question or a piece of research, answer it directly and well. Do the work yourself in this one pass: do not delegate, do not form a formal "vision" document, and do not ask permission to proceed — just do the task and finish.`;
+
 /** The tool name the worker calls to promote itself into a corporation. */
 export const CREATE_PRODUCTION_HIERARCHY = 'create_production_hierarchy';
 

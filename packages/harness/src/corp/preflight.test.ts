@@ -42,6 +42,29 @@ describe('preflightProduct — applicability', () => {
   });
 });
 
+describe('preflightProduct — path normalization (no false FAIL on a correct product)', () => {
+  // The workspace arg and the listFiles output can differ by a trailing/double slash
+  // (a $TMPDIR ending in "/"). A prefix miss would leave every path absolute and read
+  // a CORRECT product as all-imports-missing. Both forms must resolve identically.
+  const correct = {
+    '/ws/index.html': htmlWithModule("import { start } from './game.js'; start();"),
+    '/ws/game.js': 'export function start() {}',
+  };
+
+  it('a trailing-slash workspace arg still resolves relative imports', () => {
+    const r = preflightProduct('/ws/', memFs(correct));
+    expect(r.applicable).toBe(true);
+    expect(r.entry).toBe('index.html');
+    expect(r.ok).toBe(true);
+  });
+
+  it('a double-slash workspace arg still resolves relative imports', () => {
+    const r = preflightProduct('/ws//', memFs(correct));
+    expect(r.ok).toBe(true);
+    expect(r.entry).toBe('index.html');
+  });
+});
+
 describe('preflightProduct — loadable products PASS (no false positives)', () => {
   it('a fully self-contained inline entry with no imports loads', () => {
     const r = preflightProduct(

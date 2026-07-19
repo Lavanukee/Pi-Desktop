@@ -354,7 +354,13 @@ export function preflightProduct(workspace: string, fs: WorkspaceReadFs): Prefli
   } catch {
     absList = [];
   }
-  const prefix = workspace.endsWith('/') ? workspace : `${workspace}/`;
+  // Normalize BOTH the workspace root and each listed path (`\`→`/`, collapse
+  // duplicate slashes, drop trailing slash) before stripping the prefix — the
+  // `workspace` arg and the `listFiles` output can differ by a trailing/`//` slash
+  // (e.g. a `$TMPDIR` ending in `/`), and a prefix miss would leave every path
+  // ABSOLUTE, breaking resolution so a CORRECT product reads as all-imports-missing.
+  const norm = (p: string): string => p.replace(/\\/g, '/').replace(/\/{2,}/g, '/');
+  const prefix = `${norm(workspace).replace(/\/+$/, '')}/`;
   for (const abs of absList) {
     let content: string | undefined;
     try {
@@ -363,7 +369,8 @@ export function preflightProduct(workspace: string, fs: WorkspaceReadFs): Prefli
       content = undefined;
     }
     if (content === undefined) continue;
-    const rel = (abs.startsWith(prefix) ? abs.slice(prefix.length) : abs).replace(/\\/g, '/');
+    const absNorm = norm(abs);
+    const rel = absNorm.startsWith(prefix) ? absNorm.slice(prefix.length) : absNorm;
     files.set(rel, content);
   }
 

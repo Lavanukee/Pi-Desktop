@@ -199,6 +199,10 @@ export function appendWorkerActivity(
 interface CorpStoreState {
   /** The active corp task id (an inline corp turn renders it), or null. */
   taskId: string | null;
+  /** True while the task is live (from start until its terminal `done`/`status`
+   * event). Drives the composer's Stop button — a follow-up-able but finished
+   * task keeps its taskId, so taskId!==null alone can't mean "running". */
+  corpRunning: boolean;
   /**
    * The task's folded event stream (`reduceSituation` output) — what the
    * inline corp turn renders. Null until the task's first event arrives.
@@ -249,6 +253,7 @@ interface CorpStoreState {
 
 export const useCorpStore = create<CorpStoreState>((set) => ({
   taskId: null,
+  corpRunning: false,
   situation: null,
   liveNode: null,
   pinnedNode: null,
@@ -258,6 +263,8 @@ export const useCorpStore = create<CorpStoreState>((set) => ({
   setTask: (taskId) =>
     set({
       taskId,
+      // A freshly-tracked task is running; setTask(null) clears the flag.
+      corpRunning: taskId !== null,
       situation: null,
       liveNode: null,
       pinnedNode: null,
@@ -270,6 +277,9 @@ export const useCorpStore = create<CorpStoreState>((set) => ({
   foldEvent: (event) =>
     set((s) => ({
       situation: reduceSituation(s.situation ?? initialSituation(s.taskId ?? ''), event),
+      // The terminal `done` (completed / aborted / failed) ends the run — flip the
+      // Stop button off. Follow-ups after this go through the CEO ask path.
+      ...(event.type === 'done' ? { corpRunning: false } : {}),
     })),
   foldWorkerActivity: (event) =>
     set((s) => {

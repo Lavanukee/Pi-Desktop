@@ -45,6 +45,9 @@ interface RunningTask {
   readonly engine?: CorpEngine;
   readonly handle: TaskHandle;
   readonly wc: WebContents;
+  /** Mesh runs have no CorpEngine — their cooperative stop lives here instead, so
+   * `corp:abort` can halt a hierarchy the same way it aborts an engine task. */
+  readonly abortMesh?: () => void;
 }
 
 const tasks = new Map<string, RunningTask>();
@@ -205,6 +208,7 @@ async function handleStart(
   // the same high/max gate the tool used.
   let engine: CorpEngine | undefined;
   let handle: TaskHandle;
+  let abortMesh: (() => void) | undefined;
   if (resolved.ok && corpParamsForEffort(req.effort).promotionAllowed) {
     const meshTaskId = `corp-mesh-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const cwd = createNodeWorkspaceFactory(corpWorkspaceRoot())(meshTaskId).workspace;
@@ -213,7 +217,14 @@ async function handleStart(
       baseUrl: resolved.baseUrl,
       model: resolved.model,
     });
-    handle = startMeshTask({ handle: modelHandle, task: req.prompt, taskId: meshTaskId, cwd });
+    const meshHandle = startMeshTask({
+      handle: modelHandle,
+      task: req.prompt,
+      taskId: meshTaskId,
+      cwd,
+    });
+    handle = meshHandle;
+    abortMesh = meshHandle.abort;
     log.info('corp MESH task started', { taskId: meshTaskId });
   } else {
     const runRoleAgent = resolved.ok
@@ -243,7 +254,12 @@ async function handleStart(
       ? engine.startTask(req.prompt, req.ctx)
       : engine.startUnavailable(req.prompt, resolved.message, req.ctx);
   }
-  tasks.set(handle.taskId, { ...(engine !== undefined ? { engine } : {}), handle, wc });
+  tasks.set(handle.taskId, {
+    ...(engine !== undefined ? { engine } : {}),
+    ...(abortMesh !== undefined ? { abortMesh } : {}),
+    handle,
+    wc,
+  });
 
   // Forward the task's events to the requesting window until the terminal `done`.
   // We keep DRAINING to the terminal even if the window is gone (destroyed or
@@ -311,7 +327,14 @@ const handlers: CorpHandlers = {
   },
   'corp:abort': (_wc, req) => {
     const task = tasks.get(req.taskId);
-    if (task?.engine === undefined) return { ok: false };
+    if (task === undefined) return { ok: false };
+    // Mesh (hierarchy) runs have no engine — fire their cooperative stop instead,
+    // so every subagent is told to wrap up and no new turns start.
+    if (task.engine === undefined) {
+      if (task.abortMesh === undefined) return { ok: false };
+      task.abortMesh();
+      return { ok: true };
+    }
     task.engine.abort(task.handle);
     return { ok: true };
   },

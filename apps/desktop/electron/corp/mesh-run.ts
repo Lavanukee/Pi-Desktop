@@ -169,7 +169,7 @@ export function startMeshTask(opts: {
   readonly taskId: string;
   readonly cwd: string;
   readonly maxTokens?: number;
-}): TaskHandle {
+}): TaskHandle & { readonly abort: () => void } {
   const stream = new MeshEventStream();
   const roster = buildCorpRoster({ task: opts.task });
   const states = new Map<string, OrgNodeView['state']>();
@@ -180,10 +180,31 @@ export function startMeshTask(opts: {
   stream.push({ type: 'status', status: 'working' });
   emitChart();
 
+  // Cooperative stop. `abort()` fires the mesh's signal (no new turns start) AND
+  // emits the terminal 'aborted' done immediately, so the UI shows "stopped" at
+  // once rather than waiting out the in-flight turn. The run's own then/catch are
+  // guarded by `terminated` so they never double-emit after a stop.
+  const controller = new AbortController();
+  let terminated = false;
+  const abort = (): void => {
+    if (terminated) return;
+    terminated = true;
+    controller.abort();
+    for (const agent of roster) if (states.get(agent.id) === 'working') states.set(agent.id, 'idle');
+    emitChart();
+    stream.push({ type: 'status', status: 'done' });
+    stream.push({
+      type: 'done',
+      result: { outcome: 'aborted', summary: 'Stopped — every agent was told to wrap up.' },
+    });
+    stream.end();
+  };
+
   void runCorpMeshTask({
     handle: opts.handle,
     task: opts.task,
     cwd: opts.cwd,
+    signal: controller.signal,
     ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
     onActivity: (agentId, record) => {
       if (record.kind === 'turn-start') {
@@ -202,6 +223,10 @@ export function startMeshTask(opts: {
     },
   })
     .then((result) => {
+      // A stop already emitted the terminal 'aborted' done — the mesh resolves
+      // right after (its hops all refuse), so swallow this to avoid double-done.
+      if (terminated) return;
+      terminated = true;
       for (const agent of roster) states.set(agent.id, 'done');
       emitChart();
       stream.push({ type: 'status', status: 'done' });
@@ -210,6 +235,8 @@ export function startMeshTask(opts: {
       stream.end();
     })
     .catch((err) => {
+      if (terminated) return;
+      terminated = true;
       const taskResult: TaskResult = {
         outcome: 'failed',
         summary: 'The mesh run failed.',
@@ -220,5 +247,5 @@ export function startMeshTask(opts: {
       stream.end();
     });
 
-  return { taskId: opts.taskId, events: stream };
+  return { taskId: opts.taskId, events: stream, abort };
 }

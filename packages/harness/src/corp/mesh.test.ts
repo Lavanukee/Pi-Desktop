@@ -128,6 +128,33 @@ describe('AgentMesh — bounds (an emergent loop must never run away)', () => {
     expect(mesh.hops.some((h) => h.refused === 'out-of-turns')).toBe(true);
   });
 
+  it('abort() halts the run — a mid-turn talk is refused and the peer never runs', async () => {
+    // The CEO stops the run mid-turn, then tries to talk to its manager: the talk is
+    // refused 'aborted' and the manager's handler never executes.
+    let managerRan = false;
+    const mesh = scriptedMesh([agent('ceo', ['manager']), agent('manager')], {
+      ceo: async (req) => {
+        mesh.abort();
+        return `manager said: ${await req.talk('ceo', 'manager', 'do the thing')}`;
+      },
+      manager: () => {
+        managerRan = true;
+        return 'done';
+      },
+    });
+    const out = await mesh.run('ceo', 'go');
+    expect(out).toContain('the run was stopped');
+    expect(managerRan).toBe(false);
+    expect(mesh.hops.some((h) => h.refused === 'aborted')).toBe(true);
+  });
+
+  it('abort() before run refuses even the root prompt (no turn runs)', async () => {
+    const mesh = scriptedMesh([agent('ceo')], { ceo: () => 'hi' });
+    mesh.abort();
+    expect(await mesh.run('ceo', 'go')).toContain('the run was stopped');
+    expect(mesh.turns).toBe(0);
+  });
+
   it('reports a re-entrant talk to a busy (mid-turn) agent instead of deadlocking', async () => {
     // ceo prompts manager; while manager is mid-turn it tries to talk BACK to ceo,
     // who is still on the stack → "busy".

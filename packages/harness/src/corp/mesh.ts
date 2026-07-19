@@ -85,7 +85,13 @@ export const DEFAULT_MESH_BUDGET: MeshBudget = { maxTurns: 200, maxDepth: 12 };
 export const ROOT_SENDER = 'user';
 
 /** Why a talk was refused (surfaced to the caller as a plain note, never thrown). */
-export type TalkRefusal = 'unknown-agent' | 'not-a-peer' | 'busy' | 'too-deep' | 'out-of-turns';
+export type TalkRefusal =
+  | 'unknown-agent'
+  | 'not-a-peer'
+  | 'busy'
+  | 'too-deep'
+  | 'out-of-turns'
+  | 'aborted';
 
 /** The plain-language note a refused talk returns to the calling agent. Pure. */
 export function refusalNote(kind: TalkRefusal, to: string): string {
@@ -100,6 +106,8 @@ export function refusalNote(kind: TalkRefusal, to: string): string {
       return '(this conversation has nested too many times — wrap up and report back.)';
     case 'out-of-turns':
       return '(the team is out of time for now — wrap up with what you have.)';
+    case 'aborted':
+      return '(the run was stopped — wrap up immediately, do not start anything new.)';
   }
 }
 
@@ -125,6 +133,7 @@ export class AgentMesh {
   private readonly agents = new Map<string, MeshAgent>();
   private readonly active = new Set<string>();
   private turnsUsed = 0;
+  private aborted = false;
   /** The ordered transcript of every talk (including refusals). */
   readonly hops: MeshHop[] = [];
 
@@ -144,6 +153,17 @@ export class AgentMesh {
   /** How many agent turns have run so far. */
   get turns(): number {
     return this.turnsUsed;
+  }
+
+  /**
+   * Cooperatively stop the run: every subsequent talk (including the root's next
+   * hop and any in-flight agent's `talk_to`) is refused with `'aborted'`, so the
+   * conversation unwinds fast — no new turns start. The turn currently awaiting
+   * its seam finishes (a single model call can't be torn mid-flight here), then
+   * its downstream talks all refuse. Idempotent.
+   */
+  abort(): void {
+    this.aborted = true;
   }
 
   /**
@@ -186,6 +206,8 @@ export class AgentMesh {
   /** The bounds check for a talk: returns the refusal kind, or `undefined` when the
    * talk may proceed. Pure over the mesh's state. */
   private refuse(from: string, to: string, depth: number): TalkRefusal | undefined {
+    // Stop wins over everything — once aborted, no talk proceeds.
+    if (this.aborted) return 'aborted';
     if (!this.agents.has(to)) return 'unknown-agent';
     // The root may talk to anyone; an agent may talk only to its DECLARED peers.
     if (from !== ROOT_SENDER && this.agents.get(from)?.peers.includes(to) !== true) {

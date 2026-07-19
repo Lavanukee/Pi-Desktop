@@ -19,6 +19,7 @@ import {
   IconClose,
 } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
+import { abortCorpTask } from '../state/corp-connect';
 import { useCorpStore } from '../state/corp-store';
 import {
   abortPi,
@@ -200,6 +201,10 @@ export function ChatComposer({
 }) {
   const flavor = useThemeStore((s) => s.flavor);
   const isStreaming = usePiStore((s) => s.agent.isStreaming);
+  // A corp/hierarchy run is live from start to its terminal `done` — its Stop
+  // halts every subagent (cooperative abort), distinct from a plain chat Stop.
+  const corpRunning = useCorpStore((s) => s.corpRunning);
+  const corpTaskId = useCorpStore((s) => s.taskId);
   const cwd = usePiStore((s) => s.session?.cwd ?? '');
 
   const apiRef = useRef<ComposerEditorApi | null>(null);
@@ -498,7 +503,14 @@ export function ChatComposer({
     apiRef.current?.focus();
   };
 
-  const showSend = flavor === 'codex' || canSend || isStreaming;
+  const isBusy = isStreaming || corpRunning;
+  const showSend = flavor === 'codex' || canSend || isBusy;
+  // Stop routes to the right abort: a corp run cooperatively halts its subagents;
+  // a plain chat aborts the pi turn.
+  const stopBusy = (): void => {
+    if (corpRunning && corpTaskId !== null) void abortCorpTask(corpTaskId);
+    else void abortPi();
+  };
   // jedd #12: the primary placeholder is friendly for a first-timer — the
   // developer-jargon @ / ! hints were demoted to the subtle helper line below
   // (home only), not baked into the placeholder. A single short line also stops
@@ -631,12 +643,12 @@ export function ChatComposer({
             <div className="pd-composer-footer-spacer" />
             <ComposerFooter piModels={piModels} onOpenModels={onOpenModels} />
             {showSend ? (
-              isStreaming ? (
+              isBusy ? (
                 <IconButton
-                  aria-label="Stop"
+                  aria-label={corpRunning ? 'Stop — halt all agents' : 'Stop'}
                   variant="primary"
                   circle
-                  onClick={() => void abortPi()}
+                  onClick={() => stopBusy()}
                   data-testid="composer-stop"
                 >
                   <IconClose size={14} />

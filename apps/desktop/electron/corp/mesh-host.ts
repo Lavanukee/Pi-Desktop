@@ -213,6 +213,8 @@ export async function runCorpMeshTask(opts: {
   readonly engineerCount?: number;
   readonly maxTokens?: number;
   readonly onActivity?: (agentId: string, record: RoleAgentActivity) => void;
+  /** Cooperative stop: fires the mesh's abort so no new agent turns start. */
+  readonly signal?: AbortSignal;
 }): Promise<CorpMeshRunResult> {
   const roster = buildCorpRoster({
     task: opts.task,
@@ -226,6 +228,10 @@ export async function runCorpMeshTask(opts: {
     ...(opts.onActivity !== undefined ? { onActivity: opts.onActivity } : {}),
   });
   const mesh = new AgentMesh(runAgentTurn, roster);
+  if (opts.signal !== undefined) {
+    if (opts.signal.aborted) mesh.abort();
+    else opts.signal.addEventListener('abort', () => mesh.abort(), { once: true });
+  }
   const reply = await mesh.run('ceo', opts.task);
   return { reply, hops: mesh.hops, turns: mesh.turns };
 }

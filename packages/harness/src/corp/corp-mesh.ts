@@ -182,10 +182,19 @@ export interface CorpMeshResult {
  * errors into replies).
  */
 export async function runCorpMesh(
-  opts: CorpMeshOptions & { readonly runAgentTurn: RunAgentTurn; readonly budget?: MeshBudget },
+  opts: CorpMeshOptions & {
+    readonly runAgentTurn: RunAgentTurn;
+    readonly budget?: MeshBudget;
+    /** Stop the run: fires the mesh's cooperative abort (no new turns start). */
+    readonly signal?: AbortSignal;
+  },
 ): Promise<CorpMeshResult> {
   const roster = buildCorpRoster(opts);
   const mesh = new AgentMesh(opts.runAgentTurn, roster, opts.budget ?? DEFAULT_MESH_BUDGET);
+  if (opts.signal !== undefined) {
+    if (opts.signal.aborted) mesh.abort();
+    else opts.signal.addEventListener('abort', () => mesh.abort(), { once: true });
+  }
   const reply = await mesh.run('ceo', opts.task);
   return { reply, hops: mesh.hops, turns: mesh.turns, exhausted: mesh.exhausted };
 }

@@ -12,7 +12,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron as electron } from 'playwright-core';
@@ -33,7 +33,7 @@ const PROMPT =
 // the situation room long before this and the window simply stays up until then.
 const HOLD_MS = Number(process.env.OBS_HOLD_HOURS ?? 14) * 60 * 60 * 1000;
 
-const OUT = process.env.OBS_OUT ?? path.join(homedir(), 'Desktop', 'pi-overnight-run');
+const OUT = process.env.OBS_OUT ?? path.join(appRoot, '..', '..', '.corp-runs', 'pi-overnight-run');
 mkdirSync(OUT, { recursive: true });
 const LOG = path.join(OUT, 'overnight.log');
 const mark = (obj) =>

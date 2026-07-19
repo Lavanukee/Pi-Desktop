@@ -16,3 +16,6 @@ pnpm-debug.log*
 
 # local packaging output
 apps/desktop/release/
+
+# corp/pi e2e run artifacts (logs, screenshots, game builds) — never committed
+.corp-runs/

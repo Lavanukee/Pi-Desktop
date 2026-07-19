@@ -6,11 +6,19 @@
  * screenshots. Read the JSONL it writes; it does NOT rely on the situation room.
  *
  * Run (after pnpm build):  OBS_PROMPT="..." node tests/e2e/corp-diag.mjs
- * Output: ~/Desktop/pi-corp-diag/diag.jsonl (+ poll-*.png)
+ * Output: <repo>/.corp-runs/pi-corp-diag/diag.jsonl (+ poll-*.png)
  */
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron as electron } from 'playwright-core';
@@ -21,7 +29,7 @@ const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.
 const PROMPT =
   process.env.OBS_PROMPT ??
   'Build a single-file browser Snake game. It MUST be one index.html that opens directly in a browser with no build step. Start screen with a Play button, arrow-key controls, growing snake, food, score, game-over restart. Neon styling.';
-const OUT = process.env.OBS_OUT ?? path.join(homedir(), 'Desktop', 'pi-corp-diag');
+const OUT = process.env.OBS_OUT ?? path.join(appRoot, '..', '..', '.corp-runs', 'pi-corp-diag');
 mkdirSync(OUT, { recursive: true });
 const LOG = path.join(OUT, 'diag.jsonl');
 const CAP_MS = Number(process.env.OBS_CAP_MIN ?? 12) * 60 * 1000;
@@ -91,15 +99,18 @@ function probe() {
       out.spinners = spins.length;
       out.spinnerTexts = Array.from(spins)
         .slice(0, 6)
-        .map((s) => ((s.closest('[class*="chain"],[class*="activity"],div') ?? s).innerText ?? '')
-          .replace(/\s+/g, ' ')
-          .slice(0, 50));
+        .map((s) =>
+          ((s.closest('[class*="chain"],[class*="activity"],div') ?? s).innerText ?? '')
+            .replace(/\s+/g, ' ')
+            .slice(0, 50),
+        );
       out.thinkingCount = (txt.match(/Thinking\.\.\./g) ?? []).length;
       out.done = /(^|\n)\s*Done(\s|$)/.test(txt);
       // subagent-UX probes
       const wm = txt.match(/Waiting for [^\n]{0,60}/);
       out.waitingText = wm ? wm[0] : null;
-      out.finishedLine = (document.querySelector('[data-testid="corp-finished-line"]')?.innerText ?? null);
+      out.finishedLine =
+        document.querySelector('[data-testid="corp-finished-line"]')?.innerText ?? null;
     }
     // the live activity HUD (ground-truth of what the system thinks it's doing)
     out.hud = (document.querySelector('[data-testid="corp-debug-hud"]')?.innerText ?? '')
@@ -162,7 +173,13 @@ try {
     const fs = readdirSync(corpRoot)
       .filter((f) => f.startsWith('outcome-') && f.endsWith('.json'))
       .map((f) => path.join(corpRoot, f))
-      .filter((p) => { try { return statSync(p).mtimeMs >= t0; } catch { return false; } })
+      .filter((p) => {
+        try {
+          return statSync(p).mtimeMs >= t0;
+        } catch {
+          return false;
+        }
+      })
       .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
     return fs[0] ?? null;
   };
@@ -170,10 +187,27 @@ try {
     if (!existsSync(corpRoot)) return [];
     const dirs = readdirSync(corpRoot)
       .map((d) => path.join(corpRoot, d))
-      .filter((p) => { try { return statSync(p).isDirectory() && statSync(p).mtimeMs >= t0; } catch { return false; } });
+      .filter((p) => {
+        try {
+          return statSync(p).isDirectory() && statSync(p).mtimeMs >= t0;
+        } catch {
+          return false;
+        }
+      });
     const acc = [];
-    const walk = (root, base) => { for (const n of readdirSync(root)) { const p = path.join(root, n); const s = statSync(p); if (s.isDirectory()) walk(p, base); else acc.push({ path: path.relative(base, p), bytes: s.size }); } };
-    for (const d of dirs) { try { walk(d, d); } catch {} }
+    const walk = (root, base) => {
+      for (const n of readdirSync(root)) {
+        const p = path.join(root, n);
+        const s = statSync(p);
+        if (s.isDirectory()) walk(p, base);
+        else acc.push({ path: path.relative(base, p), bytes: s.size });
+      }
+    };
+    for (const d of dirs) {
+      try {
+        walk(d, d);
+      } catch {}
+    }
     return acc;
   };
   let i = 0;
@@ -186,7 +220,9 @@ try {
     const elapsedMin = Number(((Date.now() - t0) / 60000).toFixed(1));
     const hasBrowserTab = (snap.canvasTabs ?? []).some((tb) => tb.kind === 'browser');
     logline({ ev: 'poll', i, elapsedMin, hasBrowserTab, ...snap });
-    await page.screenshot({ path: path.join(OUT, `poll-${String(i).padStart(2, '0')}.png`) }).catch(() => {});
+    await page
+      .screenshot({ path: path.join(OUT, `poll-${String(i).padStart(2, '0')}.png`) })
+      .catch(() => {});
     outcomeFile = newestOutcome();
     if (outcomeFile) {
       extraPolls += 1;
@@ -196,7 +232,11 @@ try {
   const ws = listWorkspace();
   const idx = ws.filter((f) => /index\.html?$/i.test(f.path));
   let verdict = null;
-  if (outcomeFile) { try { verdict = JSON.parse(readFileSync(outcomeFile, 'utf8')); } catch {} }
+  if (outcomeFile) {
+    try {
+      verdict = JSON.parse(readFileSync(outcomeFile, 'utf8'));
+    } catch {}
+  }
   const finalSnap = await page.evaluate(probe).catch(() => ({}));
   logline({
     ev: 'END',

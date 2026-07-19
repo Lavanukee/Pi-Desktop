@@ -10,7 +10,7 @@
  * from the corp workspace into the output dir.
  *
  * Run (after `pnpm build`):  node tests/e2e/observed-3d-run.mjs
- * Output: ~/Desktop/pi-3d-observed-run/  (run.jsonl, main.log, poll-*.png, game/)
+ * Output: <repo>/.corp-runs/pi-3d-observed-run/  (run.jsonl, main.log, poll-*.png, game/)
  */
 import {
   appendFileSync,
@@ -18,8 +18,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   statSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -39,7 +39,8 @@ const PROMPT =
 const CAP_MS = Number(process.env.OBS_CAP_MIN ?? 100) * 60 * 1000; // launcher safety net (not the run budget)
 const POLL_MS = Number(process.env.OBS_POLL_SEC ?? 30) * 1000;
 
-const OUT = process.env.OBS_OUT ?? path.join(homedir(), 'Desktop', 'pi-3d-observed-run');
+const OUT =
+  process.env.OBS_OUT ?? path.join(appRoot, '..', '..', '.corp-runs', 'pi-3d-observed-run');
 mkdirSync(OUT, { recursive: true });
 const LOG = path.join(OUT, 'run.jsonl');
 const MAIN_LOG = path.join(OUT, 'main.log');
@@ -189,12 +190,26 @@ try {
       .then((n) => n > 0)
       .catch(() => false);
     const ws = newestWorkspace();
-    const freshWs = ws !== null && (() => { try { return statSync(ws).mtimeMs >= t0; } catch { return false; } })();
-    if (hasTurn || freshWs) { started = true; break; }
+    const freshWs =
+      ws !== null &&
+      (() => {
+        try {
+          return statSync(ws).mtimeMs >= t0;
+        } catch {
+          return false;
+        }
+      })();
+    if (hasTurn || freshWs) {
+      started = true;
+      break;
+    }
     await page.waitForTimeout(2000);
   }
   if (!started) {
-    logline({ ev: 'no-start-signal', note: 'Enter may not have submitted — clicking composer-send once' });
+    logline({
+      ev: 'no-start-signal',
+      note: 'Enter may not have submitted — clicking composer-send once',
+    });
     const send = page.locator('[data-testid="composer-send"]');
     if ((await send.count()) > 0) await send.click().catch(() => {});
     // Give the fallback a moment to take.

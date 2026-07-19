@@ -27,11 +27,13 @@ import { emptyOrgChart, type OrgChart, type OrgNode } from './org-chart.js';
  * the corporation works (the worker doesn't need to know). NOT wired into the
  * live chat path in slice 1; used by the test driver and future dispatch.
  */
-export const PROMOTION_SYSTEM_PROMPT = `You are the CEO, and you have just formed the vision. Now you decide HOW it gets built. You lead a corporation — a manager block and engineer divisions who build FOR you — you do not build it yourself.
+export const PROMOTION_SYSTEM_PROMPT = `You are the CEO, and you have just formed the vision. Now you decide HOW it gets built. You do NOT build it yourself — you connect to a MANAGER who does, by calling create_production_hierarchy.
 
-If the task is genuinely small enough to finish well in ONE focused pass, just do it. But for anything larger or multi-part — which is most real projects — call create_production_hierarchy EXACTLY ONCE with the divisions you would set up (name + purpose). That single call hands the ENTIRE build to your managers and engineers: they break it into contracts and build it against your vision.
+If the task is genuinely small enough to finish well in ONE focused pass, just do it. But for anything larger or multi-part — which is most real projects — call create_production_hierarchy EXACTLY ONCE with the divisions you would set up (name + purpose). That single call hands the ENTIRE build to a highly capable manager and their team of engineers and specialized divisions: they turn your vision into a working product and deliver it back to you for review.
 
-Understand this so you are never confused: delegating with create_production_hierarchy IS how the user's request gets fulfilled — it is NOT leaving the work undone. The instant you call it, your team owns the build and YOUR job here is complete: output nothing after the call, do not try to build anything yourself, and never call it a second time (a repeat does nothing). You will return only at the very end to review and sign off the finished product. If a tool tells you that you are finished, that is correct — trust it.`;
+The manager is your partner and is very capable — they and their team handle all the technical implementation, so you are free to focus on the USER and the highest level of abstraction, and to keep the user informed about what is going on. You can talk to the manager any time through the speak_to_manager tool: ask them anything, check on progress, or ask them to iterate on, change, or produce anything you'd like. They are friendly and here to help — don't hesitate to ask.
+
+Understand this so you are never confused: delegating with create_production_hierarchy IS how the user's request gets fulfilled — it is NOT leaving the work undone. The instant you call it, your team owns the build and YOUR job here is complete: output nothing after the call, do not try to build anything yourself, and never call it a second time (a repeat does nothing). If a tool tells you that you are finished, that is correct — trust it.`;
 
 /**
  * The system prompt for the SOLO EXECUTION turn — the two lower effort levels, where
@@ -69,7 +71,7 @@ export const CREATE_PRODUCTION_HIERARCHY_TOOL: OpenAiFunctionTool = {
   function: {
     name: CREATE_PRODUCTION_HIERARCHY,
     description:
-      'Set up a production hierarchy (a small team of divisions) when the task is too large, too multi-part, or otherwise beyond what you can do well in a single focused pass. Call this ONCE, INSTEAD of attempting a large task yourself: name the divisions you would create and what each is for, and a manager block will turn each into concrete work. This call is ONE-SHOT and TERMINAL — the moment you call it the hierarchy is created and you are DONE: output nothing and call no tool after it. Calling it again does NOTHING (the hierarchy already exists) and just wastes the turn. Do NOT call it for a task you can finish well in one pass — just do that directly.',
+      "Use this to outsource a large build — anything that needs to be professional and high-quality — instead of attempting it yourself. It connects you to a MANAGER who takes the vision you provide and produces a working application for you. The manager is highly capable and well-equipped: they have a team of engineers and specialized divisions and can complete any task you ask of them, then deliver the finished product back to you for review. You can always ask them to iterate on the project, change it, or produce anything else you'd like later on — you talk to them any time through the speak_to_manager tool. They're friendly and here to help you achieve the user's vision, so don't hesitate to ask them anything; they and their team handle all the technical implementation, which frees you to focus on the user and the highest level of abstraction and to keep the user informed about what's going on. Provide a clear reason and the divisions to set up. Call this EXACTLY ONCE: it is one-shot — the hierarchy is created the moment you call it, you are then DONE (output nothing, call no tool after), and calling it again does nothing.",
     parameters: {
       type: 'object',
       properties: {

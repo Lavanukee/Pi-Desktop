@@ -30,8 +30,11 @@ describe('CREATE_PRODUCTION_HIERARCHY_TOOL', () => {
     const t = CREATE_PRODUCTION_HIERARCHY_TOOL;
     expect(t.type).toBe('function');
     expect(t.function.name).toBe(CREATE_PRODUCTION_HIERARCHY);
-    // Description makes the WHEN explicit.
-    expect(t.function.description.toLowerCase()).toContain('too large');
+    // Description makes the WHEN explicit (outsource a large build to the manager).
+    expect(t.function.description.toLowerCase()).toContain('outsource');
+    expect(t.function.description.toLowerCase()).toContain('manager');
+    // …and names the CEO↔manager channel it promises.
+    expect(t.function.description).toContain('speak_to_manager');
 
     const params = t.function.parameters as {
       type: string;
@@ -207,8 +210,8 @@ describe('PROMOTION one-shot messaging (J5)', () => {
 
   it('the tool description is one-shot + terminal (call again does nothing)', () => {
     const d = CREATE_PRODUCTION_HIERARCHY_TOOL.function.description;
-    expect(d).toContain('ONE-SHOT');
-    expect(d).toContain('TERMINAL');
+    expect(d).toContain('EXACTLY ONCE');
+    expect(d.toLowerCase()).toContain('one-shot');
     expect(d.toLowerCase()).toContain('calling it again does nothing');
   });
 });

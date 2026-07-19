@@ -39,6 +39,7 @@ import {
   type DecompositionGranularity,
   makeNodeWorkspaceFs,
   makeNodeWorkspaceReadFs,
+  type OpenAiFunctionTool,
   parseArchitecture,
   parseCreateHierarchyArgs,
   parseEngineerOutput,
@@ -425,7 +426,35 @@ const ARCHITECT_NODE = 'architect';
 /** The CEO's follow-up Q&A system prompt (A1/A4): a follow-up message is ANSWERED by
  * the CEO from what it already knows — it must NEVER restart the vision ceremony. */
 const CEO_ASK_PROMPT =
-  'You are the CEO who is leading this production. The user is asking you a follow-up question about it. Answer them directly, concisely, and in plain language — as the person who actually ran this, not a bureaucrat. Use ONLY what you know from the context below: the original request, the vision and plan you formed, the areas and tasks, and the current status. If you genuinely do not have a detail, say so plainly and offer to check with the part of the team that would know. Do NOT restart, re-plan, or re-form a vision, and do NOT call any tool — just answer the question.';
+  'You are the CEO who is leading this production. The user is asking you a follow-up question about it. Answer them directly, concisely, and in plain language — as the person who actually ran this, not a bureaucrat. You lead a capable manager and their team who did the build; when the manager would know a detail better than you (how something works, which approach they took, the state of a piece), call speak_to_manager to ask them, then answer the user in your own words. Use what you know from the context below (the original request, the vision and plan you formed, the areas and tasks, the current status) plus anything the manager tells you. Do NOT restart, re-plan, or re-form a vision — just answer the question.';
+
+/** The tool the CEO uses to talk to the manager who owns the build (jedd's framing).
+ * The manager answers from the whole build's context — the plan, the tasks, and the
+ * code that was actually produced — so the CEO can inform the user or ask about a part
+ * of the product. Offered only for a promoted run (a solo run has no manager). */
+const SPEAK_TO_MANAGER = 'speak_to_manager';
+const SPEAK_TO_MANAGER_TOOL: OpenAiFunctionTool = {
+  type: 'function',
+  function: {
+    name: SPEAK_TO_MANAGER,
+    description:
+      "Talk to the manager who ran the build. They have the whole team and know the plan, the tasks, and the code that was produced — ask them anything (status, how something works, which approach or library they used, whether something exists). Use this whenever the manager's knowledge would make your answer to the user better.",
+    parameters: {
+      type: 'object',
+      properties: {
+        message: {
+          type: 'string',
+          description: 'What you want to ask or tell the manager, in plain language.',
+        },
+      },
+      required: ['message'],
+    },
+  },
+};
+
+/** The manager's persona when answering the CEO's speak_to_manager message. */
+const MANAGER_ANSWER_PROMPT =
+  'You are the MANAGER who ran this build for the CEO — you have the whole team of engineers and specialized divisions, and you know the plan, the tasks, and the code that was produced. The CEO is asking you something. Answer them directly and concretely from what the team ACTUALLY built (shown below). Be concise and helpful; if something was not built, or you cannot tell from what exists, say so plainly rather than guessing. Speak for the team.';
 
 // ---------------------------------------------------------------------------
 // The engine
@@ -574,21 +603,76 @@ export class CorpEngine implements CoordinationEngine {
     if (rt === undefined) {
       return "I don't have that production in memory any more — start a new chat to kick off a fresh one.";
     }
+    const context = buildAskContext(rt, question);
+    const maxTokens = this.opts.maxTokens ?? 4096;
+    // The CEO may consult the manager — but only a PROMOTED run has one (a solo run has
+    // no team to ask). Offer speak_to_manager only then.
+    const canConsult = rt.promoted;
     try {
-      const res = await this.opts.chat({
+      const first = await this.opts.chat({
         purpose: 'ceo',
         messages: [
           { role: 'system', content: CEO_ASK_PROMPT },
-          { role: 'user', content: buildAskContext(rt, question) },
+          { role: 'user', content: context },
         ],
         // The CEO's reasoning makes for a better answer; bounded by the run's token cap.
         thinking: true,
-        maxTokens: this.opts.maxTokens ?? 4096,
+        maxTokens,
+        ...(canConsult ? { tools: [SPEAK_TO_MANAGER_TOOL] } : {}),
       });
-      const answer = (res.content ?? '').trim();
-      return answer !== '' ? answer : "I don't have more to add on that just now.";
+      const call = canConsult
+        ? first.toolCalls?.find((c) => c.name === SPEAK_TO_MANAGER)
+        : undefined;
+      if (call === undefined) {
+        const answer = (first.content ?? '').trim();
+        return answer !== '' ? answer : "I don't have more to add on that just now.";
+      }
+      // The CEO chose to consult the manager: get the manager's reply from the build's
+      // context, then let the CEO synthesize the user-facing answer with it.
+      const message = speakToManagerMessage(call.arguments);
+      const managerReply = await this.managerRespond(rt, message);
+      const second = await this.opts.chat({
+        purpose: 'ceo',
+        messages: [
+          { role: 'system', content: CEO_ASK_PROMPT },
+          { role: 'user', content: context },
+          { role: 'assistant', content: `I checked with the manager: "${message}"` },
+          {
+            role: 'user',
+            content: `The manager replied:\n${managerReply}\n\nNow give the user your answer, in your own words.`,
+          },
+        ],
+        thinking: true,
+        maxTokens,
+      });
+      const answer = (second.content ?? '').trim();
+      return answer !== '' ? answer : managerReply;
     } catch {
       return 'I hit a snag answering that — give me a moment and try again.';
+    }
+  }
+
+  /** Run ONE manager completion answering the CEO's speak_to_manager message, from the
+   * build's retained context (plan + tasks + produced files + a source peek). This is
+   * the CEO ↔ manager channel jedd's framing promises. Never throws. */
+  private async managerRespond(rt: CorpRuntime, message: string): Promise<string> {
+    try {
+      const res = await this.opts.chat({
+        purpose: 'manager',
+        messages: [
+          { role: 'system', content: MANAGER_ANSWER_PROMPT },
+          {
+            role: 'user',
+            content: `${buildManagerContext(rt)}\n\nThe CEO asks you:\n${message || '(no message)'}\n\nAnswer the CEO.`,
+          },
+        ],
+        thinking: true,
+        maxTokens: this.opts.maxTokens ?? 4096,
+      });
+      const reply = (res.content ?? '').trim();
+      return reply !== '' ? reply : 'The team is on it; there is nothing more to report right now.';
+    } catch {
+      return 'I could not reach the team just now.';
     }
   }
 
@@ -1692,6 +1776,85 @@ function buildAskContext(rt: CorpRuntime, question: string): string {
 
   lines.push('', `The user now asks: ${question}`);
   return lines.join('\n');
+}
+
+/** The produced product's file list (workspace-relative), bounded. Never throws. */
+function readBuiltFiles(rt: CorpRuntime): string[] {
+  try {
+    const root = rt.workspace.workspace;
+    const prefix = root.endsWith('/') ? root : `${root}/`;
+    return rt.workspace.readFs
+      .listFiles(root)
+      .map((p) => (p.startsWith(prefix) ? p.slice(prefix.length) : p))
+      .slice(0, 60);
+  } catch {
+    return [];
+  }
+}
+
+/** Up to a few produced source files, capped in size, so the manager can answer
+ * code-level questions ("which library", "how does X work"). Never throws. */
+function readSourcePeek(rt: CorpRuntime, files: readonly string[]): string {
+  const SRC = /\.(?:[cm]?jsx?|tsx?|html?|css|py|rb|go|rs|java|kt|swift)$/i;
+  const root = rt.workspace.workspace;
+  const prefix = root.endsWith('/') ? root : `${root}/`;
+  const parts: string[] = [];
+  for (const rel of files.filter((f) => SRC.test(f)).slice(0, 5)) {
+    let content: string | undefined;
+    try {
+      content = rt.workspace.readFs.readFile(`${prefix}${rel}`);
+    } catch {
+      content = undefined;
+    }
+    if (content !== undefined && content.trim() !== '') {
+      parts.push(`--- ${rel} ---\n${content.slice(0, 1200)}`);
+    }
+  }
+  return parts.join('\n\n');
+}
+
+/** The build context handed to the manager for a speak_to_manager reply: the vision,
+ * the divisions + tasks with state, the files produced, and a bounded peek at the
+ * source (so code-level questions can be answered). Pure aside from the read seam. */
+function buildManagerContext(rt: CorpRuntime): string {
+  const lines: string[] = [`The CEO's vision you are building: ${rt.task}`];
+  if (rt.divisions.length > 0)
+    lines.push(`Divisions: ${rt.divisions.map((d) => d.name).join(', ')}.`);
+  if (rt.contracts.length > 0) {
+    const done = rt.contracts.filter((c) => c.state === 'done').length;
+    lines.push(`Tasks: ${done}/${rt.contracts.length} complete.`);
+    for (const c of rt.contracts) lines.push(`  - ${c.title} [${c.state}] → ${c.slot}`);
+  }
+  const files = readBuiltFiles(rt);
+  if (files.length > 0) lines.push('', `Files produced (${files.length}): ${files.join(', ')}.`);
+  const peek = readSourcePeek(rt, files);
+  if (peek !== '') lines.push('', 'A look at the produced source:', peek);
+  lines.push(
+    '',
+    rt.finished ? 'Status: the build is FINISHED.' : 'Status: the build is in progress.',
+  );
+  return lines.join('\n');
+}
+
+/** Extract the `message` string from a speak_to_manager tool call's arguments (raw
+ * JSON string or decoded object). Empty string when unusable. Pure. */
+function speakToManagerMessage(args: string | Record<string, unknown>): string {
+  let obj: Record<string, unknown> | undefined;
+  if (typeof args === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(args);
+      obj =
+        parsed !== null && typeof parsed === 'object'
+          ? (parsed as Record<string, unknown>)
+          : undefined;
+    } catch {
+      obj = undefined;
+    }
+  } else {
+    obj = args;
+  }
+  const message = obj?.message;
+  return typeof message === 'string' ? message.trim() : '';
 }
 
 /** A per-node live delta PUSH ({@link WorkerActivityEvent}) — the real-time channel

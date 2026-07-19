@@ -202,6 +202,50 @@ describe('CorpEngine implements CoordinationEngine', () => {
     expect(askUserContent).toContain('FINISHED');
   });
 
+  it('the CEO consults the manager via speak_to_manager, then answers (jedd framing)', async () => {
+    let managerUser = '';
+    const chat: CorpChatFn = (req) => {
+      // The CEO follow-up turn: FIRST call speak_to_manager; after the manager's reply
+      // is fed back, synthesize the final user answer.
+      if (
+        req.purpose === 'ceo' &&
+        req.messages.some((m) => m.content.includes('The user now asks:'))
+      ) {
+        const consulted = req.messages.some((m) => m.content.includes('The manager replied:'));
+        return consulted
+          ? { content: 'We used Three.js — the manager confirmed it.' }
+          : {
+              content: '',
+              toolCalls: [
+                {
+                  name: 'speak_to_manager',
+                  arguments: { message: 'which 3D library did we use?' },
+                },
+              ],
+            };
+      }
+      // The manager's Q&A reply (distinct from the contract-authoring manager turn,
+      // which never contains "The CEO asks you:").
+      if (
+        req.purpose === 'manager' &&
+        req.messages.some((m) => m.content.includes('The CEO asks you:'))
+      ) {
+        managerUser = req.messages.find((m) => m.role === 'user')?.content ?? '';
+        return { content: 'We used Three.js for the 3D rendering.' };
+      }
+      return promotingChat()(req);
+    };
+    const engine = new CorpEngine({ chat, maxRevisions: 0 });
+    const handle = engine.startTask('Build a 3D thing');
+    await collect(handle);
+
+    const answer = await engine.ask(handle, 'what 3D library did you use?');
+    expect(answer).toContain('Three.js');
+    // The manager was actually consulted — with the CEO's question AND the build context.
+    expect(managerUser).toContain('which 3D library');
+    expect(managerUser).toContain("The CEO's vision you are building");
+  });
+
   it('ask on an unknown task returns an honest fallback (never throws)', async () => {
     const engine = new CorpEngine({ chat: promotingChat(), maxRevisions: 0 });
     const answer = await engine.ask({ taskId: 'nope' } as TaskHandle, 'hi');

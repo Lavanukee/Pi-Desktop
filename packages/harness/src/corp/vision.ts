@@ -31,6 +31,7 @@
  * never silently blank the build — "robustness is external", §0.6).
  */
 
+import { DEFAULT_DECOMPOSITION_GRANULARITY, type DecompositionGranularity } from './architect.js';
 import { getRolePrompt, withHarnessPreamble } from './prompts.js';
 import type { RoleAgentCustomTool } from './role-agent-seam.js';
 
@@ -75,8 +76,18 @@ CRITICAL: researching or sketching is NOT finishing. Your turn is ONLY complete 
  * brief to synthesize (what / tone + scope / concrete deliverables), and the
  * research → mockup → iterate → {@link SUBMIT_VISION} flow. Pure string
  * composition; deterministic.
+ *
+ * DECOMPOSITION GRANULARITY (I1): on the COARSE default (`'xhigh'`) the brief is
+ * steered to frame the work as a SMALL number of substantial, closely-related
+ * deliverables rather than fragmenting it — fewer, bigger slices flow into fewer
+ * divisions/contracts downstream and merge cleanly. `'max'` leaves the brief's
+ * scope unconstrained (the original fine-grained behaviour). This stays a SCOPE
+ * (what) steer — never HOW (no file layout/contracts; the managers own that).
  */
-export function buildCeoVisionPrompt(task: string): string {
+export function buildCeoVisionPrompt(
+  task: string,
+  granularity: DecompositionGranularity = DEFAULT_DECOMPOSITION_GRANULARITY,
+): string {
   return [
     "Form the vision for this request. Synthesize the user's intent into one concrete VISION BRIEF the corporation will build against.",
     '',
@@ -87,6 +98,11 @@ export function buildCeoVisionPrompt(task: string): string {
     '1. WHAT is being built — one clear, concrete interpretation (in INTERPRET mode you decide; do not ask).',
     '2. Its TONE and SCOPE — the intended feel and how far it reaches (what is in, what is deliberately out).',
     '3. The concrete DELIVERABLES — the specific things that must exist for this to be "done".',
+    ...(granularity === 'xhigh'
+      ? [
+          'SCOPE — keep it COARSE: frame the deliverables as a SMALL number of substantial, closely-related capabilities (a handful of big pieces), not a long list of fragmented ones. Grouping related work into fewer, larger slices lets the team build faster and integrate cleanly. (Scope only — do not prescribe file layout or contracts.)',
+        ]
+      : []),
     '',
     `Before you submit you MAY: research references to ground the vision — PREFER the real browser (browser_navigate to \`${VISION_SEARCH_URL}<url-encoded query>\`, then browser_read the results and extract the top hits), falling back to web_search / web_fetch — and sketch a quick throwaway mockup with write (e.g. a rough mockup.html) so it is concrete. Iterate until you are confident.`,
     '',

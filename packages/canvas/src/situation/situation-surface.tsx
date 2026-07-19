@@ -188,9 +188,14 @@ export function SituationRoomSurface({
   // Honest live summaries for collapsed (and quiet) section headers.
   const subagents = subagentNodes(state.chart.nodes);
   const busy = subagents.filter((n) => n.state === 'working').length;
-  // A shared 1s clock, ticking only while a subagent is at work, drives every
-  // row's live timer; frozen ("finished in") timers read `finishedAt` and ignore it.
-  const now = useNow(busy > 0);
+  // A shared 1s clock drives every row's live timer. It ticks for the WHOLE time
+  // the run is live (`live`) — not merely when THIS snapshot happens to show a
+  // working node — so a subagent's `m:ss` keeps advancing across the gaps between
+  // org-chart bursts (D4: the timer was freezing at its first reading whenever a
+  // burst momentarily reported no `working` node). Once the run settles, `live`
+  // goes false and the interval clears; frozen ("finished in") timers read
+  // `finishedAt` and ignore the clock either way.
+  const now = useNow(live || busy > 0);
   const agentsSummary = busy > 0 ? `${busy} at work` : undefined;
   const planSummary = progress.total > 0 ? `${progress.done}/${progress.total}` : undefined;
 
@@ -400,8 +405,14 @@ function actionText(action: string): string {
 function agentStatusLine(node: OrgNodeView, elapsedMs?: number): string {
   switch (node.state) {
     case 'working':
-      // A lead's "work" is coordination — say so instead of echoing an action.
+      // A lead's "work" is coordination — say so instead of echoing an action…
       if (node.role === 'ceo' || node.role === 'manager') {
+        // …EXCEPT a manager mid-turn IS producing (writing the contracts): show its
+        // live action so it reads as a real working role, not a bare name sitting on
+        // "waiting" (D2). With no action it is coordinating its builders — say so.
+        if (node.role === 'manager' && node.currentAction !== undefined) {
+          return actionText(node.currentAction);
+        }
         return 'waiting for other subagents to finish';
       }
       return node.currentAction !== undefined ? actionText(node.currentAction) : 'working…';

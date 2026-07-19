@@ -3,31 +3,43 @@
  * ({@link useBashTerminalCanvasRouting} / {@link useFileWriteCanvasRouting}),
  * but sourced from the CORP store (a running CorpEngine task) instead of
  * `usePiStore.messages`. It drives the SAME shared {@link CanvasController} so a
- * corp run lights the canvas exactly like a normal chat does:
+ * corp run lights the canvas exactly like a normal chat does — with three rules
+ * that keep the workspace CLEAN and scoped to what the user is watching:
  *
- *  - a worker running a shell command opens a live TERMINAL tab (its command +
- *    streamed output), keyed by the tool row so its output grows in place;
- *  - a worker writing a file opens a live FILE tab (with a +N/−N badge);
- *  - a delegation (a new org-chart node appears) focuses the SITUATION room.
+ *  - ONE FOLLOWED NODE (C5): only the subagent the user is viewing in the chat
+ *    (the pinned node, else the live-followed node — `shownCorpNode`) drives the
+ *    canvas. Other nodes' writes/commands never open or steal a tab.
+ *  - ONE FILE TAB (C4): the followed node's newest write shows in a SINGLE live
+ *    file tab (its body typed in from the store, +N/−N from the file block). A new
+ *    file REPLACES it — the prior corp file tab is closed, never stacked.
+ *  - ONE TERMINAL PER NODE (C6): a node's shell commands mirror into ONE terminal
+ *    tab (keyed by node), each command appended as `$ cmd\n\noutput` — not a fresh
+ *    terminal per command.
  *
- * Auto-swap falls out of upsert/focus: an EXECUTION event (a NEW bash/file tab)
- * focuses its own tab; a DELEGATION focuses the situation room. Growth deltas
- * (more output, more lines) refresh in place and never steal focus — so the view
- * doesn't thrash. Everything is guarded behind "a corp task is active", so normal
- * chat is untouched. Tabs are deduped by a stable key and a user-closed tab is
- * not reopened (an `opened` set), so the bridge is bounded and leak-free.
+ * A delegation (a new org-chart node) brings the situation room forward. Growth
+ * deltas refresh in place and never steal focus. Everything is guarded behind "a
+ * corp task is active AND a node is being followed", so normal chat is untouched,
+ * and a user-closed tab is not reopened (an `opened` set).
  */
 import type { CanvasController } from '@pi-desktop/canvas';
 import type { OrgNodeView } from '@pi-desktop/coordination';
 import { useEffect, useRef } from 'react';
 import { useCanvasStore } from '../../state/canvas-store';
-import { useCorpStore } from '../../state/corp-store';
-import { corpFileTabKey, openCorpFileInCanvas } from '../corp/corp-file-canvas';
+import { shownCorpNode, useCorpStore } from '../../state/corp-store';
+import {
+  corpFileTabKey,
+  corpFileTabSpec,
+  corpHtmlTabKey,
+  openCorpFileInCanvas,
+  openOrUpdateCorpHtmlPreview,
+} from '../corp/corp-file-canvas';
+import { corpBashSteps, currentCorpFile, isHtmlPath } from '../corp/corp-file-content';
+import { fileArtifactFromText } from './file-tabs';
 
-/** Stable terminal-tab key for a corp bash step — the node + its block index (the
- * blocks array is append-only and the output update replaces the row in place). */
-function corpTerminalTabKey(nodeId: string, blockIndex: number): string {
-  return `corpterm:${nodeId}:${blockIndex}`;
+/** Stable terminal-tab key for a corp node — ONE terminal per node (C6): every
+ * command the node runs is appended into this single mirror, not a tab per call. */
+function corpTerminalTabKey(nodeId: string): string {
+  return `corpterm:${nodeId}`;
 }
 
 /** The xterm text for a mirror terminal: the command prompt + its output — the
@@ -58,11 +70,12 @@ export function focusSituationTab(controller: CanvasController, taskId: string |
 }
 
 /**
- * Focus the selected node's MOST-RECENT canvas surface — its latest live file /
- * terminal tab — so clicking a subagent drops the user INTO its work (the canvas
+ * Focus the selected node's MOST-RECENT canvas surface — its live file / terminal
+ * tab — so clicking a subagent drops the user INTO its work (the canvas
  * live-updates that node's files/terminal). Walks the node's blocks newest-first
- * and focuses the first that has an open tab. Returns false when the node has no
- * surface yet (a not-started node), so the caller can fall back to the room.
+ * and focuses the first that has an open tab (a file tab keyed by path, its ONE
+ * terminal keyed by node). Returns false when the node has no surface yet (a
+ * not-started node), so the caller can fall back to the room.
  */
 function focusNodeLatestSurface(controller: CanvasController, nodeId: string): boolean {
   const blocks = useCorpStore.getState().workerBlocks[nodeId] ?? [];
@@ -72,8 +85,7 @@ function focusNodeLatestSurface(controller: CanvasController, nodeId: string): b
     if (block === undefined) continue;
     let key: string | undefined;
     if (block.kind === 'file' && block.path.length > 0) key = corpFileTabKey(block.path);
-    else if (block.kind === 'tool' && block.toolName === 'bash')
-      key = corpTerminalTabKey(nodeId, i);
+    else if (block.kind === 'tool' && block.toolName === 'bash') key = corpTerminalTabKey(nodeId);
     if (key === undefined) continue;
     const tab = tabs.find((t) => t.key === key);
     if (tab !== undefined) {
@@ -108,17 +120,26 @@ export function selectCorpNodeAndFocus(
 
 /**
  * Mount alongside the chat routers in CanvasTabsPanel. Subscribes to the corp
- * store's per-node blocks + the org-chart node count and drives the controller.
+ * store's FOLLOWED node + its blocks and drives the controller. Only the followed
+ * node's work reaches the canvas (C5).
  */
 export function useCorpCanvasRouting(controller: CanvasController): void {
   const taskId = useCorpStore((s) => s.taskId);
   const workerBlocks = useCorpStore((s) => s.workerBlocks);
+  // The ONE node the user is watching in the chat (pin wins over live-follow) —
+  // the only node whose work opens/updates/focuses a canvas tab (C5).
+  const shownId = useCorpStore((s) => shownCorpNode(s)?.id);
   const nodeCount = useCorpStore((s) => s.situation?.chart.nodes.length ?? 0);
 
-  // Stable keys we've already opened — so a user-closed tab is not reopened on the
-  // next delta, and we open each exactly once (the growth path is updateTab).
-  const openedTerminals = useRef<Set<string>>(new Set());
+  // The SINGLE corp file/preview tab in play (path-keyed so the chat's own
+  // file-click / refresh share it) — tracked so a NEW file closes the prior one
+  // instead of stacking. Terminals we've opened, keyed by node (one each). A key
+  // in `opened*` whose tab is gone was user-closed → not reopened.
+  const openFileKey = useRef<string | null>(null);
+  const openHtmlKey = useRef<string | null>(null);
   const openedFiles = useRef<Set<string>>(new Set());
+  const openedHtml = useRef<Set<string>>(new Set());
+  const openedTerminals = useRef<Set<string>>(new Set());
   const prevNodeCount = useRef(0);
 
   // Reset the bridge's memory when the task changes (setTask already clears the
@@ -126,71 +147,120 @@ export function useCorpCanvasRouting(controller: CanvasController): void {
   // trigger, not read in the body.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset on task change
   useEffect(() => {
-    openedTerminals.current.clear();
+    openFileKey.current = null;
+    openHtmlKey.current = null;
     openedFiles.current.clear();
+    openedHtml.current.clear();
+    openedTerminals.current.clear();
     prevNodeCount.current = 0;
   }, [taskId]);
 
-  // Terminals + files: mirror every corp bash step and every file write into the
-  // canvas. Guarded behind an active task so normal chat is unaffected.
+  // FILE (C1/C2/C4): the followed node's NEWEST write shows in ONE live file tab,
+  // typed in from the store's captured body, with the file block's +N/−N as the
+  // one authoritative badge. A new file CLOSES the prior tab (reuse, never stack).
+  // A user-closed tab is not reopened; growth refreshes in place, no focus steal.
   useEffect(() => {
-    if (taskId === null) return;
-    for (const [nodeId, blocks] of Object.entries(workerBlocks)) {
-      blocks.forEach((block, index) => {
-        if (block.kind === 'tool' && block.toolName === 'bash') {
-          const command = block.detail ?? '';
-          const key = corpTerminalTabKey(nodeId, index);
-          const data: Record<string, unknown> = {
-            mirror: true,
-            mirrorText: corpMirrorText(command, block.output ?? ''),
-          };
-          const existing = controller.getState().tabs.find((t) => t.key === key);
-          if (existing === undefined) {
-            if (openedTerminals.current.has(key)) return; // user closed it — leave it
-            openedTerminals.current.add(key);
-            // A NEW terminal tab focuses (upsert) — the execution event swaps to it.
-            controller.upsertTab(key, {
-              kind: 'terminal',
-              key,
-              title: shortCommandTitle(command) || 'Terminal',
-              data,
-            });
-            useCanvasStore.getState().setCanvasOpen(true); // slide the panel open
-          } else if ((existing.data?.mirrorText as string | undefined) !== data.mirrorText) {
-            // Output grew — refresh in place, no focus steal.
-            controller.updateTab(existing.id, { data });
-          }
-          return;
-        }
-        if (block.kind === 'file') {
-          const path = block.path;
-          if (path.length === 0) return;
-          const key = corpFileTabKey(path);
-          const added = block.addedLines;
-          const removed = block.removedLines;
-          const existing = controller.getState().tabs.find((t) => t.key === key);
-          if (existing === undefined) {
-            if (openedFiles.current.has(key)) return; // user closed it — leave it
-            openedFiles.current.add(key);
-            // A NEW file tab opens streaming + focused (reuses the existing seam,
-            // which reads the ProductPeek), carrying its live +N/−N badge.
-            void openCorpFileInCanvas(controller, taskId, path, true, {
-              addedLines: added,
-              removedLines: removed,
-            });
-            useCanvasStore.getState().setCanvasOpen(true); // slide the panel open
-          } else if (existing.addedLines !== added || existing.removedLines !== removed) {
-            // The +N/−N grew — tick the badge in place, no focus steal.
-            controller.updateTab(existing.id, {
-              streaming: true,
-              addedLines: added,
-              removedLines: removed,
-            });
-          }
-        }
-      });
+    if (taskId === null || shownId === undefined) return;
+    const file = currentCorpFile(workerBlocks[shownId] ?? []);
+    if (file === undefined) return;
+
+    const key = corpFileTabKey(file.path);
+    // A new file for the followed node → close the prior auto file (+ its preview),
+    // so a single corp file/preview tab stays in play.
+    if (openFileKey.current !== null && openFileKey.current !== key) {
+      const prior = controller.getState().tabs.find((t) => t.key === openFileKey.current);
+      if (prior !== undefined) controller.closeTab(prior.id);
+      openedFiles.current.delete(openFileKey.current);
+      openFileKey.current = null;
+      if (openHtmlKey.current !== null) {
+        const priorHtml = controller.getState().tabs.find((t) => t.key === openHtmlKey.current);
+        if (priorHtml !== undefined) controller.closeTab(priorHtml.id);
+        openedHtml.current.delete(openHtmlKey.current);
+        openHtmlKey.current = null;
+      }
     }
-  }, [workerBlocks, taskId, controller]);
+
+    const badge =
+      file.addedLines !== undefined
+        ? { addedLines: file.addedLines, removedLines: file.removedLines ?? 0 }
+        : undefined;
+    const hasContent = file.content.length > 0;
+    const existing = controller.getState().tabs.find((t) => t.key === key);
+
+    if (existing === undefined) {
+      if (!openedFiles.current.has(key)) {
+        openedFiles.current.add(key);
+        openFileKey.current = key;
+        if (hasContent) {
+          // Open the CODE tab from the real, captured write body (focused, streaming).
+          controller.upsertTab(key, {
+            ...corpFileTabSpec(file.path),
+            streaming: file.streaming,
+            artifact: fileArtifactFromText(file.path, file.content),
+            ...(badge !== undefined ? badge : {}),
+          });
+        } else {
+          // The body hasn't landed yet — best-effort peek (fills the instant it does).
+          void openCorpFileInCanvas(controller, taskId, file.path, file.streaming, badge);
+        }
+        useCanvasStore.getState().setCanvasOpen(true);
+      }
+    } else {
+      openFileKey.current = key;
+      // Growth: append the newly-captured body + tick the badge, no focus steal.
+      const patch: Record<string, unknown> = {};
+      if (hasContent && existing.artifact?.content.text !== file.content) {
+        patch.artifact = fileArtifactFromText(file.path, file.content);
+      }
+      if (existing.streaming !== file.streaming) patch.streaming = file.streaming;
+      if (
+        badge !== undefined &&
+        (existing.addedLines !== badge.addedLines || existing.removedLines !== badge.removedLines)
+      ) {
+        patch.addedLines = badge.addedLines;
+        patch.removedLines = badge.removedLines;
+      }
+      if (Object.keys(patch).length > 0) controller.updateTab(existing.id, patch);
+    }
+
+    // For an HTML file with live content, keep a secondary live preview building
+    // alongside the focused code tab (opened after it, so it never steals focus).
+    if (hasContent && isHtmlPath(file.path)) {
+      openHtmlKey.current = corpHtmlTabKey(file.path);
+      openOrUpdateCorpHtmlPreview(controller, file.path, file.content, openedHtml.current);
+    }
+  }, [workerBlocks, taskId, shownId, controller]);
+
+  // TERMINAL (C5/C6): mirror the followed node's shell commands into ONE terminal
+  // tab (keyed by node), each command appended into the same mirror — opened the
+  // instant the first command fires, growing in place, never a tab per command.
+  useEffect(() => {
+    if (taskId === null || shownId === undefined) return;
+    const steps = corpBashSteps(workerBlocks[shownId] ?? []);
+    if (steps.length === 0) return;
+    const key = corpTerminalTabKey(shownId);
+    const mirrorText = steps.map((s) => corpMirrorText(s.command, s.output)).join('\n');
+    const title = shortCommandTitle(steps[steps.length - 1]?.command ?? '') || 'Terminal';
+    const existing = controller.getState().tabs.find((t) => t.key === key);
+    if (existing === undefined) {
+      if (openedTerminals.current.has(key)) return; // user closed it — leave it
+      openedTerminals.current.add(key);
+      controller.upsertTab(key, {
+        kind: 'terminal',
+        key,
+        title,
+        data: { mirror: true, mirrorText },
+      });
+      useCanvasStore.getState().setCanvasOpen(true);
+    } else {
+      const patch: Record<string, unknown> = {};
+      if ((existing.data?.mirrorText as string | undefined) !== mirrorText) {
+        patch.data = { mirror: true, mirrorText };
+      }
+      if (existing.title !== title) patch.title = title;
+      if (Object.keys(patch).length > 0) controller.updateTab(existing.id, patch);
+    }
+  }, [workerBlocks, taskId, shownId, controller]);
 
   // Delegation: a NEW org-chart node (a team forms / a manager hires) brings the
   // situation room forward. Only on a genuine node-count increase — never on every

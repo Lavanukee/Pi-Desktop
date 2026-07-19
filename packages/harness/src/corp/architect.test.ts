@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { ARCHITECT_PROMPT, buildArchitectPrompt, parseArchitecture } from './architect.js';
+import {
+  ARCHITECT_PROMPT,
+  buildArchitectPrompt,
+  DEFAULT_DECOMPOSITION_GRANULARITY,
+  decompositionGuidanceLines,
+  parseArchitecture,
+} from './architect.js';
 
 describe('ARCHITECT_PROMPT', () => {
   it('names the two deliverables (module map + interfaces) and the no-overlap rule', () => {
@@ -82,6 +88,46 @@ describe('buildArchitectPrompt — delivery constraint (spec §5/§8, Part B)', 
   it('is derived from the vision text — a neutral vision splices nothing', () => {
     const prompt = buildArchitectPrompt('Build a CLI tool that sorts numbers.', divisions);
     expect(prompt).not.toContain('DELIVERY CONSTRAINT');
+  });
+});
+
+describe('decomposition granularity (I1 — coarse xhigh vs fine max)', () => {
+  const divisions = [
+    { name: 'Engine', purpose: 'game loop' },
+    { name: 'UI', purpose: 'the HUD' },
+  ];
+
+  it('DEFAULTS to COARSE (xhigh): the default lever is fewer, larger contracts', () => {
+    expect(DEFAULT_DECOMPOSITION_GRANULARITY).toBe('xhigh');
+  });
+
+  it('decompositionGuidanceLines(xhigh) steers to CONSOLIDATE into a handful of big modules', () => {
+    const [line] = decompositionGuidanceLines('xhigh');
+    expect(line).toContain('COARSE');
+    expect(line?.toLowerCase()).toContain('consolidate');
+    expect(line?.toLowerCase()).toContain('handful');
+    expect(line?.toLowerCase()).toContain('over-decompose');
+  });
+
+  it('decompositionGuidanceLines(max) restores the FINE full decomposition', () => {
+    const [line] = decompositionGuidanceLines('max');
+    expect(line).toContain('FINE');
+    expect(line?.toLowerCase()).toContain('decompose the work fully');
+  });
+
+  it('buildArchitectPrompt defaults to the COARSE steer (== explicit xhigh)', () => {
+    const prompt = buildArchitectPrompt('Build a browser game.', divisions);
+    expect(prompt).toContain('DECOMPOSITION — COARSE (xhigh)');
+    expect(prompt.toLowerCase()).toContain('consolidate');
+    expect(prompt).not.toContain('DECOMPOSITION — FINE');
+    // The unspecified default matches an explicit xhigh (coarser than the old behaviour).
+    expect(prompt).toBe(buildArchitectPrompt('Build a browser game.', divisions, 'xhigh'));
+  });
+
+  it('buildArchitectPrompt(..., "max") splices the FINE steer instead', () => {
+    const prompt = buildArchitectPrompt('Build a browser game.', divisions, 'max');
+    expect(prompt).toContain('DECOMPOSITION — FINE (max)');
+    expect(prompt).not.toContain('DECOMPOSITION — COARSE');
   });
 });
 

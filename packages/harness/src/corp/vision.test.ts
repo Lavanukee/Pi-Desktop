@@ -53,6 +53,22 @@ describe('buildCeoVisionPrompt — the vision-forming user turn', () => {
     expect(prompt).toContain(VISION_SEARCH_URL);
     expect(prompt).toContain('web_search'); // fallback still offered
   });
+
+  it('COARSE by default (I1): steers the brief to a small number of substantial deliverables', () => {
+    const prompt = buildCeoVisionPrompt('Build a habit tracker');
+    expect(prompt).toContain('SCOPE — keep it COARSE');
+    expect(prompt.toLowerCase()).toContain('small number of substantial');
+    // A SCOPE (what) steer — it must NOT prescribe HOW (file layout / contracts).
+    expect(prompt).toContain('Scope only');
+  });
+
+  it('FINE (max) omits the coarse scope steer (unconstrained deliverables)', () => {
+    const prompt = buildCeoVisionPrompt('Build a habit tracker', 'max');
+    expect(prompt).not.toContain('SCOPE — keep it COARSE');
+    // The three core brief requirements are unchanged.
+    expect(prompt).toContain('WHAT is being built');
+    expect(prompt).toContain('DELIVERABLES');
+  });
 });
 
 describe('SUBMIT_VISION_TOOL — the finalize-the-brief custom tool', () => {

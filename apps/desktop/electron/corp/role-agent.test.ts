@@ -323,6 +323,9 @@ describe('fileWriteActivity — a LIVE file-write record from a finished tool ev
       path: 'src/ui/app.tsx',
       bytes: 340,
       linesAdded: 3,
+      // The written body rides along on `text` so the live file canvas can render
+      // the ACTUAL file instead of a blank peek.
+      text: 'a\nb\nc',
     });
   });
 
@@ -345,6 +348,7 @@ describe('fileWriteActivity — a LIVE file-write record from a finished tool ev
         path: '/abs/x.ts',
         bytes: 12,
         linesAdded: 1,
+        text: 'x',
       },
     );
     // Missing stat → no bytes field (still a valid file-write record).
@@ -359,6 +363,7 @@ describe('fileWriteActivity — a LIVE file-write record from a finished tool ev
       toolName: 'write',
       path: 'src/gone.ts',
       linesAdded: 1,
+      text: 'y',
     });
   });
 

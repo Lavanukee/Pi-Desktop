@@ -109,6 +109,17 @@ export function ChatThread() {
     liveNode: corpLiveNode,
     pinnedNode: corpPinnedNode,
   });
+  // A3/B1: once the team forms (the promoted "waiting" view), keep the CEO/root's
+  // vision-forming turn visible as history ABOVE the live "Waiting for N…"
+  // indicator — otherwise it vanishes on promotion and it looks like nothing
+  // happened. The lead is the chart's ceo/solo (else the root / first node).
+  const corpLeadNode =
+    corpSituation !== null
+      ? (corpSituation.chart.nodes.find((n) => n.role === 'ceo' || n.role === 'solo') ??
+        corpSituation.chart.nodes.find((n) => n.parentId === undefined) ??
+        corpSituation.chart.nodes[0] ??
+        null)
+      : null;
   const { controller: canvasController } = useCanvasTabs();
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -375,13 +386,22 @@ export function ChatThread() {
           {corpTaskId !== null && corpView.kind === 'stream' ? (
             <CorpChatStream taskId={corpTaskId} node={corpView.node} />
           ) : corpTaskId !== null && corpView.kind === 'waiting' && corpSituation !== null ? (
-            <CorpInlineTurn
-              taskId={corpTaskId}
-              state={corpSituation}
-              fetchTranscript={(nodeId) => fetchWorkerTranscript(corpTaskId, nodeId)}
-              peekAvailable={corpPeekAvailable(corpSituation)}
-              onFocusSituation={() => focusSituationTab(canvasController, corpTaskId)}
-            />
+            <>
+              {/* A3: the CEO's vision, kept as history so it never disappears when
+                  the team forms — settled, no live tail of its own. */}
+              {corpLeadNode !== null ? (
+                <CorpChatStream taskId={corpTaskId} node={corpLeadNode} historyMode />
+              ) : null}
+              {/* B1: the live "Waiting for N of M tasks · K in progress" indicator —
+                  mounted the whole promoted-unpinned phase; never a bare "Done". */}
+              <CorpInlineTurn
+                taskId={corpTaskId}
+                state={corpSituation}
+                fetchTranscript={(nodeId) => fetchWorkerTranscript(corpTaskId, nodeId)}
+                peekAvailable={corpPeekAvailable(corpSituation)}
+                onFocusSituation={() => focusSituationTab(canvasController, corpTaskId)}
+              />
+            </>
           ) : corpTaskId !== null && corpView.kind === 'starting' ? (
             // Bridge the moment between submit and the first agent appearing so the
             // chat is never blank — the model is spinning up, not gone.

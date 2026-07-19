@@ -447,6 +447,11 @@ export function fileWriteActivity(
     path: rel,
     ...(bytes !== undefined ? { bytes } : {}),
     ...(linesAdded !== undefined ? { linesAdded } : {}),
+    // Carry the WHOLE written body on the record's generic `text` field (the
+    // structured-write completion has the full file) so coordination can thread it
+    // to the live file canvas — the tab renders the ACTUAL content, not a blank
+    // peek. Reuses the existing field; no new activity shape.
+    ...(body !== undefined ? { text: body } : {}),
   };
 }
 
@@ -829,8 +834,7 @@ export async function runRoleAgent(
       // LIVE: name the tool the MOMENT it starts — the NAMED call + a short arg
       // summary (web_search → the query, read → the file, bash → the command) so
       // the transcript/feed show "Searching the web: …" / "Reading …" as the
-      // CURRENT action, not a generic "Used a tool". write/edit are skipped here:
-      // they light the file map from `tool_result` once the file actually exists.
+      // CURRENT action, not a generic "Used a tool".
       if (e.toolName !== 'write' && e.toolName !== 'edit') {
         const { detail, path } = toolCallDetail(e.toolName, e.input);
         emit({
@@ -839,6 +843,16 @@ export async function runRoleAgent(
           ...(detail !== undefined ? { detail } : {}),
           ...(path !== undefined ? { path } : {}),
         });
+      } else {
+        // write/edit: the file is still being PRODUCED, but name it the moment the
+        // call starts — a "Writing <path>" row + the canvas file tab opening
+        // immediately (streaming) — instead of waiting for `tool_result`. A
+        // phase:'start' file-write carries only the path (no line counts yet); the
+        // paired `tool_result` adds the authoritative +N and settles the row.
+        const startPath = toolCallPath(e.input as RoleAgentToolCall['arguments']);
+        if (startPath !== undefined) {
+          emit({ kind: 'file-write', toolName: e.toolName, path: startPath, phase: 'start' });
+        }
       }
       const denied = bashDenylistGate(e.toolName, e.input);
       if (denied !== undefined) return denied;

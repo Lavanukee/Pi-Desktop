@@ -72,6 +72,51 @@ describe('createSubmitReviewGate — the §164 submission interceptor', () => {
       'Your slot file src/missing.ts does not exist yet — write it before submitting.',
     );
   });
+
+  it('the finalize ack is firmly TERMINAL (turn over — stop, do not submit again)', () => {
+    const gate = createSubmitReviewGate({
+      slot: 's.ts',
+      reviewPrompt: REVIEW,
+      readSlot: () => 'x',
+    });
+    gate(); // bounce
+    const ack = gate().toLowerCase();
+    expect(ack).toContain('finalized');
+    expect(ack).toContain('turn is over');
+    expect(ack).toContain('stop');
+  });
+
+  it('F1 — a THIRD+ submit after finalize is IDEMPOTENT (no loop, no re-read, no re-record)', () => {
+    const capture = newSubmitReviewCapture();
+    let content = 'draft';
+    let reads = 0;
+    const gate = createSubmitReviewGate({
+      slot: 's.ts',
+      reviewPrompt: REVIEW,
+      readSlot: () => {
+        reads += 1;
+        return content;
+      },
+      capture,
+    });
+    gate(); // bounce (read #1)
+    content = 'final';
+    const finalized = gate(); // finalize (read #2)
+    expect(capture.finalized).toBe(true);
+    expect(capture.finalBytes).toBe('final'.length);
+    const readsAfterFinalize = reads;
+
+    // The model keeps calling submit — the gate is a firm terminal dead-end and
+    // never re-reads the slot or re-records, so it cannot spin an endless loop.
+    content = 'a-later-mutation-that-must-NOT-be-recorded';
+    const again = gate();
+    const andAgain = gate();
+    expect(again).toBe(finalized); // same terminal ack, verbatim
+    expect(andAgain).toBe(finalized);
+    expect(reads).toBe(readsAfterFinalize); // no further slot reads
+    expect(capture.finalBytes).toBe('final'.length); // capture frozen at finalize
+    expect(capture.changed).toBe(true);
+  });
 });
 
 describe('seedIsolatedWorkspace — isolated engineer workspace (spec §91)', () => {

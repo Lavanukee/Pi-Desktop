@@ -244,13 +244,17 @@ export function newSubmitReviewCapture(): SubmitReviewCapture {
 
 /**
  * The §164 submission interceptor as a STATEFUL step over the engineer's submit
- * calls within ONE agent run (spec §7):
+ * calls within ONE agent run (spec §7; F1 — the submit must TERMINATE, not loop):
  *  - FIRST call → BOUNCE: snapshot the draft, return the model-free self-review
  *    prompt, and do NOT finalize — the agent keeps working and improves.
- *  - SECOND (or later) call → FINALIZE: verify the slot file exists (THROW the
- *    actionable error when it does not, so the pi loop feeds it back and the model
- *    writes then re-submits), record the final + whether it CHANGED from the draft,
- *    and ack.
+ *  - The FINALIZING call → verify the slot file exists (THROW the actionable error
+ *    when it does not, so the pi loop feeds it back and the model writes then
+ *    re-submits), record the final + whether it CHANGED from the draft, and return
+ *    a firmly TERMINAL ack (the turn is over — output nothing, call no tool).
+ *  - ANY call after finalize → IDEMPOTENT terminal ack: it does NOT re-read or
+ *    re-record, so a model that keeps calling submit_contract cannot spin the gate
+ *    into an endless "accepted my work" confirm loop — every extra call is a firm
+ *    dead-end, bounded already by the global RunBudget.
  * `readSlot` reads the slot content from the run's cwd (undefined = missing), so the
  * gate is pure and unit-testable without touching disk. Returns the tool-result
  * text; throws only the missing-slot finalize error.
@@ -263,6 +267,8 @@ export function createSubmitReviewGate(args: {
 }): () => string {
   let calls = 0;
   let draft = '';
+  let finalized = false;
+  const terminalAck = `Contract finalized — your file at ${args.slot} is submitted. Your turn is OVER: reply with nothing and call no further tool. Stop now; do not submit again.`;
   return (): string => {
     calls += 1;
     if (calls === 1) {
@@ -273,18 +279,22 @@ export function createSubmitReviewGate(args: {
       }
       return args.reviewPrompt;
     }
+    // Already finalized on an earlier call → an idempotent terminal dead-end. Do
+    // NOT re-verify or re-record; a repeated submit can never re-open the gate.
+    if (finalized) return terminalAck;
     const final = args.readSlot();
     if (final === undefined) {
       throw new Error(
         `Your slot file ${args.slot} does not exist yet — write it before submitting.`,
       );
     }
+    finalized = true;
     if (args.capture !== undefined) {
       args.capture.finalized = true;
       args.capture.finalBytes = byteLength(final);
       args.capture.changed = draft !== final;
     }
-    return `Slot file ${args.slot} submitted and finalized — you are done. Stop here; do not call any further tools.`;
+    return terminalAck;
   };
 }
 

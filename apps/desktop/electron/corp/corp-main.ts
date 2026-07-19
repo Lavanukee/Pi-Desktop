@@ -30,50 +30,11 @@ import { corpConcurrencyForHost } from './concurrency';
 import { createLlamaCorpChat } from './corp-chat';
 import type { CorpInvokeMap } from './corp-contract';
 import { CORP_INVOKE_CHANNELS } from './corp-contract';
+import { createBrowserSearch } from './corp-search';
 import { createRunRoleAgent } from './role-agent-seam-impl';
 
 const log = createLogger('desktop:corp');
 const events = createIpcEventSender<AppEventMap>();
-
-/**
- * In-page scrape for the browser-backed web_search: runs on the loaded
- * DuckDuckGo HTML results page (`duckduckgo.com/html/?q=…`) and returns the top
- * hits as `{title,url,snippet}`. DDG's HTML endpoint wraps each result link in a
- * `//duckduckgo.com/l/?uddg=<encoded>` redirect — decoded here so the returned
- * URL is the real destination (usable by web_fetch). Pure string (an `evaluate`
- * script); never throws (guards + try/catch), returns [] if the shape changes.
- */
-const DDG_SCRAPE_SCRIPT = String.raw`(() => {
-  try {
-    var decode = function (h) {
-      try {
-        var m = /[?&]uddg=([^&]+)/.exec(h || '');
-        if (m) return decodeURIComponent(m[1]);
-      } catch (e) {}
-      if (h && h.indexOf('//') === 0) return 'https:' + h;
-      return h || '';
-    };
-    var out = [];
-    var nodes = document.querySelectorAll('.result, .web-result, .results_links');
-    for (var i = 0; i < nodes.length; i++) {
-      var el = nodes[i];
-      var a = el.querySelector('a.result__a') || el.querySelector('.result__title a') || el.querySelector('a[href]');
-      if (!a) continue;
-      var title = (a.textContent || '').replace(/\s+/g, ' ').trim();
-      if (!title) continue;
-      var sn = el.querySelector('.result__snippet');
-      out.push({
-        title: title,
-        url: decode(a.getAttribute('href') || ''),
-        snippet: sn ? (sn.textContent || '').replace(/\s+/g, ' ').trim() : '',
-      });
-      if (out.length >= 20) break;
-    }
-    return out;
-  } catch (e) {
-    return [];
-  }
-})()`;
 
 /** Per-task record: the engine that owns it, its handle, and the target window. */
 interface RunningTask {
@@ -197,27 +158,12 @@ async function handleStart(
   // web_search, browser-backed: open the canvas browser to DuckDuckGo's HTML
   // results (the user watches it live) and scrape the hits via an in-page
   // evaluate — not bot-blocked the way the server-side scrape is (which returns
-  // "No results"). This is why `web_search` now WORKS + is visible regardless of
-  // whether the model reaches for web_search or browser_navigate.
+  // "No results"). H1: the scrape does NOT block on full page load (which hangs
+  // ~tens of seconds after the server-rendered results are already in the DOM);
+  // it caps the navigate wait, POLLS for the results container, then extracts
+  // against the current `duckduckgo.com/html/` structure (see ./corp-search).
   const browserSearch: BrowserSearchFn | undefined =
-    browserBridge === null
-      ? undefined
-      : async (query, count) => {
-          const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-          await browserBridge.request('navigate', { url });
-          const raw = await browserBridge.request<unknown>('evaluate', { script: DDG_SCRAPE_SCRIPT });
-          const arr = Array.isArray(raw) ? raw : [];
-          return arr
-            .filter((r): r is { title: string; url?: string; snippet?: string } =>
-              r !== null && typeof r === 'object' && typeof (r as { title?: unknown }).title === 'string',
-            )
-            .slice(0, count)
-            .map((r) => ({
-              title: String(r.title),
-              url: String(r.url ?? ''),
-              snippet: String(r.snippet ?? ''),
-            }));
-        };
+    browserBridge === null ? undefined : createBrowserSearch(browserBridge);
   const runRoleAgent = resolved.ok
     ? createRunRoleAgent({
         baseUrl: resolved.baseUrl,

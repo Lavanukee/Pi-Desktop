@@ -576,6 +576,13 @@ export interface WorkerActivityEvent {
   readonly output?: string;
   /** File path a `file`/`tool` step touched. */
   readonly path?: string;
+  /** The written file's BODY for a `file` step, when the engine captured it (a
+   * `write`/`edit` carries the whole new file; a structured tool write lands it at
+   * completion). Lets the live file canvas render the ACTUAL content the worker
+   * produced — typed in like the normal chat's streaming write — instead of a
+   * blank tab waiting on the (empty mid-run) product peek. Absent when the engine
+   * only knows the line count (the tab then falls back to the peek). */
+  readonly content?: string;
   /** Lines this `file` chunk added / removed (the live +N/−N readout). */
   readonly addedLines?: number;
   readonly removedLines?: number;

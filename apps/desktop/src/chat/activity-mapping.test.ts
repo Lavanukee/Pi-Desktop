@@ -6,6 +6,7 @@
 import type { AssistantMsg, ContentBlock, ToolResultMsg } from '@pi-desktop/engine';
 import { describe, expect, it } from 'vitest';
 import {
+  chainRunningFlags,
   type GroupSegment,
   mapThinkingStep,
   mapToolStep,
@@ -498,5 +499,85 @@ describe('mapThinkingStep', () => {
       thought: 'hmm',
     });
     expect(mapThinkingStep(think('hmm'), true).data.label).toBe('Thinking…');
+  });
+});
+
+describe('chainRunningFlags (E1 — only the last live step is present-tense)', () => {
+  const noResults = { hasResult: () => false, runningToolCalls: [] as string[] };
+
+  it('marks ONLY the last step running in a live chain — prior steps stay past', () => {
+    const flags = chainRunningFlags(
+      [call('c1', 'edit', { path: 'a.ts' }), call('c2', 'edit', { path: 'b.ts' })],
+      { streaming: true, ...noResults },
+    );
+    // The E1 bug: a NEW action used to re-present ALL prior tool calls. Now the
+    // earlier edit is settled (past "Edited a file") and only the current one runs.
+    expect(flags).toEqual([false, true]);
+  });
+
+  it('keeps a prior tool PAST when a new THOUGHT is the live trailing block', () => {
+    const flags = chainRunningFlags([call('c1', 'edit', { path: 'a.ts' }), think('next step')], {
+      streaming: true,
+      ...noResults,
+    });
+    // The tool ran, then the model started thinking — the tool is "Edited a file"
+    // (past), the trailing thought is "Thinking…" (present).
+    expect(flags).toEqual([false, true]);
+  });
+
+  it('settles the whole chain once the turn is no longer streaming', () => {
+    const flags = chainRunningFlags(
+      [think('a'), call('c1', 'bash', { command: 'ls' }), call('c2', 'read', { path: 'a' })],
+      { streaming: false, ...noResults },
+    );
+    expect(flags).toEqual([false, false, false]);
+  });
+
+  it('honors an explicit runningToolCalls entry even when it is not the last step', () => {
+    const flags = chainRunningFlags(
+      [call('c1', 'bash', { command: 'ls' }), call('c2', 'read', { path: 'a' })],
+      { streaming: true, hasResult: () => false, runningToolCalls: ['c1'] },
+    );
+    // c1 is authoritatively in-flight (present); c2 is last so also present.
+    expect(flags).toEqual([true, true]);
+  });
+
+  it('settles the last tool once its result lands (the current-action-done gap)', () => {
+    const flags = chainRunningFlags(
+      [call('c1', 'bash', { command: 'ls' }), call('c2', 'edit', { path: 'a.ts' })],
+      { streaming: true, hasResult: (id) => id === 'c2', runningToolCalls: [] },
+    );
+    // c2 already has a result → past; c1 is not last and has no result → past.
+    expect(flags).toEqual([false, false]);
+  });
+
+  it('runs the last thinking block of a live thinking-only run', () => {
+    expect(chainRunningFlags([think('a'), think('b')], { streaming: true, ...noResults })).toEqual([
+      false,
+      true,
+    ]);
+  });
+});
+
+describe('mapToolStep — commission_contract (D1 contract row)', () => {
+  it('renders a contract as a "Commissioned" tool row with the title inline + args reveal', () => {
+    const step = mapToolStep(
+      call('c1', 'commission_contract', {
+        title: 'Player movement controller',
+        owner: 'combat-eng-1',
+        slot: 'src/combat/move.ts',
+        status: 'queued',
+      }),
+      undefined,
+      false,
+    ).data;
+    expect(step.kind).toBe('tool');
+    expect(step.label).toBe('Commissioned');
+    // The contract TITLE is the inline detail ("Commissioned <title>").
+    expect(step.detail).toBe('Player movement controller');
+    if (step.kind !== 'tool') throw new Error('expected tool');
+    // The full contract fields are revealed on click (Input) — never a raw JSON dump.
+    expect(step.argsText).toContain('combat-eng-1');
+    expect(step.argsText).toContain('src/combat/move.ts');
   });
 });

@@ -38,6 +38,46 @@ import {
 import type { HierarchyDivisionSpec } from './promotion.js';
 
 /**
+ * DECOMPOSITION GRANULARITY (I1 — the coarse/fine knob). The architect (and the
+ * managers it seeds) over-decompose by default — a single Breakout game exploded
+ * into ~48 contracts, which stresses the merge and collapses integration. This
+ * knob steers how finely the work is carved:
+ *
+ *  - `'xhigh'` — COARSE: far FEWER, BIGGER contracts. Group related work so a
+ *    division owns a substantial slice; the whole project is a handful of large
+ *    modules, not dozens of tiny ones. This is the DEFAULT (fewer, larger tasks
+ *    build faster and merge cleanly).
+ *  - `'max'` — FINE: the original fine-grained decomposition (many focused,
+ *    single-responsibility modules with a seam between each).
+ *
+ * Threaded from {@link RunCorpOptions.decompositionGranularity} (run.ts) into
+ * {@link buildArchitectPrompt} and the CEO vision turn (vision.ts).
+ */
+export type DecompositionGranularity = 'xhigh' | 'max';
+
+/** The default granularity: COARSE (`xhigh`). The owner explicitly wants fewer,
+ * larger tasks — over-splitting is what collapses the merge. */
+export const DEFAULT_DECOMPOSITION_GRANULARITY: DecompositionGranularity = 'xhigh';
+
+/**
+ * The granularity STEER spliced into the architect's user turn. COARSE (`xhigh`)
+ * pushes the architect to consolidate aggressively — few big regions, a handful of
+ * substantial modules, only the genuinely cross-division interfaces — so the
+ * managers downstream author a handful of contracts, not dozens. FINE (`max`)
+ * restores the original full decomposition. Pure + deterministic.
+ */
+export function decompositionGuidanceLines(granularity: DecompositionGranularity): string[] {
+  if (granularity === 'max') {
+    return [
+      'DECOMPOSITION — FINE (max): decompose the work fully. Carve each division into focused, single-responsibility modules with a clear seam between them, and expose every genuine cross-division interface. Prefer precise, small units.',
+    ];
+  }
+  return [
+    'DECOMPOSITION — COARSE (xhigh): CONSOLIDATE aggressively. Prefer the FEWEST regions that cover the work — ideally ONE substantial region per division, grouping closely-related concerns into the same region instead of splitting them. A division owns a BIG slice and fills its one region with a HANDFUL of substantial files, NOT dozens of tiny ones. Expose ONLY the 2–3 interfaces that are genuinely cross-division. Fewer, larger modules build faster and merge cleanly; over-splitting into many small contracts stresses integration and collapses the merge — do not over-decompose.',
+  ];
+}
+
+/**
  * The lead-architect SYSTEM prompt. Deliberately concise: it establishes the
  * disposition and the two deliverables (the module map + the interface seams),
  * not task detail — that arrives in {@link buildArchitectPrompt}. Pairs with the
@@ -64,10 +104,16 @@ Keep it small and concrete. A tight map of real regions and a few real interface
  * steers toward a SELF-CONTAINED openable entry instead of a bundler-dependent
  * module graph that can never open directly. A neutral vision splices nothing, so
  * the output is unchanged for it.
+ *
+ * DECOMPOSITION GRANULARITY (I1): `granularity` steers how finely the work is
+ * carved — `'xhigh'` (COARSE, the default) consolidates into a handful of large
+ * regions/contracts; `'max'` (FINE) restores the full decomposition. See
+ * {@link decompositionGuidanceLines}.
  */
 export function buildArchitectPrompt(
   vision: string,
   divisions: readonly HierarchyDivisionSpec[],
+  granularity: DecompositionGranularity = DEFAULT_DECOMPOSITION_GRANULARITY,
 ): string {
   const divisionLines = divisions.map((d) => `- ${d.name}: ${d.purpose}`).join('\n');
   const names = divisions.map((d) => d.name).join(', ');
@@ -77,6 +123,8 @@ export function buildArchitectPrompt(
     '',
     `Overall vision:\n${vision.trim()}`,
     ...(deliveryLines.length > 0 ? ['', ...deliveryLines] : []),
+    '',
+    ...decompositionGuidanceLines(granularity),
     '',
     'Divisions (use these exact names for every "owner", "exposedBy", and "consumedBy" value):',
     divisionLines,

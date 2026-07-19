@@ -1,4 +1,5 @@
 import type { CoordinationEvent } from '@pi-desktop/coordination';
+import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render } from '../test-utils.tsx';
 import { buildMockCorpRunScript, MOCK_TASK_ID } from './mock-run.ts';
@@ -200,5 +201,60 @@ describe('SituationRoomHost', () => {
     const { container, unmount } = await render(<SituationRoomHost />);
     expect(container.textContent).toContain('No live run');
     await unmount();
+  });
+});
+
+describe('SituationRoomSurface — live per-subagent timer (D4)', () => {
+  /** A live run (status working) with one working builder (its start time lives in
+   * the corp-store timing map, threaded in as the `nodeTiming` prop). */
+  function liveRun(): SituationState {
+    let s = initialSituation('t1');
+    s = reduceSituation(s, { type: 'status', status: 'working' });
+    s = reduceSituation(s, {
+      type: 'org-chart',
+      chart: {
+        taskId: 't1',
+        nodes: [
+          { id: 'ceo', role: 'ceo', name: 'Pi', state: 'working' },
+          {
+            id: 'eng-1',
+            role: 'engineer',
+            name: 'Builder',
+            parentId: 'ceo',
+            state: 'working',
+            currentAction: 'Writing src/x.ts',
+          },
+        ],
+        edges: [{ from: 'ceo', to: 'eng-1' }],
+      },
+    });
+    return s;
+  }
+
+  it('ADVANCES the working row’s m:ss clock every second (never freezes at its first reading)', async () => {
+    vi.useFakeTimers();
+    try {
+      const base = 1_000_000_000_000;
+      vi.setSystemTime(base);
+      const timing = { 'eng-1': { startedAt: base - 9_000 } }; // 9s in
+      const { container, unmount } = await render(
+        <SituationRoomSurface state={liveRun()} nodeTiming={timing} />,
+      );
+      const timer = () =>
+        container.querySelector('[data-testid="subagent-timer"]')?.textContent ?? '';
+      expect(timer()).toBe('0:09');
+      // The 1s interval ticks the shared clock → the timer keeps advancing.
+      await act(async () => {
+        vi.advanceTimersByTime(3_000);
+      });
+      expect(timer()).toBe('0:12');
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      expect(timer()).toBe('1:12');
+      await unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

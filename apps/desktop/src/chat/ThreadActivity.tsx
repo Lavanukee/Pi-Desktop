@@ -21,6 +21,7 @@ import type { ReactNode } from 'react';
 import { usePiStore } from '../state/pi-slice';
 import {
   type ActivityBlock,
+  chainRunningFlags,
   type MappedStep,
   mapThinkingStep,
   mapToolStep,
@@ -115,19 +116,23 @@ export function ThreadActivityChain({
         : (estimateThoughtMs(thinkingText, tps) ?? 0);
   const firstThinkingIdx = blocks.findIndex((b) => b.type === 'thinking');
 
+  // E1: only the LAST block of a live chain is present-tense; every settled prior
+  // step stays past-tense (a new action must not re-present the ones before it).
+  const runningFlags = chainRunningFlags(blocks, {
+    streaming,
+    hasResult: (id) => resultForBlock.get(id) !== undefined,
+    runningToolCalls,
+  });
   const steps: MappedStep[] = blocks.map((block, i) => {
-    const isLast = i === blocks.length - 1;
+    const running = runningFlags[i] ?? false;
     if (block.type === 'thinking') {
-      // A thought is "running" only while it's the trailing block of a live turn.
       return mapThinkingStep(
         block,
-        streaming && isLast,
+        running,
         !streaming && i === firstThinkingIdx ? thinkingMs : undefined,
       );
     }
-    const result = resultForBlock.get(block.id);
-    const running = runningToolCalls.includes(block.id) || (result === undefined && streaming);
-    return mapToolStep(block, result, running);
+    return mapToolStep(block, resultForBlock.get(block.id), running);
   });
 
   return (

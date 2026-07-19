@@ -32,6 +32,7 @@ import { ChatComposer } from './ChatComposer';
 import { ChatThread } from './ChatThread';
 import { ChatTitle } from './ChatTitle';
 import { CanvasTabsPanel } from './canvas/CanvasTabsPanel';
+import { CorpDebugHud } from './corp/CorpDebugHud';
 import { useHarnessTitleSync } from './harness-title';
 import { SessionSidebar, type SidebarStub } from './SessionSidebar';
 import { ToastHost } from './ToastHost';
@@ -251,6 +252,8 @@ export function ChatApp({
 
   return (
     <CanvasProvider controller={canvasController.current}>
+      {/* Dev-only live activity HUD (renders only in a ?corp / PI_DESKTOP_CORP run). */}
+      <CorpDebugHud />
       <div className="flex h-full">
         {/* The sidebar stays mounted; when collapsed the slot narrows to a
             ~64px ICON RAIL (round-8 #1) rather than hiding — global.css owns the

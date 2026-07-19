@@ -739,6 +739,12 @@ export class CorpEngine implements CoordinationEngine {
         const contracts = parseManagerContracts(result.content ?? '');
         const nonEmpty = contracts.length > 0;
         if (div !== undefined && nonEmpty) this.addContracts(rt, div, contracts);
+        // D3: the manager's planning turn is OVER — settle its node so it doesn't
+        // linger `working` with a stale "Responding"/"thinking" action for the rest
+        // of the run. `setNode(idle)` clears the current action + any open stream; the
+        // division's honest state is then derived from its contracts (divisionState)
+        // on every subsequent chart — working only while a builder under it runs.
+        if (div !== undefined) this.setNode(rt, div.id, 'idle');
         // Advance to the next division after a non-empty turn OR after the single
         // retry (empty twice) — mirrors runCorp's withRetryOnEmpty per division.
         if (nonEmpty || rt.mgrRetryPending) {
@@ -749,9 +755,12 @@ export class CorpEngine implements CoordinationEngine {
         }
         if (nonEmpty) {
           this.emitChecklist(rt);
-          this.emit(rt, { type: 'org-chart', chart: this.buildChart(rt) });
           this.emitEta(rt);
         }
+        // Broadcast the chart ALWAYS (not only on a non-empty turn) so the settled
+        // manager node renders — an empty planning turn still settles instead of
+        // freezing the node lit.
+        this.emit(rt, { type: 'org-chart', chart: this.buildChart(rt) });
         // Once every division has planned, the build begins.
         if (rt.mgrCursor >= rt.divisions.length && rt.contracts.length > 0) {
           this.setStatus(rt, 'working');
@@ -933,24 +942,39 @@ export class CorpEngine implements CoordinationEngine {
       case 'file-write': {
         if (record.path === undefined || record.path === '') return;
         const rel = record.path;
+        // A phase:'start' record fires at the tool_call boundary (before the file
+        // exists) purely to light the row + canvas tab IMMEDIATELY; the paired
+        // completion record (no phase) lands the authoritative +N. The transcript
+        // "Writing <rel>" line is added ONCE, on completion, so a start+completion
+        // pair never doubles the row.
+        const starting = record.phase === 'start';
         if (nodeId !== undefined) {
           this.closeStream(rt, nodeId); // the write ends any open text/reasoning tail
           // Light the map MID-work: an ACTIVE (phase 'progress') touch, so the region
           // shows as being written NOW; the role's completion settles it to 'end'.
-          this.addLine(rt, nodeId, 'file-touch', `writing ${rel}`, {
-            path: rel,
-            label: 'Writing',
-            detail: rel,
-          });
+          if (!starting) {
+            this.addLine(rt, nodeId, 'file-touch', `writing ${rel}`, {
+              path: rel,
+              label: 'Writing',
+              detail: rel,
+            });
+          }
           rt.currentAction.set(nodeId, `Writing ${rel}`);
           // PUSH the live file edit as a per-node worker-activity so the inline chat
           // feed lights the +N/−N readout in real time (mirrors the transcript line).
+          // The completion record carries the written BODY on `text` — forward it as
+          // `content` so the live file canvas renders the ACTUAL file, not a blank
+          // peek. The phase:'start' record has no body (path only), so a fresh row
+          // opens the tab immediately and the completion fills its content.
           this.emit(
             rt,
             workerActivity(nodeId, {
               kind: 'file',
               path: rel,
               label: 'Writing',
+              ...(record.text !== undefined && record.text.length > 0
+                ? { content: record.text }
+                : {}),
               ...(record.linesAdded !== undefined ? { addedLines: record.linesAdded } : {}),
             }),
           );
@@ -1413,9 +1437,15 @@ export class CorpEngine implements CoordinationEngine {
         edges.push({ from: CEO_NODE, to: ARCHITECT_NODE });
       }
       for (const d of rt.divisions) {
+        // D2: before a division has any contracts it IS a MANAGER — the role
+        // planning the area, WRITING the contracts. Labelling it a bare `division`
+        // then (its own name, no role) reads as an idle area sitting in the tree.
+        // Role it `manager` until its builders exist; once contracts land it becomes
+        // the work-area container its engineers hang under.
+        const hasContracts = rt.contracts.some((c) => c.divisionId === d.id);
         nodes.push({
           id: d.id,
-          role: 'division',
+          role: hasContracts ? 'division' : 'manager',
           name: d.name,
           parentId: CEO_NODE,
           state: this.divisionState(rt, d, state),

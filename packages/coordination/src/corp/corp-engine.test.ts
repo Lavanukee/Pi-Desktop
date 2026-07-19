@@ -119,7 +119,12 @@ describe('CorpEngine implements CoordinationEngine', () => {
     if (richest?.type === 'org-chart') {
       const roles = richest.chart.nodes.map((n) => n.role);
       expect(roles).toContain('ceo');
-      expect(roles.filter((r) => r === 'division')).toHaveLength(2);
+      // Both areas appear under the CEO. An area is role `division` once it has its
+      // builders; an area still awaiting contracts shows as its `manager` (D2 — a
+      // planning lead, never a bare division name). Either way both areas are nodes,
+      // and at least one has become a division with engineers.
+      expect(roles.filter((r) => r === 'division' || r === 'manager')).toHaveLength(2);
+      expect(roles).toContain('division');
       expect(roles).toContain('engineer');
       // The architecture module map projected through.
       expect(richest.chart.modules?.length).toBeGreaterThan(0);

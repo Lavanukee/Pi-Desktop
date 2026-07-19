@@ -283,7 +283,7 @@ export function engineerToolAllowlist(declared: readonly string[]): string[] {
  */
 export const AGENT_ENGINEER_ADDENDUM = `You build ONE self-contained module. TWO tool calls are MANDATORY and are the ONLY way to finish — do them, do not just talk:
   (1) WRITE: call the write tool to create the COMPLETE file at your contract's slot path. The file you WRITE is your deliverable — NEVER paste code as a chat message; a message is not a submission.
-  (2) SUBMIT: call submit_contract. Simply stopping does NOT count and fails the contract. Your FIRST submit_contract call gives you one chance to improve the file before it is final; then call submit_contract AGAIN to finalize.
+  (2) SUBMIT: call submit_contract. Simply stopping does NOT count and fails the contract. Your FIRST submit_contract call gives you one chance to improve the file before it is final; then call submit_contract AGAIN to finalize. That SECOND call FINALIZES your work and ENDS your turn — after it, say nothing and call no further tool (do not keep re-submitting).
 Do NOT explore the workspace (no ls / find / grep) — it holds ONLY your read-only dependency files, nothing to discover. Read ONLY the dependency files your contract names (skip reading entirely if it names none), then IMMEDIATELY call write to create your file, optionally run one quick \`bash\` check, then call submit_contract. Writing the file is the whole task — call write first, deliberate less.`;
 
 /**
@@ -318,7 +318,7 @@ export const SUBMIT_CONTRACT_TOOL = 'submit_contract';
 export function buildSubmitContractTool(contract: Contract): RoleAgentCustomTool {
   return {
     name: SUBMIT_CONTRACT_TOOL,
-    description: `Call this when you believe your file at ${contract.slot} meets the contract. The FIRST time you call it you get one chance to re-read your contract and improve the file before it is final; call it again once you are satisfied to finalize.`,
+    description: `Call this when you believe your file at ${contract.slot} meets the contract. This is a TWO-STEP submit: the FIRST call gives you one verification pass to re-read your contract and improve the file; the SECOND call FINALIZES it and ENDS your turn — after that call, output nothing and call no further tool. Do not call it more than twice.`,
     parameters: {
       type: 'object',
       properties: {
@@ -350,6 +350,7 @@ export function buildEngineerSubmitGate(contract: Contract): string {
     `2. BEHAVIOR / VISUAL check, if applicable. If your contract produces something runnable or renderable, exercise it to the extent you can (a tiny smoke test via bash) and confirm it does what the contract says. Skip only if there is genuinely nothing to run.`,
     `3. CONTRACT check. Does the file fully meet the input → output for ${contract.slot} and the review rubric (${contract.reviewRubric})? Fix any correctness bug, missed edge case, or drift.`,
     'If ANYTHING failed or could be improved, WRITE the file again FIRST. Only call submit_contract a second time once you have CONFIRMED it compiles against its real dependencies and fulfils the contract to the best of your ability.',
+    'This verification pass is your ONE chance to improve the file. Your NEXT submit_contract call is FINAL — it finalizes your work and ENDS your turn. After that call, do NOT reply, summarize, affirm, or call any tool; the turn is over. Never re-submit in a confirm loop.',
   ].join('\n');
 }
 
@@ -443,7 +444,7 @@ export function buildAgentEngineerPrompt(
 
   lines.push(
     '',
-    `Now WRITE the complete file to ${contract.slot} with the write tool, run ONE quick bash sanity check, then call submit_contract to finish — you are NOT finished until you call it, as simply stopping does not submit your work. On your first submit you get one chance to review and improve the file before it is final. Writing the slot file is the entire task — do not explore the workspace or print the file as text.`,
+    `Now WRITE the complete file to ${contract.slot} with the write tool, run ONE quick bash sanity check, then call submit_contract to finish — you are NOT finished until you call it, as simply stopping does not submit your work. On your first submit you get one chance to review and improve the file before it is final; your SECOND submit_contract FINALIZES the file and ENDS your turn — after it, do not reply or call any tool. Writing the slot file is the entire task — do not explore the workspace or print the file as text.`,
     `If you get stuck, consult FIRST (call_peer / call_specialist) before giving up; only if it is still genuinely impossible after that, reply on one line exactly: unfulfillable, because <reason>.`,
   );
   return lines.join('\n');

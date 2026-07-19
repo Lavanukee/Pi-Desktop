@@ -150,6 +150,84 @@ describe('transcriptToBlocks — line → ContentBlock mapping', () => {
   });
 });
 
+describe('transcriptToBlocks — manager contract array → commission rows (D1)', () => {
+  const contract = (
+    id: string,
+    title: string,
+    owner: string,
+    slot: string,
+    deps: string[] = [],
+  ) => ({
+    id,
+    title,
+    ownerNodeId: owner,
+    input: `input for ${id}`,
+    output: `output for ${id}`,
+    slot,
+    available: { tools: ['read', 'write'], imports: [] },
+    reviewRubric: 'works + tested',
+    dependsOn: deps,
+    status: 'queued',
+  });
+  const CONTRACTS = [
+    contract('combat-1', 'Player movement controller', 'combat-eng-1', 'src/combat/move.ts'),
+    contract('combat-2', 'Hit detection', 'combat-eng-2', 'src/combat/hit.ts', ['combat-1']),
+  ];
+
+  it('splits a bare contract array into ONE commission tool-call row per contract (no JSON dump)', () => {
+    const blocks = transcriptToBlocks([line({ kind: 'message', text: JSON.stringify(CONTRACTS) })]);
+    const tools = blocks.filter(isTool);
+    expect(tools).toHaveLength(2);
+    expect(tools[0]).toMatchObject({
+      type: 'toolCall',
+      name: 'commission_contract',
+      arguments: {
+        title: 'Player movement controller',
+        owner: 'combat-eng-1',
+        slot: 'src/combat/move.ts',
+      },
+    });
+    expect(tools[1]).toMatchObject({
+      name: 'commission_contract',
+      arguments: { title: 'Hit detection', owner: 'combat-eng-2', dependsOn: ['combat-1'] },
+    });
+    // NOT a raw ```json code block, and no raw contract JSON leaked as text.
+    expect(blocks.some((b) => b.type === 'text')).toBe(false);
+    expect(JSON.stringify(blocks)).not.toMatch(/```json|reviewRubric/);
+  });
+
+  it('detects a contract array wrapped in a ```json fence + surrounding prose', () => {
+    const text = `Here are the contracts:\n\`\`\`json\n${JSON.stringify(CONTRACTS)}\n\`\`\``;
+    const blocks = transcriptToBlocks([line({ kind: 'message', text })]);
+    // The lead-in prose is kept as text; the array becomes commission rows.
+    expect(blocks[0]).toEqual({ type: 'text', text: 'Here are the contracts:' });
+    expect(blocks.filter(isTool)).toHaveLength(2);
+    expect(JSON.stringify(blocks)).not.toMatch(/```/);
+  });
+
+  it('gives commission rows index-stable ids and coalesces into one activity chain', () => {
+    const blocks = transcriptToBlocks([line({ kind: 'message', text: JSON.stringify(CONTRACTS) })]);
+    const ids = blocks.filter(isTool).map((b) => b.id);
+    expect(new Set(ids).size).toBe(ids.length); // unique
+  });
+
+  it('leaves a NON-contract JSON array as a fenced ```json block (no false positives)', () => {
+    const arr = JSON.stringify([
+      { contract: 'part-0', files: ['src/a.ts'] },
+      { contract: 'part-1', files: ['src/b.ts'] },
+    ]);
+    const [block] = transcriptToBlocks([line({ kind: 'message', text: arr })]);
+    expect(block).toMatchObject({ type: 'text' });
+    expect((block as { text: string }).text).toMatch(/^```json\n/);
+  });
+
+  it('does NOT split a still-streaming contract array (mid-stream stays fenced)', () => {
+    const partial = JSON.stringify(CONTRACTS).slice(0, 60); // truncated, unparseable
+    const blocks = transcriptToBlocks([line({ kind: 'message', text: partial, streaming: true })]);
+    expect(blocks.filter(isTool)).toHaveLength(0);
+  });
+});
+
 describe('transcriptToAssistantView — streaming + running control', () => {
   const view = (lines: WorkerTranscriptLine[]): WorkerTranscriptView => ({
     nodeId: 'n',

@@ -49,7 +49,18 @@ export type CorpBlock =
        * grows, so a terminal tab can mirror the command + its live output. */
       output?: string;
     }
-  | { kind: 'file'; path: string; label?: string; addedLines: number; removedLines: number };
+  | {
+      kind: 'file';
+      path: string;
+      label?: string;
+      addedLines: number;
+      removedLines: number;
+      /** The written file BODY when the engine captured it (a structured write lands
+       * it in full at completion) — the live file canvas renders THIS so the tab
+       * shows the actual content, not a blank peek. Absent when only the line count
+       * is known. */
+      content?: string;
+    };
 
 /** Settle the trailing text/thinking block (its live flag off), if any — the
  * renderer's mirror of the engine's `closeStream`: a tool/file/next-block start
@@ -152,7 +163,10 @@ export function appendWorkerActivity(
       const path = event.path ?? '';
       const last = blocks[blocks.length - 1];
       if (last !== undefined && last.kind === 'file' && last.path === path) {
-        // A repeat write to the SAME tail path ticks +N/−N up in real time.
+        // A repeat write to the SAME tail path ticks +N/−N up in real time. The
+        // newest write's body wins (the completion carries the full file); a start
+        // record (no body) keeps whatever content already landed.
+        const content = event.content ?? last.content;
         blocks[blocks.length - 1] = {
           kind: 'file',
           path,
@@ -163,6 +177,7 @@ export function appendWorkerActivity(
               : {}),
           addedLines: last.addedLines + (event.addedLines ?? 0),
           removedLines: last.removedLines + (event.removedLines ?? 0),
+          ...(content !== undefined ? { content } : {}),
         };
       } else {
         blocks.push({
@@ -171,6 +186,7 @@ export function appendWorkerActivity(
           ...(event.label !== undefined ? { label: event.label } : {}),
           addedLines: event.addedLines ?? 0,
           removedLines: event.removedLines ?? 0,
+          ...(event.content !== undefined ? { content: event.content } : {}),
         });
       }
       return blocks;

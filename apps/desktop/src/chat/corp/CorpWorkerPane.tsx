@@ -110,9 +110,16 @@ export function CorpWorkerFeed({
     lastLine.streaming !== true;
   const currentAction = transcript?.currentAction;
 
+  // A5: the CEO/solo LEAD is the model the user is already talking to — there is no
+  // "briefing card" for it (the synthesized "Pi · Lead" bubble that echoed the
+  // prompt back with canned deliverables). Only a real briefed subagent
+  // (manager/engineer/…) shows its contract briefing.
+  const showBriefing =
+    transcript !== null && transcript.role !== 'ceo' && transcript.role !== 'solo';
+
   return (
     <Thread>
-      {transcript !== null ? (
+      {showBriefing && transcript !== null ? (
         <TaskBriefingBubble briefing={transcript.briefing} collapsible />
       ) : null}
       {view !== null ? (

@@ -252,3 +252,62 @@ describe('CorpWorkerFeed — a tool-call written as TEXT renders as a tool-call 
     await unmount();
   });
 });
+
+/**
+ * A5: the CEO/solo LEAD is the model the user is already talking to — no "briefing
+ * card" (the synthesized "Pi · Lead" bubble that echoed the prompt back with canned
+ * deliverables). A real briefed subagent still shows its contract briefing.
+ */
+describe('CorpWorkerFeed — A5: no lead briefing card, real subagent briefing kept', () => {
+  function feedFor(
+    role: WorkerTranscriptView['role'],
+    briefing: WorkerTranscriptView['briefing'],
+  ): ReactNode {
+    const t: WorkerTranscriptView = {
+      nodeId: 'n',
+      role,
+      briefing,
+      lines: [{ at: 0, kind: 'message', text: 'Working on it.' }],
+    };
+    return (
+      <CanvasProvider>
+        <CorpWorkerFeed transcript={t} working={false} loading={false} nodeState="done" />
+      </CanvasProvider>
+    );
+  }
+
+  it('suppresses the "Pi · Lead" echo card for a ceo-role stream', async () => {
+    const { container, unmount } = await render(
+      feedFor('ceo', {
+        workerName: 'Pi',
+        roleLine: 'Lead',
+        title: 'Answer the question',
+        goal: 'Build a Breakout game.',
+        deliverables: ['a working result', 'reviewed before it ships'],
+      }),
+    );
+    // No briefing bubble, no "Pi · Lead" byline, none of the canned deliverables.
+    expect(container.querySelector('[data-testid="task-briefing"]')).toBeNull();
+    expect(container.textContent).not.toContain('Pi · Lead');
+    expect(container.textContent).not.toContain('a working result');
+    expect(container.textContent).not.toContain('reviewed before it ships');
+    // The real stream body still renders.
+    expect(container.textContent).toContain('Working on it.');
+    await unmount();
+  });
+
+  it('keeps a real subagent (engineer) contract briefing', async () => {
+    const { container, unmount } = await render(
+      feedFor('engineer', {
+        workerName: 'HUD',
+        roleLine: 'Builder · UI',
+        title: 'Build the HUD overlay',
+        goal: 'Deliver src/ui/hud.ts against its contract.',
+        deliverables: ['src/ui/hud.ts'],
+      }),
+    );
+    expect(container.querySelector('[data-testid="task-briefing"]')).not.toBeNull();
+    expect(container.textContent).toContain('Build the HUD overlay');
+    await unmount();
+  });
+});

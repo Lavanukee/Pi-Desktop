@@ -148,6 +148,98 @@ describe('CorpChatStream — pushed deltas stream like the normal chat', () => {
     await unmount();
   });
 
+  it('shows a live "Working…" indicator when the node is working but nothing streams', async () => {
+    // A SETTLED assistant paragraph while the node is still working (one turn
+    // ended; the next ~48s-later turn hasn't started) — nothing is streaming, so
+    // the feed must show a live working indicator, never sit on a frozen frame.
+    await push(
+      { kind: 'text', phase: 'start' },
+      { kind: 'text', phase: 'delta', delta: 'Here is the plan.' },
+      { kind: 'text', phase: 'end' },
+    );
+    const { container, unmount } = await render(stream());
+    const action = container.querySelector('[data-testid="corp-current-action"]');
+    expect(action).not.toBeNull();
+    expect(action?.textContent).toContain('Working');
+    await unmount();
+  });
+
+  it('B3: a working coordinator lead reads "waiting for other subagents to finish", not a bare Working…', async () => {
+    const MGR: OrgNodeView = { id: 'mgr', role: 'manager', name: 'Build plan', state: 'working' };
+    // A promoted run (team formed) so the manager is coordinating, not producing.
+    await act(async () => {
+      useCorpStore.getState().foldEvent({
+        type: 'org-chart',
+        chart: {
+          taskId: 't1',
+          nodes: [
+            { id: 'ceo', role: 'ceo', name: 'Pi', state: 'working' },
+            MGR,
+            { id: 'eng', role: 'engineer', name: 'HUD', parentId: 'mgr', state: 'working' },
+          ],
+          edges: [],
+        },
+      });
+      for (const e of [
+        { kind: 'text', phase: 'start' } as const,
+        { kind: 'text', phase: 'delta', delta: 'Contracts written.' } as const,
+        { kind: 'text', phase: 'end' } as const,
+      ]) {
+        useCorpStore
+          .getState()
+          .foldWorkerActivity({ type: 'worker-activity', nodeId: 'mgr', ...e });
+      }
+    });
+    const { container, unmount } = await render(stream(MGR));
+    const action = container.querySelector('[data-testid="corp-current-action"]');
+    expect(action?.textContent).toContain('waiting for other subagents to finish');
+    expect(action?.textContent).not.toContain('Working…');
+    await unmount();
+  });
+
+  it('A3: history mode preserves the vision text but shows NO live working tail', async () => {
+    // The CEO formed its vision (a settled paragraph) and is still "working"
+    // (coordinating). Rendered as history beneath the "Waiting for N…" indicator, it
+    // keeps its text on screen but must not sprout its own live tail.
+    await push(
+      { kind: 'text', phase: 'start' },
+      { kind: 'text', phase: 'delta', delta: 'Here is the plan for Breakout.' },
+      { kind: 'text', phase: 'end' },
+    );
+    const { container, unmount } = await render(
+      <CanvasProvider>
+        <CorpChatStream taskId="t1" node={CEO} historyMode />
+      </CanvasProvider>,
+    );
+    expect(container.querySelector('.pd-markdown')?.textContent).toContain(
+      'Here is the plan for Breakout.',
+    );
+    // No "Working…"/waiting tail of its own (the live signal is the sibling indicator).
+    expect(container.querySelector('[data-testid="corp-current-action"]')).toBeNull();
+    await unmount();
+  });
+
+  it('A3: history mode renders nothing when the lead produced no vision yet', async () => {
+    const { container, unmount } = await render(
+      <CanvasProvider>
+        <CorpChatStream taskId="t1" node={CEO} historyMode />
+      </CanvasProvider>,
+    );
+    expect(container.querySelector('[data-testid="corp-chat-stream"]')).toBeNull();
+    await unmount();
+  });
+
+  it('hides the working indicator WHILE text streams (the streaming tail is the live signal)', async () => {
+    await push(
+      { kind: 'text', phase: 'start' },
+      { kind: 'text', phase: 'delta', delta: 'Streaming the answer' },
+    );
+    const { container, unmount } = await render(stream());
+    // A streaming tail is on screen (the Markdown), so no separate indicator.
+    expect(container.querySelector('[data-testid="corp-current-action"]')).toBeNull();
+    await unmount();
+  });
+
   it('renders [thinking → write → bash-in-thought → text] as real rows and never re-mounts the chain', async () => {
     const content = Array.from({ length: 50 }, (_, i) => `const a${i} = ${i};`).join('\n');
     const writeXml = [

@@ -30,7 +30,13 @@
  */
 
 import { BROWSER_TOOL_NAMES } from '@pi-desktop/browser-use/tool-names';
-import { ARCHITECT_PROMPT, buildArchitectPrompt, parseArchitecture } from './architect.js';
+import {
+  ARCHITECT_PROMPT,
+  buildArchitectPrompt,
+  DEFAULT_DECOMPOSITION_GRANULARITY,
+  type DecompositionGranularity,
+  parseArchitecture,
+} from './architect.js';
 import {
   buildProductManifest,
   type ContractStatusSummary,
@@ -209,6 +215,16 @@ export interface RunCorpOptions {
   /** Cap on bounce rounds for BOTH the review-at-merge tester bounce and the CEO
    * revise loop (revise.ts); default {@link DEFAULT_BOUNCE_ROUNDS}. */
   readonly maxRevisions?: number;
+  /**
+   * DECOMPOSITION GRANULARITY (I1) — how finely the architect + managers carve the
+   * work into contracts. `'xhigh'` (COARSE, the {@link DEFAULT_DECOMPOSITION_GRANULARITY})
+   * consolidates into a handful of large regions/contracts; `'max'` (FINE) restores
+   * the full decomposition (many small modules). The default leans COARSE: the
+   * architect over-decomposes otherwise (a Breakout game became ~48 contracts),
+   * which stresses the merge and collapses integration — fewer, larger tasks build
+   * faster and merge cleanly. Threaded into the CEO vision turn (vision.ts) + the
+   * architect prompt (architect.ts). */
+  readonly decompositionGranularity?: DecompositionGranularity;
   /** Base generation cap for judgment turns (default 8192); manager + engineer
    * turns floor at 16k regardless (config robustness — see docs). */
   readonly maxTokens?: number;
@@ -772,6 +788,10 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
   // into BOTH the guaranteed integration contract (Part A) and the review-recovery
   // synthesis (Part C). Set in the promoted branch from the working task.
   let deliveryShape = deriveDeliveryShape(options.task);
+  // DECOMPOSITION GRANULARITY (I1) — resolved once and threaded into the CEO vision
+  // turn + the architect prompt. Default COARSE (`xhigh`): the architect over-splits
+  // otherwise, which collapses the merge; fewer, larger contracts build faster.
+  const granularity = options.decompositionGranularity ?? DEFAULT_DECOMPOSITION_GRANULARITY;
   let totalContracts = 0;
   const emptyAfterRetryDivisions: string[] = [];
   let chart: OrgChart | undefined;
@@ -797,7 +817,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
       const out = await agentRoleTurn({
         purpose: 'vision',
         systemPrompt: CEO_VISION_PROMPT,
-        userPrompt: buildCeoVisionPrompt(options.task),
+        userPrompt: buildCeoVisionPrompt(options.task, granularity),
         // read/write/bash to draft + preview a mockup; the browser_* set to research
         // by driving the REAL canvas browser (the PREFERRED path — not bot-blocked
         // like the scraped web_search), with web_search/web_fetch kept as a fallback.
@@ -842,7 +862,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         purpose: 'vision',
         messages: [
           { role: 'system', content: CEO_VISION_PROMPT },
-          { role: 'user', content: buildCeoVisionPrompt(options.task) },
+          { role: 'user', content: buildCeoVisionPrompt(options.task, granularity) },
         ],
         thinking: roleThinkingEnabled('ceo'),
         maxTokens: baseMaxTokens,
@@ -916,7 +936,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         const out = await agentRoleTurn({
           purpose: 'architect',
           systemPrompt: ARCHITECT_PROMPT,
-          userPrompt: buildArchitectPrompt(workingTask, divisions),
+          userPrompt: buildArchitectPrompt(workingTask, divisions, granularity),
           tools: ['read'],
           cwd: options.workspace,
           thinking: architectThinking,
@@ -930,7 +950,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
           purpose: 'architect',
           messages: [
             { role: 'system', content: ARCHITECT_PROMPT },
-            { role: 'user', content: buildArchitectPrompt(workingTask, divisions) },
+            { role: 'user', content: buildArchitectPrompt(workingTask, divisions, granularity) },
           ],
           thinking: architectThinking,
           maxTokens: genMaxTokens,

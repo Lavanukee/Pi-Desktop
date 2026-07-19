@@ -124,6 +124,36 @@ describe('appendWorkerActivity (the PUSH block accumulator)', () => {
     expect(blocks).toEqual([{ kind: 'file', path: 'src/x.ts', addedLines: 5, removedLines: 1 }]);
   });
 
+  it('carries the written BODY end-to-end (C1): the file block keeps its content', () => {
+    let blocks: CorpBlock[] = [];
+    // The write's START opens the row (path only, no body yet)…
+    blocks = appendWorkerActivity(blocks, wa({ kind: 'file', path: 'src/x.ts', label: 'Writing' }));
+    // …its COMPLETION lands the authoritative +N AND the whole captured body, which
+    // the live file canvas renders — folded onto the SAME row, not a new one.
+    blocks = appendWorkerActivity(
+      blocks,
+      wa({ kind: 'file', path: 'src/x.ts', addedLines: 3, content: 'a\nb\nc' }),
+    );
+    expect(blocks).toEqual([
+      {
+        kind: 'file',
+        path: 'src/x.ts',
+        label: 'Writing',
+        addedLines: 3,
+        removedLines: 0,
+        content: 'a\nb\nc',
+      },
+    ]);
+    // A newer body to the same tail path wins; a body-less tick keeps the last body.
+    blocks = appendWorkerActivity(
+      blocks,
+      wa({ kind: 'file', path: 'src/x.ts', addedLines: 1, content: 'a\nb\nc\nd' }),
+    );
+    expect((blocks[0] as Extract<CorpBlock, { kind: 'file' }>).content).toBe('a\nb\nc\nd');
+    blocks = appendWorkerActivity(blocks, wa({ kind: 'file', path: 'src/x.ts', addedLines: 1 }));
+    expect((blocks[0] as Extract<CorpBlock, { kind: 'file' }>).content).toBe('a\nb\nc\nd');
+  });
+
   it('folds a bash command’s streamed output onto the SAME tool row (no duplicate)', () => {
     let blocks: CorpBlock[] = [];
     // The command lands first (no output), then its result arrives (partial → final)

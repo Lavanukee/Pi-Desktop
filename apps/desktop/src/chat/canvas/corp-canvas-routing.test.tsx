@@ -1,12 +1,19 @@
 // @vitest-environment jsdom
 /**
  * The corp → canvas bridge ({@link useCorpCanvasRouting}) drives the SHARED
- * CanvasController so a multi-agent run lights the canvas exactly like a normal
- * chat: a worker's bash step opens a live TERMINAL tab (command + streamed
- * output), a worker's file write opens a live FILE tab (with a +N/−N badge), a
- * delegation focuses the SITUATION room, and a subagent-row click brings the
- * situation room forward. Driven entirely from MOCK worker-activity fed into the
- * corp store against a REAL controller (no engine, no app launch).
+ * CanvasController so a multi-agent run lights the canvas like a normal chat —
+ * scoped to what the user is watching:
+ *
+ *  - C5: ONLY the followed subagent (pinned, else live-followed) opens/updates a
+ *    tab. Another node's writes/commands never open one.
+ *  - C1/C2: a file write TYPES IN the actual captured body, with the file block's
+ *    +N/−N as the one authoritative badge.
+ *  - C4: the followed node's newest write REPLACES the prior file tab (one tab,
+ *    never stacked per write).
+ *  - C6: a node's shell commands append into ONE terminal tab (keyed by node).
+ *
+ * Driven entirely from MOCK worker-activity fed into the corp store against a REAL
+ * controller (no engine, no app launch).
  */
 import {
   type CanvasController,
@@ -93,7 +100,7 @@ async function flush(): Promise<void> {
   });
 }
 
-/** Push worker-activity deltas into the store (inside act). */
+/** Push worker-activity deltas into the store (inside act). Defaults to eng-1. */
 async function push(...events: WorkerActivityEvent[]): Promise<void> {
   await act(async () => {
     for (const e of events) useCorpStore.getState().foldWorkerActivity(e);
@@ -116,7 +123,8 @@ function chartOf(ids: string[]): OrgChartView {
   };
 }
 
-/** Fold an org-chart snapshot into the store (situation + follow), inside act. */
+/** Fold an org-chart snapshot into the store (situation + follow), inside act. The
+ * deepest working node becomes the followed (shown) node — an engineer over the CEO. */
 async function feedChart(ids: string[]): Promise<void> {
   const event: CoordinationEvent = { type: 'org-chart', chart: chartOf(ids) };
   await act(async () => {
@@ -134,7 +142,147 @@ function situationState(ids: string[]): SituationState {
 }
 
 describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', () => {
-  it('opens a terminal + file tab, focuses situation on delegation, and on a subagent click', async () => {
+  it('follows ONLY the shown node; one file tab (reused), one terminal (appended)', async () => {
+    const controller = createCanvasController();
+    useCorpStore.getState().setTask('t1');
+
+    const { unmount } = await render(
+      <CanvasProvider controller={controller}>
+        <Bridge controller={controller} />
+      </CanvasProvider>,
+    );
+
+    // A team forms: ceo + two builders. The deepest working node (eng-1) is the
+    // followed/shown node — the only one whose work reaches the canvas.
+    await feedChart(['ceo', 'eng-1', 'eng-2']);
+    expect(useCorpStore.getState().liveNode?.id).toBe('eng-1');
+
+    // (C5) A NON-shown node (eng-2) writes a file → NO tab opens for it.
+    await push(
+      wa({ nodeId: 'eng-2', kind: 'file', path: 'other/z.ts', content: 'zzz', addedLines: 9 }),
+    );
+    await flush();
+    expect(controller.getState().tabs.find((t) => t.key === 'corpfile:other/z.ts')).toBeUndefined();
+
+    // (C1/C2) The SHOWN node writes a file, its captured body carried end-to-end →
+    // a live file tab renders the ACTUAL content, +N from the file block (not a
+    // content-derived count), streaming settled (a structured write lands complete).
+    await push(
+      wa({ kind: 'file', path: 'src/x.ts', label: 'Writing', content: 'a\nb\nc', addedLines: 3 }),
+    );
+    const fileX = controller.getState().tabs.find((t) => t.key === 'corpfile:src/x.ts');
+    expect(fileX).toBeDefined();
+    expect(fileX?.kind).toBe('file');
+    expect(fileX?.artifact?.content.text).toBe('a\nb\nc');
+    expect(fileX?.addedLines).toBe(3);
+    expect(fileX?.streaming).toBe(false);
+    // The new file tab focused (auto-swap to the execution).
+    expect(controller.getState().activeTabId).toBe(fileX?.id);
+
+    // (C4) A NEW file for the same node REPLACES the tab — the prior corpfile is
+    // CLOSED, not stacked. Exactly one corp file tab remains.
+    await push(wa({ kind: 'file', path: 'src/y.ts', content: 'y1\ny2\ny3\ny4', addedLines: 4 }));
+    expect(controller.getState().tabs.find((t) => t.key === 'corpfile:src/x.ts')).toBeUndefined();
+    const fileY = controller.getState().tabs.find((t) => t.key === 'corpfile:src/y.ts');
+    expect(fileY?.artifact?.content.text).toBe('y1\ny2\ny3\ny4');
+    expect(fileY?.addedLines).toBe(4);
+    expect(controller.getState().tabs.filter((t) => t.key?.startsWith('corpfile:'))).toHaveLength(
+      1,
+    );
+
+    // (C6) Two shell commands for the shown node → ONE terminal tab (keyed by node),
+    // both commands appended into the same mirror — never a tab per command.
+    await push(
+      wa({ kind: 'tool', toolName: 'bash', detail: 'npm run build' }),
+      wa({ kind: 'tool', toolName: 'bash', detail: 'npm run build', output: 'Build OK' }),
+      wa({ kind: 'tool', toolName: 'bash', detail: 'npm test' }),
+      wa({ kind: 'tool', toolName: 'bash', detail: 'npm test', output: 'Tests pass' }),
+    );
+    const terms = controller.getState().tabs.filter((t) => t.key?.startsWith('corpterm:'));
+    expect(terms).toHaveLength(1);
+    expect(terms[0]?.key).toBe('corpterm:eng-1');
+    const mirror = terms[0]?.data?.mirrorText as string | undefined;
+    expect(mirror).toContain('npm run build');
+    expect(mirror).toContain('Build OK');
+    expect(mirror).toContain('npm test');
+    expect(mirror).toContain('Tests pass');
+
+    // (C5, again) eng-2 never got a surface — only the followed node's work showed.
+    expect(controller.getState().tabs.find((t) => t.key === 'corpterm:eng-2')).toBeUndefined();
+
+    await unmount();
+  });
+
+  it('types a file in live from the streamed write body + opens a live HTML preview (code focused)', async () => {
+    const controller = createCanvasController();
+    useCorpStore.getState().setTask('t1');
+
+    const { unmount } = await render(
+      <CanvasProvider controller={controller}>
+        <Bridge controller={controller} />
+      </CanvasProvider>,
+    );
+
+    // Make eng-1 the followed node so its work reaches the canvas (C5).
+    await feedChart(['ceo', 'eng-1']);
+
+    // The model streams a TEXT-FORM `<function=write>` whose content GROWS across
+    // deltas (the qwen grammar-failure shape) — the corp canvas must render THIS
+    // live body, not the (empty mid-run) product peek.
+    await push(wa({ kind: 'text', phase: 'start' }));
+    await push(
+      wa({
+        kind: 'text',
+        phase: 'delta',
+        delta:
+          '<function=write><parameter=path>index.html</parameter><parameter=content>\n<!DOCTYPE html>\n<html><body><h1>Hi',
+      }),
+    );
+
+    // (1) The file CODE tab renders the ACTUAL streaming write body, streaming, and
+    // is FOCUSED (the code tab, not the preview).
+    const code1 = controller.getState().tabs.find((t) => t.key === 'corpfile:index.html');
+    expect(code1).toBeDefined();
+    expect(code1?.kind).toBe('file');
+    expect(code1?.streaming).toBe(true);
+    expect(code1?.artifact?.content.text).toBe('<!DOCTYPE html>\n<html><body><h1>Hi');
+    expect(controller.getState().activeTabId).toBe(code1?.id);
+
+    // (2) A live HTML PREVIEW opened alongside it (secondary — NOT focused).
+    const preview1 = controller.getState().tabs.find((t) => t.key === 'corphtml:index.html');
+    expect(preview1).toBeDefined();
+    expect(preview1?.kind).toBe('html');
+    expect(preview1?.artifact?.content.kind).toBe('html');
+    expect(preview1?.artifact?.content.text).toContain('<h1>Hi');
+    expect(controller.getState().activeTabId).not.toBe(preview1?.id);
+
+    // (3) More content streams in — the SAME tabs GROW in place, then settle when
+    // the write closes (streaming:false), never a new tab, never a focus steal.
+    await push(
+      wa({
+        kind: 'text',
+        phase: 'delta',
+        delta: ' there</h1></body></html>\n</parameter></function>',
+      }),
+      wa({ kind: 'text', phase: 'end' }),
+    );
+
+    const code2 = controller.getState().tabs.find((t) => t.key === 'corpfile:index.html');
+    expect(code2?.id).toBe(code1?.id); // grew in place
+    expect(code2?.artifact?.content.text).toContain('Hi there');
+    expect(code2?.artifact?.content.text.length ?? 0).toBeGreaterThan(
+      code1?.artifact?.content.text.length ?? 0,
+    );
+    expect(code2?.streaming).toBe(false); // the write closed → settled
+
+    const preview2 = controller.getState().tabs.find((t) => t.key === 'corphtml:index.html');
+    expect(preview2?.id).toBe(preview1?.id);
+    expect(preview2?.artifact?.content.text).toContain('Hi there');
+
+    await unmount();
+  });
+
+  it('delegation focuses the situation room; a subagent click scopes to its latest surface', async () => {
     const controller = createCanvasController();
     useCorpStore.getState().setTask('t1');
 
@@ -155,58 +303,22 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
     const situationId = controller.getState().tabs.find((t) => t.key === 'situation:t1')?.id;
     expect(situationId).toBeDefined();
 
-    // A solo chart first (one node) — NOT a delegation.
-    await feedChart(['ceo']);
-
-    // (1) A file write grows +N → a live corpfile tab, streaming, badge = +5/−1.
-    await push(
-      wa({ kind: 'file', path: 'src/x.ts', label: 'Writing', addedLines: 3 }),
-      wa({ kind: 'file', path: 'src/x.ts', addedLines: 2, removedLines: 1 }),
-    );
-    await flush(); // the async peek → file-tab open resolves
-
-    const file = controller.getState().tabs.find((t) => t.key === 'corpfile:src/x.ts');
-    expect(file).toBeDefined();
-    expect(file?.kind).toBe('file');
-    expect(file?.streaming).toBe(true);
-    expect(file?.addedLines).toBe(5);
-    expect(file?.removedLines).toBe(1);
-
-    // (2) A bash command with streamed output → a live corpterm tab whose mirror
-    // carries BOTH the command and its output.
-    await push(
-      wa({ kind: 'tool', toolName: 'bash', detail: 'npm run build' }),
-      wa({
-        kind: 'tool',
-        toolName: 'bash',
-        detail: 'npm run build',
-        output: 'compiling…\nBuild OK',
-      }),
-    );
-
-    const term = controller.getState().tabs.find((t) => t.key?.startsWith('corpterm:'));
-    expect(term).toBeDefined();
-    expect(term?.kind).toBe('terminal');
-    const mirrorText = term?.data?.mirrorText as string | undefined;
-    expect(mirrorText).toContain('npm run build');
-    expect(mirrorText).toContain('Build OK');
-
-    // The last execution event (bash) focused its own tab — situation is NOT active.
-    expect(controller.getState().activeTabId).toBe(term?.id);
-    expect(controller.getState().activeTabId).not.toBe(situationId);
-
-    // (3) A delegation (a NEW org-chart node) focuses the situation room.
+    // A delegation (a NEW org-chart node) focuses the situation room.
     await feedChart(['ceo', 'eng-1']);
     expect(controller.getState().activeTabId).toBe(situationId);
 
-    // (4) A subagent-row click SCOPES the canvas to that node's most-recent
-    // surface (STEP 4) — eng-1's live terminal here — dropping the user into its
-    // work. Move focus to the situation tab first so the scope is observable.
+    // eng-1 (the followed node) runs a shell command → its ONE terminal opens.
+    await push(wa({ kind: 'tool', toolName: 'bash', detail: 'python -m http.server' }));
+    const term = controller.getState().tabs.find((t) => t.key === 'corpterm:eng-1');
+    expect(term).toBeDefined();
+    expect(term?.data?.mirrorText as string | undefined).toContain('python -m http.server');
+
+    // A subagent-row click SCOPES the canvas to that node's most-recent surface
+    // (STEP 4) — eng-1's live terminal here. Focus the room first so the scope is
+    // observable.
     await act(async () => {
       if (situationId) controller.focusTab(situationId);
     });
-    expect(controller.getState().activeTabId).toBe(situationId);
-
     const { container: room, unmount: unmountRoom } = await render(
       <SituationRoomSurface
         state={situationState(['ceo', 'eng-1'])}
@@ -218,7 +330,6 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
     await act(async () => {
       (row as HTMLElement).click();
     });
-    // eng-1 pinned + the canvas scoped to its terminal tab (its latest surface).
     expect(useCorpStore.getState().pinnedNode?.id).toBe('eng-1');
     expect(controller.getState().activeTabId).toBe(term?.id);
 

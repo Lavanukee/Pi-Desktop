@@ -24,7 +24,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { fetchWorkerTranscript } from '../../state/corp-connect';
 import { type CorpBlock, useCorpStore } from '../../state/corp-store';
 import { CorpWorkerFeed } from './CorpWorkerPane';
-import { corpFileTabKey, openCorpFileInCanvas } from './corp-file-canvas';
+import { openCorpFileInCanvas } from './corp-file-canvas';
 import './CorpChatStream.css';
 
 /** Fallback poll cadence (a pinned node with no pushed deltas): fast while the
@@ -36,6 +36,14 @@ export interface CorpChatStreamProps {
   taskId: string;
   /** The agent whose live stream to show (follow-live target, or a pinned pick). */
   node: OrgNodeView;
+  /**
+   * History mode (A3): render the node's already-produced blocks as SETTLED chat
+   * history — no live "Working…"/waiting tail of its own. Used to KEEP the CEO's
+   * vision-forming turn visible above the live "Waiting for N…" indicator once the
+   * team forms, so the vision never vanishes on promotion. Renders nothing when
+   * the node has no pushed output to preserve.
+   */
+  historyMode?: boolean;
 }
 
 /** Poll-burst dedupe (the worker pane's rule): a snapshot that shows nothing new
@@ -104,11 +112,13 @@ function synthBriefing(node: OrgNodeView): WorkerBriefingView {
   };
 }
 
-export function CorpChatStream({ taskId, node }: CorpChatStreamProps) {
+export function CorpChatStream({ taskId, node, historyMode = false }: CorpChatStreamProps) {
   const blocks = useCorpStore((s) => s.workerBlocks[node.id]);
+  const situation = useCorpStore((s) => s.situation);
   const liveBlocks = blocks ?? [];
   const hasPush = liveBlocks.length > 0;
-  const working = node.state === 'working';
+  // History mode preserves an already-formed turn; it is never "live" itself.
+  const working = node.state === 'working' && !historyMode;
   // A finished node shows "subagent finished in Nm Ns" — its frozen working span
   // (finishedAt − startedAt; `now` is ignored once finishedAt is set).
   const timing = useCorpStore((s) => s.nodeTiming[node.id]);
@@ -125,6 +135,12 @@ export function CorpChatStream({ taskId, node }: CorpChatStreamProps) {
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // History mode needs no transcript (the briefing is suppressed for a lead and
+    // the body comes from the pushed blocks) — skip the poll entirely.
+    if (historyMode) {
+      setLoading(false);
+      return undefined;
+    }
     setLoading(true);
     const pull = () => {
       void fetchWorkerTranscript(taskId, node.id).then((t) => {
@@ -144,7 +160,7 @@ export function CorpChatStream({ taskId, node }: CorpChatStreamProps) {
       cancelled = true;
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [taskId, node.id, working]);
+  }, [taskId, node.id, working, historyMode]);
 
   // Open a file step in the canvas as a LIVE corp-peek view (owner's bar (b)).
   const openFile = useCallback(
@@ -154,40 +170,50 @@ export function CorpChatStream({ taskId, node }: CorpChatStreamProps) {
     [controller, taskId, node.state],
   );
 
-  // Auto-refresh an ALREADY-OPEN corp file tab as its +N/−N grow (the active write
-  // updates live in the canvas). Keyed on the file blocks' signature so it fires
-  // only when a file row changes — never on every streamed text token.
-  const fileSig = liveBlocks
-    .filter((b): b is Extract<CorpBlock, { kind: 'file' }> => b.kind === 'file')
-    .map((b) => `${b.path}:${b.addedLines}:${b.removedLines}`)
-    .join('|');
-  useEffect(() => {
-    if (fileSig === '') return;
-    const openKeys = new Set(controller.getState().tabs.map((t) => t.key));
-    const current = useCorpStore.getState().workerBlocks[node.id] ?? [];
-    for (const b of current) {
-      if (b.kind === 'file' && openKeys.has(corpFileTabKey(b.path))) {
-        void openCorpFileInCanvas(controller, taskId, b.path, node.state === 'working');
-      }
-    }
-  }, [fileSig, controller, taskId, node.id, node.state]);
+  // The live file tab (its streaming content + its +N/−N badge) is driven entirely
+  // by the corp→canvas routing hook (useCorpCanvasRouting) off the SAME store, so
+  // there is no per-node refresh here — that path stole focus + could clobber the
+  // live write body with an empty product-peek read. Clicking a file row still
+  // opens it on demand via `openFile` below.
+
+  // Is the node producing output RIGHT NOW (a streaming text/thinking tail)?
+  const anyStreaming = liveBlocks.some(
+    (b) => (b.kind === 'text' || b.kind === 'thinking') && b.streaming,
+  );
+
+  // B3: the anti-void tail for a working node with nothing streaming. A coordinator
+  // LEAD (ceo/manager/division-head) in a PROMOTED run is not producing — it's
+  // waiting on its team — so it reads that way instead of a bare "Working…" that
+  // looks like a stall when the user is watching a non-acting node. Pre-promotion
+  // the lead IS the sole worker forming the vision, so "Working…" is honest.
+  const promoted = (situation?.chart.nodes.length ?? 0) > 1;
+  const coordinatorLead =
+    node.role === 'ceo' || node.role === 'manager' || node.role === 'division-head';
+  const idleTail =
+    promoted && coordinatorLead ? 'waiting for other subagents to finish' : 'Working…';
 
   // The live body: the shown node's accumulated blocks (PUSH), rendered through the
-  // shared feed. NO currentAction is threaded — the pushed streaming blocks ARE the
-  // live tail, so the feed never shows a bare "Responding/working…" void. When there
-  // are no pushed deltas yet, fall back to the polled transcript.
+  // shared feed. When the node is working but NOTHING is streaming (the inter-turn
+  // gap between one turn ending and the next starting), thread a live "Working…"
+  // action so the feed's anti-void tail shows a working indicator beneath the last
+  // settled paragraph — there is ALWAYS streaming text, a live edit, or "Working…",
+  // never a frozen frame. While something streams, the streaming tail IS the live
+  // signal, so no indicator is threaded. Falls back to the polled transcript when
+  // there are no pushed deltas yet.
   const view: WorkerTranscriptView | null = hasPush
     ? {
         nodeId: node.id,
         role: transcript?.role ?? node.role,
         briefing: transcript?.briefing ?? synthBriefing(node),
         lines: liveBlocks.map((b) => blockToLine(b, working)),
-        ...(working &&
-        liveBlocks.some((b) => (b.kind === 'text' || b.kind === 'thinking') && b.streaming)
-          ? { streaming: true }
-          : {}),
+        ...(working && anyStreaming ? { streaming: true } : {}),
+        ...(working && !anyStreaming ? { currentAction: idleTail } : {}),
       }
     : transcript;
+
+  // A3: in history mode with nothing to preserve, render nothing (the live
+  // "Waiting for N…" indicator alongside carries the signal).
+  if (historyMode && !hasPush) return null;
 
   return (
     <div className="pd-corpchat-stream" data-testid="corp-chat-stream" data-node-id={node.id}>

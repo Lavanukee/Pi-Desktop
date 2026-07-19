@@ -57,6 +57,29 @@ function probe() {
     out.canvasErr = String(e);
   }
   try {
+    const cs = window.__corpStore?.getState?.();
+    if (cs) {
+      const nodes = cs.situation?.chart?.nodes ?? [];
+      out.corp = {
+        nodeCount: nodes.length,
+        nodes: Object.entries(cs.workerBlocks ?? {})
+          .map(([id, blocks]) => ({
+            id: id.slice(0, 12),
+            kinds: blocks.map((b) => b.kind[0]).join(''),
+            writes: blocks
+              .filter((b) => b.kind === 'text' && /<function=(?:write|edit)>/.test(b.text))
+              .map((b) => /<parameter=path>([^<]+)/.exec(b.text)?.[1]?.trim() ?? '?'),
+            fileBlocks: blocks
+              .filter((b) => b.kind === 'file')
+              .map((b) => `${b.path}(+${b.addedLines})`),
+          }))
+          .filter((n) => n.kinds.length > 0),
+      };
+    }
+  } catch (e) {
+    out.corpErr = String(e);
+  }
+  try {
     const stream = document.querySelector('[data-testid="corp-chat-stream"]');
     if (stream) {
       const txt = stream.innerText ?? '';
@@ -78,6 +101,10 @@ function probe() {
       out.waitingText = wm ? wm[0] : null;
       out.finishedLine = (document.querySelector('[data-testid="corp-finished-line"]')?.innerText ?? null);
     }
+    // the live activity HUD (ground-truth of what the system thinks it's doing)
+    out.hud = (document.querySelector('[data-testid="corp-debug-hud"]')?.innerText ?? '')
+      .replace(/\s+/g, ' ')
+      .slice(0, 400);
     // situation-room subagent rows (in the canvas situation surface, outside the stream)
     const rows = document.querySelectorAll('[data-testid="subagent-row"]');
     out.subagentRows = Array.from(rows)

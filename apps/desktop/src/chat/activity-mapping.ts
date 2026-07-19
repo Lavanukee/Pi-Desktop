@@ -286,6 +286,11 @@ const TOOL_REGISTRY: Record<string, ToolResolution> = {
     'Reading reminders',
     'Read reminders',
   ]),
+  // A manager's CONTRACT, surfaced as a "Commissioned <title>" tool-call row when
+  // corp-blocks detects a contract ARRAY in the feed (D1) — one row per contract,
+  // the raw JSON never dumped. Neutral `tool` kind: the reveal shows the contract
+  // fields (Input); the collapsed row reads "Commissioned" + the contract title.
+  commission_contract: { kind: 'tool', displayName: 'Commissioned' },
 };
 
 /** Tool-name prefix (before the first `_`/`.`) → its macOS connector identity. */
@@ -759,4 +764,37 @@ export function mapThinkingStep(
       ...(durationMs !== undefined && durationMs > 0 ? { durationMs } : {}),
     },
   };
+}
+
+/**
+ * Which blocks of a chain are RUNNING (present-tense) vs SETTLED (past-tense) —
+ * the single source of truth for the tense of every step (E1).
+ *
+ * Root-cause fix: only the LAST block of a LIVE (streaming) chain may go
+ * present-tense via the streaming fallback; every earlier block stays PAST tense
+ * even when it has no result yet. The old rule ("no result AND streaming")
+ * re-lit EVERY resultless step present the instant a new action started — so
+ * "Edited a file" reverted to "Editing a file" across the whole chain. Now a
+ * settled prior step reads "Edited a file" / "Thought" / "Ran a command" and only
+ * the current/last one reads "Editing a file" / "Thinking…".
+ *
+ * A tool the engine explicitly reports as in-flight (`runningToolCalls`) is
+ * always present (normal chat's authoritative signal, unchanged). A thinking
+ * block runs only while it is the trailing block of a live turn. Pure + tested.
+ */
+export function chainRunningFlags(
+  blocks: readonly ActivityBlock[],
+  opts: {
+    streaming: boolean;
+    hasResult: (id: string) => boolean;
+    runningToolCalls: readonly string[];
+  },
+): boolean[] {
+  const lastIdx = blocks.length - 1;
+  return blocks.map((block, i) => {
+    const isLast = i === lastIdx;
+    if (block.type === 'thinking') return opts.streaming && isLast;
+    if (opts.runningToolCalls.includes(block.id)) return true;
+    return opts.streaming && isLast && !opts.hasResult(block.id);
+  });
 }

@@ -235,6 +235,112 @@ function jsonFence(text: string, streaming: boolean): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// Manager CONTRACT-ARRAY split (D1) — a manager authors a division's contracts as
+// a raw JSON ARRAY of contract objects (contracts.ts `buildManagerContractPrompt`:
+// "Output ONLY a JSON array … each element is a contract"). Left to the JSON
+// fencer it dumps as one ```json wall; instead each element becomes a
+// "Commissioned <title>" tool-call ROW through the real activity pipeline.
+// ---------------------------------------------------------------------------
+
+/** The contract fields a row surfaces (the manager emits the full Contract). */
+interface ContractLike {
+  readonly title: string;
+  readonly ownerNodeId: string;
+  readonly id?: string;
+  readonly slot?: string;
+  readonly status?: string;
+  readonly dependsOn?: readonly unknown[];
+}
+
+/** A contract element: an object carrying a title + owner and one more of the
+ * contract-specific fields (id/slot/status). Strict enough that an ordinary JSON
+ * array in the feed (e.g. `[{contract, files}]`) is NOT mistaken for contracts. */
+function isContractLike(el: unknown): el is ContractLike {
+  if (typeof el !== 'object' || el === null || Array.isArray(el)) return false;
+  const o = el as Record<string, unknown>;
+  if (typeof o.title !== 'string' || typeof o.ownerNodeId !== 'string') return false;
+  return typeof o.slot === 'string' || typeof o.status === 'string' || typeof o.id === 'string';
+}
+
+/** Locate the first balanced JSON array `[…]` in `text` (string-aware scan), or
+ * null. Fences/prose around it fall to `before`/`after` and are scrubbed there. */
+function findJsonArrayRegion(
+  text: string,
+): { before: string; region: string; after: string } | null {
+  const start = text.indexOf('[');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '[') depth++;
+    else if (ch === ']') {
+      depth--;
+      if (depth === 0) {
+        return {
+          before: text.slice(0, start),
+          region: text.slice(start, i + 1),
+          after: text.slice(i + 1),
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/** Strip ```lang code-fence markers a small model may wrap around its output. */
+function stripCodeFences(text: string): string {
+  return text.replace(/```[a-zA-Z0-9]*\s*\n?/g, '').replace(/```/g, '');
+}
+
+/**
+ * When a SETTLED message IS (or contains) a manager contract array, the parsed
+ * contracts plus any surrounding prose; else null (ordinary handling). Requires a
+ * non-empty array whose EVERY element is contract-shaped, so only a real contract
+ * batch splits into rows.
+ */
+function detectContractArray(
+  text: string,
+): { before: string; contracts: ContractLike[]; after: string } | null {
+  if (!text.includes('[')) return null;
+  const region = findJsonArrayRegion(text);
+  if (region === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(region.region);
+  } catch {
+    return null; // truncated / not JSON → leave to the ordinary path
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every(isContractLike)) return null;
+  return {
+    before: stripCodeFences(region.before).trim(),
+    contracts: parsed as ContractLike[],
+    after: stripCodeFences(region.after).trim(),
+  };
+}
+
+/** One contract → a `commission_contract` toolCall block (renders "Commissioned
+ * <title>", the contract fields revealed on click). The registry maps the name. */
+function commissionBlock(contract: ContractLike, id: string): ToolCallBlock {
+  const deps = Array.isArray(contract.dependsOn) ? contract.dependsOn.filter((d) => d !== '') : [];
+  return toolCallBlock(id, 'commission_contract', {
+    title: contract.title,
+    owner: contract.ownerNodeId,
+    ...(contract.slot !== undefined ? { slot: contract.slot } : {}),
+    ...(contract.status !== undefined ? { status: contract.status } : {}),
+    ...(deps.length > 0 ? { dependsOn: deps } : {}),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Tool / file lines → toolCall blocks
 // ---------------------------------------------------------------------------
 
@@ -323,9 +429,20 @@ function lineToBlocks(line: WorkerTranscriptLine, index: number): ContentBlock[]
     }
     default: {
       // A `message` line. Mid-stream: suppress any open tool-call scaffolding. Once
-      // SETTLED, a written tool call splits out; else a JSON payload fences to a
-      // code block; else plain prose.
+      // SETTLED: a manager's CONTRACT ARRAY splits into commission rows (D1); else a
+      // written tool call splits out; else a JSON payload fences to a code block;
+      // else plain prose.
       if (streaming) return streamingBlocks('text', line.text);
+      const contracts = detectContractArray(line.text);
+      if (contracts !== null) {
+        const out: ContentBlock[] = [];
+        if (contracts.before.length > 0) out.push({ type: 'text', text: contracts.before });
+        contracts.contracts.forEach((c, i) => {
+          out.push(commissionBlock(c, `${idBase}-contract-${i}`));
+        });
+        if (contracts.after.length > 0) out.push({ type: 'text', text: contracts.after });
+        return out;
+      }
       const split = splitWrittenToolCall('text', line.text, idBase);
       if (split !== null) return split;
       const fenced = jsonFence(line.text, false);

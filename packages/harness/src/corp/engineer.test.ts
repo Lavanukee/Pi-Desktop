@@ -240,6 +240,34 @@ describe('buildSubmitContractTool (§164 submission interceptor)', () => {
   });
 });
 
+describe('F1 — submit_contract is a bounded, TERMINATING two-step submit', () => {
+  it('the review-gate (first-call bounce) declares the next submit FINAL and turn-ending', () => {
+    const gate = buildEngineerSubmitGate(contract());
+    // The verification pass improves the file, then the NEXT submit is terminal.
+    expect(gate).toContain('FINAL');
+    expect(gate.toLowerCase()).toContain('ends your turn');
+    // No affirm-and-continue after the finalizing submit; no confirm loop.
+    expect(gate.toLowerCase()).toContain('do not');
+    expect(gate.toLowerCase()).toContain('confirm loop');
+  });
+
+  it('the tool description frames a two-call submit whose SECOND call finalizes + ends the turn', () => {
+    const tool = buildSubmitContractTool(contract());
+    expect(tool.description).toContain('FINALIZES');
+    expect(tool.description.toLowerCase()).toContain('ends your turn');
+    // Bounded: never call it more than twice.
+    expect(tool.description.toLowerCase()).toContain('twice');
+  });
+
+  it('the agent addendum + agent prompt both say the SECOND submit ends the turn (output nothing after)', () => {
+    expect(AGENT_ENGINEER_ADDENDUM.toLowerCase()).toContain('ends your turn');
+    expect(AGENT_ENGINEER_ADDENDUM.toLowerCase()).toContain('do not keep re-submitting');
+    const prompt = buildAgentEngineerPrompt(contract(), []);
+    expect(prompt).toContain('FINALIZES');
+    expect(prompt.toLowerCase()).toContain('ends your turn');
+  });
+});
+
 describe('engineerAgentToolAllowlist (submit_contract + file tools)', () => {
   it('adds submit_contract to the built-in engineer toolset (the allowlist gotcha)', () => {
     const tools = engineerAgentToolAllowlist(['write']);

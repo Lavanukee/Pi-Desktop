@@ -32,14 +32,17 @@ import { createLlamaCorpChat } from './corp-chat';
 import type { CorpInvokeMap } from './corp-contract';
 import { CORP_INVOKE_CHANNELS } from './corp-contract';
 import { createBrowserSearch } from './corp-search';
+import { startMeshTask } from './mesh-run';
+import { createCorpModelProvider } from './role-agent';
 import { createRunRoleAgent } from './role-agent-seam-impl';
 
 const log = createLogger('desktop:corp');
 const events = createIpcEventSender<AppEventMap>();
 
-/** Per-task record: the engine that owns it, its handle, and the target window. */
+/** Per-task record: the engine that owns it (absent for the env-gated agent-mesh
+ * path, which has no CorpEngine), its handle, and the target window. */
 interface RunningTask {
-  readonly engine: CorpEngine;
+  readonly engine?: CorpEngine;
   readonly handle: TaskHandle;
   readonly wc: WebContents;
 }
@@ -193,33 +196,52 @@ async function handleStart(
   // against the current `duckduckgo.com/html/` structure (see ./corp-search).
   const browserSearch: BrowserSearchFn | undefined =
     browserBridge === null ? undefined : createBrowserSearch(browserBridge);
-  const runRoleAgent = resolved.ok
-    ? createRunRoleAgent({
-        baseUrl: resolved.baseUrl,
-        model: resolved.model,
-        // The CEO vision turn (spec §4) researches references — inject the web-tools
-        // registrar so web_search / web_fetch exist for the runs whose allowlist
-        // requests them (the seam gates by name; no other role is affected).
-        // web_search is browser-backed when the bridge is present (see browserSearch).
-        webResearchFactory: (pi) =>
-          registerWebTools(pi, browserSearch !== undefined ? { browserSearch } : {}),
-        // The browser_* tools drive the SAME visible canvas browser (the search
-        // opens live in the situation-room canvas). Gated by name in the seam.
-        browserToolsFactory: (pi) => registerBrowserUseTools(pi, { bridge: browserBridge }),
-      })
-    : undefined;
-  const engine = new CorpEngine({
-    // Unused on the unavailable path (startUnavailable never calls the model).
-    chat: resolved.ok ? resolved.chat : noopCorpChat,
-    ...(runRoleAgent !== undefined ? { runRoleAgent } : {}),
-    workspaceFor: createNodeWorkspaceFactory(corpWorkspaceRoot()),
-    concurrency,
-    ...corpParamsForEffort(req.effort),
-  });
-  const handle = resolved.ok
-    ? engine.startTask(req.prompt, req.ctx)
-    : engine.startUnavailable(req.prompt, resolved.message, req.ctx);
-  tasks.set(handle.taskId, { engine, handle, wc });
+  // EXPERIMENTAL AGENT-MESH path (env-gated, ADDITIVE): run the task as a persistent
+  // multi-agent mesh (jedd's "everyone is an agent that talks to anyone") instead of
+  // the deterministic pipeline, emitting the SAME event stream so the situation room
+  // renders it unchanged. The model + shared workspace are resolved directly here (no
+  // CorpEngine). The `else` branch is the current behavior, byte-for-byte.
+  let engine: CorpEngine | undefined;
+  let handle: TaskHandle;
+  if (resolved.ok && process.env.PI_DESKTOP_CORP_MESH === '1') {
+    const meshTaskId = `corp-mesh-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const cwd = createNodeWorkspaceFactory(corpWorkspaceRoot())(meshTaskId).workspace;
+    fs.mkdirSync(cwd, { recursive: true });
+    const modelHandle = await createCorpModelProvider({
+      baseUrl: resolved.baseUrl,
+      model: resolved.model,
+    });
+    handle = startMeshTask({ handle: modelHandle, task: req.prompt, taskId: meshTaskId, cwd });
+    log.info('corp MESH task started', { taskId: meshTaskId });
+  } else {
+    const runRoleAgent = resolved.ok
+      ? createRunRoleAgent({
+          baseUrl: resolved.baseUrl,
+          model: resolved.model,
+          // The CEO vision turn (spec §4) researches references — inject the web-tools
+          // registrar so web_search / web_fetch exist for the runs whose allowlist
+          // requests them (the seam gates by name; no other role is affected).
+          // web_search is browser-backed when the bridge is present (see browserSearch).
+          webResearchFactory: (pi) =>
+            registerWebTools(pi, browserSearch !== undefined ? { browserSearch } : {}),
+          // The browser_* tools drive the SAME visible canvas browser (the search
+          // opens live in the situation-room canvas). Gated by name in the seam.
+          browserToolsFactory: (pi) => registerBrowserUseTools(pi, { bridge: browserBridge }),
+        })
+      : undefined;
+    engine = new CorpEngine({
+      // Unused on the unavailable path (startUnavailable never calls the model).
+      chat: resolved.ok ? resolved.chat : noopCorpChat,
+      ...(runRoleAgent !== undefined ? { runRoleAgent } : {}),
+      workspaceFor: createNodeWorkspaceFactory(corpWorkspaceRoot()),
+      concurrency,
+      ...corpParamsForEffort(req.effort),
+    });
+    handle = resolved.ok
+      ? engine.startTask(req.prompt, req.ctx)
+      : engine.startUnavailable(req.prompt, resolved.message, req.ctx);
+  }
+  tasks.set(handle.taskId, { ...(engine !== undefined ? { engine } : {}), handle, wc });
 
   // Forward the task's events to the requesting window until the terminal `done`.
   // We keep DRAINING to the terminal even if the window is gone (destroyed or
@@ -266,15 +288,19 @@ type CorpHandlers = {
 
 const handlers: CorpHandlers = {
   'corp:start': (wc, req) => handleStart(wc, req),
+  // The steer/ask/abort/permission/peek/chart/transcript handlers act on a CorpEngine.
+  // A mesh task has no engine (its live feed comes over corp:event), so these degrade
+  // gracefully for it: fire-and-forget ops no-op, and read-backs return null (the folded
+  // event stream already carries the chart + the feed).
   'corp:steer': (_wc, req) => {
     const task = tasks.get(req.taskId);
-    if (task === undefined) return { ok: false };
+    if (task?.engine === undefined) return { ok: false };
     task.engine.steer(task.handle, req.text);
     return { ok: true };
   },
   'corp:ask': async (_wc, req) => {
     const task = tasks.get(req.taskId);
-    if (task === undefined) {
+    if (task?.engine === undefined) {
       return {
         answer: "That production isn't loaded any more — start a new chat to begin a fresh one.",
       };
@@ -283,32 +309,32 @@ const handlers: CorpHandlers = {
   },
   'corp:abort': (_wc, req) => {
     const task = tasks.get(req.taskId);
-    if (task === undefined) return { ok: false };
+    if (task?.engine === undefined) return { ok: false };
     task.engine.abort(task.handle);
     return { ok: true };
   },
   'corp:respond-permission': (_wc, req) => {
     const task = tasks.get(req.taskId);
-    if (task === undefined) return { ok: false };
+    if (task?.engine === undefined) return { ok: false };
     task.engine.respondToPermission(task.handle, req.requestId, req.granted);
     return { ok: true };
   },
   'corp:get-org-chart': (_wc, req) => {
     const task = tasks.get(req.taskId);
-    return { chart: task === undefined ? null : task.engine.getOrgChart(task.handle) };
+    return { chart: task?.engine === undefined ? null : task.engine.getOrgChart(task.handle) };
   },
   'corp:worker-transcript': (_wc, req) => {
     const task = tasks.get(req.taskId);
     return {
       transcript:
-        task === undefined
+        task?.engine === undefined
           ? null
           : (task.engine.getWorkerTranscript(task.handle, req.nodeId) ?? null),
     };
   },
   'corp:peek': (_wc, req) => {
     const task = tasks.get(req.taskId);
-    return { peek: task === undefined ? null : (task.engine.peek(task.handle) ?? null) };
+    return { peek: task?.engine === undefined ? null : (task.engine.peek(task.handle) ?? null) };
   },
 };
 

@@ -506,3 +506,46 @@ export function formatEta(eta: EtaRange | undefined): string {
   if (low === high) return `~${high} min left`;
   return `~${low}–${high} min left`;
 }
+
+// ---------------------------------------------------------------------------
+// Per-node timing (spec §11: each subagent shows a live TIMER + "finished in")
+// ---------------------------------------------------------------------------
+
+/**
+ * When a node started/finished working, stamped in RENDERER state (the corp
+ * store), threaded into the situation surface as a prop. The fold itself stays
+ * pure (no clock) — these epoch millis come from the app-state action that folds
+ * the run, never from {@link reduceSituation}.
+ */
+export interface NodeTiming {
+  /** Epoch millis a node first entered `working`. */
+  readonly startedAt?: number;
+  /** Epoch millis a `working` node left for `done`/`retired`. */
+  readonly finishedAt?: number;
+}
+
+/**
+ * A node's elapsed working time in millis: LIVE (`now − startedAt`) while it is
+ * still running, FROZEN (`finishedAt − startedAt`) once it finished. `undefined`
+ * for a node that never started working (nothing honest to show).
+ */
+export function nodeElapsedMs(timing: NodeTiming | undefined, now: number): number | undefined {
+  if (timing?.startedAt === undefined) return undefined;
+  return Math.max(0, (timing.finishedAt ?? now) - timing.startedAt);
+}
+
+/** Compact live clock — `m:ss` (the per-subagent running timer). */
+export function formatClock(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/** Human duration — `Nm Ns` (or `Ns` under a minute): the "finished in" readout. */
+export function formatDuration(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}

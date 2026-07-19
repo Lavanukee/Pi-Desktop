@@ -13,7 +13,7 @@
  * accumulator. Polling remains ONLY as the fallback for a pinned, non-live node
  * with no buffered deltas (and a one-shot fetch sources the briefing).
  */
-import { useCanvasTabs } from '@pi-desktop/canvas';
+import { nodeElapsedMs, useCanvasTabs } from '@pi-desktop/canvas';
 import type {
   OrgNodeView,
   WorkerBriefingView,
@@ -109,6 +109,11 @@ export function CorpChatStream({ taskId, node }: CorpChatStreamProps) {
   const liveBlocks = blocks ?? [];
   const hasPush = liveBlocks.length > 0;
   const working = node.state === 'working';
+  // A finished node shows "subagent finished in Nm Ns" — its frozen working span
+  // (finishedAt − startedAt; `now` is ignored once finishedAt is set).
+  const timing = useCorpStore((s) => s.nodeTiming[node.id]);
+  const finished = node.state === 'done' || node.state === 'retired';
+  const finishedInMs = finished ? nodeElapsedMs(timing, Date.now()) : undefined;
   const [transcript, setTranscript] = useState<WorkerTranscriptView | null>(null);
   const [loading, setLoading] = useState(true);
   const { controller } = useCanvasTabs();
@@ -192,6 +197,7 @@ export function CorpChatStream({ taskId, node }: CorpChatStreamProps) {
         loading={loading && !hasPush}
         nodeState={node.state}
         onOpenFile={openFile}
+        {...(finishedInMs !== undefined ? { finishedInMs } : {})}
       />
     </div>
   );

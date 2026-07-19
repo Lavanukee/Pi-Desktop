@@ -631,6 +631,7 @@ function DefaultSurface({
           taskId={tab.situationTaskId}
           userMode={tab.situationUserMode}
           selectedNodeId={tab.situationSelectedNodeId}
+          nodeTiming={tab.situationNodeTiming}
           onPeek={(artifact) => handlers?.onSituationPeek?.(id, artifact)}
           onSelectNode={
             handlers?.onSituationNodeSelect

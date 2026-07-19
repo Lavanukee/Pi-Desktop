@@ -199,12 +199,13 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
     await feedChart(['ceo', 'eng-1']);
     expect(controller.getState().activeTabId).toBe(situationId);
 
-    // (4) A subagent-row click focuses the situation tab. Move focus away first,
-    // then render the room and click a real subagent row.
+    // (4) A subagent-row click SCOPES the canvas to that node's most-recent
+    // surface (STEP 4) — eng-1's live terminal here — dropping the user into its
+    // work. Move focus to the situation tab first so the scope is observable.
     await act(async () => {
-      if (term) controller.focusTab(term.id);
+      if (situationId) controller.focusTab(situationId);
     });
-    expect(controller.getState().activeTabId).toBe(term?.id);
+    expect(controller.getState().activeTabId).toBe(situationId);
 
     const { container: room, unmount: unmountRoom } = await render(
       <SituationRoomSurface
@@ -217,7 +218,9 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
     await act(async () => {
       (row as HTMLElement).click();
     });
-    expect(controller.getState().activeTabId).toBe(situationId);
+    // eng-1 pinned + the canvas scoped to its terminal tab (its latest surface).
+    expect(useCorpStore.getState().pinnedNode?.id).toBe('eng-1');
+    expect(controller.getState().activeTabId).toBe(term?.id);
 
     await unmountRoom();
     await unmount();

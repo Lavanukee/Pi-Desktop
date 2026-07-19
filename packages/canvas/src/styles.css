@@ -2115,6 +2115,17 @@
   color: var(--pd-status-warning-fg);
 }
 
+/* Per-subagent live timer (m:ss while working): a compact, muted, tabular chip
+   pinned to the row's trailing edge so the seconds tick in place without shift. */
+.pd-sitroom-agent-timer {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: var(--pd-font-size-footnote);
+  font-variant-numeric: tabular-nums;
+  color: var(--pd-text-muted);
+}
+
 /* Queued / blocked / stopped: a quiet hollow ring in the icon slot. */
 .pd-sitroom-agent-dot {
   width: 7px;
@@ -3393,6 +3404,13 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-muted);
+}
+
+/* "Subagent finished in Nm Ns" — the settled close of a finished node's stream. */
+.pd-workerpane-finished {
+  margin-top: 6px;
   font-size: var(--pd-font-size-caption);
   color: var(--pd-text-muted);
 }

@@ -24,7 +24,7 @@
  * honestly. {@link WorkerPaneShell} + {@link CorpWorkerFeed} are shared with the
  * demo route's pane so the demo renders EXACTLY what a live run renders.
  */
-import { TaskBriefingBubble } from '@pi-desktop/canvas';
+import { formatDuration, TaskBriefingBubble } from '@pi-desktop/canvas';
 import type { OrgNodeView, WorkerTranscriptView } from '@pi-desktop/coordination';
 import { ContextGauge, MessageRow, ShimmerText, Spinner, Thread } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
@@ -57,7 +57,9 @@ function emptyLine(state: OrgNodeView['state']): string {
     case 'retired':
       return 'This part of the team has stepped away.';
     default:
-      return 'Queued — this part of the work hasn’t started yet.';
+      // A not-yet-started subagent: its contract briefing still shows above; this
+      // is the honest "hasn't been picked up yet" tail (Point 4b).
+      return 'Not yet queued';
   }
 }
 
@@ -76,6 +78,9 @@ export interface CorpWorkerFeedProps {
   /** Open a file step (read/edit) in the canvas — wired by the inline chat stream
    * to the live corp-peek file view. Omitted where there's no canvas (demo/pane). */
   onOpenFile?: (path: string) => void;
+  /** Elapsed working millis of a FINISHED node — renders the "finished in Nm Ns"
+   * line (Point 4c). Omitted for a running/queued node or when timing is unknown. */
+  finishedInMs?: number;
 }
 
 /** The live feed body: briefing card + the streamed AssistantGroup + tail. */
@@ -85,8 +90,11 @@ export function CorpWorkerFeed({
   loading,
   nodeState,
   onOpenFile,
+  finishedInMs,
 }: CorpWorkerFeedProps) {
   const hasLines = transcript !== null && transcript.lines.length > 0;
+  // A finished subagent (spec §11): "subagent finished in Nm Ns" under its stream.
+  const finished = (nodeState === 'done' || nodeState === 'retired') && finishedInMs !== undefined;
   // The node's activity as ONE streamed assistant group (the normal chat's shape).
   const view =
     hasLines && transcript !== null ? transcriptToAssistantView(transcript, working) : null;
@@ -127,6 +135,11 @@ export function CorpWorkerFeed({
       {!hasLines && !loading ? (
         <div className="pd-workerpane-tail">
           {working ? <ShimmerText>{emptyLine(nodeState)}</ShimmerText> : emptyLine(nodeState)}
+        </div>
+      ) : null}
+      {finished && finishedInMs !== undefined ? (
+        <div className="pd-workerpane-finished" data-testid="corp-finished-line">
+          Subagent finished in {formatDuration(finishedInMs)}
         </div>
       ) : null}
       {loading && transcript === null ? (

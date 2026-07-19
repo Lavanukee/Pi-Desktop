@@ -287,6 +287,17 @@ export function CanvasTabsPanel() {
     if (tab !== undefined) controller.updateTab(tab.id, { situationSelectedNodeId: corpShownId });
   }, [controller, corpTaskId, corpShownId]);
 
+  // Thread per-node timing (STEP 2) into the situation tab so its rows show a
+  // live timer + "finished in Nm Ns". `nodeTiming` gets a NEW ref only when a
+  // node transitions (corp store's trackChart), so this fires on transitions, not
+  // on every chart burst; the surface's own 1s tick animates the live seconds.
+  const corpNodeTiming = useCorpStore((s) => s.nodeTiming);
+  useEffect(() => {
+    if (corpTaskId === null) return;
+    const tab = controller.getState().tabs.find((t) => t.key === `situation:${corpTaskId}`);
+    if (tab !== undefined) controller.updateTab(tab.id, { situationNodeTiming: corpNodeTiming });
+  }, [controller, corpTaskId, corpNodeTiming]);
+
   // "Peek at the build" (spec §11 safety valve): fetch the REAL in-progress product
   // tree for the live task and open it in its own tab. DTO-only — the renderer never
   // touches the engine; it reads the neutral ProductPeek over `corp:peek`.

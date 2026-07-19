@@ -15,6 +15,8 @@
 import {
   followTarget,
   initialSituation,
+  type NodeTiming,
+  nodeElapsedMs,
   reduceSituation,
   type SituationState,
 } from '@pi-desktop/canvas';
@@ -191,6 +193,14 @@ interface CorpStoreState {
   /** User-pinned node — overrides the follow; null = following live. */
   pinnedNode: OrgNodeView | null;
   /**
+   * Per-node working timing, keyed by nodeId — `startedAt` stamped the first
+   * time a node enters `working`, `finishedAt` when it leaves working→
+   * `done`/`retired`. The one datum the neutral {@link OrgNodeView} lacks;
+   * stamped here (app-state, not the pure fold) and threaded into the situation
+   * surface so each subagent shows a live timer + a "finished in Nm Ns" line.
+   */
+  nodeTiming: Record<string, NodeTiming>;
+  /**
    * The run's live context fullness (0..100) — the latest reading from the
    * followed/pinned node's transcript. The composer's context ring prefers this
    * while a corp task is active, so the circle actually FILLS during a run.
@@ -213,8 +223,9 @@ interface CorpStoreState {
   selectNode: (node: OrgNodeView | null) => void;
   /** Drop the pin and resume following the running node. */
   followLive: () => void;
-  /** Fold one org-chart snapshot: advance the follow target + refresh the
-   * pinned node's live state (its gem/status must stay honest). */
+  /** Fold one org-chart snapshot: advance the follow target, refresh the pinned
+   * node's live state (its gem/status must stay honest), stamp per-node timing,
+   * and auto-return (drop the pin) when the pinned node finishes. */
   trackChart: (chart: OrgChartView) => void;
   /** Record the run's latest context reading (from a transcript poll). */
   setContextPercent: (percent: number) => void;
@@ -227,6 +238,7 @@ export const useCorpStore = create<CorpStoreState>((set) => ({
   pinnedNode: null,
   contextPercent: null,
   workerBlocks: {},
+  nodeTiming: {},
   setTask: (taskId) =>
     set({
       taskId,
@@ -235,6 +247,7 @@ export const useCorpStore = create<CorpStoreState>((set) => ({
       pinnedNode: null,
       contextPercent: null,
       workerBlocks: {},
+      nodeTiming: {},
     }),
   // Same initial state as SituationRoomHost: `initialSituation(taskId ?? '')`,
   // then one `reduceSituation` per event.
@@ -258,20 +271,71 @@ export const useCorpStore = create<CorpStoreState>((set) => ({
     set((s) => {
       const nextLive = followTarget(chart, s.liveNode?.id) ?? s.liveNode;
       // Keep the pinned node's state fresh from the chart (unknown id: keep as-is).
-      const nextPinned =
+      const refreshedPin =
         s.pinnedNode !== null
           ? (chart.nodes.find((n) => n.id === s.pinnedNode?.id) ?? s.pinnedNode)
           : null;
+      // AUTO-RETURN (STEP 5): a pinned node that just finished drops the pin
+      // (followLive) so the chat returns to the CEO-waiting overview to pick
+      // another / the CEO. Fires exactly once — once null, no chart re-triggers it.
+      const pinnedJustFinished =
+        s.pinnedNode !== null &&
+        s.pinnedNode.state !== 'done' &&
+        s.pinnedNode.state !== 'retired' &&
+        refreshedPin !== null &&
+        (refreshedPin.state === 'done' || refreshedPin.state === 'retired');
+      const nextPinned = pinnedJustFinished ? null : refreshedPin;
       // Preserve object identity when nothing user-visible changed, so chart
       // bursts don't re-render the pane (selectors compare by reference).
       const same = (a: OrgNodeView | null, b: OrgNodeView | null) =>
         a !== null && b !== null && a.id === b.id && a.state === b.state && a.name === b.name;
+      // Stamp per-node timing (STEP 1): startedAt on first `working`, finishedAt
+      // when a started node leaves working→done/retired. Idempotent + additive —
+      // a new object only when something changed, so the canvas subscription
+      // (CanvasTabsPanel) fires on transitions, not on every chart burst.
+      const timing = stampTiming(s.nodeTiming, chart);
       return {
         liveNode: same(s.liveNode, nextLive) ? s.liveNode : nextLive,
-        pinnedNode: same(s.pinnedNode, nextPinned) ? s.pinnedNode : nextPinned,
+        pinnedNode: pinnedJustFinished
+          ? null
+          : same(s.pinnedNode, nextPinned)
+            ? s.pinnedNode
+            : nextPinned,
+        ...(timing !== s.nodeTiming ? { nodeTiming: timing } : {}),
       };
     }),
 }));
+
+/**
+ * Stamp per-node working timing from one chart snapshot. `startedAt` lands the
+ * first time a node is seen `working`; `finishedAt` lands when a node that had a
+ * `startedAt` is `done`/`retired`. Pure + idempotent — returns the SAME object
+ * when nothing changed (referential-equality change signal for subscribers). The
+ * clock is `Date.now()` here (app-state, not the pure situation fold).
+ */
+function stampTiming(
+  prev: Record<string, NodeTiming>,
+  chart: OrgChartView,
+): Record<string, NodeTiming> {
+  let next: Record<string, NodeTiming> | null = null;
+  for (const node of chart.nodes) {
+    const cur = prev[node.id];
+    if (node.state === 'working' && cur?.startedAt === undefined) {
+      next ??= { ...prev };
+      next[node.id] = { ...cur, startedAt: Date.now() };
+      continue;
+    }
+    if (
+      (node.state === 'done' || node.state === 'retired') &&
+      cur?.startedAt !== undefined &&
+      cur.finishedAt === undefined
+    ) {
+      next ??= { ...prev };
+      next[node.id] = { ...cur, finishedAt: Date.now() };
+    }
+  }
+  return next ?? prev;
+}
 
 /** The node the left chat area should show right now (pin wins over follow). */
 export function shownCorpNode(s: {
@@ -279,4 +343,18 @@ export function shownCorpNode(s: {
   liveNode: OrgNodeView | null;
 }): OrgNodeView | null {
   return s.pinnedNode ?? s.liveNode;
+}
+
+/**
+ * A node's elapsed working time in millis (live = `now − startedAt`; frozen =
+ * `finishedAt − startedAt`; `undefined` if it never started) — the selector the
+ * chat pane reads for its "finished in" line. Re-exports the canvas helper over
+ * the store's timing map so callers don't reach into the shape.
+ */
+export function corpNodeElapsedMs(
+  s: { nodeTiming: Record<string, NodeTiming> },
+  nodeId: string,
+  now: number,
+): number | undefined {
+  return nodeElapsedMs(s.nodeTiming[nodeId], now);
 }

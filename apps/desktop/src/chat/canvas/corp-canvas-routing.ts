@@ -58,9 +58,40 @@ export function focusSituationTab(controller: CanvasController, taskId: string |
 }
 
 /**
- * A situation-room subagent row was clicked: pin the node's stream to the chat
- * pane (as before) AND bring the situation room forward (STEP 4). One place so
- * the panel wiring and the tests never drift.
+ * Focus the selected node's MOST-RECENT canvas surface — its latest live file /
+ * terminal tab — so clicking a subagent drops the user INTO its work (the canvas
+ * live-updates that node's files/terminal). Walks the node's blocks newest-first
+ * and focuses the first that has an open tab. Returns false when the node has no
+ * surface yet (a not-started node), so the caller can fall back to the room.
+ */
+function focusNodeLatestSurface(controller: CanvasController, nodeId: string): boolean {
+  const blocks = useCorpStore.getState().workerBlocks[nodeId] ?? [];
+  const tabs = controller.getState().tabs;
+  for (let i = blocks.length - 1; i >= 0; i -= 1) {
+    const block = blocks[i];
+    if (block === undefined) continue;
+    let key: string | undefined;
+    if (block.kind === 'file' && block.path.length > 0) key = corpFileTabKey(block.path);
+    else if (block.kind === 'tool' && block.toolName === 'bash')
+      key = corpTerminalTabKey(nodeId, i);
+    if (key === undefined) continue;
+    const tab = tabs.find((t) => t.key === key);
+    if (tab !== undefined) {
+      controller.focusTab(tab.id);
+      useCanvasStore.getState().setCanvasOpen(true);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * A situation-room subagent row was clicked: PIN the node's stream to the chat
+ * pane AND scope the canvas to that node (STEP 4). A live/finished node with its
+ * own surface drops the user straight into it (its latest file/terminal tab); a
+ * not-started node (nothing to scope to) — or clicking the pinned node again to
+ * unpin — brings the situation room forward instead. One place so the panel
+ * wiring and the tests never drift.
  */
 export function selectCorpNodeAndFocus(
   controller: CanvasController,
@@ -68,6 +99,10 @@ export function selectCorpNodeAndFocus(
   node: OrgNodeView,
 ): void {
   useCorpStore.getState().selectNode(node);
+  // `selectNode` toggles: clicking the pinned node again unpins it. Only scope
+  // into the node while it is (still) the pinned one; otherwise return to the room.
+  const stillPinned = useCorpStore.getState().pinnedNode?.id === node.id;
+  if (stillPinned && focusNodeLatestSurface(controller, node.id)) return;
   focusSituationTab(controller, taskId);
 }
 

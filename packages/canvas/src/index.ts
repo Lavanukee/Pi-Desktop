@@ -78,6 +78,7 @@ export type {
   ContractProgress,
   FileTouchView,
   ModuleRegionFill,
+  NodeTiming,
   SituationState,
 } from './situation/situation-model.ts';
 export {
@@ -85,9 +86,12 @@ export {
   crossGroupWaits,
   fillModuleRegions,
   followTarget,
+  formatClock,
+  formatDuration,
   formatEta,
   groupChecklist,
   initialSituation,
+  nodeElapsedMs,
   reduceSituation,
   workingCount,
 } from './situation/situation-model.ts';

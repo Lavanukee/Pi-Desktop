@@ -46,6 +46,13 @@ export interface CorpInlineTurnProps {
   peekAvailable: boolean;
   /** Open the Build snapshot. */
   onPeek?: () => void;
+  /**
+   * Re-focus the situation-room canvas panel (Point 3). When wired, THIS is the
+   * primary click target of the "waiting" summary — the CEO's turn is a jump-back
+   * to the team view, since drill-in now lives in the situation room, not the
+   * inline rows. Absent (demo/tests): the summary toggles the inline rows as before.
+   */
+  onFocusSituation?: () => void;
 }
 
 /** The engine's raw "thinking" action reads as a live "thinking…" to a person. */
@@ -178,6 +185,7 @@ export function CorpInlineTurn({
   fetchTranscript,
   peekAvailable,
   onPeek,
+  onFocusSituation,
 }: CorpInlineTurnProps) {
   const [expanded, setExpanded] = useState(false);
   const [openNodeId, setOpenNodeId] = useState<string | null>(null);
@@ -233,9 +241,17 @@ export function CorpInlineTurn({
           <button
             type="button"
             className="pd-corpturn-summary pd-focusable"
-            aria-expanded={expanded}
+            aria-expanded={onFocusSituation ? undefined : expanded}
             data-testid="corp-inline-summary"
-            onClick={() => setExpanded((v) => !v)}
+            onClick={() => {
+              // Wired in the live thread: the CEO-waiting indicator jumps the user
+              // back to the situation-room canvas (Point 3). Standalone: toggle rows.
+              if (onFocusSituation) {
+                onFocusSituation();
+                return;
+              }
+              setExpanded((v) => !v);
+            }}
           >
             {terminal ? (
               <span className="pd-corpturn-summary-text" data-testid="corp-inline-done">

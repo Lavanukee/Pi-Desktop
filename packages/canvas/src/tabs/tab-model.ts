@@ -1,6 +1,7 @@
 import type { CoordinationEvent } from '@pi-desktop/coordination';
 import type { ReactNode } from 'react';
 import type { Artifact } from '../model.ts';
+import type { NodeTiming } from '../situation/situation-model.ts';
 
 /**
  * The kinds a canvas tab can host. Each maps to a surface component (browser |
@@ -156,6 +157,12 @@ export interface CanvasTab {
   situationUserMode?: 'user' | 'power';
   /** The worker whose live stream the app is showing (highlights its node). */
   situationSelectedNodeId?: string;
+  /**
+   * Per-node working timing (from the renderer's corp store), keyed by nodeId —
+   * the surface renders each subagent's live timer + "finished in Nm Ns" from
+   * it. The pure situation fold can't carry a clock, so the app pushes this in.
+   */
+  situationNodeTiming?: Record<string, NodeTiming>;
 
   /** Free-form per-surface data the core never reads. */
   data?: Record<string, unknown>;

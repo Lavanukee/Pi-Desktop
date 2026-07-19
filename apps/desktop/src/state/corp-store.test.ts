@@ -10,10 +10,16 @@ import type {
   ChecklistItem,
   CoordinationEvent,
   OrgChartView,
+  OrgNodeView,
   WorkerActivityEvent,
 } from '@pi-desktop/coordination';
-import { beforeEach, describe, expect, it } from 'vitest';
-import { appendWorkerActivity, type CorpBlock, useCorpStore } from './corp-store';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  appendWorkerActivity,
+  type CorpBlock,
+  corpNodeElapsedMs,
+  useCorpStore,
+} from './corp-store';
 
 const CHART: OrgChartView = {
   taskId: 't1',
@@ -165,5 +171,101 @@ describe('appendWorkerActivity (the PUSH block accumulator)', () => {
     // setTask clears every node's blocks.
     useCorpStore.getState().setTask('t2');
     expect(useCorpStore.getState().workerBlocks).toEqual({});
+  });
+});
+
+// A chart with two subagents at chosen states (STEP 1 timing transitions).
+const timingChart = (aState: OrgNodeView['state'], bState: OrgNodeView['state']): OrgChartView => ({
+  taskId: 't1',
+  nodes: [
+    { id: 'ceo', role: 'ceo', name: 'Pi', state: 'working' },
+    { id: 'a', role: 'engineer', name: 'A', parentId: 'ceo', state: aState },
+    { id: 'b', role: 'engineer', name: 'B', parentId: 'ceo', state: bState },
+  ],
+  edges: [],
+});
+
+describe('trackChart per-node timing (STEP 1)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('stamps startedAt when a node first enters working (once), finishedAt on working→done', () => {
+    const now = vi.spyOn(Date, 'now');
+    useCorpStore.getState().setTask('t1');
+
+    // A enters working at t=1000; B is still idle → no timing for B.
+    now.mockReturnValue(1000);
+    useCorpStore.getState().trackChart(timingChart('working', 'idle'));
+    let timing = useCorpStore.getState().nodeTiming;
+    expect(timing.a).toEqual({ startedAt: 1000 });
+    expect(timing.b).toBeUndefined();
+
+    // A still working at t=5000 → startedAt is NOT re-stamped (idempotent).
+    now.mockReturnValue(5000);
+    useCorpStore.getState().trackChart(timingChart('working', 'idle'));
+    timing = useCorpStore.getState().nodeTiming;
+    expect(timing.a).toEqual({ startedAt: 1000 });
+
+    // A leaves working → done at t=9000 → finishedAt lands once.
+    now.mockReturnValue(9000);
+    useCorpStore.getState().trackChart(timingChart('done', 'idle'));
+    timing = useCorpStore.getState().nodeTiming;
+    expect(timing.a).toEqual({ startedAt: 1000, finishedAt: 9000 });
+
+    // A stays done at t=12000 → finishedAt is NOT re-stamped.
+    now.mockReturnValue(12000);
+    useCorpStore.getState().trackChart(timingChart('done', 'idle'));
+    expect(useCorpStore.getState().nodeTiming.a).toEqual({ startedAt: 1000, finishedAt: 9000 });
+  });
+
+  it('never stamps finishedAt for a node that reaches done without ever working', () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(2000);
+    useCorpStore.getState().setTask('t1');
+    // B goes straight to done — no startedAt was ever recorded → no timing at all.
+    useCorpStore.getState().trackChart(timingChart('working', 'done'));
+    expect(useCorpStore.getState().nodeTiming.b).toBeUndefined();
+    expect(now).toHaveBeenCalled();
+  });
+
+  it('keeps the SAME nodeTiming object when nothing transitioned (referential signal)', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1000);
+    useCorpStore.getState().setTask('t1');
+    useCorpStore.getState().trackChart(timingChart('working', 'idle'));
+    const first = useCorpStore.getState().nodeTiming;
+    // Same states again → no stamp → same object reference (no needless re-render).
+    useCorpStore.getState().trackChart(timingChart('working', 'idle'));
+    expect(useCorpStore.getState().nodeTiming).toBe(first);
+  });
+
+  it('corpNodeElapsedMs: live = now − startedAt; frozen = finishedAt − startedAt; else undefined', () => {
+    const s = { nodeTiming: { a: { startedAt: 1000 }, b: { startedAt: 1000, finishedAt: 4000 } } };
+    expect(corpNodeElapsedMs(s, 'a', 6000)).toBe(5000); // live
+    expect(corpNodeElapsedMs(s, 'b', 999999)).toBe(3000); // frozen (now ignored)
+    expect(corpNodeElapsedMs(s, 'missing', 6000)).toBeUndefined();
+  });
+
+  it('auto-returns: a pinned node finishing (working→done) drops the pin (STEP 5)', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1000);
+    useCorpStore.getState().setTask('t1');
+    const working = timingChart('working', 'idle');
+    useCorpStore.getState().trackChart(working);
+    // Pin the working node A.
+    const a = working.nodes.find((n) => n.id === 'a') as OrgNodeView;
+    useCorpStore.getState().selectNode(a);
+    expect(useCorpStore.getState().pinnedNode?.id).toBe('a');
+
+    // A finishes → the pin auto-drops (followLive).
+    useCorpStore.getState().trackChart(timingChart('done', 'idle'));
+    expect(useCorpStore.getState().pinnedNode).toBeNull();
+  });
+
+  it('a pinned node still working is kept (no spurious auto-return)', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1000);
+    useCorpStore.getState().setTask('t1');
+    const working = timingChart('working', 'idle');
+    useCorpStore.getState().trackChart(working);
+    useCorpStore.getState().selectNode(working.nodes.find((n) => n.id === 'a') as OrgNodeView);
+    // B advances but A keeps working → the pin on A stays.
+    useCorpStore.getState().trackChart(timingChart('working', 'working'));
+    expect(useCorpStore.getState().pinnedNode?.id).toBe('a');
   });
 });

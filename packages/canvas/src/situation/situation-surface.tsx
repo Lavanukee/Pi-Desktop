@@ -45,8 +45,12 @@ import { ExercisePanel } from './exercise-panel.tsx';
 import { PlanPanel } from './plan-panel.tsx';
 import {
   contractProgress,
+  formatClock,
+  formatDuration,
   formatEta,
   initialSituation,
+  type NodeTiming,
+  nodeElapsedMs,
   reduceSituation,
   type SituationState,
 } from './situation-model.ts';
@@ -63,6 +67,12 @@ export interface SituationRoomSurfaceProps {
   /** Clicking a worker routes its live stream to the app (left chat area). */
   onSelectNode?: (node: OrgNodeView) => void;
   selectedNodeId?: string;
+  /**
+   * Per-node working timing (from the app's corp store) — each subagent row
+   * shows a live `m:ss` timer while working and "finished in Nm Ns" once done.
+   * Absent = no timers (the surface stays honest; nothing invented).
+   */
+  nodeTiming?: Record<string, NodeTiming>;
   className?: string;
 }
 
@@ -117,11 +127,28 @@ function subagentNodes(nodes: readonly OrgNodeView[]): readonly OrgNodeView[] {
   );
 }
 
+/**
+ * A `now` that ticks each second while `active` — the per-subagent timers read
+ * from it (`now − startedAt`). Idle: no interval (frozen timers don't need it),
+ * so nothing leaks. Mirrors apps/desktop HarnessStatus.tsx's `useElapsed`, but
+ * kept surface-local since the canvas is a framework-lib.
+ */
+function useNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [active]);
+  return now;
+}
+
 export function SituationRoomSurface({
   state,
   onPeek,
   onSelectNode,
   selectedNodeId,
+  nodeTiming,
   className,
 }: SituationRoomSurfaceProps) {
   const progress = contractProgress(state);
@@ -161,6 +188,9 @@ export function SituationRoomSurface({
   // Honest live summaries for collapsed (and quiet) section headers.
   const subagents = subagentNodes(state.chart.nodes);
   const busy = subagents.filter((n) => n.state === 'working').length;
+  // A shared 1s clock, ticking only while a subagent is at work, drives every
+  // row's live timer; frozen ("finished in") timers read `finishedAt` and ignore it.
+  const now = useNow(busy > 0);
   const agentsSummary = busy > 0 ? `${busy} at work` : undefined;
   const planSummary = progress.total > 0 ? `${progress.done}/${progress.total}` : undefined;
 
@@ -290,6 +320,8 @@ export function SituationRoomSurface({
               nodes={subagents}
               onSelectNode={onSelectNode}
               selectedNodeId={selectedNodeId}
+              nodeTiming={nodeTiming}
+              now={now}
             />
           </RoomSection>
           {stacked ? planSection : null}
@@ -363,8 +395,9 @@ function actionText(action: string): string {
 }
 
 /** The one-line status a subagent row shows for its node's live state —
- * exactly the chat's wording (CorpInlineTurn's rowStatusLine). */
-function agentStatusLine(node: OrgNodeView): string {
+ * exactly the chat's wording (CorpInlineTurn's rowStatusLine). A finished node
+ * with known timing reads "finished in Nm Ns" (Point 4c) instead of a bare "done". */
+function agentStatusLine(node: OrgNodeView, elapsedMs?: number): string {
   switch (node.state) {
     case 'working':
       // A lead's "work" is coordination — say so instead of echoing an action.
@@ -373,11 +406,11 @@ function agentStatusLine(node: OrgNodeView): string {
       }
       return node.currentAction !== undefined ? actionText(node.currentAction) : 'working…';
     case 'done':
-      return 'done';
+      return elapsedMs !== undefined ? `finished in ${formatDuration(elapsedMs)}` : 'done';
     case 'blocked':
       return 'blocked';
     case 'retired':
-      return 'stopped';
+      return elapsedMs !== undefined ? `finished in ${formatDuration(elapsedMs)}` : 'stopped';
     default:
       return 'queued';
   }
@@ -413,6 +446,10 @@ interface SubagentListProps {
   nodes: readonly OrgNodeView[];
   onSelectNode?: (node: OrgNodeView) => void;
   selectedNodeId?: string;
+  /** Per-node working timing — drives each row's live/frozen timer. */
+  nodeTiming?: Record<string, NodeTiming>;
+  /** The shared 1s clock the live timers read from. */
+  now: number;
 }
 
 /**
@@ -422,7 +459,7 @@ interface SubagentListProps {
  * clicking routes that worker's live stream to the app's left pane (the
  * row does not expand in place, so the expander chevron is suppressed in CSS).
  */
-function SubagentList({ nodes, onSelectNode, selectedNodeId }: SubagentListProps) {
+function SubagentList({ nodes, onSelectNode, selectedNodeId, nodeTiming, now }: SubagentListProps) {
   const ordered = orderSubagents(nodes);
   if (ordered.length === 0) {
     return <div className="pd-sitroom-feed-empty">Waiting for the work to start…</div>;
@@ -431,7 +468,8 @@ function SubagentList({ nodes, onSelectNode, selectedNodeId }: SubagentListProps
     <div className="pd-sitroom-agents" data-testid="subagent-list">
       {ordered.map((node) => {
         const working = node.state === 'working';
-        const line = agentStatusLine(node);
+        const elapsed = nodeElapsedMs(nodeTiming?.[node.id], now);
+        const line = agentStatusLine(node, elapsed);
         return (
           <ActivityRow
             key={node.id}
@@ -451,6 +489,14 @@ function SubagentList({ nodes, onSelectNode, selectedNodeId }: SubagentListProps
                 ) : (
                   <span className="pd-sitroom-agent-action">{line}</span>
                 )}
+                {/* The per-subagent timer: a live `m:ss` while working, frozen at
+                    its final duration once done. Present only when the node has
+                    actually started (honest — nothing invented for a queued row). */}
+                {working && elapsed !== undefined ? (
+                  <span className="pd-sitroom-agent-timer" data-testid="subagent-timer">
+                    {formatClock(elapsed)}
+                  </span>
+                ) : null}
               </>
             }
             onClick={() => onSelectNode?.(node)}
@@ -476,6 +522,8 @@ export interface SituationRoomHostProps {
   userMode?: SituationUserMode;
   onSelectNode?: (node: OrgNodeView) => void;
   selectedNodeId?: string;
+  /** Per-node working timing (from the app's corp store) — drives the row timers. */
+  nodeTiming?: Record<string, NodeTiming>;
 }
 
 /**
@@ -489,6 +537,7 @@ export function SituationRoomHost({
   userMode,
   onSelectNode,
   selectedNodeId,
+  nodeTiming,
 }: SituationRoomHostProps) {
   const [state, setState] = useState<SituationState>(() => initialSituation(taskId ?? ''));
 
@@ -533,6 +582,7 @@ export function SituationRoomHost({
       userMode={userMode}
       onSelectNode={onSelectNode}
       selectedNodeId={selectedNodeId}
+      nodeTiming={nodeTiming}
     />
   );
 }

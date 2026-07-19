@@ -10,6 +10,8 @@
  * indicator ({@link ThreadStatusIndicator}, jedd blind-test #1) while streaming,
  * inline artifact widgets (THEME 2), and auto-scroll.
  */
+
+import { useCanvasTabs } from '@pi-desktop/canvas';
 import type {
   AssistantMsg,
   BashExecMsg,
@@ -30,12 +32,16 @@ import {
   Thread,
 } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
+import { fetchWorkerTranscript } from '../state/corp-connect';
 import { useCorpStore } from '../state/corp-store';
 import { useLlmStore } from '../state/llm-store';
 import { forkAndReprompt, sendPrompt, switchBranch } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { AssistantGroup } from './AssistantGroup';
+import { focusSituationTab } from './canvas/corp-canvas-routing';
 import { CorpChatStream } from './corp/CorpChatStream';
+import { CorpInlineTurn } from './corp/CorpInlineTurn';
+import { corpChatView, corpPeekAvailable } from './corp/corp-thread-view';
 import { HarnessChecklistPanel, ThreadStatusIndicator } from './HarnessStatus';
 
 /** Concatenated visible text of an assistant response group (for copy). */
@@ -88,16 +94,22 @@ export function ChatThread() {
   const tps = useLlmStore((s) => s.status.metrics?.avgTps ?? s.status.metrics?.lastTps);
 
   // EXPERIMENTAL production harness: while a corp run is live, the model's output
-  // streams INLINE after the user's prompt — the shown agent's real feed (the
-  // CEO/root before it builds a team, then the live worker, or a subagent the user
-  // pinned from the situation room). The prompt bubble stays; the chat is never
-  // blanked or taken over. shownNode = pinned ?? live ?? the root, so it shows the
-  // original model streaming from the very first event.
+  // streams INLINE after the user's prompt. The prompt bubble stays; the chat is
+  // never blanked or taken over. `corpChatView` (pure) decides what to render: a
+  // PINNED subagent's stream, else — once the team forms (promoted) — the CEO
+  // "Waiting for N subagents to finish" indicator (the DEFAULT promoted view, NOT
+  // an auto-followed leaf), else the pre-promotion solo CEO/root stream.
   const corpTaskId = useCorpStore((s) => s.taskId);
   const corpSituation = useCorpStore((s) => s.situation);
   const corpLiveNode = useCorpStore((s) => s.liveNode);
   const corpPinnedNode = useCorpStore((s) => s.pinnedNode);
-  const shownCorpNode = corpPinnedNode ?? corpLiveNode ?? corpSituation?.chart.nodes[0] ?? null;
+  const corpView = corpChatView({
+    taskId: corpTaskId,
+    situation: corpSituation,
+    liveNode: corpLiveNode,
+    pinnedNode: corpPinnedNode,
+  });
+  const { controller: canvasController } = useCanvasTabs();
 
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -355,13 +367,22 @@ export function ChatThread() {
 
           {/* The corp run's live model output, as the assistant's answer:
               rendered AFTER the user's prompt bubble, inside the scroll flow, so it
-              reads as Pi replying — never a takeover pane. Shows the CEO/root while
-              it plans, then follows the live worker (or a subagent pinned from the
-              situation room). The subagent NAVIGATOR + checklist live in the
+              reads as Pi replying — never a takeover pane. A pinned subagent streams
+              its feed; a promoted-but-unpinned run shows the CEO's "Waiting for N…"
+              indicator (clickable → the situation-room canvas); pre-promotion streams
+              the solo CEO/root. The subagent NAVIGATOR + checklist live in the
               situation-room canvas tab, which opens when the model builds a team. */}
-          {corpTaskId !== null && shownCorpNode !== null ? (
-            <CorpChatStream taskId={corpTaskId} node={shownCorpNode} />
-          ) : corpTaskId !== null ? (
+          {corpTaskId !== null && corpView.kind === 'stream' ? (
+            <CorpChatStream taskId={corpTaskId} node={corpView.node} />
+          ) : corpTaskId !== null && corpView.kind === 'waiting' && corpSituation !== null ? (
+            <CorpInlineTurn
+              taskId={corpTaskId}
+              state={corpSituation}
+              fetchTranscript={(nodeId) => fetchWorkerTranscript(corpTaskId, nodeId)}
+              peekAvailable={corpPeekAvailable(corpSituation)}
+              onFocusSituation={() => focusSituationTab(canvasController, corpTaskId)}
+            />
+          ) : corpTaskId !== null && corpView.kind === 'starting' ? (
             // Bridge the moment between submit and the first agent appearing so the
             // chat is never blank — the model is spinning up, not gone.
             <div className="pd-corpchat-starting" data-testid="corp-chat-starting">

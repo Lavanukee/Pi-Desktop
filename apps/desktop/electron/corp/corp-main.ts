@@ -196,14 +196,16 @@ async function handleStart(
   // against the current `duckduckgo.com/html/` structure (see ./corp-search).
   const browserSearch: BrowserSearchFn | undefined =
     browserBridge === null ? undefined : createBrowserSearch(browserBridge);
-  // EXPERIMENTAL AGENT-MESH path (env-gated, ADDITIVE): run the task as a persistent
-  // multi-agent mesh (jedd's "everyone is an agent that talks to anyone") instead of
-  // the deterministic pipeline, emitting the SAME event stream so the situation room
-  // renders it unchanged. The model + shared workspace are resolved directly here (no
-  // CorpEngine). The `else` branch is the current behavior, byte-for-byte.
+  // EFFORT-GATED AGENT MESH: the top two effort levels (high/max) engage the
+  // corporation — and at those levels it runs as a persistent multi-agent MESH
+  // (jedd's "everyone is an agent that talks to anyone"), emitting the SAME event
+  // stream so the situation room renders it unchanged. Below high, there is no
+  // delegation: the `else` branch runs a single solo agent (the deterministic path
+  // with promotionAllowed=false). `corpParamsForEffort(effort).promotionAllowed` is
+  // the same high/max gate the tool used.
   let engine: CorpEngine | undefined;
   let handle: TaskHandle;
-  if (resolved.ok && process.env.PI_DESKTOP_CORP_MESH === '1') {
+  if (resolved.ok && corpParamsForEffort(req.effort).promotionAllowed) {
     const meshTaskId = `corp-mesh-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const cwd = createNodeWorkspaceFactory(corpWorkspaceRoot())(meshTaskId).workspace;
     fs.mkdirSync(cwd, { recursive: true });

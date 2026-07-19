@@ -45,7 +45,7 @@ import type { ProductManifest } from './assemble.js';
 import { budgetExceeded, type RunBudget } from './budget.js';
 import type { CeoDecision } from './ceo.js';
 import type { Contract } from './org-chart.js';
-import { getRolePrompt, roleThinkingEnabled, type SpecialistKind } from './prompts.js';
+import { getRolePrompt, roleThinkingEnabled, type SpecialistKind, withHarnessPreamble } from './prompts.js';
 import { runBoundedRevise } from './revise.js';
 import type {
   RoleAgentCustomTool,
@@ -284,7 +284,7 @@ export function buildReviewSystemPrompt(plan: ReviewLensPlan): string {
       '- The tester already BUILT and RAN this product and saved a screenshot of the running artifact in your working directory. Read/inspect that screenshot (and the built output) and measure the REAL rendered result — do not restrict yourself to a static markup review when a rendered artifact exists.',
     );
   }
-  return `${base}\n${framing.join('\n')}`;
+  return withHarnessPreamble(`${base}\n${framing.join('\n')}`);
 }
 
 /** Format the product manifest as the reviewer-facing block (the files to measure). */

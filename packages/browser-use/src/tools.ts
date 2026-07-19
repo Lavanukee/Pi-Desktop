@@ -103,8 +103,9 @@ export function registerBrowserUseTools(pi: ExtensionAPI, options: BrowserUseOpt
     name: BROWSER_NAVIGATE_TOOL,
     label: 'Browse: Navigate',
     description:
-      'Open a URL in the canvas browser (opening/focusing the browser tab if needed) and wait ' +
-      'for it to load. Follow with browser_snapshot to see the page. The user watches a live ' +
+      'Drive a live Chrome browser for reliable, real-time access to any website. Open a URL in ' +
+      'the canvas browser (opening/focusing the browser tab if needed) and wait for it to load. ' +
+      'Follow with browser_snapshot or browser_read to see the page. The user watches a live ' +
       'cursor as you browse.',
     promptSnippet: 'Navigate the canvas browser to a URL',
     parameters: Type.Object({

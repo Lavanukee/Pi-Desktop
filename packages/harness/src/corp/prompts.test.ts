@@ -8,6 +8,7 @@ import {
   getArchetypePrompt,
   getPromptById,
   getRolePrompt,
+  HARNESS_PREAMBLE,
   isCapabilityTier,
   isCoreRole,
   isDivisionArchetype,
@@ -93,18 +94,22 @@ describe('getPromptById', () => {
 describe('composeNodePrompt', () => {
   const base = getRolePrompt('engineer');
 
-  it('returns the base prompt unchanged when there is no extension', () => {
-    expect(composeNodePrompt(base)).toBe(base.prompt);
+  it('prepends the shared harness preamble, then the base, when there is no extension', () => {
+    const out = composeNodePrompt(base);
+    expect(out.startsWith(HARNESS_PREAMBLE)).toBe(true);
+    expect(out).toContain(base.prompt);
   });
 
-  it('treats a blank/whitespace extension as no extension', () => {
-    expect(composeNodePrompt(base, '')).toBe(base.prompt);
-    expect(composeNodePrompt(base, '   \n  ')).toBe(base.prompt);
+  it('treats a blank/whitespace extension as no extension (still preamble + base)', () => {
+    const expected = composeNodePrompt(base);
+    expect(composeNodePrompt(base, '')).toBe(expected);
+    expect(composeNodePrompt(base, '   \n  ')).toBe(expected);
   });
 
-  it('appends a real extension without dropping the base (and keeps the base first)', () => {
+  it('appends a real extension without dropping the base (preamble first, then base)', () => {
     const out = composeNodePrompt(base, 'Prefer Godot connectors.');
-    expect(out.startsWith(base.prompt)).toBe(true);
+    expect(out.startsWith(HARNESS_PREAMBLE)).toBe(true);
+    expect(out).toContain(base.prompt);
     expect(out).toContain('Prefer Godot connectors.');
     expect(out).toContain('the contract still governs'); // the guard framing is preserved
   });

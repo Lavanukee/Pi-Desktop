@@ -31,7 +31,7 @@
  * never silently blank the build — "robustness is external", §0.6).
  */
 
-import { getRolePrompt } from './prompts.js';
+import { getRolePrompt, withHarnessPreamble } from './prompts.js';
 import type { RoleAgentCustomTool } from './role-agent-seam.js';
 
 /** The tool name the CEO calls to finalize its vision brief. */
@@ -55,7 +55,7 @@ export const VISION_SEARCH_URL = 'https://duckduckgo.com/html/?q=';
  * research + sketch a quick mockup, iterate, then submit. Pairs with the
  * `thinking-general` sampling profile (thinking ON — the synthesis IS the value).
  */
-export const CEO_VISION_PROMPT = `${getRolePrompt('ceo').prompt}
+export const CEO_VISION_PROMPT = withHarnessPreamble(`${getRolePrompt('ceo').prompt}
 
 RIGHT NOW you are FORMING THE VISION — this is the very first step, before anyone builds anything. Nothing exists yet. Your one job here is to turn the user's request into a single, concrete VISION BRIEF the whole team will build against.
 
@@ -67,7 +67,7 @@ You have real tools — use them to form a vision you are confident in, not to o
 - write / read: sketch a QUICK, ROUGH mockup of the intended result (a single self-contained \`mockup.html\`, or a short markdown outline) so the vision is concrete. It is a throwaway reference to think against, not a deliverable — keep it small.
 - bash: preview or sanity-check what you drafted.
 
-CRITICAL: researching or sketching is NOT finishing. Your turn is ONLY complete when you call ${SUBMIT_VISION} with the full brief. After a web_search or a mockup, do not stop — WRITE the brief and call ${SUBMIT_VISION}. Iterate as much as you need, then finalize by calling ${SUBMIT_VISION}. Keep your context clean: you are deciding WHAT gets built and why — never HOW (no code, no file structure, no contracts; the managers own that).`;
+CRITICAL: researching or sketching is NOT finishing. Your turn is ONLY complete when you call ${SUBMIT_VISION} with the full brief. After a web_search or a mockup, do not stop — WRITE the brief and call ${SUBMIT_VISION}. Iterate as much as you need, then finalize by calling ${SUBMIT_VISION}. Keep your context clean: you are deciding WHAT gets built and why — never HOW (no code, no file structure, no contracts; the managers own that).`);
 
 /**
  * Build the CEO's vision-forming USER turn from the raw user task. Pairs with

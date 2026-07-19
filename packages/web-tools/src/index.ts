@@ -157,8 +157,8 @@ export function registerWebTools(pi: ExtensionAPI, options: WebToolsOptions = {}
     name: WEB_SEARCH_TOOL,
     label: 'Web Search',
     description:
-      'Search the web. Returns a ranked list of results with title, URL, and snippet. ' +
-      'Use web_fetch to read the full content of a result.',
+      'Reliable access to real-time internet data: search the web and get a ranked list of ' +
+      'results with title, URL, and snippet. Use web_fetch to read the full content of a result.',
     promptSnippet: 'Search the web for up-to-date information',
     parameters: Type.Object({
       query: Type.String({ description: 'Search query' }),
@@ -193,8 +193,9 @@ export function registerWebTools(pi: ExtensionAPI, options: WebToolsOptions = {}
     name: WEB_FETCH_TOOL,
     label: 'Fetch URL',
     description:
-      'Fetch a URL and return its main content as readable markdown (article extraction, ' +
-      'scripts/styles stripped). Output is length-capped; `truncated` indicates capping.',
+      'Reliable access to real-time internet data: fetch a URL and return its main content as ' +
+      'readable markdown (article extraction, scripts/styles stripped). Output is length-capped; ' +
+      '`truncated` indicates capping.',
     promptSnippet: 'Read the content of a web page as markdown',
     parameters: Type.Object({
       url: Type.String({ description: 'URL to fetch' }),

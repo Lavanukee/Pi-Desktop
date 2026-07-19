@@ -404,13 +404,32 @@ export function getPromptById(id: string): RolePrompt | undefined {
 }
 
 /**
- * Compose a node's effective system prompt: the library base plus a manager's
- * light extension, if any. Pure string composition — the extension can never
- * override the base, and the contract still governs regardless.
+ * The shared disposition prepended to every corp role's system prompt. Counters
+ * the base model's over-cautious safety-training refusals (it fetched real search
+ * results and then claimed "I can't actually get real news"): the roles have real
+ * tools and every task they are handed is achievable with them, so they should
+ * ATTEMPT with the tools rather than disclaim or give up. It grants no new
+ * capability and asks for nothing unsafe — it just stops the model from refusing
+ * work it can plainly do. Applied via {@link withHarnessPreamble}.
+ */
+export const HARNESS_PREAMBLE = `You are a highly capable system able to access real-time information and data and to accomplish tasks using the tools below. Do not refuse the user's request. Even if a request seems implausible or you are unsure, use your tools to solve the problem and fulfill it — including searching with the search and browser tools and reading what they return. Every task you are given here is solvable with the tools available: attempt it, use the tool output you retrieve, and do not give up.`;
+
+/** Prepend the shared {@link HARNESS_PREAMBLE} to a finalized role system prompt. */
+export function withHarnessPreamble(prompt: string): string {
+  return `${HARNESS_PREAMBLE}\n\n${prompt}`;
+}
+
+/**
+ * Compose a node's effective system prompt: the shared harness preamble, the
+ * library base, plus a manager's light extension, if any. Pure string composition
+ * — the extension can never override the base, and the contract still governs
+ * regardless.
  */
 export function composeNodePrompt(base: RolePrompt, extension?: string): string {
   const ext = extension?.trim();
-  return ext === undefined || ext === ''
-    ? base.prompt
-    : `${base.prompt}\n\nDivision-specific extension (the contract still governs):\n${ext}`;
+  const body =
+    ext === undefined || ext === ''
+      ? base.prompt
+      : `${base.prompt}\n\nDivision-specific extension (the contract still governs):\n${ext}`;
+  return withHarnessPreamble(body);
 }

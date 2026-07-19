@@ -152,8 +152,10 @@ function createMainWindow(): BrowserWindow {
   const icon = appIconImage();
   const win = new BrowserWindow({
     title: 'Pi Desktop',
-    width: 1080,
-    height: 720,
+    // Roomier default so the chat + canvas (situation room, live files/terminal)
+    // aren't squished side-by-side on first launch.
+    width: 1440,
+    height: 940,
     minWidth: 640,
     minHeight: 480,
     // First run: adopt the user's Claude Desktop window size/position if present.

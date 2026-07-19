@@ -67,9 +67,23 @@ export interface PythonGateDecision {
   readonly reason?: string;
 }
 
+/**
+ * A browser-backed search: drive a REAL browser to a results page and scrape it.
+ * When provided, {@link WEB_SEARCH_TOOL} PREFERS this — it opens the canvas
+ * browser to a DuckDuckGo results page the user watches live and extracts the
+ * hits, which is not bot-blocked the way the server-side scrape is — falling back
+ * to the configured scrape backends only if the browser yields nothing or errors.
+ */
+export type BrowserSearchFn = (
+  query: string,
+  count: number,
+) => Promise<Array<{ title: string; url: string; snippet: string }>>;
+
 export interface WebToolsOptions {
   /** web_search config; merged over {@link webSearchConfigFromEnv} (env supplies defaults). */
   readonly search?: WebSearchConfig;
+  /** Browser-backed search (preferred when present) — see {@link BrowserSearchFn}. */
+  readonly browserSearch?: BrowserSearchFn;
   readonly fetch?: {
     readonly fetchImpl?: typeof fetch;
     readonly timeoutMs?: number;
@@ -168,7 +182,23 @@ export function registerWebTools(pi: ExtensionAPI, options: WebToolsOptions = {}
     }),
     async execute(_id, params, signal): Promise<AgentToolResult<WebSearchDetails>> {
       const count = boundCount(params.count);
-      const outcome = await runWebSearch(backends, params.query, { count, signal });
+      // PREFER the browser-backed search when wired: it opens the canvas browser
+      // to a DuckDuckGo results page (visible + not bot-blocked) and scrapes it.
+      // Fall back to the server-side scrape backends only if it errors/empties.
+      let outcome: Awaited<ReturnType<typeof runWebSearch>> | undefined;
+      if (options.browserSearch !== undefined) {
+        try {
+          const results = await options.browserSearch(params.query, count);
+          if (results.length > 0) {
+            outcome = { backend: 'browser · duckduckgo', results, note: undefined };
+          }
+        } catch {
+          // fall through to the scrape backends
+        }
+      }
+      if (outcome === undefined) {
+        outcome = await runWebSearch(backends, params.query, { count, signal });
+      }
       const lines = outcome.results.map(
         (r, i) => `[${i + 1}] ${r.title}\n    ${r.url}\n    ${r.snippet}`,
       );

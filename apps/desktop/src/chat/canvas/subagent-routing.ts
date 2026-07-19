@@ -15,6 +15,7 @@ import type { CanvasController, SubagentItem } from '@pi-desktop/canvas';
 import type { HarnessSubagentsStatus } from '@pi-desktop/harness';
 import { useEffect, useRef } from 'react';
 import { useCanvasStore } from '../../state/canvas-store';
+import { useCorpStore } from '../../state/corp-store';
 import { usePiStore } from '../../state/pi-slice';
 
 /** Mirror of `HARNESS_SUBAGENTS_STATUS_KEY` in @pi-desktop/harness (kept local so
@@ -82,14 +83,20 @@ export function applySubagentStatus(
 
 export function useSubagentCanvasRouting(controller: CanvasController): void {
   const raw = usePiStore((s) => s.extensionStatus[SUBAGENTS_STATUS_KEY]);
+  // During a corp run the corp SITUATION ROOM is the subagent surface; the corp
+  // role-agents also publish harness-subagents status, which would open a stray
+  // blank generic "Subagents" tab beside it. Suppress this routing while a corp
+  // task is active.
+  const corpActive = useCorpStore((s) => s.taskId !== null);
   // Count of active (queued/running) subagents at the previous tick — used to
   // detect the rising edge that opens the tab.
   const prevActive = useRef(0);
 
   useEffect(() => {
+    if (corpActive) return;
     prevActive.current = applySubagentStatus(controller, raw, prevActive.current, () =>
       // Ensure the rail is visible so the surface actually renders.
       useCanvasStore.getState().setCanvasOpen(true),
     );
-  }, [raw, controller]);
+  }, [raw, controller, corpActive]);
 }

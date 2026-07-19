@@ -155,6 +155,7 @@ export function useCorpCanvasRouting(controller: CanvasController): void {
               title: shortCommandTitle(command) || 'Terminal',
               data,
             });
+            useCanvasStore.getState().setCanvasOpen(true); // slide the panel open
           } else if ((existing.data?.mirrorText as string | undefined) !== data.mirrorText) {
             // Output grew — refresh in place, no focus steal.
             controller.updateTab(existing.id, { data });
@@ -177,6 +178,7 @@ export function useCorpCanvasRouting(controller: CanvasController): void {
               addedLines: added,
               removedLines: removed,
             });
+            useCanvasStore.getState().setCanvasOpen(true); // slide the panel open
           } else if (existing.addedLines !== added || existing.removedLines !== removed) {
             // The +N/−N grew — tick the badge in place, no focus steal.
             controller.updateTab(existing.id, {

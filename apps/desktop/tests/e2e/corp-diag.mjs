@@ -73,6 +73,22 @@ function probe() {
           .slice(0, 50));
       out.thinkingCount = (txt.match(/Thinking\.\.\./g) ?? []).length;
       out.done = /(^|\n)\s*Done(\s|$)/.test(txt);
+      // subagent-UX probes
+      const wm = txt.match(/Waiting for [^\n]{0,60}/);
+      out.waitingText = wm ? wm[0] : null;
+      out.finishedLine = (document.querySelector('[data-testid="corp-finished-line"]')?.innerText ?? null);
+    }
+    // situation-room subagent rows (in the canvas situation surface, outside the stream)
+    const rows = document.querySelectorAll('[data-testid="subagent-row"]');
+    out.subagentRows = Array.from(rows)
+      .slice(0, 12)
+      .map((r) => ({
+        text: (r.innerText ?? '').replace(/\s+/g, ' ').slice(0, 48),
+        timer: r.querySelector('[data-testid="subagent-timer"]')?.innerText ?? null,
+      }));
+    if (stream) {
+      const txt2 = stream.innerText ?? '';
+      void txt2;
       // tool-call rows + clickability
       const rows = stream.querySelectorAll(
         '.pd-chain-step, [data-testid="tool-step"], [class*="activity"]',

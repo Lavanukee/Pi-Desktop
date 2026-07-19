@@ -21,7 +21,7 @@ import type { CoordinationEvent, TaskHandle, TaskResult } from '@pi-desktop/coor
 import { CorpEngine, createNodeWorkspaceFactory } from '@pi-desktop/coordination/corp';
 import type { CorpChatFn } from '@pi-desktop/harness/corp';
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
-import { registerWebTools } from '@pi-desktop/web-tools';
+import { type BrowserSearchFn, registerWebTools } from '@pi-desktop/web-tools';
 import { app, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
 import { ensureCorpInferenceServer } from '../inference/llm-main';
 import type { AppEventMap } from '../ipc-contract';
@@ -34,6 +34,46 @@ import { createRunRoleAgent } from './role-agent-seam-impl';
 
 const log = createLogger('desktop:corp');
 const events = createIpcEventSender<AppEventMap>();
+
+/**
+ * In-page scrape for the browser-backed web_search: runs on the loaded
+ * DuckDuckGo HTML results page (`duckduckgo.com/html/?q=…`) and returns the top
+ * hits as `{title,url,snippet}`. DDG's HTML endpoint wraps each result link in a
+ * `//duckduckgo.com/l/?uddg=<encoded>` redirect — decoded here so the returned
+ * URL is the real destination (usable by web_fetch). Pure string (an `evaluate`
+ * script); never throws (guards + try/catch), returns [] if the shape changes.
+ */
+const DDG_SCRAPE_SCRIPT = String.raw`(() => {
+  try {
+    var decode = function (h) {
+      try {
+        var m = /[?&]uddg=([^&]+)/.exec(h || '');
+        if (m) return decodeURIComponent(m[1]);
+      } catch (e) {}
+      if (h && h.indexOf('//') === 0) return 'https:' + h;
+      return h || '';
+    };
+    var out = [];
+    var nodes = document.querySelectorAll('.result, .web-result, .results_links');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var a = el.querySelector('a.result__a') || el.querySelector('.result__title a') || el.querySelector('a[href]');
+      if (!a) continue;
+      var title = (a.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!title) continue;
+      var sn = el.querySelector('.result__snippet');
+      out.push({
+        title: title,
+        url: decode(a.getAttribute('href') || ''),
+        snippet: sn ? (sn.textContent || '').replace(/\s+/g, ' ').trim() : '',
+      });
+      if (out.length >= 20) break;
+    }
+    return out;
+  } catch (e) {
+    return [];
+  }
+})()`;
 
 /** Per-task record: the engine that owns it, its handle, and the target window. */
 interface RunningTask {
@@ -149,6 +189,35 @@ async function handleStart(
   // The ENGINEER role runs as a real agentic loop (file + bash tools) via the
   // role-agent seam, bound to the SAME resolved server the chat seam uses. Absent
   // on the unavailable path (the engine terminates without running the harness).
+  // One shared bridge to the in-process browser-agent server (published on
+  // app-ready). Drives the SAME visible canvas browser for both the browser_*
+  // tools AND the browser-backed web_search below. Null in a headless/test main
+  // (no bridge env) → web_search transparently falls back to the scrape.
+  const browserBridge = BrowserAgentClient.fromEnv();
+  // web_search, browser-backed: open the canvas browser to DuckDuckGo's HTML
+  // results (the user watches it live) and scrape the hits via an in-page
+  // evaluate — not bot-blocked the way the server-side scrape is (which returns
+  // "No results"). This is why `web_search` now WORKS + is visible regardless of
+  // whether the model reaches for web_search or browser_navigate.
+  const browserSearch: BrowserSearchFn | undefined =
+    browserBridge === null
+      ? undefined
+      : async (query, count) => {
+          const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+          await browserBridge.request('navigate', { url });
+          const raw = await browserBridge.request<unknown>('evaluate', { script: DDG_SCRAPE_SCRIPT });
+          const arr = Array.isArray(raw) ? raw : [];
+          return arr
+            .filter((r): r is { title: string; url?: string; snippet?: string } =>
+              r !== null && typeof r === 'object' && typeof (r as { title?: unknown }).title === 'string',
+            )
+            .slice(0, count)
+            .map((r) => ({
+              title: String(r.title),
+              url: String(r.url ?? ''),
+              snippet: String(r.snippet ?? ''),
+            }));
+        };
   const runRoleAgent = resolved.ok
     ? createRunRoleAgent({
         baseUrl: resolved.baseUrl,
@@ -156,18 +225,12 @@ async function handleStart(
         // The CEO vision turn (spec §4) researches references — inject the web-tools
         // registrar so web_search / web_fetch exist for the runs whose allowlist
         // requests them (the seam gates by name; no other role is affected).
-        webResearchFactory: (pi) => registerWebTools(pi),
-        // The CEO vision turn PREFERS the REAL canvas browser to research: a scraped
-        // web_search (DuckDuckGo HTML) is bot-blocked server-side (202/challenge →
-        // "No results"), but a real browser tab is not. The browser-agent bridge
-        // (registerBrowserAgentIpc, on app-ready) publishes PI_BROWSER_AGENT_SOCK/
-        // _TOKEN onto THIS main process's env before any corp run, and its socket
-        // server + browserManager live IN THIS PROCESS — so BrowserAgentClient
-        // .fromEnv() connects to the in-process bridge and the browser_* tools drive
-        // a VISIBLE canvas tab (the search opens live in the situation-room canvas).
-        // Gated by name in the seam like the web tools; no other role is affected.
-        browserToolsFactory: (pi) =>
-          registerBrowserUseTools(pi, { bridge: BrowserAgentClient.fromEnv() }),
+        // web_search is browser-backed when the bridge is present (see browserSearch).
+        webResearchFactory: (pi) =>
+          registerWebTools(pi, browserSearch !== undefined ? { browserSearch } : {}),
+        // The browser_* tools drive the SAME visible canvas browser (the search
+        // opens live in the situation-room canvas). Gated by name in the seam.
+        browserToolsFactory: (pi) => registerBrowserUseTools(pi, { bridge: browserBridge }),
       })
     : undefined;
   const engine = new CorpEngine({

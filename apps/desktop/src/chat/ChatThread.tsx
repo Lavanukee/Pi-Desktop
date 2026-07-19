@@ -396,6 +396,9 @@ export function ChatThread() {
                 reasons and "Working" while it acts, with the harness stage folded
                 in subtly. No duplicate label, no footer status, no stray spinner. */}
           <ThreadStatusIndicator />
+          {/* Breathing room so the last message/thought is never jammed against
+              the composer — the user can scroll it up clear of the input bar. */}
+          <div className="h-28 shrink-0" aria-hidden />
         </Thread>
       </ScrollArea>
     </div>

@@ -27,6 +27,7 @@ export * from './engineer.js';
 export * from './escalate.js';
 export * from './integrate.js';
 export * from './integration-contract.js';
+export * from './corp-mesh.js';
 export * from './mesh.js';
 export * from './org-chart.js';
 export * from './persistence.js';

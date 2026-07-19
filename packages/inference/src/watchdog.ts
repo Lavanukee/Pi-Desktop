@@ -84,6 +84,36 @@ var timer = setInterval(function () {
 if (timer && timer.unref) timer.unref();
 `;
 
+/**
+ * The macOS reaper as a POSIX-shell one-liner run via `/bin/sh -c <script> sh
+ * <targetPid>`. Same contract as {@link WATCHDOG_SCRIPT} — kill `$1` on parent
+ * death (stdin EOF) or reparent-to-init, UNLESS `disarm` is read first — but it
+ * runs `/bin/sh` (bash, on macOS) instead of the Electron `execPath`. That's the
+ * whole point: an `ELECTRON_RUN_AS_NODE` sidecar spawned from the inference
+ * utilityProcess still flashed a bouncing dock icon each time a llama-server
+ * started; a plain shell has no GUI layer, so nothing appears in the Dock.
+ *
+ * `read -t 1` (bash, which macOS `/bin/sh` is) gives BOTH signals in one loop
+ * with no leaked background poller: EOF (rc 1) → the parent's pipe closed → kill;
+ * timeout (rc > 128) → check ppid for the reparent case; a `disarm` line → exit
+ * clean. stop() writes `disarm\n` WITH a newline, so the disarm read always
+ * completes before any EOF, never mis-firing the kill.
+ */
+export const SHELL_WATCHDOG_SCRIPT = [
+  't="$1"',
+  'while :; do',
+  '  IFS= read -r -t 1 line; rc=$?',
+  '  if [ "$rc" -gt 128 ]; then',
+  '    [ "$(ps -o ppid= -p $$ 2>/dev/null | tr -d " ")" = 1 ] && { kill -9 "$t" 2>/dev/null; break; }',
+  '  elif [ "$rc" -ne 0 ]; then',
+  '    kill -9 "$t" 2>/dev/null; break',
+  '  else',
+  '    case "$line" in *disarm*) break;; esac',
+  '  fi',
+  'done',
+  'exit 0',
+].join('\n');
+
 export interface StartWatchdogOptions {
   /** The llama-server PID to SIGKILL when the parent dies. */
   readonly targetPid: number;
@@ -100,6 +130,14 @@ export interface StartWatchdogOptions {
   readonly runAsNode?: boolean;
   /** Base environment for the sidecar (default `process.env`). */
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * Run the reaper as a plain `/bin/sh` process instead of the Electron
+   * `execPath` (default: true on macOS). A shell has no GUI layer, so it never
+   * shows a Dock icon — the fix for the bouncing "exec" app a llama-server start
+   * used to spawn. Off-darwin defaults to the Node/Electron sidecar. Injectable
+   * so tests exercise both strategies regardless of the host platform.
+   */
+  readonly useShellReaper?: boolean;
 }
 
 /**
@@ -109,16 +147,29 @@ export interface StartWatchdogOptions {
  * EOFs and the sidecar SIGKILLs `targetPid`.
  */
 export function startParentDeathWatchdog(opts: StartWatchdogOptions): WatchdogHandle {
-  const execPath = opts.execPath ?? process.execPath;
-  const script = opts.script ?? WATCHDOG_SCRIPT;
   const spawn = opts.spawnFn ?? spawnCb;
-  const runAsNode = opts.runAsNode ?? true;
+  const useShell = opts.useShellReaper ?? process.platform === 'darwin';
   const baseEnv = opts.env ?? process.env;
-  const env: NodeJS.ProcessEnv = runAsNode
-    ? { ...baseEnv, ELECTRON_RUN_AS_NODE: '1' }
-    : { ...baseEnv };
 
-  const child: ChildProcess = spawn(execPath, ['-e', script, String(opts.targetPid)], {
+  // On macOS the reaper runs as `/bin/sh` (no GUI → no Dock icon). Elsewhere it's
+  // the Electron `execPath` as Node. Both share the SAME wiring below (detached,
+  // stdin=death pipe) and the SAME stop() contract — only the program differs.
+  let command: string;
+  let args: readonly string[];
+  let env: NodeJS.ProcessEnv;
+  if (useShell) {
+    command = '/bin/sh';
+    // `sh -c <script> sh <pid>` → inside the script $0=sh, $1=<pid>.
+    args = ['-c', opts.script ?? SHELL_WATCHDOG_SCRIPT, 'sh', String(opts.targetPid)];
+    env = { ...baseEnv };
+  } else {
+    const runAsNode = opts.runAsNode ?? true;
+    command = opts.execPath ?? process.execPath;
+    args = ['-e', opts.script ?? WATCHDOG_SCRIPT, String(opts.targetPid)];
+    env = runAsNode ? { ...baseEnv, ELECTRON_RUN_AS_NODE: '1' } : { ...baseEnv };
+  }
+
+  const child: ChildProcess = spawn(command, args, {
     // Detached: its own session, so a signal to the parent's process group does
     // NOT hit the watchdog — it must survive the parent to do its job.
     detached: true,

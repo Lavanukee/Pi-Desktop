@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
-import { startParentDeathWatchdog, WATCHDOG_SCRIPT } from './watchdog.js';
+import { SHELL_WATCHDOG_SCRIPT, startParentDeathWatchdog, WATCHDOG_SCRIPT } from './watchdog.js';
 
 // --- Unit: spawn wiring + stop() semantics (no real processes) --------------
 
@@ -54,6 +54,7 @@ describe('startParentDeathWatchdog (wiring)', () => {
     startParentDeathWatchdog({
       targetPid: 4242,
       spawnFn: spawnFn as unknown as typeof spawn,
+      useShellReaper: false, // exercise the Node/Electron path regardless of host OS
     });
 
     expect(captured?.args[0]).toBe('-e');
@@ -65,6 +66,36 @@ describe('startParentDeathWatchdog (wiring)', () => {
     expect(env.ELECTRON_RUN_AS_NODE).toBe('1');
     expect(child.unrefCount).toBe(1);
     expect(child.stdin.unrefCount).toBe(1);
+  });
+
+  it('macOS reaper runs /bin/sh (no Dock icon), NOT the Electron execPath', () => {
+    let captured: { cmd: string; args: string[]; options: Record<string, unknown> } | undefined;
+    const child = new FakeChild(999);
+    const spawnFn = vi.fn(
+      (cmd: string, args: readonly string[], options: Record<string, unknown>) => {
+        captured = { cmd, args: [...args], options };
+        return asChild(child);
+      },
+    );
+
+    startParentDeathWatchdog({
+      targetPid: 4242,
+      spawnFn: spawnFn as unknown as typeof spawn,
+      useShellReaper: true,
+    });
+
+    expect(captured?.cmd).toBe('/bin/sh');
+    expect(captured?.args[0]).toBe('-c');
+    expect(captured?.args[1]).toBe(SHELL_WATCHDOG_SCRIPT);
+    // `sh -c <script> sh <pid>` → $0=sh, $1=pid inside the script.
+    expect(captured?.args[2]).toBe('sh');
+    expect(captured?.args[3]).toBe('4242');
+    expect(captured?.options.detached).toBe(true);
+    expect(captured?.options.stdio).toEqual(['pipe', 'ignore', 'ignore']);
+    // A shell ignores ELECTRON_RUN_AS_NODE — it must not be set (it's a Node-only knob).
+    const env = captured?.options.env as Record<string, string>;
+    expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+    expect(child.unrefCount).toBe(1);
   });
 
   it('stop() disarms (writes `disarm`) then SIGKILLs the sidecar, idempotently', () => {
@@ -91,6 +122,7 @@ describe('startParentDeathWatchdog (wiring)', () => {
     startParentDeathWatchdog({
       targetPid: 1,
       spawnFn: spawnFn as unknown as typeof spawn,
+      useShellReaper: false,
       runAsNode: false,
       env: { PATH: '/x' },
     });
@@ -171,6 +203,68 @@ describe('WATCHDOG_SCRIPT (end-to-end)', () => {
       await sleep(250);
       wd.stdin?.end('disarm\n'); // stand down → the sidecar exits without killing
       await sleep(900); // give it every chance to (wrongly) reap
+      expect(alive(vpid)).toBe(true);
+    } finally {
+      try {
+        victim.kill('SIGKILL');
+      } catch {
+        /* already reaped */
+      }
+      try {
+        wd.kill('SIGKILL');
+      } catch {
+        /* already exited */
+      }
+    }
+  }, 15_000);
+});
+
+// --- Integration: the REAL /bin/sh reaper (macOS production path) ------------
+/** The real shell sidecar, stdin wired to a pipe WE hold (playing "the parent"). */
+function spawnShellWatchdogProc(targetPid: number): ChildProcess {
+  return spawn('/bin/sh', ['-c', SHELL_WATCHDOG_SCRIPT, 'sh', String(targetPid)], {
+    detached: true,
+    stdio: ['pipe', 'ignore', 'ignore'],
+  });
+}
+
+// Gate on darwin: SHELL_WATCHDOG_SCRIPT relies on bash `read -t` semantics that
+// macOS `/bin/sh` (bash) provides; a POSIX `/bin/sh` (dash) on Linux CI wouldn't.
+const describeShell = process.platform === 'darwin' ? describe : describe.skip;
+describeShell('SHELL_WATCHDOG_SCRIPT (end-to-end, macOS)', () => {
+  it('SIGKILLs the tracked child when its parent dies (stdin pipe EOF)', async () => {
+    const victim = spawnVictim();
+    const vpid = victim.pid ?? -1;
+    expect(vpid).toBeGreaterThan(0);
+    const wd = spawnShellWatchdogProc(vpid);
+    try {
+      await sleep(250);
+      expect(alive(vpid)).toBe(true);
+      wd.stdin?.end(); // hard parent death → EOF → reap the orphan
+      const died = await waitUntil(() => !alive(vpid), 8000);
+      expect(died).toBe(true);
+    } finally {
+      try {
+        victim.kill('SIGKILL');
+      } catch {
+        /* already reaped */
+      }
+      try {
+        wd.kill('SIGKILL');
+      } catch {
+        /* already exited */
+      }
+    }
+  }, 15_000);
+
+  it('does NOT kill the tracked child after `disarm` (graceful teardown)', async () => {
+    const victim = spawnVictim();
+    const vpid = victim.pid ?? -1;
+    const wd = spawnShellWatchdogProc(vpid);
+    try {
+      await sleep(250);
+      wd.stdin?.end('disarm\n'); // stand down → exits without killing
+      await sleep(900);
       expect(alive(vpid)).toBe(true);
     } finally {
       try {

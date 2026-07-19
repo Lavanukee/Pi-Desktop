@@ -414,6 +414,11 @@ const CEO_NODE = 'ceo';
 const SOLO_NODE = 'solo';
 const ARCHITECT_NODE = 'architect';
 
+/** The CEO's follow-up Q&A system prompt (A1/A4): a follow-up message is ANSWERED by
+ * the CEO from what it already knows — it must NEVER restart the vision ceremony. */
+const CEO_ASK_PROMPT =
+  'You are the CEO who is leading this production. The user is asking you a follow-up question about it. Answer them directly, concisely, and in plain language — as the person who actually ran this, not a bureaucrat. Use ONLY what you know from the context below: the original request, the vision and plan you formed, the areas and tasks, and the current status. If you genuinely do not have a detail, say so plainly and offer to check with the part of the team that would know. Do NOT restart, re-plan, or re-form a vision, and do NOT call any tool — just answer the question.';
+
 // ---------------------------------------------------------------------------
 // The engine
 // ---------------------------------------------------------------------------
@@ -537,6 +542,40 @@ export class CorpEngine implements CoordinationEngine {
     const nodeId = rt.promoted ? CEO_NODE : SOLO_NODE;
     this.addLine(rt, nodeId, 'note', `steer: ${text}`);
     this.emit(rt, activity(nodeId, 'note', `You steered: ${text}`));
+  }
+
+  /**
+   * A1/A4 — answer a follow-up question AS THE CEO, from what it already knows,
+   * instead of restarting the vision ceremony (the old behavior: every follow-up
+   * spun up a brand-new run). Runs ONE plain CEO completion against the RETAINED
+   * context (the original request, the vision + plan the CEO formed, the areas +
+   * tasks, and the live/finished status), and returns the answer text for the chat
+   * to render as a normal reply. Works both mid-run and after completion (the runtime
+   * is retained). No tools, no re-plan. Deep questions about a specific engineer's
+   * choice are a later step (inter-agent Q&A); for now the CEO answers from context.
+   * Never throws: an unknown task or a model error yields an honest fallback line.
+   */
+  async ask(handle: TaskHandle, question: string): Promise<string> {
+    const rt = this.tasks.get(handle.taskId);
+    if (rt === undefined) {
+      return "I don't have that production in memory any more — start a new chat to kick off a fresh one.";
+    }
+    try {
+      const res = await this.opts.chat({
+        purpose: 'ceo',
+        messages: [
+          { role: 'system', content: CEO_ASK_PROMPT },
+          { role: 'user', content: buildAskContext(rt, question) },
+        ],
+        // The CEO's reasoning makes for a better answer; bounded by the run's token cap.
+        thinking: true,
+        maxTokens: this.opts.maxTokens ?? 4096,
+      });
+      const answer = (res.content ?? '').trim();
+      return answer !== '' ? answer : "I don't have more to add on that just now.";
+    } catch {
+      return 'I hit a snag answering that — give me a moment and try again.';
+    }
   }
 
   abort(handle: TaskHandle): void {
@@ -1591,6 +1630,54 @@ function soloNode(state: OrgNodeState): OrgNodeView {
 
 function activity(nodeId: string, kind: Activity['kind'], summary: string): CoordinationEvent {
   return { type: 'activity', activity: { nodeId, kind, summary, timestamp: Date.now() } };
+}
+
+/** Assemble the CEO's retained knowledge of THIS production into the Q&A user turn
+ * (A1/A4): the original request, the vision + plan the CEO spoke to the user, the
+ * areas + tasks with their state, and the live/finished status — then the question.
+ * Everything comes from the retained runtime; no re-planning. Pure. */
+function buildAskContext(rt: CorpRuntime, question: string): string {
+  const lines: string[] = [`The user originally asked you to: ${rt.task}`];
+
+  // The vision + plan you already spoke to the user (your own words, migrated onto
+  // the CEO node at promotion; the solo node pre-promotion).
+  const spoken = (rt.lines.get(rt.promoted ? CEO_NODE : SOLO_NODE) ?? [])
+    .filter((l) => l.kind === 'message' && l.text.trim() !== '')
+    .map((l) => l.text.trim());
+  if (spoken.length > 0) {
+    lines.push(
+      '',
+      'What you already told them / the plan you formed:',
+      ...spoken.map((t) => `- ${t}`),
+    );
+  }
+
+  if (rt.divisions.length > 0) {
+    lines.push(
+      '',
+      `You split the work into ${rt.divisions.length} area(s): ${rt.divisions.map((d) => d.name).join(', ')}.`,
+    );
+  }
+  if (rt.contracts.length > 0) {
+    const done = rt.contracts.filter((c) => c.state === 'done').length;
+    lines.push(`Tasks: ${done}/${rt.contracts.length} complete.`);
+    for (const c of rt.contracts) lines.push(`  - ${c.title} [${c.state}]`);
+  }
+
+  if (rt.finished) {
+    lines.push('', `The build is FINISHED (outcome: ${rt.result?.terminatedReason ?? 'done'}).`);
+    const brief = rt.result?.vision?.brief;
+    if (brief !== undefined && brief.trim() !== '')
+      lines.push(`The vision brief you set: ${brief.trim()}`);
+    const solo = rt.result?.directAnswerPreview;
+    if (solo !== undefined && solo.trim() !== '')
+      lines.push(`Your direct answer was: ${solo.trim()}`);
+  } else {
+    lines.push('', `The build is STILL IN PROGRESS (status: ${rt.status}).`);
+  }
+
+  lines.push('', `The user now asks: ${question}`);
+  return lines.join('\n');
 }
 
 /** A per-node live delta PUSH ({@link WorkerActivityEvent}) — the real-time channel

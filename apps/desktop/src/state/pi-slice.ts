@@ -17,6 +17,7 @@ import type {
   UiDialogRequest,
 } from '@pi-desktop/engine';
 import { create } from 'zustand';
+import { useCorpStore } from './corp-store';
 
 export interface PiNotification {
   id: string;
@@ -87,6 +88,9 @@ interface PiSliceState {
   /** Local echo for the composer (the RPC stream has no user-message event).
    * `images` are `data:` URIs, matching UserMsg.images. */
   appendUser: (text: string, images?: string[]) => void;
+  /** Append a SETTLED assistant reply (a single text block) — used by the corp CEO
+   * follow-up Q&A (A1/A4), whose answer arrives whole over IPC, not as a token stream. */
+  appendAssistantText: (text: string) => void;
   /** Composer `!` bash mode result row (outside the agent turn). */
   appendBashExec: (command: string, output: string, exitCode: number) => void;
   /** Replace the thread (session switch/rehydration) and reset transient run
@@ -163,7 +167,11 @@ export const usePiStore = create<PiSliceState>((set) => ({
         },
       ],
     })),
-  setMessagesExternal: (messages, truncated = false) =>
+  setMessagesExternal: (messages, truncated = false) => {
+    // A1/A4 — a new / switched / rehydrated session is NOT the corp task's session,
+    // so drop the corp task pointer: the next prompt starts a FRESH production rather
+    // than routing a follow-up to the previous chat's CEO.
+    useCorpStore.getState().setTask(null);
     set((s) => ({
       messages,
       historyTruncated: truncated,
@@ -188,7 +196,8 @@ export const usePiStore = create<PiSliceState>((set) => ({
       extensionStatus: Object.fromEntries(
         Object.entries(s.extensionStatus).filter(([key]) => !key.startsWith('harness')),
       ),
-    })),
+    }));
+  },
 
   commitFork: (ordinal, { messageIndex, newFile, baseFile, editedText, images }) =>
     set((s) => {
@@ -256,6 +265,19 @@ export const usePiStore = create<PiSliceState>((set) => ({
           text,
           ...(images !== undefined && images.length > 0 ? { images } : {}),
           timestamp: Date.now(),
+        },
+      ],
+    })),
+  appendAssistantText: (text) =>
+    set((s) => ({
+      messages: [
+        ...s.messages,
+        {
+          kind: 'assistant',
+          id: nextLocalId('a'),
+          blocks: [{ type: 'text', text }],
+          timestamp: Date.now(),
+          isStreaming: false,
         },
       ],
     })),

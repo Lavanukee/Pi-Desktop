@@ -175,6 +175,39 @@ describe('CorpEngine implements CoordinationEngine', () => {
     expect(engine.getWorkerTranscript(handle, 'solo')).toBeUndefined();
   });
 
+  it('answers a follow-up as the CEO from retained context, no ceremony restart (A1/A4)', async () => {
+    let askUserContent = '';
+    const chat: CorpChatFn = (req) => {
+      // The follow-up Q&A turn carries the retained-context marker; the sign-off does not.
+      if (
+        req.purpose === 'ceo' &&
+        req.messages.some((m) => m.content.includes('The user now asks:'))
+      ) {
+        askUserContent = req.messages.find((m) => m.role === 'user')?.content ?? '';
+        return { content: 'We split it into Frontend and Backend; both are done.' };
+      }
+      return promotingChat()(req);
+    };
+    const engine = new CorpEngine({ chat, maxRevisions: 0 });
+    const handle = engine.startTask('Build me a dashboard app');
+    await collect(handle);
+
+    const answer = await engine.ask(handle, 'what areas did you split it into?');
+    expect(answer).toContain('Frontend');
+    // The CEO answered from the RETAINED plan (areas + status + the question) — it did
+    // NOT start a fresh vision→promotion run.
+    expect(askUserContent).toContain('Frontend');
+    expect(askUserContent).toContain('Backend');
+    expect(askUserContent).toContain('what areas did you split it into?');
+    expect(askUserContent).toContain('FINISHED');
+  });
+
+  it('ask on an unknown task returns an honest fallback (never throws)', async () => {
+    const engine = new CorpEngine({ chat: promotingChat(), maxRevisions: 0 });
+    const answer = await engine.ask({ taskId: 'nope' } as TaskHandle, 'hi');
+    expect(answer).toMatch(/don't have that production/i);
+  });
+
   it('stays solo when the worker does not promote', async () => {
     const soloChat: CorpChatFn = (req) =>
       req.purpose === 'worker'

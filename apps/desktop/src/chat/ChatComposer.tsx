@@ -19,6 +19,7 @@ import {
   IconClose,
 } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
+import { useCorpStore } from '../state/corp-store';
 import {
   abortPi,
   applyHarnessPreset,
@@ -186,6 +187,7 @@ export function ChatComposer({
   piModels,
   onOpenModels,
   onCorpSubmit,
+  onCorpFollowUp,
 }: {
   piModels: Model[];
   onOpenModels?: () => void;
@@ -193,6 +195,9 @@ export function ChatComposer({
    * routed here (the CorpEngine + situation room) instead of the normal pi turn.
    * Absent / flag off ⇒ the composer behaves exactly as it does today. */
   onCorpSubmit?: (echo: string, imageUris: string[]) => void;
+  /** A1/A4 — route a follow-up (a corp task already exists) to the CEO for an answer
+   * instead of starting a fresh production. */
+  onCorpFollowUp?: (question: string) => void;
 }) {
   const flavor = useThemeStore((s) => s.flavor);
   const isStreaming = usePiStore((s) => s.agent.isStreaming);
@@ -447,7 +452,13 @@ export function ChatComposer({
     // locally. When off, this branch is never taken and the app is byte-for-byte
     // its current self.
     if (onCorpSubmit !== undefined && productionHarnessEnabled()) {
-      onCorpSubmit(echo, imageUris);
+      // A1/A4 — once a production exists in this chat, a follow-up is ANSWERED by the
+      // CEO (from its retained context) rather than starting a fresh vision ceremony.
+      if (onCorpFollowUp !== undefined && useCorpStore.getState().taskId !== null) {
+        onCorpFollowUp(echo);
+      } else {
+        onCorpSubmit(echo, imageUris);
+      }
       return;
     }
 

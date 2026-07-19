@@ -127,6 +127,15 @@ export async function steerCorpTask(taskId: string, text: string): Promise<void>
   await window.piDesktop.invoke('corp:steer', { taskId, text }).catch(() => undefined);
 }
 
+/** A follow-up question ANSWERED by the CEO from its retained context (A1/A4) — not a
+ * new run. Returns the CEO's reply (an honest fallback line on any error). */
+export async function askCorpTask(taskId: string, question: string): Promise<string> {
+  return window.piDesktop
+    .invoke('corp:ask', { taskId, question })
+    .then((r) => r.answer)
+    .catch(() => 'I hit a snag answering that — give me a moment and try again.');
+}
+
 /** Answer a surfaced permission request. */
 export async function respondCorpPermission(
   taskId: string,

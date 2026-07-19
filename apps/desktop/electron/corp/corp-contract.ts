@@ -28,6 +28,9 @@ export type CorpInvokeMap = {
   };
   /** Mid-run steering to the lead (no faked user turn). Fire-and-forget. */
   'corp:steer': { request: { taskId: string; text: string }; response: { ok: boolean } };
+  /** A follow-up question ANSWERED by the CEO from its retained context (A1/A4) —
+   * NOT a new run. Works mid-run and after completion; returns the CEO's reply. */
+  'corp:ask': { request: { taskId: string; question: string }; response: { answer: string } };
   /** Stop the task; the stream ends with a `done` event, `outcome:'aborted'`. */
   'corp:abort': { request: { taskId: string }; response: { ok: boolean } };
   /** Answer a surfaced permission request. */
@@ -58,6 +61,7 @@ export type CorpInvokeMap = {
 export const CORP_INVOKE_CHANNELS = [
   'corp:start',
   'corp:steer',
+  'corp:ask',
   'corp:abort',
   'corp:respond-permission',
   'corp:get-org-chart',

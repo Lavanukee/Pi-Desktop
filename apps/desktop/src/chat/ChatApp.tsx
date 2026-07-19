@@ -20,7 +20,7 @@ import { IconButton, IconClose, MainSurface, TopBar } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
 import type { SettingsSection } from '../settings/SettingsView';
 import { registerCanvasControllerReset, useCanvasStore } from '../state/canvas-store';
-import { startCorpTask } from '../state/corp-connect';
+import { askCorpTask, startCorpTask } from '../state/corp-connect';
 import { useCorpStore } from '../state/corp-store';
 import { getModels, setSessionName, startPi } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
@@ -235,6 +235,22 @@ export function ChatApp({
     );
   };
 
+  // A1/A4 — a follow-up while a corp task already exists is ANSWERED by the CEO from
+  // its retained context, NOT a fresh vision ceremony. The question echoes as the
+  // user's bubble; the CEO's reply arrives whole over IPC and lands as an assistant
+  // message. (Starting a brand-new production is "New chat".)
+  const onCorpFollowUp = (question: string) => {
+    const taskId = useCorpStore.getState().taskId;
+    if (taskId === null) {
+      onCorpSubmit(question, []);
+      return;
+    }
+    usePiStore.getState().appendUser(question);
+    void askCorpTask(taskId, question).then((answer) => {
+      usePiStore.getState().appendAssistantText(answer);
+    });
+  };
+
   const title = windowTitle ?? (messageCount > 0 ? 'Chat' : 'New chat');
   const empty = messageCount === 0;
 
@@ -247,6 +263,7 @@ export function ChatApp({
       piModels={piModels}
       onOpenModels={() => onOpenSettings('models')}
       onCorpSubmit={onCorpSubmit}
+      onCorpFollowUp={onCorpFollowUp}
     />
   );
 

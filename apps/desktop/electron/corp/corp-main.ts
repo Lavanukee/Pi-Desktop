@@ -251,6 +251,15 @@ const handlers: CorpHandlers = {
     task.engine.steer(task.handle, req.text);
     return { ok: true };
   },
+  'corp:ask': async (_wc, req) => {
+    const task = tasks.get(req.taskId);
+    if (task === undefined) {
+      return {
+        answer: "That production isn't loaded any more — start a new chat to begin a fresh one.",
+      };
+    }
+    return { answer: await task.engine.ask(task.handle, req.question) };
+  },
   'corp:abort': (_wc, req) => {
     const task = tasks.get(req.taskId);
     if (task === undefined) return { ok: false };

@@ -45,7 +45,13 @@ import type { ProductManifest } from './assemble.js';
 import { budgetExceeded, type RunBudget } from './budget.js';
 import type { CeoDecision } from './ceo.js';
 import type { Contract } from './org-chart.js';
-import { getRolePrompt, roleThinkingEnabled, type SpecialistKind, withHarnessPreamble } from './prompts.js';
+import { type PreflightResult, summarizePreflight } from './preflight.js';
+import {
+  getRolePrompt,
+  roleThinkingEnabled,
+  type SpecialistKind,
+  withHarnessPreamble,
+} from './prompts.js';
 import { runBoundedRevise } from './revise.js';
 import type {
   RoleAgentCustomTool,
@@ -155,6 +161,13 @@ export interface ReviewPhaseSummary {
    * clears. It stays `true` only when no recovery seam is wired or the entry could
    * not be produced. */
   readonly runnableEntryMissing: boolean;
+  /** The runnable entry EXISTS but does not actually LOAD — the static preflight
+   * proved a load-breaker (a missing import, a `.ts` module, a bare/`node:` specifier;
+   * preflight.ts), AS OF THE END OF THE PHASE. Like {@link runnableEntryMissing} it is
+   * routed through the Part C integration recovery (rebuild the entry self-contained)
+   * and recomputed to `false` once the re-assembled entry loads. The CEO's APPROVE is
+   * gated on it — a product that does not run cannot be signed off. */
+  readonly productDoesNotRun: boolean;
   /** The review pass was cut short because the global RunBudget was spent. */
   readonly skippedForBudget: boolean;
   /** The transcript-free FINDINGS summary handed to the CEO's final review. */
@@ -602,6 +615,43 @@ export function deriveTesterGateBlocking(manifest: ProductManifest): ReviewFindi
   ];
 }
 
+/**
+ * The PREFLIGHT ground truth (spec §8, generalized past "a file named index.html
+ * exists") — a web product whose runnable entry does NOT actually load: a relative
+ * import with no target on disk, a `.ts` module a browser can't run, a bare specifier
+ * with no import map, a `node:*` builtin, a runtime `@types/*` import. Any of those
+ * means opening the entry throws — a BLOCKING tester finding regardless of what any
+ * lens agent reported (the overnight run shipped exactly this and "passed"). Like the
+ * missing-entry blocker, it CANNOT be cleared by re-dispatching an existing contract
+ * (the entry must be REBUILT self-contained), so the review phase routes it through
+ * the SAME Part C integration recovery. Empty when the product loads or the check does
+ * not apply (a pure-logic product). Pure.
+ */
+export function derivePreflightBlocking(preflight: PreflightResult | undefined): ReviewFinding[] {
+  if (preflight === undefined || !preflight.applicable || preflight.ok) return [];
+  return [
+    {
+      lens: 'tester',
+      severity: 'blocking',
+      title: 'The runnable entry does not load — the product cannot actually run',
+      evidence: summarizePreflight(preflight),
+      location: preflight.entry ?? 'index.html',
+    },
+  ];
+}
+
+/** The bounce note for the Part C integration recovery when preflight failed: the
+ * exact load-breakers the integration engineer must fix by rebuilding the entry so it
+ * genuinely opens (self-contained, no `.ts`/bare/`node:` imports). Pure. */
+export function buildPreflightBounceNotes(preflight: PreflightResult): string {
+  return [
+    'The runnable entry you assembled DOES NOT LOAD — opening it in a browser throws before anything runs. Rebuild the entry so it genuinely opens with no build step. Fix EVERY load-breaker below:',
+    summarizePreflight(preflight),
+    '',
+    'Rules the entry MUST satisfy: import only files that actually exist; never import a .ts/.tsx module (a browser cannot run TypeScript — inline the code or ship compiled .js); resolve every dependency via a relative path, an import map, or a full CDN URL (no bare specifiers, no node: builtins, no @types/* at runtime).',
+  ].join('\n');
+}
+
 /** Merge two finding lists, dropping exact duplicates (same lens+title+location). */
 function dedupeFindings(a: readonly ReviewFinding[], b: readonly ReviewFinding[]): ReviewFinding[] {
   const out: ReviewFinding[] = [];
@@ -693,7 +743,14 @@ export type DispatchIntegrationContractFn = (input: {
   readonly reason: string;
   readonly notes: string;
 }) => Promise<
-  | { readonly ran: boolean; readonly manifest: ProductManifest; readonly verify: VerifyResult }
+  | {
+      readonly ran: boolean;
+      readonly manifest: ProductManifest;
+      readonly verify: VerifyResult;
+      /** The re-run preflight over the RE-ASSEMBLED entry, so the review phase can
+       * recompute the "does not load" gate against the freshly-built entry. */
+      readonly preflight: PreflightResult;
+    }
   | undefined
 >;
 
@@ -704,6 +761,10 @@ export interface ReviewPhaseParams {
   readonly visionBrief: string;
   readonly manifest: ProductManifest;
   readonly verifyResult: VerifyResult;
+  /** The static execution-grounded preflight over the runnable entry (preflight.ts) —
+   * the "does it actually load?" ground truth. Absent → the load gate is inert (the
+   * pre-fix behavior). Applicable only to a web product with an index.html entry. */
+  readonly preflightResult?: PreflightResult;
   readonly contracts: readonly Contract[];
   /** The product tree the reviewers run over (read-only intent). */
   readonly workspace: string;
@@ -841,6 +902,12 @@ export async function runReviewPhase(params: ReviewPhaseParams): Promise<ReviewP
   // via the synthesized integration contract, at which point this is recomputed
   // against the re-assembled manifest; it stays true only when no recovery ran.
   let runnableEntryMissing = deriveTesterGateBlocking(params.manifest).length > 0;
+  // The runnable entry EXISTS but does not actually LOAD (static preflight — a missing
+  // import, a `.ts` module a browser can't run, a bare/`node:` specifier). Like a
+  // missing entry, re-dispatching an existing contract can't clear it — Part C rebuilds
+  // the entry. Tracked live: Part C recomputes it against the freshly-built entry.
+  let currentPreflight = params.preflightResult;
+  let productDoesNotRun = derivePreflightBlocking(currentPreflight).length > 0;
   // Did the TESTER manage to build + run the product? (Set after the tester lens.) The
   // visual/accessibility lenses consume its real screenshot only when it did.
   let testerBuiltOk = false;
@@ -874,8 +941,10 @@ export async function runReviewPhase(params: ReviewPhaseParams): Promise<ReviewP
     collected = [...collected, ...findings];
     if (plan.lens === 'tester') {
       // The tester built + ran the product when it actually ran the build (bash) and
-      // measured no blocking failure — and only when the product HAS a home to run in.
-      testerBuiltOk = usedBash && blockingCount === 0 && !runnableEntryMissing;
+      // measured no blocking failure — and only when the product HAS a home to run in
+      // AND its entry actually loads (the static preflight found no load-breaker).
+      testerBuiltOk =
+        usedBash && blockingCount === 0 && !runnableEntryMissing && !productDoesNotRun;
     }
     lensRuns.push(
       lensRun(plan.lens, {
@@ -897,11 +966,16 @@ export async function runReviewPhase(params: ReviewPhaseParams): Promise<ReviewP
   const objective = deriveBlockingFromVerify(params.verifyResult, params.contracts);
   let currentManifest = params.manifest;
   let testerGate = deriveTesterGateBlocking(currentManifest);
+  // The static "does the entry actually load?" blocker (recomputed by Part C).
+  let preflightGate = derivePreflightBlocking(currentPreflight);
   // The specialists' + (later) the auditor's findings — the set that survives a
   // successful re-verify (the verify-derived blockers are dropped, these stay).
   let specialistFindings = collected;
   let findings = sortBySeverity(
-    dedupeFindings(dedupeFindings(specialistFindings, objective), testerGate),
+    dedupeFindings(
+      dedupeFindings(dedupeFindings(specialistFindings, objective), testerGate),
+      preflightGate,
+    ),
   );
   let blocking = findings.filter(isBlocking);
   const hadBlocking = blocking.length > 0;
@@ -925,35 +999,55 @@ export async function runReviewPhase(params: ReviewPhaseParams): Promise<ReviewP
     // recompute the model-free gate against the fresh manifest — so the gate can
     // actually clear instead of flagging forever.
     if (
-      runnableEntryMissing &&
+      (runnableEntryMissing || productDoesNotRun) &&
       params.dispatchIntegrationContract !== undefined &&
       !budgetSpent()
     ) {
-      log('review: no runnable entry → synthesizing + dispatching an integration contract');
-      const out = await params.dispatchIntegrationContract({
-        reason:
-          'the product has renderable modules but no runnable entry that wires them into a running product',
-        notes: buildIntegrationBounceNotes(testerGate),
-      });
+      // Both failure modes rebuild the ENTRY (workspace:'shared', so it reads the real
+      // tree): a MISSING entry is created; an entry that does not LOAD is rewritten
+      // self-contained. Compose the notes so the integration engineer sees exactly
+      // what to fix (the "no home" blocker and/or the concrete load-breakers).
+      const reason = runnableEntryMissing
+        ? 'the product has renderable modules but no runnable entry that wires them into a running product'
+        : 'the product has a runnable entry, but opening it does not load (broken imports / a .ts or bare/node: specifier a browser cannot run)';
+      const bounceNotes = [
+        ...(runnableEntryMissing ? [buildIntegrationBounceNotes(testerGate)] : []),
+        ...(productDoesNotRun && currentPreflight !== undefined
+          ? [buildPreflightBounceNotes(currentPreflight)]
+          : []),
+      ].join('\n\n');
+      log(
+        runnableEntryMissing
+          ? 'review: no runnable entry → synthesizing + dispatching an integration contract'
+          : 'review: entry does not load → dispatching an integration contract to rebuild it',
+      );
+      const out = await params.dispatchIntegrationContract({ reason, notes: bounceNotes });
       if (out === undefined) {
         skippedForBudget = true;
       } else if (out.ran) {
         integrationEntryDispatched = true;
         currentManifest = out.manifest;
+        currentPreflight = out.preflight;
         revisedVerifyOk = out.verify.ok;
-        // Recompute the MODEL-FREE gate against the RE-ASSEMBLED manifest.
+        // Recompute BOTH model-free gates against the RE-ASSEMBLED / rebuilt entry.
         testerGate = deriveTesterGateBlocking(currentManifest);
+        preflightGate = derivePreflightBlocking(currentPreflight);
         runnableEntryMissing = testerGate.length > 0;
-        integrationEntryRecovered = !runnableEntryMissing;
-        // Re-aggregate: the "no runnable entry" blocker is gone once the entry exists.
+        productDoesNotRun = preflightGate.length > 0;
+        integrationEntryRecovered = !runnableEntryMissing && !productDoesNotRun;
+        // Re-aggregate: the missing-entry / does-not-load blockers clear once the
+        // rebuilt entry exists AND loads.
         findings = sortBySeverity(
-          dedupeFindings(dedupeFindings(specialistFindings, objective), testerGate),
+          dedupeFindings(
+            dedupeFindings(dedupeFindings(specialistFindings, objective), testerGate),
+            preflightGate,
+          ),
         );
         blocking = findings.filter(isBlocking);
         log(
           integrationEntryRecovered
-            ? 'review: integration entry produced — the tester gate re-opened'
-            : 'review: integration dispatch ran but no runnable entry yet',
+            ? 'review: integration entry produced + loads — the tester gate re-opened'
+            : 'review: integration dispatch ran but the entry is still missing or does not load',
         );
       }
     }
@@ -1052,20 +1146,24 @@ export async function runReviewPhase(params: ReviewPhaseParams): Promise<ReviewP
   // findings and the (now-live, possibly cleared) tester gate. Then recompute the
   // residual blocking set the gate verdict reads.
   if (revisedVerifyOk === true) {
-    findings = sortBySeverity(dedupeFindings(specialistFindings, testerGate));
+    findings = sortBySeverity(
+      dedupeFindings(dedupeFindings(specialistFindings, testerGate), preflightGate),
+    );
   }
   blocking = findings.filter(isBlocking);
 
   // 4. The TESTER GATE verdict (spec §8, generalized — the CEO's APPROVE is gated on
-  // it). It PASSES when the product ends the phase actually building/running: there is
-  // a runnable entry (Part C may have PRODUCED it) AND no blocking failure remains, or
-  // the bounded bounce cleared the objective re-verify. A "no home" product that could
-  // not be given an entry never passes.
-  const testerGatePassed = runnableEntryMissing
-    ? false
-    : blocking.length === 0
-      ? true
-      : revisedVerifyOk === true;
+  // it). It PASSES when the product ends the phase actually building AND running: there
+  // is a runnable entry (Part C may have PRODUCED it) that actually LOADS (the static
+  // preflight found no load-breaker) AND no blocking failure remains, or the bounded
+  // bounce cleared the objective re-verify. A "no home" product, or an entry that does
+  // not load, never passes — the exact false sign-off this fixes.
+  const testerGatePassed =
+    runnableEntryMissing || productDoesNotRun
+      ? false
+      : blocking.length === 0
+        ? true
+        : revisedVerifyOk === true;
 
   const ceoFindingsSummary = buildFindingsSummary({
     findings,
@@ -1087,6 +1185,7 @@ export async function runReviewPhase(params: ReviewPhaseParams): Promise<ReviewP
     integrationEntryRecovered,
     testerGatePassed,
     runnableEntryMissing,
+    productDoesNotRun,
     skippedForBudget,
     ceoFindingsSummary,
   };

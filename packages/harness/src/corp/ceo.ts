@@ -26,6 +26,7 @@
  */
 
 import type { ProductManifest } from './assemble.js';
+import type { PreflightResult } from './preflight.js';
 import type { VerifyResult } from './verify.js';
 
 /**
@@ -56,6 +57,10 @@ export interface CeoReviewInput {
   readonly manifest: ProductManifest;
   /** The objective verification evidence (verify.ts). */
   readonly verifyResult: VerifyResult;
+  /** The static execution-grounded load evidence (preflight.ts): does the runnable
+   * entry actually LOAD, or does opening it throw? Absent on the chat-fallback path or
+   * for a pure-logic product. The CEO cannot approve a product that does not load. */
+  readonly preflightResult?: PreflightResult;
   /** The advisory specialists' transcript-free FINDINGS summary (review.ts), when a
    * review-at-merge phase ran before the CEO (spec §8). Measured findings only. */
   readonly reviewFindings?: string;
@@ -82,6 +87,28 @@ function manifestLines(manifest: ProductManifest): string[] {
 
   const s = manifest.contractStatusSummary;
   lines.push(`- Contract outcomes: ${s.done} done, ${s.failed} failed, ${s.skipped} not completed`);
+  return lines;
+}
+
+/** Format the static LOAD evidence (preflight.ts) as the reviewer-facing block —
+ * "the entry actually loads" or the concrete load-breakers. Empty for a pure-logic
+ * product (no browser entry to load). Pure. */
+function preflightLines(preflight: PreflightResult | undefined): string[] {
+  if (preflight === undefined || !preflight.applicable) return [];
+  if (preflight.ok) {
+    return [
+      '',
+      'OBJECTIVE LOAD EVIDENCE — PREFLIGHT:',
+      `- Result: PASS — the runnable entry (${preflight.entry ?? 'index.html'}) loads; every import resolves to a browser-loadable target.`,
+    ];
+  }
+  const lines = [
+    '',
+    'OBJECTIVE LOAD EVIDENCE — PREFLIGHT:',
+    `- Result: FAIL — the runnable entry (${preflight.entry ?? 'index.html'}) DOES NOT LOAD. Opening it throws before anything runs. This is DISQUALIFYING: a product that does not load has not met the bar, however complete the manifest looks.`,
+    `- Load-breakers (${preflight.defects.length}):`,
+  ];
+  for (const d of preflight.defects) lines.push(`    - [${d.kind}] ${d.importer}: ${d.message}`);
   return lines;
 }
 
@@ -116,9 +143,10 @@ export function buildCeoReviewPrompt(input: CeoReviewInput): string {
     ...manifestLines(input.manifest),
     '',
     ...verifyLines(input.verifyResult),
+    ...preflightLines(input.preflightResult),
     ...(findings !== undefined && findings !== '' ? ['', findings] : []),
     '',
-    'Does this finished product ACTUALLY BUILD AND RUN, and meet the standard the original task set? Use the tester/specialist findings and the verification evidence above as ground truth — do not APPROVE a product that failed to build or run, has no runnable entry, or is missing the described feature. Begin your reply with APPROVE or REVISE on its own line; if REVISE, add specific notes addressed to the exact gap.',
+    'Does this finished product ACTUALLY BUILD AND RUN, and meet the standard the original task set? Use the tester/specialist findings, the verification evidence, and the load evidence above as ground truth — do not APPROVE a product that failed to build or run, whose entry does not load, has no runnable entry, or is missing the described feature. Begin your reply with APPROVE or REVISE on its own line; if REVISE, add specific notes addressed to the exact gap.',
   ].join('\n');
 }
 

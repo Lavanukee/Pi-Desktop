@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { ProductManifest } from './assemble.js';
 import { newRunBudget } from './budget.js';
 import type { Contract } from './org-chart.js';
+import type { PreflightResult } from './preflight.js';
 import {
   buildFindingsSummary,
   buildReviewAgentInput,
   buildReviewSystemPrompt,
   buildReviewUserPrompt,
   deriveBlockingFromVerify,
+  derivePreflightBlocking,
   deriveTesterGateBlocking,
   hasRenderableArtifacts,
   hasRunnableEntry,
@@ -54,6 +56,8 @@ function manifestWith(slots: string[]): ProductManifest {
 }
 
 const okVerify: VerifyResult = { ok: true, filesChecked: 3, errors: [] };
+/** A passing/inapplicable preflight (the entry loads, or there is no browser entry). */
+const okPreflight: PreflightResult = { ok: true, applicable: false, filesChecked: 0, defects: [] };
 
 describe('lens selection (spec §8 — pick lenses appropriate to the product)', () => {
   it('always runs correctness/tester/security/performance for a code product', () => {
@@ -697,6 +701,126 @@ describe('runReviewPhase — the tester gate (build / run / screenshot)', () => 
   });
 });
 
+/** A failing preflight: the entry exists but a broken import means it does not load. */
+const failPreflight: PreflightResult = {
+  ok: false,
+  applicable: true,
+  entry: 'index.html',
+  filesChecked: 2,
+  defects: [
+    {
+      kind: 'missing-module',
+      importer: 'index.html',
+      specifier: './src/engine/state.ts',
+      message: "imports './src/engine/state.ts' but no such file exists in the product",
+    },
+  ],
+};
+
+describe('derivePreflightBlocking — the "does the entry load?" ground truth', () => {
+  it('raises ONE blocking tester finding when preflight failed', () => {
+    const found = derivePreflightBlocking(failPreflight);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.lens).toBe('tester');
+    expect(found[0]?.severity).toBe('blocking');
+    expect(found[0]?.evidence).toContain('DOES NOT LOAD');
+  });
+
+  it('is empty when the entry loads, the check is inapplicable, or there is none', () => {
+    expect(derivePreflightBlocking(okPreflight)).toEqual([]);
+    expect(
+      derivePreflightBlocking({
+        ok: true,
+        applicable: true,
+        entry: 'index.html',
+        filesChecked: 1,
+        defects: [],
+      }),
+    ).toEqual([]);
+    expect(derivePreflightBlocking(undefined)).toEqual([]);
+  });
+});
+
+describe('runReviewPhase — the "entry exists but does not load" gate (preflight, Part C)', () => {
+  it('routes a non-loading entry through Part C; a rebuild that LOADS clears the gate', async () => {
+    // The manifest already HAS an index.html (runnableEntryMissing is false), but its
+    // imports are broken so it does not load. This is the exact overnight false sign-off.
+    const manifest = manifestWith(['index.html', 'src/app.tsx']);
+    const contracts = [contract('c1', 'index.html'), contract('c2', 'src/app.tsx')];
+    let dispatchNotes = '';
+    const summary = await runReviewPhase({
+      lensPlan: selectReviewLenses(manifest),
+      task: 'Build a game',
+      visionBrief: '',
+      manifest,
+      verifyResult: okVerify,
+      preflightResult: failPreflight,
+      contracts,
+      workspace: '/ws',
+      maxTokens: 8192,
+      runReviewAgent: async () => findingsCall([]),
+      // The integration engineer rebuilt the entry self-contained → it loads now.
+      dispatchIntegrationContract: async ({ notes }) => {
+        dispatchNotes = notes;
+        return { ran: true, manifest, verify: okVerify, preflight: okPreflight };
+      },
+    });
+    expect(dispatchNotes).toContain('DOES NOT LOAD');
+    expect(summary.integrationEntryDispatched).toBe(true);
+    expect(summary.integrationEntryRecovered).toBe(true);
+    expect(summary.productDoesNotRun).toBe(false);
+    expect(summary.testerGatePassed).toBe(true);
+  });
+
+  it('stays a hard gate failure when the rebuilt entry STILL does not load', async () => {
+    const manifest = manifestWith(['index.html', 'src/app.tsx']);
+    const contracts = [contract('c1', 'index.html'), contract('c2', 'src/app.tsx')];
+    const summary = await runReviewPhase({
+      lensPlan: selectReviewLenses(manifest),
+      task: 'Build a game',
+      visionBrief: '',
+      manifest,
+      verifyResult: okVerify,
+      preflightResult: failPreflight,
+      contracts,
+      workspace: '/ws',
+      maxTokens: 8192,
+      runReviewAgent: async () => findingsCall([]),
+      dispatchIntegrationContract: async () => ({
+        ran: true,
+        manifest,
+        verify: okVerify,
+        preflight: failPreflight, // still broken
+      }),
+    });
+    expect(summary.integrationEntryDispatched).toBe(true);
+    expect(summary.productDoesNotRun).toBe(true);
+    expect(summary.testerGatePassed).toBe(false);
+  });
+
+  it('without a recovery seam, a non-loading entry stays a hard gate failure', async () => {
+    const manifest = manifestWith(['index.html', 'src/app.tsx']);
+    const contracts = [contract('c1', 'index.html'), contract('c2', 'src/app.tsx')];
+    const summary = await runReviewPhase({
+      lensPlan: selectReviewLenses(manifest),
+      task: 'Build a game',
+      visionBrief: '',
+      manifest,
+      verifyResult: okVerify,
+      preflightResult: failPreflight,
+      contracts,
+      workspace: '/ws',
+      maxTokens: 8192,
+      runReviewAgent: async () => findingsCall([]),
+    });
+    expect(summary.productDoesNotRun).toBe(true);
+    expect(summary.testerGatePassed).toBe(false);
+    expect(summary.findings.some((f) => f.lens === 'tester' && f.severity === 'blocking')).toBe(
+      true,
+    );
+  });
+});
+
 describe('runReviewPhase — the integration-entry recovery (Part C, spec §5/§8)', () => {
   it('synthesizes + dispatches an integration contract when the entry is missing, and the gate clears on re-verify', async () => {
     // A renderable product with NO runnable entry — the "food with no home". With the
@@ -725,6 +849,7 @@ describe('runReviewPhase — the integration-entry recovery (Part C, spec §5/§
           ran: true,
           manifest: manifestWith(['src/app.tsx', 'styles.css', 'index.html']),
           verify: okVerify,
+          preflight: okPreflight,
         };
       },
     });
@@ -758,6 +883,7 @@ describe('runReviewPhase — the integration-entry recovery (Part C, spec §5/§
         ran: true,
         manifest: manifestWith(['src/app.tsx', 'styles.css']),
         verify: okVerify,
+        preflight: okPreflight,
       }),
     });
     expect(summary.integrationEntryDispatched).toBe(true);

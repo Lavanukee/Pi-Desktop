@@ -31,6 +31,23 @@ import { type DeliveryShape, deliveryConstraintLines } from './delivery.js';
 import type { Architecture, Contract, OrgNode } from './org-chart.js';
 import { isRenderableSlot, isRunnableEntrySlot } from './review.js';
 
+/** The concrete rules a BROWSER entry (an `index.html`) must satisfy to actually
+ * LOAD — the exact discipline the static preflight (preflight.ts) enforces at the
+ * gate. Spliced into the integration brief so PREVENTION matches DETECTION: the
+ * engineer is told up front what the gate will bounce it for. The real-run defect
+ * these fix: an `index.html` that imported `.ts` modules, non-existent files, a bare
+ * `three`, and `node:media` — none of which a browser can load. Pure. */
+export function browserEntryRuleLines(): string[] {
+  return [
+    'BROWSER-LOADABLE ENTRY (the entry must OPEN and RUN, not just exist — this is checked):',
+    '- Import ONLY files that actually exist. Before you import a path, confirm the file is really there with that exact name (read the tree first).',
+    '- NEVER import a .ts/.tsx module from the HTML — a browser cannot execute TypeScript. Inline the logic into the entry, or import compiled .js. A <script type="module"> may only load .js/.mjs.',
+    '- Resolve every dependency one of three ways: a RELATIVE path to a real .js file, an <script type="importmap"> mapping, or a full https:// CDN URL. NO bare specifiers (e.g. `import "three"`) with no import map — a browser cannot resolve them.',
+    '- NO `node:` builtins (node:fs, node:media, …) and NO `@types/*` imports — neither exists at runtime in a browser.',
+    '- The bar: double-clicking the entry (or serving the folder) LOADS and RUNS the product with no build step and no console errors.',
+  ];
+}
+
 /** The stable id of the synthesized integration contract (uniquified against
  * existing ids by {@link ensureIntegrationContract} in the rare collision case). */
 export const INTEGRATION_CONTRACT_ID = 'integration-entry';
@@ -131,6 +148,9 @@ export function buildIntegrationContract(input: BuildIntegrationContractInput): 
   const noteLines = [
     "This is the final INTEGRATION/assembly step: wire EVERY division's produced module + its exposed interface into ONE runnable product and confirm it actually runs. It depends on the division outputs, so their real files exist when you build this.",
     ...deliveryConstraintLines(deliveryShape),
+    // A browser entry (index.html) must genuinely LOAD — the exact rules the preflight
+    // gate enforces, so the engineer is told them up front (prevention == detection).
+    ...(slot.endsWith('.html') ? browserEntryRuleLines() : []),
   ];
   const trimmedExtra = extraNotes?.trim();
   if (trimmedExtra !== undefined && trimmedExtra !== '') noteLines.push('', trimmedExtra);

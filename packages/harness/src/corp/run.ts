@@ -97,6 +97,7 @@ import { type DivisionContracts, resolveInterfaceHandles } from './integrate.js'
 import { buildIntegrationContract, ensureIntegrationContract } from './integration-contract.js';
 import type { Contract, ContractStatus, OrgChart, OrgNode } from './org-chart.js';
 import { buildOrgChartQueueWithReport } from './plan.js';
+import { type PreflightResult, preflightProduct } from './preflight.js';
 import {
   applyCreateHierarchy,
   CREATE_PRODUCTION_HIERARCHY,
@@ -1178,6 +1179,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
   // stop, so the run ends with an honest verdict over whatever product exists. ---
   let manifest: ProductManifest | undefined;
   let verifyResult: VerifyResult | undefined;
+  let preflightResult: PreflightResult | undefined;
   let initialCeoDecision: CeoDecision | undefined;
   let finalCeoDecision: CeoDecision | undefined;
   let reviseSummary: ReviseSummary | undefined;
@@ -1211,6 +1213,11 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
     const ceoReview = async (purpose: 'ceo' | 'revise'): Promise<CeoDecision> => {
       manifest = buildProductManifest(reviewChart, options.workspace, options.readFs);
       verifyResult = verifyProduct(options.workspace, options.readFs, options.fileCheck);
+      // The "does the entry actually load?" ground truth, recomputed each turn so a
+      // genuine fix in a revise round re-opens the gate (and a still-broken entry keeps
+      // it shut). The CEO reviews against it — it cannot sign off a product that throws
+      // on open, however complete the manifest looks.
+      preflightResult = preflightProduct(options.workspace, options.readFs);
       chargeTurn(budget);
       turnsByPurpose[purpose] += 1;
       // VISION-ONLY user turn (original task + the vision brief + product manifest +
@@ -1221,6 +1228,10 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         originalTask: reviewStandard,
         manifest,
         verifyResult,
+        // The static load evidence (preflight.ts) — "the entry actually loads" or the
+        // concrete load-breakers — as first-class ground truth, so the CEO cannot
+        // rubber-stamp a product that throws on open.
+        preflightResult,
         // The advisory specialists' transcript-free FINDINGS summary (spec §8 — the
         // CEO judges the product WITH the measured evidence, never the build
         // transcript). Absent when no review phase ran (chat-fallback path).
@@ -1277,6 +1288,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
       const reviewedChart = chart;
       const preManifest = buildProductManifest(reviewedChart, options.workspace, options.readFs);
       const preVerify = verifyProduct(options.workspace, options.readFs, options.fileCheck);
+      const prePreflight = preflightProduct(options.workspace, options.readFs);
       const lensPlan = selectReviewLenses(preManifest);
 
       // Charge + run ONE reviewer. A spent budget → undefined → runReviewPhase skips
@@ -1372,7 +1384,13 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         reason: string;
         notes: string;
       }): Promise<
-        { ran: boolean; manifest: ProductManifest; verify: VerifyResult } | undefined
+        | {
+            ran: boolean;
+            manifest: ProductManifest;
+            verify: VerifyResult;
+            preflight: PreflightResult;
+          }
+        | undefined
       > => {
         if (chart === undefined || dispatchReport === undefined) return undefined;
         if (budgetExceeded(budget)) return undefined;
@@ -1424,7 +1442,10 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         const ran = produced || report.failed.includes(synth.id);
         const manifest = buildProductManifest(chart, options.workspace, options.readFs);
         const verify = verifyProduct(options.workspace, options.readFs, options.fileCheck);
-        return { ran, manifest, verify };
+        // Re-run the static load check over the REBUILT entry so runReviewPhase can
+        // recompute the "does not load" gate against it (a genuine rebuild clears it).
+        const preflight = preflightProduct(options.workspace, options.readFs);
+        return { ran, manifest, verify, preflight };
       };
 
       log(`review-at-merge — lenses: ${lensPlan.map((p) => p.lens).join(', ')}`);
@@ -1434,6 +1455,7 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         visionBrief,
         manifest: preManifest,
         verifyResult: preVerify,
+        preflightResult: prePreflight,
         contracts: reviewedChart.contracts,
         workspace: options.workspace,
         maxTokens: baseMaxTokens,
@@ -1462,6 +1484,10 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
     const testerGateOk = (): boolean => {
       if (reviewSummary === undefined) return true;
       if (reviewSummary.runnableEntryMissing) return false;
+      // A runnable entry that does not LOAD is a hard gate failure — but a genuine fix
+      // in a later revise round re-opens it, so consult the LIVE preflight (recomputed
+      // each ceoReview) once the review phase's static verdict has been superseded.
+      if (reviewSummary.productDoesNotRun && preflightResult?.ok !== true) return false;
       if (reviewSummary.testerGatePassed) return true;
       return verifyResult?.ok === true;
     };

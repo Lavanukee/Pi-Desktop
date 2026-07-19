@@ -7,8 +7,8 @@ import {
   DEFAULT_STALL_WINDOW_MS,
   defaultMaxTurns,
   fitBudgetToPlan,
-  markProgress,
   MAX_TURNS_FLOOR,
+  markProgress,
   newRunBudget,
   TURNS_PER_UNIT,
 } from './budget.js';

@@ -45,6 +45,15 @@ interface RunningTask {
 
 const tasks = new Map<string, RunningTask>();
 
+/** How many TERMINAL (done/errored) tasks to retain so the situation room + build
+ * snapshot keep resolving after completion — `corp:peek`/`get-org-chart`/
+ * `worker-transcript` read the on-disk product through the retained engine, and the
+ * workspace is never cleaned up. Bounds memory across a long session (active tasks
+ * are never pruned). Fixes the "Build snapshot: no files yet" on a COMPLETED run
+ * whose files are on disk — the record was dropped the instant `done` fired. */
+const RETAINED_TERMINAL_TASKS = 8;
+const terminalOrder: string[] = [];
+
 /** Where per-task workspaces land (a temp root; engineers write produced files
  * here). Isolated per task under the OS temp dir so a run never touches HOME. */
 function corpWorkspaceRoot(): string {
@@ -211,7 +220,15 @@ async function handleStart(
         error: err instanceof Error ? err.message : String(err),
       });
     } finally {
-      tasks.delete(handle.taskId);
+      // Do NOT drop the record on terminal — peek / org-chart / worker-transcript must
+      // keep resolving AFTER `done` (the build snapshot reads the on-disk product once
+      // the run finishes; the workspace persists). Retain the most recent terminal
+      // tasks and prune the oldest to bound memory. Active tasks are never in this list.
+      terminalOrder.push(handle.taskId);
+      while (terminalOrder.length > RETAINED_TERMINAL_TASKS) {
+        const evict = terminalOrder.shift();
+        if (evict !== undefined && evict !== handle.taskId) tasks.delete(evict);
+      }
     }
   })();
 

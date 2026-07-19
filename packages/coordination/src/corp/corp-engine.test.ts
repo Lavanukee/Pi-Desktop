@@ -159,6 +159,22 @@ describe('CorpEngine implements CoordinationEngine', () => {
     expect(engine.getWorkerTranscript(handle, 'nope')).toBeUndefined();
   });
 
+  it('preserves the CEO vision history across promotion + speaks the plan (#3 / A2)', async () => {
+    const engine = new CorpEngine({ chat: promotingChat(), maxRevisions: 0 });
+    const handle = engine.startTask('Build me a dashboard app');
+    await collect(handle);
+    const ceo = engine.getWorkerTranscript(handle, 'ceo');
+    // The pre-promotion vision/worker notes streamed under `solo`; on promotion they
+    // are migrated onto `ceo` so the chat is not "deleted" down to a bare progress bar.
+    expect(ceo?.lines.some((l) => /Forming the vision|Reading the request/.test(l.text))).toBe(
+      true,
+    );
+    // A2 — after delegating, the CEO SPEAKS its plan to the user.
+    expect(ceo?.lines.some((l) => l.text.includes("Here's my plan"))).toBe(true);
+    // The solo node no longer surfaces its own transcript (it was migrated, not orphaned).
+    expect(engine.getWorkerTranscript(handle, 'solo')).toBeUndefined();
+  });
+
   it('stays solo when the worker does not promote', async () => {
     const soloChat: CorpChatFn = (req) =>
       req.purpose === 'worker'

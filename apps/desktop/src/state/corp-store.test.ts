@@ -202,6 +202,36 @@ describe('appendWorkerActivity (the PUSH block accumulator)', () => {
     useCorpStore.getState().setTask('t2');
     expect(useCorpStore.getState().workerBlocks).toEqual({});
   });
+
+  it('trackChart migrates the solo vision blocks onto ceo on promotion (#3)', () => {
+    useCorpStore.getState().setTask('t1');
+    // The CEO's vision streams under `solo` pre-promotion.
+    useCorpStore.getState().foldWorkerActivity({
+      type: 'worker-activity',
+      nodeId: 'solo',
+      kind: 'text',
+      phase: 'delta',
+      delta: 'forming the vision',
+    });
+    expect(useCorpStore.getState().workerBlocks.solo?.length).toBe(1);
+    // Promotion: the chart now has a `ceo` node (the `solo` node is gone).
+    const promotedChart: OrgChartView = {
+      taskId: 't1',
+      nodes: [
+        { id: 'ceo', role: 'ceo', name: 'Pi', state: 'working' },
+        { id: 'div-x', role: 'manager', name: 'X', parentId: 'ceo', state: 'idle' },
+      ],
+      edges: [],
+    };
+    useCorpStore.getState().trackChart(promotedChart);
+    const wb = useCorpStore.getState().workerBlocks;
+    // The vision now lives on `ceo` (the lead feed reads it) and `solo` is emptied.
+    expect(wb.ceo?.[0]).toMatchObject({ kind: 'text', text: 'forming the vision' });
+    expect(wb.solo).toEqual([]);
+    // Idempotent: a second promoted chart does not re-migrate / duplicate.
+    useCorpStore.getState().trackChart(promotedChart);
+    expect(useCorpStore.getState().workerBlocks.ceo?.length).toBe(1);
+  });
 });
 
 // A chart with two subagents at chosen states (STEP 1 timing transitions).

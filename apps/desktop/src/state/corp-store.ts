@@ -285,6 +285,22 @@ export const useCorpStore = create<CorpStoreState>((set) => ({
   followLive: () => set({ pinnedNode: null }),
   trackChart: (chart) =>
     set((s) => {
+      // PRESERVE THE CEO'S VISION across promotion: pre-promotion the vision streams
+      // into `workerBlocks['solo']`; on promotion the chart swaps the `solo` node for a
+      // `ceo` node, and the lead history feed reads `workerBlocks['ceo']` — which would
+      // be empty, so the chat looked "deleted". Migrate the solo blocks onto `ceo` the
+      // first time a `ceo` node appears (idempotent: solo is emptied, so it runs once).
+      // The engine mirrors this on its transcript (getWorkerTranscript) for late-join.
+      let workerBlocks = s.workerBlocks;
+      const promoted = chart.nodes.some((n) => n.id === 'ceo');
+      const soloBlocks = workerBlocks.solo;
+      if (promoted && soloBlocks !== undefined && soloBlocks.length > 0) {
+        workerBlocks = {
+          ...workerBlocks,
+          ceo: [...soloBlocks, ...(workerBlocks.ceo ?? [])],
+          solo: [],
+        };
+      }
       const nextLive = followTarget(chart, s.liveNode?.id) ?? s.liveNode;
       // Keep the pinned node's state fresh from the chart (unknown id: keep as-is).
       const refreshedPin =
@@ -318,6 +334,7 @@ export const useCorpStore = create<CorpStoreState>((set) => ({
             ? s.pinnedNode
             : nextPinned,
         ...(timing !== s.nodeTiming ? { nodeTiming: timing } : {}),
+        ...(workerBlocks !== s.workerBlocks ? { workerBlocks } : {}),
       };
     }),
 }));

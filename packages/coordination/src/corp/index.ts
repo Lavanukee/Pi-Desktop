@@ -705,20 +705,30 @@ export class CorpEngine implements CoordinationEngine {
         const divisions = detectDivisions(result);
         if (divisions !== undefined && divisions.length > 0) {
           rt.promoted = true;
+          // Settle the solo node (flush its open stream) THEN migrate its transcript
+          // onto the CEO node — the vision the CEO just formed streamed under `solo`,
+          // and buildChart drops `solo` on promotion. Without this the chat looks
+          // "deleted" (only the progress bar survives). The CEO now KEEPS its history.
           this.setNode(rt, SOLO_NODE, 'done');
+          this.migrateTranscript(rt, SOLO_NODE, CEO_NODE);
           this.setNode(rt, CEO_NODE, 'working');
           this.setNode(rt, ARCHITECT_NODE, 'idle');
           rt.divisions = divisions.map((name) => ({ id: `div-${slug(name)}`, name }));
           for (const d of rt.divisions) this.setNode(rt, d.id, 'idle');
-          // Plain words, never org jargon: say what actually happens to the
-          // user's project — more hands are joining, and these are the areas.
-          this.addLine(
-            rt,
-            CEO_NODE,
-            'message',
-            `This needs more than one pair of hands — bringing in ${divisions.join(', ')}.`,
-          );
+          // A2 — the CEO SPEAKS the plan to the user after delegating (plain words,
+          // never org jargon): what it's doing to their project and the areas it's
+          // splitting the work into. This closes the vision history it just kept.
+          const areas =
+            divisions.length === 1
+              ? divisions[0]
+              : `${divisions.slice(0, -1).join(', ')} and ${divisions[divisions.length - 1]}`;
+          const plan = `Here's my plan. This is more than one pair of hands can build well, so I'm splitting it into ${divisions.length} area${divisions.length === 1 ? '' : 's'} — ${areas} — each with its own dedicated team. I'll pull the pieces together and review the whole thing before it's done, and I'm here if you want to ask about any of it.`;
+          this.addLine(rt, CEO_NODE, 'message', plan);
+          // Emit the chart FIRST (the client migrates the vision blocks solo→ceo on
+          // this promotion snapshot), THEN push the plan as a live CEO block so it
+          // lands AFTER the preserved vision in the feed (not just the peek transcript).
           this.emit(rt, { type: 'org-chart', chart: this.buildChart(rt) });
+          this.emit(rt, workerActivity(CEO_NODE, { kind: 'text', phase: 'end', delta: plan }));
         } else if (!rt.streamedMessage.has(SOLO_NODE)) {
           // On the AGENT path the model's answer already streamed into a live message
           // line — don't append a truncated duplicate. The chat/mock path (no stream)
@@ -1370,6 +1380,28 @@ export class CorpEngine implements CoordinationEngine {
     list.push(line);
     rt.lines.set(nodeId, list);
     return line;
+  }
+
+  /**
+   * Move `from`'s transcript onto `to`, PREPENDING it before whatever `to` already
+   * holds. Used at promotion to carry the CEO's vision-forming history from the
+   * pre-promotion `solo` node onto the surviving `ceo` node — otherwise buildChart
+   * drops `solo` and the whole vision transcript is orphaned ("it deleted the chat").
+   * Migrates the streamed-message flag too so the click-through/late-join record is
+   * consistent. Only settled lines exist here (the caller settles `from` first). Pure
+   * over rt state; a no-op when `from` has nothing.
+   */
+  private migrateTranscript(rt: CorpRuntime, from: string, to: string): void {
+    const fromLines = rt.lines.get(from);
+    if (fromLines !== undefined && fromLines.length > 0) {
+      const toLines = rt.lines.get(to) ?? [];
+      rt.lines.set(to, [...fromLines, ...toLines]);
+      rt.lines.delete(from);
+    }
+    if (rt.streamedMessage.has(from)) {
+      rt.streamedMessage.add(to);
+      rt.streamedMessage.delete(from);
+    }
   }
 
   private emitChecklist(rt: CorpRuntime): void {

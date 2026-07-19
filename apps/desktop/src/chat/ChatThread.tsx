@@ -35,7 +35,7 @@ import { useEffect, useRef, useState } from 'react';
 import { fetchWorkerTranscript } from '../state/corp-connect';
 import { useCorpStore } from '../state/corp-store';
 import { useLlmStore } from '../state/llm-store';
-import { forkAndReprompt, sendPrompt, switchBranch } from '../state/pi-connect';
+import { forkAndReprompt, switchBranch } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { AssistantGroup } from './AssistantGroup';
 import { focusSituationTab } from './canvas/corp-canvas-routing';
@@ -127,13 +127,16 @@ export function ChatThread() {
   const copyText = (text: string) => {
     void navigator.clipboard?.writeText(text);
   };
-  // Retry: re-send the user turn that preceded this assistant response.
+  // Retry: re-run the user turn that preceded this assistant response as a NEW BRANCH
+  // — exactly like editing + resending that turn (forkAndReprompt), so the response
+  // becomes an alternate the BranchSwitcher surfaces. (Previously it called sendPrompt,
+  // which appended a DUPLICATE user message instead of branching.)
   const retryFrom = (firstAssistantId: string) => {
     const idx = messages.findIndex((m) => m.id === firstAssistantId);
     for (let i = idx - 1; i >= 0; i--) {
       const m = messages[i];
       if (m?.kind === 'user') {
-        void sendPrompt(m.text);
+        void forkAndReprompt(m.id, m.text);
         return;
       }
     }

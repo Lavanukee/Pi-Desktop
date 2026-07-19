@@ -41,6 +41,7 @@ import {
   stripToolCallScaffolding,
 } from '@pi-desktop/provider-llamacpp/repair';
 import { toolStepKind } from '../activity-mapping';
+import { type DetectedArtifact, detectArtifacts } from '../canvas/artifacts';
 
 /** The corp role-agent built-in tools the text-form salvage resolves written
  * calls to. Kept focused on the real tools so ordinary prose that merely names a
@@ -472,6 +473,24 @@ export function transcriptToBlocks(lines: readonly WorkerTranscriptLine[]): Cont
     for (const block of lineToBlocks(line, i)) out.push(block);
   });
   return out;
+}
+
+/**
+ * The THEME-2 inline artifacts (```html / ```svg fences) a corp node's stream
+ * carries. The corp feed SUPPRESSES these inline (owner rule J3: the corp thread is
+ * text / thoughts / tool rows only — an HTML/SVG preview opens in the CANVAS, never
+ * as a black box in the chat), and `CorpChatStream` routes each to a canvas tab.
+ * Reuses the normal chat's {@link detectArtifacts} over one synthetic assistant
+ * message so the ids/kinds match the render pipeline exactly. Pure — no React.
+ */
+export function corpArtifacts(
+  lines: readonly WorkerTranscriptLine[],
+  streaming: boolean,
+): DetectedArtifact[] {
+  const blocks = transcriptToBlocks(lines);
+  return detectArtifacts([
+    { kind: 'assistant', id: CORP_MSG_ID, blocks, isStreaming: streaming, timestamp: 0 },
+  ]);
 }
 
 /**

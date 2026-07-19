@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildManagerContractPrompt, parseManagerContracts } from './contracts.js';
-import type { Architecture } from './org-chart.js';
+import {
+  buildManagerContractPrompt,
+  capManagerContracts,
+  parseManagerContracts,
+} from './contracts.js';
+import type { Architecture, Contract } from './org-chart.js';
 
 /** An architecture where Frontend owns a region and Backend exposes an interface. */
 function architecture(): Architecture {
@@ -32,20 +36,34 @@ describe('buildManagerContractPrompt', () => {
     expect(prompt).not.toContain('  Build a note-taking app.  '); // vision was trimmed
   });
 
-  it('states the BOUNDED small-focused principle (6–12, else sub-divisions) and asks for a JSON array', () => {
-    expect(prompt).toMatch(/6[–-]12/); // the bounded contract-count range
-    expect(prompt.toLowerCase()).toContain('sub-division');
+  it('by default (COARSE/xhigh) asks for a FEW, LARGE contracts (1–2), not the fine range', () => {
+    // The default granularity is COARSE (xhigh) — the manager is steered to a handful
+    // of big contracts, and the fine-grained 6–12 framing is gone from the default.
+    expect(prompt).toMatch(/1[–-]2|1 to 2/); // the coarse contract-count target
+    expect(prompt.toLowerCase()).toContain('few, large');
     expect(prompt.toLowerCase()).toContain('json array');
+    expect(prompt).not.toMatch(/6[–-]12/); // NOT the fine-grained range in coarse mode
     expect(prompt).not.toContain('100'); // the runaway "100 small contracts" framing is gone
   });
 
   it('adds a terminator, sharper tools-vs-imports guidance, and a distinct-slot nudge', () => {
     expect(prompt).toContain(
-      'Output between 6 and 12 contracts as a JSON array, then STOP and close the array.',
+      'Output 1 to 2 contracts as a JSON array, then STOP and close the array.',
     );
     expect(prompt).toContain('"typescript"'); // the NOT-an-import example
     expect(prompt.toLowerCase()).toContain('is not an import');
     expect(prompt).toContain('DISTINCT slot'); // two contracts must not target the same file
+  });
+
+  it('FINE (max) granularity restores the 6–12 range and the sub-division guidance (J7)', () => {
+    const fine = buildManagerContractPrompt(division, 'Build a note-taking app.', undefined, 'max');
+    expect(fine).toMatch(/6[–-]12/);
+    expect(fine.toLowerCase()).toContain('sub-division');
+    expect(fine).toContain(
+      'Output between 6 and 12 contracts as a JSON array, then STOP and close the array.',
+    );
+    // …and the coarse default does not carry the fine range.
+    expect(prompt).not.toMatch(/6[–-]12/);
   });
 
   it('names every required Contract field plus the optional notes', () => {
@@ -119,16 +137,24 @@ describe('buildManagerContractPrompt — seeded with the shared architecture', (
     expect(seeded).toContain('src/api/client.ts'); // the path a Backend contract must slot to
   });
 
-  it('still bounds granularity (6–12) and keeps the terminator when seeded', () => {
+  it('still bounds granularity (coarse 1–2 by default) and keeps the terminator when seeded', () => {
     const seeded = buildManagerContractPrompt(
       { name: 'Frontend', purpose: 'the UI' },
       'Build an app.',
       architecture(),
     );
-    expect(seeded).toMatch(/6[–-]12/);
+    expect(seeded).toMatch(/1[–-]2|1 to 2/);
     expect(seeded).toContain(
-      'Output between 6 and 12 contracts as a JSON array, then STOP and close the array.',
+      'Output 1 to 2 contracts as a JSON array, then STOP and close the array.',
     );
+    // FINE (max) restores the 6–12 range even when seeded with an architecture.
+    const fine = buildManagerContractPrompt(
+      { name: 'Frontend', purpose: 'the UI' },
+      'Build an app.',
+      architecture(),
+      'max',
+    );
+    expect(fine).toMatch(/6[–-]12/);
   });
 });
 
@@ -415,5 +441,41 @@ Let me know if you want more.`;
     expect(contracts[0]?.notes).toBe(
       'the earlier flexbox approach broke on overflow and needs a rethin',
     );
+  });
+});
+
+describe('capManagerContracts — the COARSE per-division cap (J7)', () => {
+  function contract(id: string): Contract {
+    return {
+      id,
+      title: id,
+      ownerNodeId: `${id}-eng`,
+      input: 'in',
+      output: 'out',
+      slot: `src/${id}.ts`,
+      available: { tools: ['write'], imports: [] },
+      reviewRubric: 'r',
+      dependsOn: [],
+      status: 'queued',
+    };
+  }
+  const five = ['a', 'b', 'c', 'd', 'e'].map(contract);
+
+  it('truncates to the cap, keeping the FIRST (foundation-first) contracts', () => {
+    const { contracts, trimmedIds } = capManagerContracts(five, 2);
+    expect(contracts.map((c) => c.id)).toEqual(['a', 'b']);
+    expect(trimmedIds).toEqual(['c', 'd', 'e']); // trimmed ids surfaced for logging
+  });
+
+  it('is a no-op when already at/under the cap', () => {
+    const { contracts, trimmedIds } = capManagerContracts(five.slice(0, 2), 2);
+    expect(contracts).toHaveLength(2);
+    expect(trimmedIds).toEqual([]);
+  });
+
+  it('leaves an UNCAPPED (Infinity, i.e. max) run fully untouched', () => {
+    const { contracts, trimmedIds } = capManagerContracts(five, Number.POSITIVE_INFINITY);
+    expect(contracts).toHaveLength(5);
+    expect(trimmedIds).toEqual([]);
   });
 });

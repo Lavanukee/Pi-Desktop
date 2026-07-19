@@ -25,7 +25,7 @@ import type { CanvasController } from '@pi-desktop/canvas';
 import type { OrgNodeView } from '@pi-desktop/coordination';
 import { useEffect, useRef } from 'react';
 import { useCanvasStore } from '../../state/canvas-store';
-import { shownCorpNode, useCorpStore } from '../../state/corp-store';
+import { useCorpStore } from '../../state/corp-store';
 import {
   corpFileTabKey,
   corpFileTabSpec,
@@ -126,9 +126,12 @@ export function selectCorpNodeAndFocus(
 export function useCorpCanvasRouting(controller: CanvasController): void {
   const taskId = useCorpStore((s) => s.taskId);
   const workerBlocks = useCorpStore((s) => s.workerBlocks);
-  // The ONE node the user is watching in the chat (pin wins over live-follow) —
-  // the only node whose work opens/updates/focuses a canvas tab (C5).
-  const shownId = useCorpStore((s) => shownCorpNode(s)?.id);
+  // The ONE node the user is EXPLICITLY watching — the PINNED node (a clicked
+  // subagent), the only node whose work opens/updates/focuses a canvas tab (C5).
+  // Deliberately NOT the auto-live-follow node: that flips between engineers and
+  // yanks the canvas to a node the chat isn't showing. When nothing is pinned the
+  // promoted view is the situation room, so no per-node file/terminal auto-opens.
+  const shownId = useCorpStore((s) => s.pinnedNode?.id);
   const nodeCount = useCorpStore((s) => s.situation?.chart.nodes.length ?? 0);
 
   // The SINGLE corp file/preview tab in play (path-keyed so the chat's own

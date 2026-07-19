@@ -27,7 +27,7 @@ import { emptyOrgChart, type OrgChart, type OrgNode } from './org-chart.js';
  * the corporation works (the worker doesn't need to know). NOT wired into the
  * live chat path in slice 1; used by the test driver and future dispatch.
  */
-export const PROMOTION_SYSTEM_PROMPT = `You are a capable solo developer. If a task fits in a single focused pass, just do it. If it is too large or multi-part to do well in one pass, call create_production_hierarchy with the divisions you would set up (name + purpose) instead of attempting it all yourself. The moment you call create_production_hierarchy, you are finished — output nothing after the tool call.`;
+export const PROMOTION_SYSTEM_PROMPT = `You are a capable solo developer. If a task fits in a single focused pass, just do it. If it is too large or multi-part to do well in one pass, call create_production_hierarchy EXACTLY ONCE with the divisions you would set up (name + purpose) instead of attempting it all yourself. That single call creates the ENTIRE hierarchy and hands the work to the managers — so call it one time only. The moment you call create_production_hierarchy, you are finished — output nothing after the tool call, and never call it a second time (a repeat call creates nothing and only wastes the turn).`;
 
 /** The tool name the worker calls to promote itself into a corporation. */
 export const CREATE_PRODUCTION_HIERARCHY = 'create_production_hierarchy';
@@ -54,7 +54,7 @@ export const CREATE_PRODUCTION_HIERARCHY_TOOL: OpenAiFunctionTool = {
   function: {
     name: CREATE_PRODUCTION_HIERARCHY,
     description:
-      'Set up a production hierarchy (a small team of divisions) when the task is too large, too multi-part, or otherwise beyond what you can do well in a single focused pass. Call this INSTEAD of attempting a large task yourself: name the divisions you would create and what each is for, and a manager block will turn each into concrete work. Do NOT call it for a task you can finish well in one pass — just do that directly.',
+      'Set up a production hierarchy (a small team of divisions) when the task is too large, too multi-part, or otherwise beyond what you can do well in a single focused pass. Call this ONCE, INSTEAD of attempting a large task yourself: name the divisions you would create and what each is for, and a manager block will turn each into concrete work. This call is ONE-SHOT and TERMINAL — the moment you call it the hierarchy is created and you are DONE: output nothing and call no tool after it. Calling it again does NOTHING (the hierarchy already exists) and just wastes the turn. Do NOT call it for a task you can finish well in one pass — just do that directly.',
     parameters: {
       type: 'object',
       properties: {
@@ -122,6 +122,81 @@ export function parseCreateHierarchyArgs(raw: unknown): CreateHierarchyArgs | un
   }
   if (divisions.length === 0) return undefined;
   return { reason, divisions };
+}
+
+// --- Idempotent-terminal promotion guard (J5) --------------------------------
+//
+// LIVE DEFECT this fixes: the CEO/worker called `create_production_hierarchy`
+// TWICE ("created multiple production hierarchies"), then thrashed ("I already
+// called it twice, this seems wrong"). The cure mirrors the F1 `submit_contract`
+// fix: the FIRST valid call RECORDS the hierarchy and is TERMINAL (the ack tells
+// the model it is DONE — output nothing, call no tool after); every later call is
+// an IDEMPOTENT DEAD-END that creates no second hierarchy/divisions and never
+// passes control back. Two layers enforce this:
+//   1. Prompt/description (above) + the `terminal` flag on the promotion custom
+//      tool (run.ts) — the seam ends the turn after the first call.
+//   2. This guard — the harness only ever acts on the FIRST valid call, so even a
+//      model that emits the tool twice in one reply yields exactly ONE hierarchy.
+
+/** The TERMINAL ack for the FIRST `create_production_hierarchy` call — the model
+ * is done the instant the hierarchy exists (mirrors the F1 submit_contract ack). */
+export const HIERARCHY_CREATED_ACK =
+  'Hierarchy created — you are DONE. The manager block now authors the contracts; your job is over. Output nothing and call no tool after this.';
+
+/** The IDEMPOTENT DEAD-END ack for a SECOND+ `create_production_hierarchy` call:
+ * it created nothing (the hierarchy already exists) and does not pass control back. */
+export const HIERARCHY_ALREADY_CREATED_ACK =
+  'The production hierarchy already exists — this repeat call did nothing (no second hierarchy is created). You are DONE: output nothing and call no further tool.';
+
+/** The outcome of feeding ONE `create_production_hierarchy` call to a guard. */
+export interface PromotionCallResult {
+  /** True ONLY for the first valid call — it recorded the hierarchy. */
+  readonly created: boolean;
+  /** The validated args of the recorded (first valid) call; undefined otherwise. */
+  readonly args?: CreateHierarchyArgs;
+  /** The terminal/dead-end ack to return to the model for THIS call. */
+  readonly ack: string;
+  /** True once a hierarchy has been recorded — any call from here on is a dead-end. */
+  readonly done: boolean;
+}
+
+/** A stateful, idempotent-terminal guard around {@link CREATE_PRODUCTION_HIERARCHY}. */
+export interface PromotionGuard {
+  /**
+   * Handle one call's raw (JSON-decoded) arguments. The FIRST call whose args
+   * validate records the hierarchy and returns {@link HIERARCHY_CREATED_ACK}
+   * (`created: true`). Every call after that — valid or not — is an idempotent
+   * dead-end returning {@link HIERARCHY_ALREADY_CREATED_ACK} (`created: false`,
+   * `done: true`), creating NO second hierarchy. A call BEFORE any hierarchy is
+   * recorded whose args do not validate is a no-op (`created: false, done: false`).
+   */
+  handle(raw: unknown): PromotionCallResult;
+  /** The recorded hierarchy args (from the first valid call), or undefined. */
+  readonly recorded: CreateHierarchyArgs | undefined;
+}
+
+/** Create a fresh {@link PromotionGuard}. One guard per worker/CEO promotion turn. */
+export function createPromotionGuard(): PromotionGuard {
+  let recorded: CreateHierarchyArgs | undefined;
+  return {
+    get recorded(): CreateHierarchyArgs | undefined {
+      return recorded;
+    },
+    handle(raw: unknown): PromotionCallResult {
+      // Already recorded → an idempotent terminal dead-end (no second hierarchy,
+      // control never passes back).
+      if (recorded !== undefined) {
+        return { created: false, ack: HIERARCHY_ALREADY_CREATED_ACK, done: true };
+      }
+      const args = parseCreateHierarchyArgs(raw);
+      if (args === undefined) {
+        // Not a usable promotion yet — nothing recorded, not terminal.
+        return { created: false, ack: HIERARCHY_ALREADY_CREATED_ACK, done: false };
+      }
+      recorded = args;
+      return { created: true, args, ack: HIERARCHY_CREATED_ACK, done: true };
+    },
+  };
 }
 
 /** Fallback project id when {@link applyCreateHierarchy} is given no base chart

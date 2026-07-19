@@ -152,10 +152,15 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
       </CanvasProvider>,
     );
 
-    // A team forms: ceo + two builders. The deepest working node (eng-1) is the
-    // followed/shown node — the only one whose work reaches the canvas.
+    // A team forms: ceo + two builders. The user PINS eng-1 (the node they are
+    // viewing in the chat) — only the PINNED node's work reaches the canvas (C5);
+    // live-follow no longer auto-drives it (it flipped between engineers).
     await feedChart(['ceo', 'eng-1', 'eng-2']);
-    expect(useCorpStore.getState().liveNode?.id).toBe('eng-1');
+    const eng1 = chartOf(['ceo', 'eng-1', 'eng-2']).nodes.find((n) => n.id === 'eng-1');
+    await act(async () => {
+      if (eng1 !== undefined) useCorpStore.getState().selectNode(eng1);
+    });
+    expect(useCorpStore.getState().pinnedNode?.id).toBe('eng-1');
 
     // (C5) A NON-shown node (eng-2) writes a file → NO tab opens for it.
     await push(
@@ -223,8 +228,12 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
       </CanvasProvider>,
     );
 
-    // Make eng-1 the followed node so its work reaches the canvas (C5).
+    // Make eng-1 the followed node (PINNED) so its work reaches the canvas (C5).
     await feedChart(['ceo', 'eng-1']);
+    const eng1a = chartOf(['ceo', 'eng-1']).nodes.find((n) => n.id === 'eng-1');
+    await act(async () => {
+      if (eng1a !== undefined) useCorpStore.getState().selectNode(eng1a);
+    });
 
     // The model streams a TEXT-FORM `<function=write>` whose content GROWS across
     // deltas (the qwen grammar-failure shape) — the corp canvas must render THIS
@@ -307,15 +316,9 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
     await feedChart(['ceo', 'eng-1']);
     expect(controller.getState().activeTabId).toBe(situationId);
 
-    // eng-1 (the followed node) runs a shell command → its ONE terminal opens.
-    await push(wa({ kind: 'tool', toolName: 'bash', detail: 'python -m http.server' }));
-    const term = controller.getState().tabs.find((t) => t.key === 'corpterm:eng-1');
-    expect(term).toBeDefined();
-    expect(term?.data?.mirrorText as string | undefined).toContain('python -m http.server');
-
-    // A subagent-row click SCOPES the canvas to that node's most-recent surface
-    // (STEP 4) — eng-1's live terminal here. Focus the room first so the scope is
-    // observable.
+    // A subagent-row click PINS eng-1 (the node the user chooses to watch) — only
+    // the pinned node's work reaches the canvas (C5, pinned-only). Focus the room
+    // first so the scope is observable.
     await act(async () => {
       if (situationId) controller.focusTab(situationId);
     });
@@ -331,6 +334,12 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
       (row as HTMLElement).click();
     });
     expect(useCorpStore.getState().pinnedNode?.id).toBe('eng-1');
+
+    // Now the PINNED node runs a shell command → its ONE terminal opens + focuses.
+    await push(wa({ kind: 'tool', toolName: 'bash', detail: 'python -m http.server' }));
+    const term = controller.getState().tabs.find((t) => t.key === 'corpterm:eng-1');
+    expect(term).toBeDefined();
+    expect(term?.data?.mirrorText as string | undefined).toContain('python -m http.server');
     expect(controller.getState().activeTabId).toBe(term?.id);
 
     await unmountRoom();

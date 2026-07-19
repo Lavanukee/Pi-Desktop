@@ -13,17 +13,20 @@
  * accumulator. Polling remains ONLY as the fallback for a pinned, non-live node
  * with no buffered deltas (and a one-shot fetch sources the briefing).
  */
-import { nodeElapsedMs, useCanvasTabs } from '@pi-desktop/canvas';
+import { type CanvasTabSpec, nodeElapsedMs, useCanvasTabs } from '@pi-desktop/canvas';
 import type {
   OrgNodeView,
   WorkerBriefingView,
   WorkerTranscriptLine,
   WorkerTranscriptView,
 } from '@pi-desktop/coordination';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCanvasStore } from '../../state/canvas-store';
 import { fetchWorkerTranscript } from '../../state/corp-connect';
 import { type CorpBlock, useCorpStore } from '../../state/corp-store';
+import { type DetectedArtifact, toCanvasArtifact } from '../canvas/artifacts';
 import { CorpWorkerFeed } from './CorpWorkerPane';
+import { corpArtifacts } from './corp-blocks';
 import { openCorpFileInCanvas } from './corp-file-canvas';
 import './CorpChatStream.css';
 
@@ -31,6 +34,32 @@ import './CorpChatStream.css';
  * polled transcript still streams, calm otherwise. The live node never polls. */
 const POLL_MS = 900;
 const POLL_STREAMING_MS = 120;
+
+/** After this long with no stream delta while the node is still working, the model
+ * is PROCESSING (prefilling the prompt, or blocked on a slow tool) — the J1
+ * "Processing… Ns" indicator stands in so the gap never reads as a frozen frame.
+ * Matches the dev HUD's stall threshold (CorpDebugHud). */
+const PROCESSING_STALL_MS = 2500;
+/** How often the processing clock ticks while a node is working (HUD cadence). */
+const PROCESSING_TICK_MS = 250;
+/** Stable empty ref so an idle render never re-triggers the artifact-routing effect. */
+const NO_ARTIFACTS: DetectedArtifact[] = [];
+
+/**
+ * A cheap content signature that grows whenever ANY block's text / output / line
+ * counts grow — a change marks a fresh stream delta. When it stops growing while
+ * the node is still working, the elapsed gap IS the processing time (the same
+ * signal the dev HUD's stall detector reads).
+ */
+function blocksSignature(blocks: readonly CorpBlock[]): number {
+  let n = blocks.length;
+  for (const b of blocks) {
+    if (b.kind === 'text' || b.kind === 'thinking') n += b.text.length;
+    else if (b.kind === 'tool') n += (b.detail?.length ?? 0) + (b.output?.length ?? 0);
+    else n += b.addedLines + b.removedLines;
+  }
+  return n;
+}
 
 export interface CorpChatStreamProps {
   taskId: string;
@@ -117,8 +146,14 @@ export function CorpChatStream({ taskId, node, historyMode = false }: CorpChatSt
   const situation = useCorpStore((s) => s.situation);
   const liveBlocks = blocks ?? [];
   const hasPush = liveBlocks.length > 0;
-  // History mode preserves an already-formed turn; it is never "live" itself.
-  const working = node.state === 'working' && !historyMode;
+  // J4: the lead (CEO/root) keeps STREAMING through the vision→promotion hand-off.
+  // History mode used to force `working` off, so the lead's post-vision tool calls
+  // (submit_vision → create_production_hierarchy) rendered as dead settled rows
+  // beneath a bare header. Now the feed stays live while the node is `working` — its
+  // thoughts/tool-calls stream continuously — and only its own idle "Working…" tail
+  // is suppressed in history mode (the sibling "Waiting for N…" indicator carries
+  // the coordinating signal). It settles to plain history once the lead stops.
+  const working = node.state === 'working';
   // A finished node shows "subagent finished in Nm Ns" — its frozen working span
   // (finishedAt − startedAt; `now` is ignored once finishedAt is set).
   const timing = useCorpStore((s) => s.nodeTiming[node.id]);
@@ -181,6 +216,36 @@ export function CorpChatStream({ taskId, node, historyMode = false }: CorpChatSt
     (b) => (b.kind === 'text' || b.kind === 'thinking') && b.streaming,
   );
 
+  // J1: the user-facing "Processing…" detector — the equivalent of the dev HUD's
+  // stall detector, but in the chat. While the node is working but no token has
+  // streamed for a beat (a prefill / slow-tool gap), surface a live "Processing… Ns"
+  // indicator beneath the latest step so the gap never reads as a frozen frame.
+  // `sig` grows on every delta; when it stops while working, the gap is the
+  // processing time. Scoped to the LIVE stream (a pinned/pre-promotion node) — the
+  // promoted lead's history view defers to its shimmering tool call + the
+  // "Waiting for N…" indicator.
+  //
+  // TODO(progress): a true "N% done" needs the llama server's prompt-eval progress,
+  // which the OpenAI-style stream doesn't expose during prefill. When the corp
+  // stream emits a prompt-eval progress signal, show the % here; until then, the
+  // placement + elapsed seconds ship now.
+  const sig = blocksSignature(liveBlocks);
+  const lastDeltaAt = useRef(Date.now());
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `sig` is the delta signal
+  useEffect(() => {
+    lastDeltaAt.current = Date.now();
+  }, [sig]);
+  useEffect(() => {
+    if (!working || historyMode) return undefined;
+    const id = setInterval(() => setNowTick(Date.now()), PROCESSING_TICK_MS);
+    return () => clearInterval(id);
+  }, [working, historyMode]);
+  const sinceDelta = nowTick - lastDeltaAt.current;
+  const processing =
+    working && !historyMode && hasPush && !anyStreaming && sinceDelta > PROCESSING_STALL_MS;
+  const processingSeconds = processing ? Math.floor(sinceDelta / 1000) : undefined;
+
   // B3: the anti-void tail for a working node with nothing streaming. A coordinator
   // LEAD (ceo/manager/division-head) in a PROMOTED run is not producing — it's
   // waiting on its team — so it reads that way instead of a bare "Working…" that
@@ -207,9 +272,42 @@ export function CorpChatStream({ taskId, node, historyMode = false }: CorpChatSt
         briefing: transcript?.briefing ?? synthBriefing(node),
         lines: liveBlocks.map((b) => blockToLine(b, working)),
         ...(working && anyStreaming ? { streaming: true } : {}),
-        ...(working && !anyStreaming ? { currentAction: idleTail } : {}),
+        // J4: history mode suppresses the lead's OWN idle tail (the "Waiting for
+        // N…" indicator carries the coordinating signal); the live stream still
+        // streams its thoughts/tool-calls through the promotion.
+        ...(working && !anyStreaming && !historyMode ? { currentAction: idleTail } : {}),
       }
     : transcript;
+
+  // J3: detect the THEME-2 inline artifacts (```html/```svg) the shown node wrote
+  // and route each to a CANVAS tab — the corp feed suppresses them inline (owner
+  // rule), so a mockup.html preview opens in the canvas, never as a black box in
+  // the chat. Open once (bringing the canvas forward), quiet-refresh on growth, and
+  // never reopen a user-closed one. Keyed on a content signature so the routing
+  // effect fires on real changes, not every processing tick.
+  const artifacts = view !== null ? corpArtifacts(view.lines, working) : NO_ARTIFACTS;
+  const artifactSig = artifacts.map((a) => `${a.id}:${a.text.length}`).join('|');
+  const openedArtifacts = useRef<Set<string>>(new Set());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `artifactSig` is the change signal for `artifacts`
+  useEffect(() => {
+    for (const a of artifacts) {
+      const spec: CanvasTabSpec = {
+        kind: a.kind,
+        key: a.id,
+        title: a.title,
+        artifact: toCanvasArtifact(a),
+      };
+      const existing = controller.getState().tabs.find((t) => t.key === a.id);
+      if (existing === undefined) {
+        if (openedArtifacts.current.has(a.id)) continue; // user closed it — leave it
+        openedArtifacts.current.add(a.id);
+        controller.upsertTab(a.id, spec);
+        useCanvasStore.getState().setCanvasOpen(true);
+      } else if (existing.artifact?.content.text !== a.text) {
+        controller.updateTab(existing.id, { artifact: spec.artifact, title: spec.title });
+      }
+    }
+  }, [artifactSig, controller]);
 
   // A3: in history mode with nothing to preserve, render nothing (the live
   // "Waiting for N…" indicator alongside carries the signal).
@@ -223,6 +321,7 @@ export function CorpChatStream({ taskId, node, historyMode = false }: CorpChatSt
         loading={loading && !hasPush}
         nodeState={node.state}
         onOpenFile={openFile}
+        {...(processingSeconds !== undefined ? { processingSeconds } : {})}
         {...(finishedInMs !== undefined ? { finishedInMs } : {})}
       />
     </div>

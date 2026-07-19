@@ -81,6 +81,10 @@ export interface CorpWorkerFeedProps {
   /** Elapsed working millis of a FINISHED node — renders the "finished in Nm Ns"
    * line (Point 4c). Omitted for a running/queued node or when timing is unknown. */
   finishedInMs?: number;
+  /** J1: seconds the node has been PROCESSING with no stream delta (a prefill /
+   * slow-tool gap). When set, a live "Processing… Ns" indicator renders directly
+   * below the latest tool-call/thought row. Undefined while streaming or unstalled. */
+  processingSeconds?: number;
 }
 
 /** The live feed body: briefing card + the streamed AssistantGroup + tail. */
@@ -91,6 +95,7 @@ export function CorpWorkerFeed({
   nodeState,
   onOpenFile,
   finishedInMs,
+  processingSeconds,
 }: CorpWorkerFeedProps) {
   const hasLines = transcript !== null && transcript.lines.length > 0;
   // A finished subagent (spec §11): "subagent finished in Nm Ns" under its stream.
@@ -129,11 +134,21 @@ export function CorpWorkerFeed({
             resultByCallId={view.resultByCallId}
             runningToolCalls={[]}
             tps={undefined}
+            suppressInlineArtifacts
             {...(onOpenFile !== undefined ? { onOpenFile } : {})}
           />
         </MessageRow>
       ) : null}
-      {working && hasLines && settledTextTail && currentAction !== undefined ? (
+      {/* J1: the user-facing "Processing…" indicator — the model is active but no
+          token has streamed for a beat (a prefill / slow-tool gap). Sits directly
+          below the latest tool-call/thought row (the tail of the AssistantGroup),
+          reading the elapsed seconds. Supersedes the plain idle tail while stalled. */}
+      {processingSeconds !== undefined ? (
+        <div className="pd-workerpane-action" data-testid="corp-processing">
+          <Spinner size={12} />
+          <span className="pd-workerpane-action-text">Processing… {processingSeconds}s</span>
+        </div>
+      ) : working && hasLines && settledTextTail && currentAction !== undefined ? (
         <div className="pd-workerpane-action" data-testid="corp-current-action">
           <Spinner size={12} />
           <span className="pd-workerpane-action-text">{actionText(currentAction)}</span>

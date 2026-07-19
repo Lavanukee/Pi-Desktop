@@ -77,6 +77,103 @@ export function decompositionGuidanceLines(granularity: DecompositionGranularity
   ];
 }
 
+// --- COARSE-mode ENFORCEMENT caps (J7) ---------------------------------------
+//
+// The `xhigh` prompt STEER alone did NOT land the handful the owner wants — a
+// Breakout run still produced 25–35 contracts across ~4 divisions. These are HARD
+// caps applied ON TOP of the steer so a coarse run lands around a handful even when
+// the model ignores the prompt and over-emits:
+//   - DIVISIONS (promoted by the CEO): trimmed to ≤ COARSE_MAX_DIVISIONS.
+//   - MODULE-MAP regions: one region per division (extras trimmed) and ≤ the division
+//     cap overall — a division with one region nudges its manager toward one big slice.
+//   - CONTRACTS each manager authors: truncated to ≤ COARSE_MAX_CONTRACTS_PER_DIVISION.
+// `max` (FINE) is fully UNCAPPED (Number.POSITIVE_INFINITY). The division-contract
+// total is bounded by COARSE_MAX_DIVISIONS × COARSE_MAX_CONTRACTS_PER_DIVISION (= 8
+// with the values below); the runnable-entry integration contract is one further
+// structural add (spec §5/§8), not decomposition sprawl. Every trim is LOGGED by the
+// caller (run.ts) so nothing is silently dropped.
+
+/** Max DIVISIONS a COARSE (xhigh) run carves the work into. */
+export const COARSE_MAX_DIVISIONS = 4;
+/** Max CONTRACTS a single manager authors per division in a COARSE (xhigh) run. */
+export const COARSE_MAX_CONTRACTS_PER_DIVISION = 2;
+
+/** The division cap for a granularity — {@link COARSE_MAX_DIVISIONS} for `xhigh`,
+ * unbounded (`Infinity`) for `max`. */
+export function maxDivisionsFor(granularity: DecompositionGranularity): number {
+  return granularity === 'max' ? Number.POSITIVE_INFINITY : COARSE_MAX_DIVISIONS;
+}
+
+/** The per-division contract cap for a granularity — {@link COARSE_MAX_CONTRACTS_PER_DIVISION}
+ * for `xhigh`, unbounded (`Infinity`) for `max`. */
+export function maxContractsPerDivisionFor(granularity: DecompositionGranularity): number {
+  return granularity === 'max' ? Number.POSITIVE_INFINITY : COARSE_MAX_CONTRACTS_PER_DIVISION;
+}
+
+/** The outcome of {@link capDivisions}: the kept divisions + the ones trimmed away. */
+export interface CappedDivisions {
+  readonly divisions: readonly HierarchyDivisionSpec[];
+  readonly trimmed: readonly HierarchyDivisionSpec[];
+}
+
+/**
+ * Enforce the COARSE (xhigh) DIVISION cap (J7): keep at most {@link COARSE_MAX_DIVISIONS}
+ * divisions (the first ones the CEO named), trimming any beyond it — fewer divisions ×
+ * fewer contracts each is what lands the handful. Returns the kept + trimmed divisions
+ * (the caller logs the trim). `max` (FINE) is UNCAPPED — the input is returned unchanged.
+ * Pure + deterministic; order-preserving.
+ */
+export function capDivisions(
+  divisions: readonly HierarchyDivisionSpec[],
+  granularity: DecompositionGranularity,
+): CappedDivisions {
+  const limit = maxDivisionsFor(granularity);
+  if (!Number.isFinite(limit) || divisions.length <= limit) {
+    return { divisions: [...divisions], trimmed: [] };
+  }
+  const n = Math.max(1, Math.floor(limit));
+  return { divisions: divisions.slice(0, n), trimmed: divisions.slice(n) };
+}
+
+/** The outcome of {@link capArchitecture}: the trimmed architecture + which module-map
+ * region paths were dropped (for the caller to log). */
+export interface CappedArchitecture {
+  readonly architecture: Architecture;
+  /** Region paths trimmed away (extra regions past one-per-owner / the division cap). */
+  readonly trimmedPaths: readonly string[];
+}
+
+/**
+ * Enforce the COARSE (xhigh) MODULE-MAP cap on a parsed {@link Architecture}: keep at
+ * most ONE region per owning division (the first wins — extras for the same owner are
+ * merged away) and at most {@link COARSE_MAX_DIVISIONS} regions overall, so the map
+ * stays a handful of big directory namespaces. Interfaces are untouched (they are the
+ * genuine cross-division seams and create no contracts). `max` (FINE) returns the
+ * architecture UNCHANGED with no trims. Pure + deterministic; order-preserving.
+ */
+export function capArchitecture(
+  architecture: Architecture,
+  granularity: DecompositionGranularity,
+): CappedArchitecture {
+  if (granularity === 'max') return { architecture, trimmedPaths: [] };
+  const limit = maxDivisionsFor(granularity);
+  const kept: ModuleEntry[] = [];
+  const trimmedPaths: string[] = [];
+  const ownersSeen = new Set<string>();
+  for (const region of architecture.moduleMap) {
+    const owner = region.owner.trim().toLowerCase();
+    // One region per owner, and never more than the division cap in total.
+    if (!ownersSeen.has(owner) && kept.length < limit) {
+      ownersSeen.add(owner);
+      kept.push(region);
+    } else {
+      trimmedPaths.push(region.path);
+    }
+  }
+  if (trimmedPaths.length === 0) return { architecture, trimmedPaths: [] };
+  return { architecture: { ...architecture, moduleMap: kept }, trimmedPaths };
+}
+
 /**
  * The lead-architect SYSTEM prompt. Deliberately concise: it establishes the
  * disposition and the two deliverables (the module map + the interface seams),

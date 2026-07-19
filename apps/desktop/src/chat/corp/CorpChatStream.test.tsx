@@ -19,12 +19,12 @@
  *
  * Mounted with the repo's plain react-dom + act() pattern (no testing library).
  */
-import { CanvasProvider } from '@pi-desktop/canvas';
+import { CanvasProvider, createCanvasController } from '@pi-desktop/canvas';
 import type { OrgNodeView, WorkerActivityEvent } from '@pi-desktop/coordination';
 import type { ReactNode } from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useCorpStore } from '../../state/corp-store';
 import { CorpChatStream } from './CorpChatStream';
 
@@ -322,5 +322,137 @@ describe('CorpChatStream — pushed deltas stream like the normal chat', () => {
     expect(kept?.classList.contains('pd-chain')).toBe(true);
     expect(kept).toBe(container.querySelector('.pd-chain'));
     await unmount();
+  });
+});
+
+/**
+ * J3: the corp feed is text / thoughts / tool-call rows ONLY. An inline artifact
+ * widget (a ```html/```svg preview — the live "Core Game Implementation" black box)
+ * must NOT render inline in the corp chat; it opens in the CANVAS instead, routed
+ * from the same stream. The surrounding markdown/tool rows stay in the feed.
+ */
+describe('CorpChatStream — J3: inline artifacts open in the canvas, never inline', () => {
+  it('suppresses a corp ```html artifact inline and routes it to a canvas tab', async () => {
+    const controller = createCanvasController();
+    // The CEO writes its vision with an inline HTML preview fence (the black box).
+    await push(
+      { kind: 'text', phase: 'start' },
+      {
+        kind: 'text',
+        phase: 'delta',
+        delta: '# Core Game Implementation\n\n```html\n<div id="game">Breakout</div>\n```\n',
+      },
+      { kind: 'text', phase: 'end' },
+    );
+    const { container, unmount } = await render(
+      <CanvasProvider controller={controller}>
+        <CorpChatStream taskId="t1" node={CEO} />
+      </CanvasProvider>,
+    );
+    // No inline artifact widget (the black box) anywhere in the corp feed…
+    expect(container.querySelector('[data-testid="inline-artifacts"]')).toBeNull();
+    // …the prose header still renders as plain markdown text in the feed…
+    expect(container.querySelector('.pd-markdown')?.textContent).toContain(
+      'Core Game Implementation',
+    );
+    // …and the artifact was ROUTED to a canvas HTML tab (keyed by the stable id),
+    // carrying the live preview source — it opens in the canvas, not the chat.
+    const tab = controller.getState().tabs.find((t) => t.key === 'corp-a0');
+    expect(tab).not.toBeUndefined();
+    expect(tab?.kind).toBe('html');
+    expect(tab?.artifact?.content.text).toContain('<div id="game">Breakout</div>');
+    await unmount();
+  });
+});
+
+/**
+ * J4: the lead (CEO/root) keeps STREAMING through the vision→promotion hand-off.
+ * Once the team forms, the lead renders in history mode — but its post-vision tool
+ * calls (submit_vision → create_production_hierarchy) must still render as a LIVE
+ * activity row, never a bare settled header with dead air beneath it. Its own idle
+ * "Working…" tail stays suppressed (the sibling "Waiting for N…" indicator owns it).
+ */
+describe('CorpChatStream — J4: the lead streams through the vision→promotion gap', () => {
+  it('renders the lead post-vision tool calls LIVE in history mode, not a bare header', async () => {
+    // Promote the run (a team formed) — the lead now renders in history mode.
+    await act(async () => {
+      useCorpStore.getState().foldEvent({
+        type: 'org-chart',
+        chart: {
+          taskId: 't1',
+          nodes: [
+            { id: 'ceo', role: 'ceo', name: 'Pi', state: 'working' },
+            { id: 'mgr', role: 'manager', name: 'Build', parentId: 'ceo', state: 'working' },
+          ],
+          edges: [],
+        },
+      });
+    });
+    // The CEO forms its vision (settled), THEN calls create_production_hierarchy.
+    await push(
+      { kind: 'text', phase: 'start' },
+      { kind: 'text', phase: 'delta', delta: '# Core Game Implementation' },
+      { kind: 'text', phase: 'end' },
+      { kind: 'tool', toolName: 'create_production_hierarchy' },
+    );
+    const { container, unmount } = await render(
+      <CanvasProvider>
+        <CorpChatStream taskId="t1" node={CEO} historyMode />
+      </CanvasProvider>,
+    );
+    // The vision header still renders as history…
+    expect(container.querySelector('.pd-markdown')?.textContent).toContain(
+      'Core Game Implementation',
+    );
+    // …AND the post-vision tool call renders as a LIVE chain row (expanded/active),
+    // not a dead settled title — the lead's stream is continuous through the gap.
+    expect(container.querySelector('.pd-chain-step[data-kind="tool"]')).not.toBeNull();
+    expect(container.querySelector('.pd-chain')?.getAttribute('data-expanded')).toBe('true');
+    // But NO idle "Working…"/waiting tail of its own (A3 preserved — the
+    // "Waiting for N…" indicator carries the coordinating signal).
+    expect(container.querySelector('[data-testid="corp-current-action"]')).toBeNull();
+    await unmount();
+  });
+});
+
+/**
+ * J1: the user-facing "Processing…" indicator (the chat equivalent of the dev HUD's
+ * stall detector). While the node is working but no token has streamed for a beat
+ * (a prefill / slow-tool gap), a "Processing… Ns" indicator appears directly below
+ * the latest step; it hides again the moment tokens stream (the streaming tail IS
+ * the live signal then).
+ */
+describe('CorpChatStream — J1: a "Processing…" indicator fills a prefill/stall gap', () => {
+  it('appears when active+idle below the latest step, and hides while streaming', async () => {
+    vi.useFakeTimers();
+    try {
+      // The latest step is a tool call; the node is working; nothing streams.
+      await push({ kind: 'tool', toolName: 'create_production_hierarchy' });
+      const { container, unmount } = await render(stream());
+      // A delta just landed — no stall yet.
+      expect(container.querySelector('[data-testid="corp-processing"]')).toBeNull();
+      // Advance past the stall threshold with NO new deltas → "Processing… Ns".
+      await act(async () => {
+        vi.advanceTimersByTime(3000);
+      });
+      const proc = container.querySelector('[data-testid="corp-processing"]');
+      expect(proc).not.toBeNull();
+      expect(proc?.textContent).toContain('Processing');
+      expect(proc?.textContent).toMatch(/\d+s/);
+      // It sits as the tail beneath the latest tool-call row (the chain is above it).
+      expect(container.querySelector('.pd-chain')).not.toBeNull();
+      // A fresh streaming delta clears the stall → the indicator hides.
+      await push(
+        { kind: 'text', phase: 'start' },
+        { kind: 'text', phase: 'delta', delta: 'Back to work.' },
+      );
+      await act(async () => {
+        vi.advanceTimersByTime(300);
+      });
+      expect(container.querySelector('[data-testid="corp-processing"]')).toBeNull();
+      await unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

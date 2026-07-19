@@ -26,6 +26,7 @@ export function AssistantGroup({
   runningToolCalls,
   tps,
   onOpenFile,
+  suppressInlineArtifacts = false,
 }: {
   group: AssistantMsg[];
   resultByCallId: Map<string, ToolResultMsg>;
@@ -34,6 +35,15 @@ export function AssistantGroup({
   tps: number | undefined;
   /** Override the file-op row opener (the corp feed opens a live corp-peek). */
   onOpenFile?: (path: string) => void;
+  /**
+   * CORP feed rule (J3): the corp thread is text / thoughts / tool-call rows ONLY.
+   * Any THEME-2 inline artifact widget (```html/```svg preview, a generated image)
+   * is SUPPRESSED here and opened in the CANVAS instead — `CorpChatStream` detects
+   * the same artifacts and routes each to a canvas tab, so a `mockup.html` the CEO
+   * writes shows as a tool row + a canvas preview, never a black box inline. Normal
+   * chat leaves this false and renders widgets inline (THEME 2), unchanged.
+   */
+  suppressInlineArtifacts?: boolean;
 }): ReactNode {
   const streaming = group.some((m) => m.isStreaming === true);
   // Owner-scoped result per tool-call id (avoids a bare-id collision with a
@@ -62,6 +72,9 @@ export function AssistantGroup({
           return <Markdown key={`${groupId}-t${textN++}`} text={seg.text} />;
         }
         if (seg.kind === 'artifact') {
+          // J3: never render an inline artifact widget in the corp feed — it opens
+          // in the canvas instead (routed by CorpChatStream).
+          if (suppressInlineArtifacts) return null;
           return <InlineArtifact key={seg.artifact.id} artifact={seg.artifact} />;
         }
         // Round-6 UNIFY: a tool chain AND a thinking-only run both render through
@@ -72,7 +85,7 @@ export function AssistantGroup({
         // Generated images a chain produced render INLINE beneath it (round-5 #7);
         // a thinking-only run never has tool calls, so it contributes none.
         const chainImages =
-          seg.kind === 'chain'
+          seg.kind === 'chain' && !suppressInlineArtifacts
             ? seg.blocks
                 .filter(
                   (b): b is Extract<ContentBlock, { type: 'toolCall' }> => b.type === 'toolCall',

@@ -5,7 +5,10 @@ import {
   CREATE_PRODUCTION_HIERARCHY,
   CREATE_PRODUCTION_HIERARCHY_TOOL,
   type CreateHierarchyArgs,
+  createPromotionGuard,
   DEFAULT_PROMOTION_PROJECT_ID,
+  HIERARCHY_ALREADY_CREATED_ACK,
+  HIERARCHY_CREATED_ACK,
   PROMOTION_SYSTEM_PROMPT,
   parseCreateHierarchyArgs,
 } from './promotion.js';
@@ -144,5 +147,68 @@ describe('applyCreateHierarchy', () => {
   it('honors an explicit project id override', () => {
     const chart = applyCreateHierarchy(null, args, 'explicit-id');
     expect(chart.projectId).toBe('explicit-id');
+  });
+});
+
+describe('createPromotionGuard — idempotent-terminal (J5)', () => {
+  const args: CreateHierarchyArgs = { reason: 'r', divisions: [{ name: 'A', purpose: 'a' }] };
+
+  it('the FIRST valid call records the hierarchy and returns the terminal DONE ack', () => {
+    const guard = createPromotionGuard();
+    const first = guard.handle(args);
+    expect(first.created).toBe(true);
+    expect(first.done).toBe(true);
+    expect(first.args).toEqual({ reason: 'r', divisions: [{ name: 'A', purpose: 'a' }] });
+    expect(first.ack).toBe(HIERARCHY_CREATED_ACK);
+    expect(guard.recorded).toEqual(first.args);
+  });
+
+  it('a SECOND+ call is an idempotent dead-end: no new hierarchy, no control pass-back', () => {
+    const guard = createPromotionGuard();
+    guard.handle(args);
+    const recorded = guard.recorded;
+    const second = guard.handle({ reason: 'other', divisions: [{ name: 'B', purpose: 'b' }] });
+    expect(second.created).toBe(false);
+    expect(second.done).toBe(true);
+    expect(second.args).toBeUndefined();
+    expect(second.ack).toBe(HIERARCHY_ALREADY_CREATED_ACK);
+    // The recorded hierarchy is UNCHANGED — the second call created nothing.
+    expect(guard.recorded).toBe(recorded);
+    expect(guard.recorded?.divisions).toEqual([{ name: 'A', purpose: 'a' }]);
+  });
+
+  it('an invalid FIRST call records nothing and is not yet terminal (a later valid call still works)', () => {
+    const guard = createPromotionGuard();
+    const res = guard.handle({ reason: 'x', divisions: [] });
+    expect(res.created).toBe(false);
+    expect(res.done).toBe(false);
+    expect(guard.recorded).toBeUndefined();
+    const ok = guard.handle(args);
+    expect(ok.created).toBe(true);
+    expect(guard.recorded).toBeDefined();
+  });
+
+  it('the acks decisively tell the model it is DONE (output nothing, call no tool)', () => {
+    expect(HIERARCHY_CREATED_ACK).toContain('DONE');
+    expect(HIERARCHY_CREATED_ACK.toLowerCase()).toContain('call no tool');
+    expect(HIERARCHY_ALREADY_CREATED_ACK.toLowerCase()).toContain('already exists');
+    expect(HIERARCHY_ALREADY_CREATED_ACK.toLowerCase()).toContain('call no further tool');
+  });
+});
+
+describe('PROMOTION one-shot messaging (J5)', () => {
+  it('the system prompt says to call it EXACTLY ONCE and never twice', () => {
+    expect(PROMOTION_SYSTEM_PROMPT).toContain('EXACTLY ONCE');
+    expect(PROMOTION_SYSTEM_PROMPT.toLowerCase()).toContain('never call it a second time');
+    // The original bounded-stop language is preserved.
+    expect(PROMOTION_SYSTEM_PROMPT).toContain('you are finished');
+    expect(PROMOTION_SYSTEM_PROMPT).toContain('output nothing after the tool call');
+  });
+
+  it('the tool description is one-shot + terminal (call again does nothing)', () => {
+    const d = CREATE_PRODUCTION_HIERARCHY_TOOL.function.description;
+    expect(d).toContain('ONE-SHOT');
+    expect(d).toContain('TERMINAL');
+    expect(d.toLowerCase()).toContain('calling it again does nothing');
   });
 });

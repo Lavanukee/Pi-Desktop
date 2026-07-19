@@ -6,17 +6,26 @@
  * the in-page scrape is exercised against a jsdom document, and the flow against a
  * fake bridge.
  *
- * WHY (H1): the canvas browser visibly loaded REAL DuckDuckGo results, yet
- * web_search reported "0 results". The scrape ran BEFORE the results were in the
- * DOM — the navigate blocked on the full page `load` event, which for the DDG HTML
- * page drags on for tens of seconds AFTER the server-rendered results are already
- * present, so the `evaluate` fired against a page that was still "loading". The fix:
+ * WHY (H1 + J2): the canvas browser visibly loaded REAL DuckDuckGo results, yet
+ * web_search reported "0 results". Two compounding causes:
+ *  - TIMING: the scrape ran BEFORE the results were in the DOM — the navigate blocked
+ *    on the full page `load` event, which for the DDG HTML page drags on for tens of
+ *    seconds AFTER the server-rendered results are already present, so the `evaluate`
+ *    fired against a page that was still "loading".
+ *  - READINESS + MARKUP (J2): the readiness poll counted ANY `.result` element, so it
+ *    fired on the ad / spelling / "no-result" filler rows that render first and carry
+ *    NO organic `a.result__a` anchor — the scrape then ran against a page with no
+ *    organic hits and returned []. And the current `html.duckduckgo.com/html/` markup
+ *    shifted: the `a.result__a` href is now a DIRECT `https://…` URL (the
+ *    `//duckduckgo.com/l/?uddg=` redirect wrapper is mostly gone), and the snippet is
+ *    an `a.result__snippet` anchor.
+ * The fix:
  *  - do NOT block on full page load — cap the navigate wait, then POLL the page for
- *    the results container (present the moment the document parses) up to a few
- *    seconds before scraping;
- *  - extract against the current `duckduckgo.com/html/` structure (`.result` rows,
- *    `a.result__a` titles, `.result__snippet` snippets) with tolerant fallbacks,
- *    decoding the `//duckduckgo.com/l/?uddg=` redirect to the real destination URL.
+ *    GENUINE ORGANIC results (a `div.result` that is not an ad and carries an
+ *    `a.result__a`) up to a few seconds before scraping;
+ *  - extract against the current structure — `div.result` rows, `a.result__a` titles
+ *    (direct-`https` OR the legacy `uddg=` redirect, both decoded), `a.result__snippet`
+ *    snippets — dropping sponsored / no-result rows, with tolerant legacy fallbacks.
  */
 
 /** The minimal bridge surface the search needs — the `request` slice of the
@@ -41,39 +50,56 @@ export function ddgSearchUrl(query: string): string {
 /**
  * In-page scrape for the browser-backed web_search: runs (via `evaluate`) on the
  * loaded DuckDuckGo HTML results page and returns the top hits as
- * `{title,url,snippet}`. DDG's HTML endpoint wraps each result link in a
- * `//duckduckgo.com/l/?uddg=<encoded>` redirect — decoded here so the returned URL
- * is the real destination (usable by web_fetch). Selectors are tolerant (a chain of
- * fallbacks) so a small markup drift still yields the visible hits. Pure string (an
- * `evaluate` script); never throws (guards + try/catch), returns [] if the shape
- * changes entirely. Testable: `new Function('document', 'return ' + script)(doc)`.
+ * `{title,url,snippet}`. Matches the CURRENT `html.duckduckgo.com/html/` markup
+ * (J2): each organic hit is a `div.result` with an `a.result__a` title anchor and an
+ * `a.result__snippet` snippet. The `result__a` href is now a DIRECT `https://…` URL;
+ * the legacy `//duckduckgo.com/l/?uddg=<encoded>` redirect wrapper (and the
+ * protocol-relative `//…` form) are also decoded so the returned URL is always the
+ * real destination (usable by web_fetch). Sponsored / no-result rows are dropped, and
+ * an undecodable/`javascript:`/relative href is skipped rather than emitted. A looser
+ * legacy selector is the fallback when `div.result` finds nothing (markup drift). Pure
+ * string (an `evaluate` script); never throws (guards + try/catch), returns [] if the
+ * shape changes entirely. Testable: `new Function('document', 'return ' + script)(doc)`.
  */
 export const DDG_SCRAPE_SCRIPT = String.raw`(() => {
   try {
     var decode = function (h) {
+      h = h || '';
       try {
-        var m = /[?&]uddg=([^&]+)/.exec(h || '');
+        var m = /[?&]uddg=([^&]+)/.exec(h);
         if (m) return decodeURIComponent(m[1]);
       } catch (e) {}
-      if (h && h.indexOf('//') === 0) return 'https:' + h;
-      return h || '';
+      if (h.indexOf('//') === 0) return 'https:' + h;                 // protocol-relative
+      if (h.indexOf('http://') === 0 || h.indexOf('https://') === 0) return h; // direct
+      return '';                                                       // javascript:/relative/junk → drop
     };
+    var text = function (el) {
+      return el ? (el.textContent || '').replace(/\s+/g, ' ').trim() : '';
+    };
+    var isAd = function (cls) {
+      return /result--ad|result--sponsored|result--no-result/.test(cls || '');
+    };
+    // Authoritative selector for the current markup: organic hits are div.result.
+    // Fall back to the looser legacy selector only if that finds nothing at all.
+    var rows = document.querySelectorAll('div.result');
+    if (!rows || rows.length === 0) {
+      rows = document.querySelectorAll('.web-result, .results_links, .results_links_deep, .result');
+    }
     var out = [];
-    var nodes = document.querySelectorAll('.result, .web-result, .results_links, .results_links_deep');
-    for (var i = 0; i < nodes.length; i++) {
-      var el = nodes[i];
-      // Skip DDG's own ad / no-result filler rows.
-      if (el.className && /result--ad|result--no-result/.test(el.className)) continue;
-      var a = el.querySelector('a.result__a') || el.querySelector('.result__title a') || el.querySelector('a[href]');
-      if (!a) continue;
-      var title = (a.textContent || '').replace(/\s+/g, ' ').trim();
+    var seen = {};
+    for (var i = 0; i < rows.length; i++) {
+      var el = rows[i];
+      if (isAd(el.className)) continue;                                 // sponsored / no-result filler
+      var a = el.querySelector('a.result__a') || el.querySelector('.result__title a') || el.querySelector('h2 a');
+      if (!a) continue;                                                 // ad / empty row, no organic anchor
+      var title = text(a);
       if (!title) continue;
-      var sn = el.querySelector('.result__snippet') || el.querySelector('.result__snippet a');
-      out.push({
-        title: title,
-        url: decode(a.getAttribute('href') || ''),
-        snippet: sn ? (sn.textContent || '').replace(/\s+/g, ' ').trim() : '',
-      });
+      var url = decode(a.getAttribute('href') || '');
+      if (!url) continue;                                               // undecodable href → skip
+      if (seen[url]) continue;                                          // de-dupe (looser fallback can double-match)
+      seen[url] = 1;
+      var sn = el.querySelector('a.result__snippet') || el.querySelector('.result__snippet');
+      out.push({ title: title, url: url, snippet: text(sn) });
       if (out.length >= 20) break;
     }
     return out;
@@ -83,14 +109,31 @@ export const DDG_SCRAPE_SCRIPT = String.raw`(() => {
 })()`;
 
 /**
- * In-page readiness probe (H1): how many result containers are present RIGHT NOW.
- * The DDG HTML results are server-rendered, so they exist the moment the document
- * parses — well before the `load` event — which is exactly what lets the flow poll
- * for them instead of hanging on full load. Pure string; never throws.
+ * In-page readiness probe (H1 + J2): how many GENUINE ORGANIC results are present
+ * RIGHT NOW — a `div.result` that is NOT a sponsored/no-result row and carries an
+ * `a.result__a` title anchor. Counting only organic hits (not any `.result`, which
+ * matches the ad / spelling / "no-result" rows that render first) is what makes the
+ * poll wait for real results instead of firing early and scraping an empty page. The
+ * DDG HTML results are server-rendered, so they exist the moment the document parses —
+ * well before the `load` event — which is what lets the flow poll for them instead of
+ * hanging on full load. Falls back to any `a.result__a` count. Pure string; never throws.
  */
 export const DDG_RESULTS_READY_SCRIPT = `(() => {
   try {
-    return document.querySelectorAll('.result, .web-result, .results_links, .results_links_deep').length;
+    var isAd = function (cls) {
+      return /result--ad|result--sponsored|result--no-result/.test(cls || '');
+    };
+    var rows = document.querySelectorAll('div.result');
+    var n = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var el = rows[i];
+      if (isAd(el.className)) continue;
+      if (el.querySelector('a.result__a')) n++;
+    }
+    if (n > 0) return n;
+    // Drift fallback: any organic result__a anchor (excluding the ad variant), so an
+    // ad-only page still reads 0 and the poll keeps waiting.
+    return document.querySelectorAll('a.result__a:not(.result--ad__a)').length;
   } catch (e) {
     return 0;
   }

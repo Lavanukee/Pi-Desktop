@@ -12,29 +12,54 @@ import {
 
 // ── the in-page scrape, against real-shaped DDG HTML markup (jsdom) ──────────
 
-/** A slimmed but faithful `duckduckgo.com/html/` results fragment: `.result` rows
- * with `a.result__a` titles wrapped in the `//duckduckgo.com/l/?uddg=` redirect and
- * `.result__snippet` snippets, plus an ad row that must be skipped and a direct
- * (non-redirect) protocol-relative link. `&amp;` mirrors the raw HTML entity DDG
- * emits (jsdom decodes it to `&` on getAttribute). */
+/** A faithful fragment of the CURRENT `html.duckduckgo.com/html/` POST response
+ * (mirrors packages/web-tools/src/fixtures/duckduckgo-current.html, captured 2026-07).
+ * The load-bearing shape: each organic hit is a `div.result …` whose `links_main`
+ * body holds an `h2.result__title > a.result__a` with a DIRECT `https://` href (the
+ * `//duckduckgo.com/l/?uddg=` redirect wrapper is now mostly gone), an
+ * `a.result__snippet` (with `<b>` highlights), and a `result__extras__url`. Included
+ * on purpose: a sponsored `result--ad` row (must be skipped), ONE legacy `uddg=`
+ * redirect row (proves the decode still works — `&amp;` is the raw entity DDG emits,
+ * which jsdom decodes to `&` on getAttribute), and one protocol-relative `//` href. */
 const SAMPLE_DDG_HTML = `<!doctype html><html><body>
-  <div class="result result--ad">
-    <a class="result__a" href="//duckduckgo.com/y.js?ad=1">SPONSORED — buy stuff</a>
-    <a class="result__snippet">an ad we must skip</a>
+<div id="links" class="results">
+  <div class="result results_links results_links_deep web-result ">
+    <div class="links_main links_deep result__body">
+      <h2 class="result__title">
+        <a rel="nofollow" class="result__a" href="https://developer.mozilla.org/en-US/">MDN Web Docs</a>
+      </h2>
+      <a class="result__snippet" href="https://developer.mozilla.org/en-US/">Resources for <b>developers</b>, by developers.</a>
+      <div class="result__extras"><div class="result__extras__url">
+        <a class="result__url" href="https://developer.mozilla.org/en-US/">developer.mozilla.org</a>
+      </div></div>
+    </div>
   </div>
-  <div class="result results_links results_links_deep web-result">
-    <h2 class="result__title">
-      <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fdeveloper.mozilla.org%2Fen-US%2F&amp;rut=deadbeef">MDN Web Docs</a>
-    </h2>
-    <a class="result__snippet">Resources for developers, by developers.</a>
+
+  <!-- A sponsored row: no organic content, must be skipped. -->
+  <div class="result result--ad result--ad--small">
+    <div class="links_main result__body">
+      <span class="badge--ad">Ad</span>
+      <a class="result__a result--ad__a" href="https://duckduckgo.com/y.js?ad=1">SPONSORED — buy stuff</a>
+    </div>
   </div>
-  <div class="result results_links web-result">
-    <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FDuckDuckGo">DuckDuckGo - Wikipedia</a>
-    <a class="result__snippet">A privacy-focused search engine.</a>
+
+  <!-- Legacy redirect-wrapped row: the decode must still recover the destination. -->
+  <div class="result results_links results_links_deep web-result ">
+    <div class="links_main links_deep result__body">
+      <h2 class="result__title">
+        <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FDuckDuckGo&amp;rut=deadbeef">DuckDuckGo - Wikipedia</a>
+      </h2>
+      <a class="result__snippet" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fen.wikipedia.org%2Fwiki%2FDuckDuckGo">A privacy-focused search engine.</a>
+    </div>
   </div>
+
+  <!-- Protocol-relative direct href, no snippet node. -->
   <div class="result web-result">
-    <a class="result__a" href="//example.org/direct">Direct protocol-relative link</a>
+    <div class="links_main result__body">
+      <a class="result__a" href="//example.org/direct">Direct protocol-relative link</a>
+    </div>
   </div>
+</div>
 </body></html>`;
 
 /** Run the browser-executed scrape string against a jsdom document, exactly the way
@@ -71,11 +96,16 @@ describe('DDG_SCRAPE_SCRIPT — extracts the visible hits from current DDG HTML'
     expect(results.some((r) => /buy stuff/i.test(r.title))).toBe(false); // ad skipped
   });
 
-  it('DECODES the //duckduckgo.com/l/?uddg= redirect to the real destination', () => {
-    const [first] = runScrape(SAMPLE_DDG_HTML);
-    expect(first?.url.startsWith('https://')).toBe(true);
-    expect(first?.url).not.toContain('duckduckgo.com/l/');
-    expect(first?.url).not.toContain('uddg=');
+  it('passes a DIRECT https result__a href through unchanged (the current markup)', () => {
+    const mdn = runScrape(SAMPLE_DDG_HTML).find((r) => r.title === 'MDN Web Docs');
+    expect(mdn?.url).toBe('https://developer.mozilla.org/en-US/');
+  });
+
+  it('still DECODES a legacy //duckduckgo.com/l/?uddg= redirect to the real destination', () => {
+    const wiki = runScrape(SAMPLE_DDG_HTML).find((r) => r.title === 'DuckDuckGo - Wikipedia');
+    expect(wiki?.url).toBe('https://en.wikipedia.org/wiki/DuckDuckGo');
+    expect(wiki?.url).not.toContain('duckduckgo.com/l/');
+    expect(wiki?.url).not.toContain('uddg=');
   });
 
   it('tolerates a direct (non-redirect) protocol-relative href → https:', () => {
@@ -88,14 +118,37 @@ describe('DDG_SCRAPE_SCRIPT — extracts the visible hits from current DDG HTML'
   it('returns [] for a page with no results (never throws)', () => {
     expect(runScrape('<!doctype html><html><body><p>No results.</p></body></html>')).toEqual([]);
   });
+
+  it('returns [] for a page carrying ONLY an ad / no-result row (no organic hit)', () => {
+    const adOnly = `<!doctype html><html><body><div id="links" class="results">
+      <div class="result result--ad"><a class="result__a result--ad__a" href="https://duckduckgo.com/y.js?ad=1">Ad</a></div>
+      <div class="result no-results result--no-result"><a class="result__a" href="https://duckduckgo.com/">No results.</a></div>
+    </div></body></html>`;
+    expect(runScrape(adOnly)).toEqual([]);
+  });
 });
 
-describe('DDG_RESULTS_READY_SCRIPT — counts the results container', () => {
-  it('is > 0 once results are in the DOM, 0 before they render', () => {
+describe('DDG_RESULTS_READY_SCRIPT — counts GENUINE organic results only', () => {
+  it('is > 0 once organic results are in the DOM, 0 before they render', () => {
     expect(runReady(SAMPLE_DDG_HTML)).toBeGreaterThan(0);
     expect(runReady('<!doctype html><html><body><div class="loading"></div></body></html>')).toBe(
       0,
     );
+  });
+
+  it('is 0 when only ad / no-result filler rows have rendered (does not fire early)', () => {
+    // The live "0 results" cause: the poll used to see these `.result` rows and fire
+    // the scrape before the organic hits rendered. It must now wait (count 0).
+    const fillerOnly = `<!doctype html><html><body><div id="links" class="results">
+      <div class="result result--ad result--ad--small"><a class="result__a result--ad__a" href="https://duckduckgo.com/y.js?ad=1">Ad</a></div>
+      <div class="result result--no-result">No results found for your query.</div>
+    </div></body></html>`;
+    expect(runReady(fillerOnly)).toBe(0);
+  });
+
+  it('counts exactly the organic hits in the current markup (ad row excluded)', () => {
+    // SAMPLE has 3 organic div.result rows + 1 ad row → the ad must not be counted.
+    expect(runReady(SAMPLE_DDG_HTML)).toBe(3);
   });
 });
 

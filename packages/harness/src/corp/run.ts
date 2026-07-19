@@ -33,8 +33,11 @@ import { BROWSER_TOOL_NAMES } from '@pi-desktop/browser-use/tool-names';
 import {
   ARCHITECT_PROMPT,
   buildArchitectPrompt,
+  capArchitecture,
+  capDivisions,
   DEFAULT_DECOMPOSITION_GRANULARITY,
   type DecompositionGranularity,
+  maxContractsPerDivisionFor,
   parseArchitecture,
 } from './architect.js';
 import {
@@ -59,7 +62,11 @@ import {
   type CeoDecision,
   parseCeoDecision,
 } from './ceo.js';
-import { buildManagerContractPrompt, parseManagerContracts } from './contracts.js';
+import {
+  buildManagerContractPrompt,
+  capManagerContracts,
+  parseManagerContracts,
+} from './contracts.js';
 import { deriveDeliveryShape } from './delivery.js';
 import {
   type DispatchReport,
@@ -95,10 +102,10 @@ import {
   CREATE_PRODUCTION_HIERARCHY,
   CREATE_PRODUCTION_HIERARCHY_TOOL,
   type CreateHierarchyArgs,
+  createPromotionGuard,
   type HierarchyDivisionSpec,
   type OpenAiFunctionTool,
   PROMOTION_SYSTEM_PROMPT,
-  parseCreateHierarchyArgs,
 } from './promotion.js';
 import { composeNodePrompt, getRolePrompt, roleThinkingEnabled } from './prompts.js';
 import { isBlankFile, MANAGER_EMPTY_RETRY_NUDGE, withRetryOnEmpty } from './retry.js';
@@ -411,17 +418,39 @@ function firstJsonObject(text: string | undefined): Record<string, unknown> | un
   return undefined;
 }
 
-/** Detect a `create_production_hierarchy` promotion from the model reply — a tool
- * call (decoding string args) or a JSON object in the content. */
-function detectPromotion(msg: CorpChatResult): CreateHierarchyArgs | undefined {
+/** The resolved promotion decision for one worker/CEO reply (J5). */
+interface PromotionResolution {
+  /** The recorded hierarchy args (the FIRST valid call), or undefined (stayed solo). */
+  readonly args: CreateHierarchyArgs | undefined;
+  /** How many EXTRA `create_production_hierarchy` calls the reply made AFTER the
+   * first valid one — each an idempotent dead-end that created no second hierarchy
+   * (logged, never silently, so the double-call live defect is visible). */
+  readonly ignoredExtraCalls: number;
+}
+
+/**
+ * Detect a `create_production_hierarchy` promotion from the model reply — a tool
+ * call (decoding string args) or a JSON object in the content — through the
+ * IDEMPOTENT-TERMINAL guard (J5). The FIRST valid call records the hierarchy; any
+ * additional promotion calls in the same reply are idempotent dead-ends that create
+ * NO second hierarchy and are counted for logging (the live defect: the CEO called
+ * it twice and thrashed). The harness therefore acts on exactly one hierarchy.
+ */
+function detectPromotion(msg: CorpChatResult): PromotionResolution {
+  const guard = createPromotionGuard();
+  let ignoredExtraCalls = 0;
   for (const call of msg.toolCalls ?? []) {
     if (call.name !== CREATE_PRODUCTION_HIERARCHY) continue;
     const decoded =
       typeof call.arguments === 'string' ? firstJsonObject(call.arguments) : call.arguments;
-    const parsed = parseCreateHierarchyArgs(decoded);
-    if (parsed !== undefined) return parsed;
+    const res = guard.handle(decoded);
+    if (!res.created && res.done) ignoredExtraCalls += 1; // an extra call after the first valid one
   }
-  return parseCreateHierarchyArgs(firstJsonObject(msg.content));
+  // Content-JSON fallback ONLY when no tool call carried a usable promotion.
+  if (guard.recorded === undefined) {
+    guard.handle(firstJsonObject(msg.content));
+  }
+  return { args: guard.recorded, ignoredExtraCalls };
 }
 
 const zeroTurns = (): Record<CorpTurnPurpose, number> => ({
@@ -728,10 +757,16 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
   // The worker's promotion tool as a neutral custom-tool spec: calling it IS the
   // promotion signal, and detectPromotion parses the args off the recorded tool
   // call (falling back to the finalText JSON, the same detector the chat path uses).
+  // TERMINAL (J5), exactly like the CEO vision turn's submit_vision: the FIRST call
+  // ends the turn (the seam flips its completeness bump off), so the worker/CEO
+  // cannot spin calling it a second time — the live "created multiple production
+  // hierarchies, then thrashed" defect. The harness-side idempotent guard in
+  // detectPromotion is the backstop: only the first valid call ever builds a chart.
   const promotionCustomTool: RoleAgentCustomTool = {
     name: CREATE_PRODUCTION_HIERARCHY_TOOL.function.name,
     description: CREATE_PRODUCTION_HIERARCHY_TOOL.function.description,
     parameters: CREATE_PRODUCTION_HIERARCHY_TOOL.function.parameters,
+    terminal: true,
   };
 
   // Charge ONE consult (call_peer / call_specialist) turn against the global budget
@@ -916,7 +951,15 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         tools: [CREATE_PRODUCTION_HIERARCHY_TOOL],
       });
     }
-    promotionArgs = detectPromotion(workerRes);
+    const promotion = detectPromotion(workerRes);
+    promotionArgs = promotion.args;
+    if (promotion.ignoredExtraCalls > 0) {
+      // The live double-call defect — surfaced, never silent. Exactly one hierarchy
+      // is built regardless (the idempotent guard); the extra calls are dead-ends.
+      log(
+        `worker called create_production_hierarchy ${promotion.ignoredExtraCalls + 1}× — ignored ${promotion.ignoredExtraCalls} repeat call(s); the hierarchy is created exactly once`,
+      );
+    }
 
     if (promotionArgs === undefined) {
       directAnswerPreview = preview(workerRes.content ?? '');
@@ -924,7 +967,16 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
       log('stayed solo');
     } else {
       promoted = true;
-      divisions = promotionArgs.divisions;
+      // COARSE ENFORCEMENT (J7): cap the divisions to a handful for xhigh (uncapped
+      // for max). Fewer divisions × the per-division contract cap below is what lands
+      // the ≤ ~handful total the owner wants. Trimmed divisions are logged, not silent.
+      const cappedDivisions = capDivisions(promotionArgs.divisions, granularity);
+      divisions = cappedDivisions.divisions;
+      if (cappedDivisions.trimmed.length > 0) {
+        log(
+          `coarse cap: trimmed ${cappedDivisions.trimmed.length} division(s) beyond ${divisions.length} — dropped ${cappedDivisions.trimmed.map((d) => d.name).join(', ')}`,
+        );
+      }
       log(`promoted — ${divisions.length} division(s)`);
 
       // 2. ARCHITECT → shared architecture. Thinking OFF (structured JSON); read
@@ -957,7 +1009,16 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         });
         architectContent = architectRes.content ?? '';
       }
-      const architecture = parseArchitecture(architectContent);
+      // COARSE ENFORCEMENT (J7): cap the module map to one region per division / the
+      // division cap for xhigh (uncapped for max) — a division with one big region
+      // authors fewer, larger contracts. Trimmed region paths are logged, not silent.
+      const capped = capArchitecture(parseArchitecture(architectContent), granularity);
+      const architecture = capped.architecture;
+      if (capped.trimmedPaths.length > 0) {
+        log(
+          `coarse cap: trimmed ${capped.trimmedPaths.length} extra module-map region(s) — dropped ${capped.trimmedPaths.join(', ')}`,
+        );
+      }
       architectureModuleCount = architecture.moduleMap.length;
       architectureInterfaceCount = architecture.interfaces.length;
       hasArchitecture = true;
@@ -973,7 +1034,12 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
         const managerResult = await withRetryOnEmpty({
           isEmpty: (contracts: readonly Contract[]) => contracts.length === 0,
           run: async ({ isRetry }) => {
-            const basePrompt = buildManagerContractPrompt(division, workingTask, architecture);
+            const basePrompt = buildManagerContractPrompt(
+              division,
+              workingTask,
+              architecture,
+              granularity,
+            );
             const userContent = isRetry
               ? `${basePrompt}\n\n${MANAGER_EMPTY_RETRY_NUDGE}`
               : basePrompt;
@@ -1006,7 +1072,17 @@ export async function runCorp(options: RunCorpOptions): Promise<CorpRunResult> {
             return parseManagerContracts(content);
           },
         });
-        contractsByDivision.push(managerResult.value);
+        // COARSE ENFORCEMENT (J7): truncate this manager's contracts to the per-division
+        // cap for xhigh (uncapped for max) — the hard backstop under the prompt steer so
+        // a manager that ignores "author a few large contracts" still lands a handful.
+        const contractCap = maxContractsPerDivisionFor(granularity);
+        const cappedContracts = capManagerContracts(managerResult.value, contractCap);
+        if (cappedContracts.trimmedIds.length > 0) {
+          log(
+            `coarse cap: division "${division.name}" authored ${managerResult.value.length} contracts — trimmed ${cappedContracts.trimmedIds.length} beyond the cap of ${contractCap} (dropped ${cappedContracts.trimmedIds.join(', ')})`,
+          );
+        }
+        contractsByDivision.push(cappedContracts.contracts);
         if (managerResult.emptyAfterRetry) emptyAfterRetryDivisions.push(division.name);
       }
 

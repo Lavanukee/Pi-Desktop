@@ -2,10 +2,18 @@ import { describe, expect, it } from 'vitest';
 import {
   ARCHITECT_PROMPT,
   buildArchitectPrompt,
+  COARSE_MAX_CONTRACTS_PER_DIVISION,
+  COARSE_MAX_DIVISIONS,
+  capArchitecture,
+  capDivisions,
   DEFAULT_DECOMPOSITION_GRANULARITY,
   decompositionGuidanceLines,
+  maxContractsPerDivisionFor,
+  maxDivisionsFor,
   parseArchitecture,
 } from './architect.js';
+import type { Architecture } from './org-chart.js';
+import type { HierarchyDivisionSpec } from './promotion.js';
 
 describe('ARCHITECT_PROMPT', () => {
   it('names the two deliverables (module map + interfaces) and the no-overlap rule', () => {
@@ -223,5 +231,77 @@ Let me know if you want more.`;
     });
     expect(parseArchitecture('')).toEqual({ moduleMap: [], interfaces: [] });
     expect(parseArchitecture('{ not json }')).toEqual({ moduleMap: [], interfaces: [] });
+  });
+});
+
+describe('COARSE (xhigh) enforcement caps (J7)', () => {
+  const div = (name: string): HierarchyDivisionSpec => ({ name, purpose: `${name} purpose` });
+
+  it('exposes the granularity-keyed cap values (xhigh capped, max uncapped)', () => {
+    expect(maxDivisionsFor('xhigh')).toBe(COARSE_MAX_DIVISIONS);
+    expect(maxContractsPerDivisionFor('xhigh')).toBe(COARSE_MAX_CONTRACTS_PER_DIVISION);
+    expect(maxDivisionsFor('max')).toBe(Number.POSITIVE_INFINITY);
+    expect(maxContractsPerDivisionFor('max')).toBe(Number.POSITIVE_INFINITY);
+    // The two caps multiply to a handful — the whole point of coarse mode.
+    expect(COARSE_MAX_DIVISIONS * COARSE_MAX_CONTRACTS_PER_DIVISION).toBeLessThanOrEqual(8);
+  });
+
+  describe('capDivisions', () => {
+    const six = ['a', 'b', 'c', 'd', 'e', 'f'].map(div);
+
+    it('xhigh trims divisions past the cap, keeping the first, and reports the trimmed', () => {
+      const { divisions, trimmed } = capDivisions(six, 'xhigh');
+      expect(divisions).toHaveLength(COARSE_MAX_DIVISIONS);
+      expect(divisions.map((d) => d.name)).toEqual(['a', 'b', 'c', 'd']);
+      expect(trimmed.map((d) => d.name)).toEqual(['e', 'f']);
+    });
+
+    it('max leaves every division in place (uncapped)', () => {
+      const { divisions, trimmed } = capDivisions(six, 'max');
+      expect(divisions).toHaveLength(6);
+      expect(trimmed).toEqual([]);
+    });
+
+    it('is a no-op when already at/under the cap', () => {
+      const { divisions, trimmed } = capDivisions(six.slice(0, 3), 'xhigh');
+      expect(divisions).toHaveLength(3);
+      expect(trimmed).toEqual([]);
+    });
+  });
+
+  describe('capArchitecture', () => {
+    const arch = (): Architecture => ({
+      moduleMap: [
+        { path: 'src/a1/', owner: 'A', purpose: 'a one' },
+        { path: 'src/a2/', owner: 'A', purpose: 'a two — extra region for the same owner' },
+        { path: 'src/b/', owner: 'B', purpose: 'b' },
+        { path: 'src/c/', owner: 'C', purpose: 'c' },
+        { path: 'src/d/', owner: 'D', purpose: 'd' },
+        { path: 'src/e/', owner: 'E', purpose: 'e — past the division cap' },
+      ],
+      interfaces: [
+        { name: 'I', exposedBy: 'A', path: 'src/a1/i.ts', summary: 's', consumedBy: ['B'] },
+      ],
+    });
+
+    it('xhigh keeps one region per owner and ≤ the division cap, trimming the rest', () => {
+      const { architecture, trimmedPaths } = capArchitecture(arch(), 'xhigh');
+      // A's second region is merged away; E is past the 4-division cap.
+      expect(architecture.moduleMap.map((m) => m.path)).toEqual([
+        'src/a1/',
+        'src/b/',
+        'src/c/',
+        'src/d/',
+      ]);
+      expect(trimmedPaths).toEqual(['src/a2/', 'src/e/']);
+      expect(architecture.interfaces).toHaveLength(1); // interfaces untouched
+    });
+
+    it('max returns the architecture unchanged with no trims', () => {
+      const original = arch();
+      const { architecture, trimmedPaths } = capArchitecture(original, 'max');
+      expect(architecture).toBe(original);
+      expect(trimmedPaths).toEqual([]);
+    });
   });
 });

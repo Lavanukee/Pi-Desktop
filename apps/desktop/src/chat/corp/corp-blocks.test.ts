@@ -9,7 +9,7 @@
 import type { WorkerTranscriptLine, WorkerTranscriptView } from '@pi-desktop/coordination';
 import type { ContentBlock } from '@pi-desktop/engine';
 import { describe, expect, it } from 'vitest';
-import { transcriptToAssistantView, transcriptToBlocks } from './corp-blocks';
+import { corpArtifacts, transcriptToAssistantView, transcriptToBlocks } from './corp-blocks';
 
 function line(
   over: Partial<WorkerTranscriptLine> & Pick<WorkerTranscriptLine, 'kind'>,
@@ -225,6 +225,36 @@ describe('transcriptToBlocks — manager contract array → commission rows (D1)
     const partial = JSON.stringify(CONTRACTS).slice(0, 60); // truncated, unparseable
     const blocks = transcriptToBlocks([line({ kind: 'message', text: partial, streaming: true })]);
     expect(blocks.filter(isTool)).toHaveLength(0);
+  });
+});
+
+describe('corpArtifacts — THEME-2 fences the corp feed routes to the canvas (J3)', () => {
+  it('detects a ```html preview fence (with its surrounding prose left as text)', () => {
+    const text = '# Core Game Implementation\n\n```html\n<div id="game">Breakout</div>\n```';
+    const arts = corpArtifacts([line({ kind: 'message', text })], false);
+    expect(arts).toHaveLength(1);
+    expect(arts[0]).toMatchObject({ kind: 'html', id: 'corp-a0' });
+    expect(arts[0]?.text).toContain('<div id="game">Breakout</div>');
+  });
+
+  it('detects a ```svg fence', () => {
+    const text = 'Here is the logo:\n```svg\n<svg><rect /></svg>\n```';
+    const arts = corpArtifacts([line({ kind: 'message', text })], false);
+    expect(arts).toHaveLength(1);
+    expect(arts[0]?.kind).toBe('svg');
+  });
+
+  it('finds NO artifact in plain prose or an ordinary code fence (no false positives)', () => {
+    const prose = corpArtifacts(
+      [line({ kind: 'message', text: 'Just splitting the work.' })],
+      false,
+    );
+    expect(prose).toHaveLength(0);
+    const code = corpArtifacts(
+      [line({ kind: 'message', text: '```ts\nconst x = 1;\n```' })],
+      false,
+    );
+    expect(code).toHaveLength(0);
   });
 });
 

@@ -1060,3 +1060,164 @@ describe('runCorp — the RunBudget is the ultimate net', () => {
     expect(result.budget.turnsUsed).toBeLessThanOrEqual(result.budget.maxTurns);
   });
 });
+
+// --- J5: create_production_hierarchy is one-shot + idempotent -----------------
+
+describe('runCorp — create_production_hierarchy is one-shot + idempotent (J5)', () => {
+  it('builds exactly ONE hierarchy when the worker calls the tool twice, and logs the extra', async () => {
+    const { fs, readFs } = memWorkspace();
+    const first = {
+      reason: 'first, real hierarchy',
+      divisions: [
+        { name: 'Alpha', purpose: 'a' },
+        { name: 'Beta', purpose: 'b' },
+      ],
+    };
+    const second = { reason: 'a mistaken repeat', divisions: [{ name: 'Gamma', purpose: 'g' }] };
+    const oneContract = [
+      {
+        id: 'x1',
+        title: 't',
+        ownerNodeId: 'e1',
+        input: 'i',
+        output: 'o',
+        slot: 'src/x1.ts',
+        available: { tools: ['write'], imports: [] },
+        reviewRubric: 'r',
+        dependsOn: [],
+        status: 'queued',
+      },
+    ];
+    const logs: string[] = [];
+    const chat: CorpChatFn = (request) => {
+      switch (request.purpose) {
+        case 'vision':
+          return { content: 'VISION BRIEF: build it.' };
+        case 'worker':
+          // The live defect: the worker emits the promotion tool TWICE in one reply.
+          return {
+            content: '',
+            toolCalls: [
+              { name: CREATE_PRODUCTION_HIERARCHY, arguments: JSON.stringify(first) },
+              { name: CREATE_PRODUCTION_HIERARCHY, arguments: JSON.stringify(second) },
+            ],
+          };
+        case 'architect':
+          return { content: JSON.stringify({ moduleMap: [], interfaces: [] }) };
+        case 'manager':
+          return { content: JSON.stringify(oneContract) };
+        case 'engineer':
+          return { content: ENGINEER_FILE };
+        default:
+          return { content: 'APPROVE — good.' };
+      }
+    };
+    const result = await runCorp({
+      task: 'Build a multi-part thing',
+      chat,
+      fs,
+      readFs,
+      workspace: '/ws',
+      log: (m) => logs.push(m),
+    });
+
+    expect(result.promoted).toBe(true);
+    // ONLY the first call's divisions — the second call created no second hierarchy.
+    expect(result.divisions).toEqual(['Alpha', 'Beta']);
+    expect(result.divisions).not.toContain('Gamma');
+    expect(result.promotionReason).toBe('first, real hierarchy');
+    // The extra call is surfaced (logged), never silent — and the run still terminates.
+    expect(logs.some((l) => /ignored 1 repeat call/.test(l))).toBe(true);
+    expect(result.terminatedReason).toBe('completed');
+  });
+});
+
+// --- J7: coarse (xhigh) lands a handful; max is uncapped ----------------------
+
+describe('runCorp — coarse (xhigh) lands a handful; max is uncapped (J7)', () => {
+  const SIX_DIVISIONS = {
+    reason: 'a big multi-part build',
+    divisions: [
+      { name: 'D1', purpose: 'p1' },
+      { name: 'D2', purpose: 'p2' },
+      { name: 'D3', purpose: 'p3' },
+      { name: 'D4', purpose: 'p4' },
+      { name: 'D5', purpose: 'p5' },
+      { name: 'D6', purpose: 'p6' },
+    ],
+  };
+  // Every manager over-authors EIGHT contracts (the sprawl the owner saw). A fresh
+  // counter per run keeps ids/slots unique across the 6 division turns.
+  const makeChat = (): CorpChatFn => {
+    let n = 0;
+    return (request) => {
+      switch (request.purpose) {
+        case 'vision':
+          return { content: 'VISION BRIEF: build it.' };
+        case 'worker':
+          return {
+            content: '',
+            toolCalls: [
+              { name: CREATE_PRODUCTION_HIERARCHY, arguments: JSON.stringify(SIX_DIVISIONS) },
+            ],
+          };
+        case 'architect':
+          return { content: JSON.stringify({ moduleMap: [], interfaces: [] }) };
+        case 'manager': {
+          const arr = [];
+          for (let i = 0; i < 8; i++) {
+            n += 1;
+            arr.push({
+              id: `c${n}`,
+              title: `t${n}`,
+              ownerNodeId: `e${n}`,
+              input: 'i',
+              output: 'o',
+              slot: `src/f${n}.ts`,
+              available: { tools: ['write'], imports: [] },
+              reviewRubric: 'r',
+              dependsOn: [],
+              status: 'queued',
+            });
+          }
+          return { content: JSON.stringify(arr) };
+        }
+        case 'engineer':
+          return { content: ENGINEER_FILE };
+        default:
+          return { content: 'APPROVE — good.' };
+      }
+    };
+  };
+
+  it('xhigh caps divisions ≤4 and contracts ≤2/division → a handful (8 here, not 48)', async () => {
+    const { fs, readFs } = memWorkspace();
+    const result = await runCorp({
+      task: 'Build a thing',
+      chat: makeChat(),
+      fs,
+      readFs,
+      workspace: '/ws',
+      decompositionGranularity: 'xhigh',
+    });
+    expect(result.divisions).toHaveLength(4); // 6 → capped to COARSE_MAX_DIVISIONS
+    // 4 divisions × ≤2 contracts each = a handful (≤8); a pure-logic task adds no
+    // integration entry, so the plan IS the division contracts.
+    expect(result.totalContracts).toBeLessThanOrEqual(8);
+    expect(result.totalContracts).toBe(8);
+  });
+
+  it('max leaves divisions AND contracts fully uncapped (48 here)', async () => {
+    const { fs, readFs } = memWorkspace();
+    const result = await runCorp({
+      task: 'Build a thing',
+      chat: makeChat(),
+      fs,
+      readFs,
+      workspace: '/ws',
+      decompositionGranularity: 'max',
+    });
+    expect(result.divisions).toHaveLength(6); // uncapped
+    expect(result.totalContracts).toBe(48); // 6 × 8, uncapped
+  });
+});

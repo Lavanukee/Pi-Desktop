@@ -18,9 +18,62 @@
  * manager's authoring step only.
  */
 
+import {
+  COARSE_MAX_CONTRACTS_PER_DIVISION,
+  DEFAULT_DECOMPOSITION_GRANULARITY,
+  type DecompositionGranularity,
+} from './architect.js';
 import type { Architecture } from './org-chart.js';
 import { type Contract, isContract } from './org-chart.js';
 import type { HierarchyDivisionSpec } from './promotion.js';
+
+/**
+ * The contract-count STEER for a manager's turn, keyed off granularity (J7). COARSE
+ * (`xhigh`, the default) asks for a FEW, LARGE contracts (≤ {@link
+ * COARSE_MAX_CONTRACTS_PER_DIVISION}) so a division owns a big slice and the whole
+ * project lands around a handful of contracts — the enforcement cap
+ * ({@link capManagerContracts}) truncates anything beyond it. FINE (`max`) keeps the
+ * original bounded 6–12 range (full fine-grained decomposition). Pure + deterministic.
+ */
+function managerContractCountGuidance(granularity: DecompositionGranularity): {
+  readonly bodyLine: string;
+  readonly outputLine: string;
+} {
+  if (granularity === 'max') {
+    return {
+      bodyLine:
+        'Keep each contract small and focused, but bounded: aim for roughly 6–12 focused contracts for this division. If a contract would take an hour, split it — but if this division genuinely needs MORE than ~12 contracts, that is the signal it should be split into sub-divisions, not crammed into one oversized contract set. Order them so each contract only depends on ones that come before it.',
+      outputLine:
+        'Output between 6 and 12 contracts as a JSON array, then STOP and close the array.',
+    };
+  }
+  const cap = COARSE_MAX_CONTRACTS_PER_DIVISION;
+  return {
+    bodyLine: `Author a FEW, LARGE contracts — aim for 1–${cap} (author at most ${cap}) that each OWN a substantial slice of this division. Do NOT split the work into many small tasks: GROUP closely-related concerns into the SAME big contract, giving one worker a whole coherent module. Fewer, larger contracts build faster and merge cleanly; over-splitting into many tiny contracts stresses integration and collapses the merge. Order them so each contract only depends on ones that come before it.`,
+    outputLine: `Output 1 to ${cap} contracts as a JSON array, then STOP and close the array.`,
+  };
+}
+
+/**
+ * Enforce the COARSE (xhigh) per-division contract cap (J7): keep at most `cap`
+ * contracts (the FIRST ones, which the manager authors foundation-first in dependency
+ * order), truncating any beyond it. Returns the kept contracts + the ids trimmed (for
+ * the caller to log — nothing is silently dropped). `cap === Infinity` (FINE / `max`)
+ * returns the input UNCHANGED. Pure + deterministic.
+ */
+export function capManagerContracts(
+  contracts: readonly Contract[],
+  cap: number,
+): { readonly contracts: Contract[]; readonly trimmedIds: readonly string[] } {
+  if (!Number.isFinite(cap) || contracts.length <= cap) {
+    return { contracts: [...contracts], trimmedIds: [] };
+  }
+  const limit = Math.max(0, Math.floor(cap));
+  return {
+    contracts: contracts.slice(0, limit),
+    trimmedIds: contracts.slice(limit).map((c) => c.id),
+  };
+}
 
 /** Normalized division-name compare (the architect uses the exact names, but a
  * small model may drift case/whitespace). */
@@ -98,7 +151,9 @@ export function buildManagerContractPrompt(
   division: HierarchyDivisionSpec,
   vision: string,
   architecture?: Architecture,
+  granularity: DecompositionGranularity = DEFAULT_DECOMPOSITION_GRANULARITY,
 ): string {
+  const countGuidance = managerContractCountGuidance(granularity);
   return [
     'Write the typed contracts for ONE division of this project.',
     '',
@@ -108,7 +163,7 @@ export function buildManagerContractPrompt(
     `Division purpose: ${division.purpose}`,
     ...architectureSeedLines(division, architecture),
     '',
-    'Keep each contract small and focused, but bounded: aim for roughly 6–12 focused contracts for this division. If a contract would take an hour, split it — but if this division genuinely needs MORE than ~12 contracts, that is the signal it should be split into sub-divisions, not crammed into one oversized contract set. Order them so each contract only depends on ones that come before it.',
+    countGuidance.bodyLine,
     '',
     'Output ONLY a JSON array (no prose, no code fence) where each element is a contract with exactly these fields:',
     '- "id": string — short unique id, e.g. "' +
@@ -125,7 +180,7 @@ export function buildManagerContractPrompt(
     '- "notes": string (optional) — anything not captured above: a past approach that failed and should be avoided, a special instruction, a constraint, or a warning. Omit when there is nothing extra to say.',
     '- "status": "queued" — every new contract starts queued.',
     '',
-    'Output between 6 and 12 contracts as a JSON array, then STOP and close the array.',
+    countGuidance.outputLine,
   ].join('\n');
 }
 

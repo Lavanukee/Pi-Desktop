@@ -21,9 +21,27 @@ import { type CorpBlock, shownCorpNode, useCorpStore } from '../../state/corp-st
 
 /** Only render inside a corp ENV-override run (`?corp` on the window URL) — a dev
  * diagnostic, never shown to a settings-enabled user. */
+// The visual HUD is a DEV diagnostic — it must NOT ride the `?corp` feature flag
+// (that's just "corp mode is on", which every corp user has). It requires its own
+// explicit opt-in `?corphud` (PI_DESKTOP_CORP_HUD=1), so a normal corp run shows
+// no debug overlay.
 function hudEnabled(): boolean {
   try {
-    return typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('corp');
+    return (
+      typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('corphud')
+    );
+  } catch {
+    return false;
+  }
+}
+
+// The raw-store exposure for e2e probes rides the E2E flag (like `__pi_store`),
+// independent of the visual HUD, so diagnostics keep working with no overlay.
+function e2eEnabled(): boolean {
+  try {
+    return (
+      typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('piE2E')
+    );
   } catch {
     return false;
   }
@@ -91,6 +109,7 @@ function blocksSig(blocks: readonly CorpBlock[]): number {
 
 export function CorpDebugHud(): React.ReactElement | null {
   const enabled = hudEnabled();
+  const e2e = e2eEnabled();
   const taskId = useCorpStore((s) => s.taskId);
   const workerBlocks = useCorpStore((s) => s.workerBlocks);
   const node = useCorpStore((s) => shownCorpNode(s));
@@ -108,10 +127,10 @@ export function CorpDebugHud(): React.ReactElement | null {
   // Dev diagnostic: expose the corp store so an e2e probe can inspect the raw
   // blocks (is the write content in the store as text vs a structured file block?).
   useEffect(() => {
-    if (enabled && typeof window !== 'undefined') {
+    if (e2e && typeof window !== 'undefined') {
       (window as unknown as { __corpStore?: unknown }).__corpStore = useCorpStore;
     }
-  }, [enabled]);
+  }, [e2e]);
 
   const nodeId = node?.id;
   const blocks = nodeId !== undefined ? (workerBlocks[nodeId] ?? []) : [];

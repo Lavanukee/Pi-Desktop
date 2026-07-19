@@ -198,6 +198,9 @@ function createMainWindow(): BrowserWindow {
   const devQuery: Record<string, string> = {};
   if (process.env.PI_DESKTOP_CORP === '1') devQuery.corp = '1';
   if (process.env.PI_DESKTOP_GEN === '1') devQuery.gen = '1';
+  // Separate opt-in for the live activity HUD (CorpDebugHud) — decoupled from the
+  // corp feature flag so a normal `PI_DESKTOP_CORP=1` run shows no debug overlay.
+  if (process.env.PI_DESKTOP_CORP_HUD === '1') devQuery.corphud = '1';
   loadRenderer(win, Object.keys(devQuery).length > 0 ? devQuery : undefined);
 
   win.on('closed', () => {

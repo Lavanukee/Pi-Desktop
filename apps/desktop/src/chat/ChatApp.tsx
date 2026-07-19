@@ -273,7 +273,9 @@ export function ChatApp({
 
   return (
     <CanvasProvider controller={canvasController.current}>
-      {/* Dev-only live activity HUD (renders only in a ?corp / PI_DESKTOP_CORP run). */}
+      {/* Dev-only live activity HUD — explicit opt-in via ?corphud
+          (PI_DESKTOP_CORP_HUD=1), NOT the corp feature flag, so a normal corp run
+          shows no debug overlay. Still exposes __corpStore under ?piE2E for probes. */}
       <CorpDebugHud />
       <div className="flex h-full">
         {/* The sidebar stays mounted; when collapsed the slot narrows to a

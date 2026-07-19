@@ -16,12 +16,12 @@ import {
 describe('PROMOTION_SYSTEM_PROMPT', () => {
   it('names the promotion tool and the "one focused pass" trigger', () => {
     expect(PROMOTION_SYSTEM_PROMPT).toContain(CREATE_PRODUCTION_HIERARCHY);
-    expect(PROMOTION_SYSTEM_PROMPT).toContain('single focused pass');
+    expect(PROMOTION_SYSTEM_PROMPT.toLowerCase()).toContain('one focused pass');
   });
 
   it('bounds the worker: stop the moment the promotion tool is called (no ramble)', () => {
-    expect(PROMOTION_SYSTEM_PROMPT).toContain('you are finished');
-    expect(PROMOTION_SYSTEM_PROMPT).toContain('output nothing after the tool call');
+    expect(PROMOTION_SYSTEM_PROMPT).toContain('YOUR job here is complete');
+    expect(PROMOTION_SYSTEM_PROMPT).toContain('output nothing after the call');
   });
 });
 
@@ -201,8 +201,8 @@ describe('PROMOTION one-shot messaging (J5)', () => {
     expect(PROMOTION_SYSTEM_PROMPT).toContain('EXACTLY ONCE');
     expect(PROMOTION_SYSTEM_PROMPT.toLowerCase()).toContain('never call it a second time');
     // The original bounded-stop language is preserved.
-    expect(PROMOTION_SYSTEM_PROMPT).toContain('you are finished');
-    expect(PROMOTION_SYSTEM_PROMPT).toContain('output nothing after the tool call');
+    expect(PROMOTION_SYSTEM_PROMPT).toContain('YOUR job here is complete');
+    expect(PROMOTION_SYSTEM_PROMPT).toContain('output nothing after the call');
   });
 
   it('the tool description is one-shot + terminal (call again does nothing)', () => {

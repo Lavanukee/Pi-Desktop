@@ -10,7 +10,7 @@ import {
 
 describe('CEO_VISION_PROMPT — the vision-forming system prompt', () => {
   it('re-frames the CEO disposition for forming the vision, with the tool flow', () => {
-    expect(CEO_VISION_PROMPT).toContain('hold the vision'); // the CEO library disposition
+    expect(CEO_VISION_PROMPT).toContain('CEO of a production corporation'); // the CEO library disposition (leads a team)
     expect(CEO_VISION_PROMPT).toContain('FORMING THE VISION'); // the vision-forming framing
     expect(CEO_VISION_PROMPT).toContain('INTERPRET mode'); // the autonomous-run default
     expect(CEO_VISION_PROMPT).toContain(SUBMIT_VISION); // how to finalize

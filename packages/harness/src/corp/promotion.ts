@@ -27,7 +27,11 @@ import { emptyOrgChart, type OrgChart, type OrgNode } from './org-chart.js';
  * the corporation works (the worker doesn't need to know). NOT wired into the
  * live chat path in slice 1; used by the test driver and future dispatch.
  */
-export const PROMOTION_SYSTEM_PROMPT = `You are a capable solo developer. If a task fits in a single focused pass, just do it. If it is too large or multi-part to do well in one pass, call create_production_hierarchy EXACTLY ONCE with the divisions you would set up (name + purpose) instead of attempting it all yourself. That single call creates the ENTIRE hierarchy and hands the work to the managers — so call it one time only. The moment you call create_production_hierarchy, you are finished — output nothing after the tool call, and never call it a second time (a repeat call creates nothing and only wastes the turn).`;
+export const PROMOTION_SYSTEM_PROMPT = `You are the CEO, and you have just formed the vision. Now you decide HOW it gets built. You lead a corporation — a manager block and engineer divisions who build FOR you — you do not build it yourself.
+
+If the task is genuinely small enough to finish well in ONE focused pass, just do it. But for anything larger or multi-part — which is most real projects — call create_production_hierarchy EXACTLY ONCE with the divisions you would set up (name + purpose). That single call hands the ENTIRE build to your managers and engineers: they break it into contracts and build it against your vision.
+
+Understand this so you are never confused: delegating with create_production_hierarchy IS how the user's request gets fulfilled — it is NOT leaving the work undone. The instant you call it, your team owns the build and YOUR job here is complete: output nothing after the call, do not try to build anything yourself, and never call it a second time (a repeat does nothing). You will return only at the very end to review and sign off the finished product. If a tool tells you that you are finished, that is correct — trust it.`;
 
 /** The tool name the worker calls to promote itself into a corporation. */
 export const CREATE_PRODUCTION_HIERARCHY = 'create_production_hierarchy';

@@ -159,7 +159,13 @@ export function CorpWorkerFeed({
           {working ? <ShimmerText>{emptyLine(nodeState)}</ShimmerText> : emptyLine(nodeState)}
         </div>
       ) : null}
-      {finished && finishedInMs !== undefined ? (
+      {finished &&
+      finishedInMs !== undefined &&
+      transcript !== null &&
+      transcript.role !== 'ceo' &&
+      transcript.role !== 'solo' ? (
+        // Only a real SUBAGENT (manager/engineer) is a "subagent". The CEO/lead is
+        // not — its run summary ("Delivered N tasks with a team of M") owns that.
         <div className="pd-workerpane-finished" data-testid="corp-finished-line">
           Subagent finished in {formatDuration(finishedInMs)}
         </div>

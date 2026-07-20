@@ -42,7 +42,7 @@ import {
   TIER_LABEL,
 } from '../../../../packages/harness/src/classify/tier.ts';
 import type { LlmTierPick } from '../../electron/ipc-contract';
-import type { EffortLevel } from '../../electron/settings/settings-contract';
+import type { EffortLevel, ModelSelection } from '../../electron/settings/settings-contract';
 import { useLlmStore } from '../state/llm-store';
 import { activateLocalModel } from '../state/local-model';
 import { autoEffortForTier } from '../state/model-selection';
@@ -145,6 +145,32 @@ export function pickPreloadModel(inp: PreloadInputs): { modelId: string; quant: 
     }
   }
   return null;
+}
+
+/**
+ * Which model to bring online at boot for ANY selection mode — the fix for the
+ * "fetch failed" first send. Auto preloaded the fastest model, but a PINNED
+ * tier/model preloaded nothing ("owns its own load"), so a relaunch left no
+ * server up and the first prompt hit a dead endpoint → a bare "fetch failed".
+ *
+ * Now: a server already resident → null (no-op). A pinned tier/model whose model
+ * is on disk → THAT model. Auto, or a pinned pick that isn't downloaded → the
+ * fastest downloaded model, so the app ALWAYS comes up with a running server.
+ * Pure + injectable (tested), like {@link pickPreloadModel}.
+ */
+export function resolveBootModel(
+  sel: ModelSelection,
+  inp: PreloadInputs,
+): { modelId: string; quant?: string } | null {
+  if (inp.serverRunning && inp.currentModelId !== null) return null;
+  const onDisk = (id: string): boolean => inp.downloadedModelIds.includes(id);
+  if (sel.mode === 'model' && onDisk(sel.modelId)) return { modelId: sel.modelId };
+  if (sel.mode === 'tier' && inp.tierModels !== undefined) {
+    const pick = inp.tierModels[sel.tier];
+    if (pick !== undefined && onDisk(pick.modelId)) return { modelId: pick.modelId, quant: pick.quant };
+  }
+  // Auto, or a pinned pick that isn't on disk → guarantee SOME server is up.
+  return pickPreloadModel(inp);
 }
 
 // --- Pure routing decision -------------------------------------------------
@@ -522,29 +548,61 @@ export async function maybeRouteAuto(
  * Best-effort — never throws (a failed preload just means the first send loads a
  * model on demand).
  */
+/** Coalesces concurrent server-ensures onto one activation (boot preload + a
+ * racing first send share it). Nulled when the ensure settles. */
+let ensureServerPromise: Promise<void> | null = null;
+
+/**
+ * Guarantee a model server is up + healthy before a send, coalescing concurrent
+ * callers onto ONE activation. Fast path (a server is already resident) resolves
+ * synchronously with no IPC. Otherwise it resolves the boot model for the current
+ * selection ({@link resolveBootModel}) and activates it — awaiting llama's health
+ * poll — so the caller can dispatch safely afterwards.
+ *
+ * BOTH the boot preload and every send funnel through here, which closes the
+ * "fetch failed" race: a "hi" typed while the boot model is still loading AWAITS
+ * that same load instead of racing a dead endpoint (or kicking a duplicate
+ * activation). No-op under `?piE2E` (probes must not launch a real llama-server).
+ * Best-effort — a failed ensure is no worse than before.
+ */
+export function ensureChatServerReady(): Promise<void> {
+  if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('piE2E'))
+    return Promise.resolve();
+  const s = useLlmStore.getState().status;
+  if (s.serverRunning && s.model?.id != null) return Promise.resolve();
+  if (ensureServerPromise !== null) return ensureServerPromise;
+  ensureServerPromise = (async () => {
+    try {
+      const llm = useLlmStore.getState();
+      // Make the tier picks + downloaded set + running-server state current.
+      await Promise.all([llm.refreshCatalog(), llm.refreshStatus()]);
+      const fresh = useLlmStore.getState();
+      if (fresh.status.serverRunning && fresh.status.model?.id != null) return;
+      // Resolve the boot model for the CURRENT selection mode — Auto OR a pinned
+      // tier/model. Previously only Auto preloaded, so a relaunched pinned pick
+      // came up with no server and the first send "fetch failed". Now every mode
+      // brings a server online (or reuses the resident one).
+      const target = resolveBootModel(useSettingsStore.getState().settings.modelSelection, {
+        tierModels: fresh.recommendation?.tierModels,
+        downloadedModelIds: fresh.status.downloadedModelIds,
+        serverRunning: fresh.status.serverRunning,
+        currentModelId: fresh.status.model?.id ?? null,
+      });
+      if (target === null) return;
+      await activateLocalModel(target.modelId, target.quant);
+    } catch {
+      // Best-effort; the send may still fetch-fail, which is no worse than before.
+    }
+  })().finally(() => {
+    ensureServerPromise = null;
+  });
+  return ensureServerPromise;
+}
+
+/** Startup auto-preload — bring a server online at boot so the first send never
+ * races a dead endpoint. Delegates to the coalesced {@link ensureChatServerReady}. */
 export async function preloadFastestModel(): Promise<void> {
-  try {
-    // E2E (mock-pi) runs against the REAL inference supervisor + the machine's
-    // real model cache; a probe must never auto-launch a real llama-server at
-    // boot. Same `?piE2E=1` opt-in the store hooks / native-surfaces guard use.
-    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('piE2E'))
-      return;
-    if (useSettingsStore.getState().settings.modelSelection.mode !== 'auto') return;
-    const llm = useLlmStore.getState();
-    // Make the tier picks + downloaded set + running-server state current.
-    await Promise.all([llm.refreshCatalog(), llm.refreshStatus()]);
-    const fresh = useLlmStore.getState();
-    const target = pickPreloadModel({
-      tierModels: fresh.recommendation?.tierModels,
-      downloadedModelIds: fresh.status.downloadedModelIds,
-      serverRunning: fresh.status.serverRunning,
-      currentModelId: fresh.status.model?.id ?? null,
-    });
-    if (target === null) return;
-    await activateLocalModel(target.modelId, target.quant);
-  } catch {
-    // Preload is best-effort; the first send will load a model on demand.
-  }
+  await ensureChatServerReady();
 }
 
 // --- Explicit footer selections (bypass hysteresis) ------------------------

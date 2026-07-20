@@ -5,7 +5,7 @@
  */
 import { createEventRouter, type ImageContent, rehydrateSessionJsonl } from '@pi-desktop/engine';
 import type { TaskClass } from '@pi-desktop/harness';
-import { maybeRouteAuto } from '../chat/auto-router';
+import { ensureChatServerReady, maybeRouteAuto } from '../chat/auto-router';
 import { resetCanvasForNewSession } from './canvas-store';
 import { ensureVisionMode } from './local-model';
 import { createPiSink, usePiStore } from './pi-slice';
@@ -249,6 +249,14 @@ export async function sendPrompt(
   agentMessage?: string,
   forcedClass?: TaskClass,
 ) {
+  // jedd: "if the server is down, check before attempting to post, then start it
+  // then and there." A first send (or one after a crashed/never-started server)
+  // otherwise POSTs to a dead endpoint → a bare "fetch failed". Ensure a server is
+  // up FIRST — before the echo + the epoch capture — so a server-load pi-restart
+  // happens OUTSIDE the session-switch guard (it bumps the epoch) and the echo is
+  // never lost to a thread reset. Fast, synchronous no-op when a server is already
+  // ready; skipped for image turns (the vision branch relaunches its own server).
+  if (!messageNeedsVision({ imageDataUris })) await ensureChatServerReady();
   usePiStore.getState().appendUser(message, imageDataUris);
   // Mark in-flight the instant we accept the send (before the awaits below, which
   // can be a multi-second vision relaunch). This bridges the dispatch→agent_start

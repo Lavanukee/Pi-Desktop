@@ -13,6 +13,7 @@ import {
   explicitSwitchAction,
   formatTierBytes,
   pickPreloadModel,
+  resolveBootModel,
   type RouteInputs,
   type RouterMemory,
   SWITCH_DEBOUNCE_MS,
@@ -370,6 +371,58 @@ describe('pickPreloadModel (startup — a model is ALWAYS loaded)', () => {
         serverRunning: false,
         currentModelId: null,
       }),
+    ).toBeNull();
+  });
+});
+
+describe('resolveBootModel (a server is up at boot for ANY selection mode)', () => {
+  const tierModels = {
+    fast: pick('gemma-4-e2b-it'),
+    balanced: pick('gemma-4-12b-it'),
+    intelligent: pick('qwen3.6-27b-mtp'),
+  };
+  const base = {
+    tierModels,
+    downloadedModelIds: ['gemma-4-e2b-it', 'gemma-4-12b-it', 'qwen3.6-27b-mtp'],
+    serverRunning: false,
+    currentModelId: null,
+  };
+
+  it('Auto → the fastest downloaded model (same as pickPreloadModel)', () => {
+    expect(resolveBootModel({ mode: 'auto' }, base)).toEqual({
+      modelId: 'gemma-4-e2b-it',
+      quant: 'Q4_K_M',
+    });
+  });
+
+  it('a pinned TIER loads THAT tier’s model (the fix: pinned used to preload nothing)', () => {
+    expect(resolveBootModel({ mode: 'tier', tier: 'intelligent' }, base)).toEqual({
+      modelId: 'qwen3.6-27b-mtp',
+      quant: 'Q4_K_M',
+    });
+  });
+
+  it('a pinned MODEL loads that model', () => {
+    expect(resolveBootModel({ mode: 'model', modelId: 'gemma-4-12b-it' }, base)).toEqual({
+      modelId: 'gemma-4-12b-it',
+    });
+  });
+
+  it('a pinned pick that is NOT on disk falls back to the fastest downloaded (never no server)', () => {
+    expect(
+      resolveBootModel(
+        { mode: 'model', modelId: 'not-downloaded' },
+        { ...base, downloadedModelIds: ['gemma-4-12b-it'] },
+      ),
+    ).toEqual({ modelId: 'gemma-4-12b-it', quant: 'Q4_K_M' });
+  });
+
+  it('is null when a server is already resident (never preempts a running model)', () => {
+    expect(
+      resolveBootModel(
+        { mode: 'tier', tier: 'fast' },
+        { ...base, serverRunning: true, currentModelId: 'gemma-4-12b-it' },
+      ),
     ).toBeNull();
   });
 });

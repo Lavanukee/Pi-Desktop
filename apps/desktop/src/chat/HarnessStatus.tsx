@@ -13,23 +13,18 @@
  *    flip pending → in_progress → done with the TaskChecklist animation.
  */
 import {
+  ContextGauge,
   TaskChecklist,
   type TaskChecklistItem,
   type TaskState,
-  WorkingIndicator,
 } from '@pi-desktop/ui';
-import { useEffect, useState } from 'react';
-// Harness SOURCE import (not the barrel) — keeps the renderer bundle clean; see
-// auto-router.ts. tier.ts is pure + browser-safe.
-import { TIER_LABEL } from '../../../../packages/harness/src/classify/tier.ts';
-import { useModelSwitching } from '../state/model-selection-store';
+import { type ReactElement, useEffect, useRef, useState } from 'react';
+import { useLlmStore } from '../state/llm-store';
 import { usePiStore } from '../state/pi-slice';
-import { useModelSelection } from '../state/settings-store';
 import {
   type PlanItem,
   PREFILL_STATUS_KEY,
   parsePrefillPercent,
-  threadStatusView,
   useHarnessStatus,
 } from './harness-status';
 
@@ -44,56 +39,84 @@ function toTaskState(item: PlanItem): TaskState {
   return 'pending';
 }
 
-/** Live elapsed seconds since `startedAt` (ticks each second; 0 when idle). */
-function useElapsed(startedAt: number | null): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (startedAt === null) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [startedAt]);
-  return startedAt === null ? 0 : Math.max(0, Math.floor((now - startedAt) / 1000));
+/**
+ * The processing ring (jedd): a context-gauge-style circle that FILLS with the
+ * prompt-ingest percent, next to a shimmering "N% processing" label (same sweep
+ * as the old working/thinking text). Indeterminate (a soft pulse) while the model
+ * loads or before the first prefill frame; the arc fills smoothly as % climbs
+ * (the ContextGauge arc already transitions). At 100% it holds full, then the
+ * whole thing fades out (see {@link ThreadStatusIndicator}).
+ */
+function ProcessingRing({
+  percent,
+  label,
+  fading,
+}: {
+  percent: number | null;
+  label: string;
+  fading: boolean;
+}): ReactElement {
+  const value = percent === null ? 0 : Math.min(1, Math.max(0, percent / 100));
+  const text = percent === null ? label.toLowerCase() : `${Math.round(percent)}% ${label.toLowerCase()}`;
+  return (
+    <div
+      className={`pd-processing${fading ? ' pd-processing--fading' : ''}`}
+      data-testid="thread-processing"
+    >
+      <ContextGauge
+        value={value}
+        size={15}
+        className={`pd-processing-ring${percent === null ? ' pd-processing-ring--indeterminate' : ''}`}
+        label={text}
+      />
+      <span className="pd-working-label">{text}</span>
+    </div>
+  );
 }
 
 /**
- * The ONE live status indicator (jedd blind-test #1). Renders a single
- * {@link WorkingIndicator} in the thread that reads "Thinking" while the model
- * reasons and "Working" while it acts, with the harness lifecycle stage folded in
- * subtly (classify only in Auto — #5). Also borrows the same indicator for the
- * pre-stream model switch so the swap isn't silent. Renders nothing when idle.
+ * The ONE live status indicator. During the PROCESSING phase — from the instant
+ * the message is sent (server load / dispatch) through prefill, before the first
+ * token — it shows the {@link ProcessingRing}. Once the model starts producing
+ * (thinking/tokens stream on their own), the ring fills to 100% and fades. The
+ * old "Working · Reviewing · Ns" label is gone (jedd) — the streamed content and
+ * inline tool rows carry the run from there. Renders nothing when idle.
  */
-export function ThreadStatusIndicator() {
+export function ThreadStatusIndicator(): ReactElement | null {
   const isStreaming = usePiStore((s) => s.agent.isStreaming);
-  const retry = usePiStore((s) => s.agent.retry);
-  const agentStartedAt = usePiStore((s) => s.agent.agentStartedAt);
-  const toolRunning = usePiStore((s) => s.runningToolCalls.length > 0);
+  const promptInFlight = usePiStore((s) => s.promptInFlight);
   // Prefill progress rides the generic extensionStatus channel (published by the
-  // inference lane from provider-llamacpp's `prompt_progress` frames), so no
-  // engine/store plumbing is needed — the indicator just reads and parses it.
+  // inference lane from provider-llamacpp's `prompt_progress` frames).
   const prefillRaw = usePiStore((s) => s.extensionStatus[PREFILL_STATUS_KEY]);
-  const status = useHarnessStatus();
-  const selection = useModelSelection();
-  const switching = useModelSwitching();
-  const elapsed = useElapsed(isStreaming ? agentStartedAt : null);
+  const serverStarting = useLlmStore((s) => s.status.phase === 'starting');
+  const prefillPct = parsePrefillPercent(prefillRaw);
 
-  const view = threadStatusView({
-    isStreaming,
-    retry,
-    toolRunning,
-    stage: status?.stage ?? null,
-    isAuto: selection.mode === 'auto',
-    switchingToTier: switching !== null ? TIER_LABEL[switching.toTier] : null,
-    promptProgress: parsePrefillPercent(prefillRaw),
-  });
-  if (view === null) return null;
+  // Processing spans send → dispatch (promptInFlight) → prefill (prefillPct). Once
+  // the model is generating (no prefill, streaming tokens), it's done processing.
+  const processing = promptInFlight || prefillPct !== null;
 
+  // Hold at 100% then fade for a beat after the processing phase ends.
+  const [fading, setFading] = useState(false);
+  const wasProcessing = useRef(false);
+  useEffect(() => {
+    if (processing) {
+      wasProcessing.current = true;
+      setFading(false);
+      return;
+    }
+    if (!wasProcessing.current) return;
+    wasProcessing.current = false;
+    setFading(true);
+    const t = setTimeout(() => setFading(false), 450);
+    return () => clearTimeout(t);
+  }, [processing]);
+
+  if (!processing && !fading) return null;
   return (
-    <WorkingIndicator
-      className="py-2"
-      data-testid="thread-status"
-      label={view.label}
-      detail={view.detail}
-      elapsedSeconds={view.showElapsed ? elapsed : undefined}
+    <ProcessingRing
+      percent={processing ? prefillPct : 100}
+      label={serverStarting ? 'Loading model' : 'Processing'}
+      fading={fading}
     />
   );
 }

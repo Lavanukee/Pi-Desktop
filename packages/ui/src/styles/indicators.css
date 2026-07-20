@@ -200,3 +200,55 @@
     background-position: 0 0;
   }
 }
+
+/* ── Processing ring (jedd): a filling context-gauge circle + shimmering
+ * "N% processing" label, shown from send through prefill, then faded. ───────── */
+.pd-processing {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 0;
+  color: var(--pd-text-muted);
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-footnote);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The arc already transitions stroke-dashoffset (pd-gauge-arc), so % climbs fill
+ * smoothly; hold full at 100% then fade the whole indicator out. */
+.pd-processing--fading {
+  animation: pd-processing-fade 0.45s var(--pd-easing-standard) forwards;
+}
+
+@keyframes pd-processing-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Before any % is known (model still loading / pre-first-prefill frame) the ring
+ * softly pulses so the circle reads as "alive, warming up", not stuck at empty. */
+.pd-processing-ring--indeterminate {
+  animation: pd-processing-pulse 1.3s ease-in-out infinite;
+}
+
+@keyframes pd-processing-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-processing-ring--indeterminate,
+  .pd-processing--fading {
+    animation: none;
+  }
+}

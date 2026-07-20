@@ -305,3 +305,30 @@
   width: calc(14px * var(--pd-menu-scale, 1));
   height: calc(14px * var(--pd-menu-scale, 1));
 }
+
+/*
+ * Project picker (jedd): (1) lift the dropdown ABOVE the composer card so it's
+ * never obstructed by the input bar; (2) make the hover highlight span the row
+ * edge-to-edge (to the menu borders) instead of an inset pill; (3) mark the
+ * CURRENT choice — the active project row, or "Don't work in a project" when no
+ * folder is set — in green.
+ */
+.pd-project-menu {
+  z-index: 1000;
+}
+
+.pd-project-menu .pd-menu-item {
+  border-radius: 0;
+  margin-inline: calc(-1 * var(--pd-menu-padding));
+  padding-inline: calc(10px + var(--pd-menu-padding));
+  width: auto;
+}
+
+.pd-menu-item--current {
+  color: var(--pd-status-success-fg, #16a34a);
+}
+
+.pd-menu-item--current .pd-menu-icon,
+.pd-menu-item--current .pd-menu-check {
+  color: inherit;
+}

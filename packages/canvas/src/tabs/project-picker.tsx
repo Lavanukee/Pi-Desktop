@@ -183,7 +183,7 @@ export function ProjectPicker({
                 type="button"
                 role="menuitemradio"
                 aria-checked={project.id === active}
-                className="pd-menu-item"
+                className={`pd-menu-item${project.id === active ? ' pd-menu-item--current' : ''}`}
                 onClick={() => pick(() => onSelect(project.id))}
               >
                 <span className="pd-menu-icon" aria-hidden="true">
@@ -214,12 +214,33 @@ export function ProjectPicker({
           </button>
           <button
             type="button"
-            role="menuitem"
-            className="pd-menu-item"
+            role="menuitemradio"
+            aria-checked={active == null}
+            className={`pd-menu-item${active == null ? ' pd-menu-item--current' : ''}`}
             onClick={() => pick(onClear)}
           >
-            <span className="pd-menu-icon" aria-hidden="true" />
-            Don't work in a project
+            <span className="pd-menu-icon" aria-hidden="true">
+              {/* Folder with a slash — "no working folder". */}
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                <line x1="3.5" y1="3.5" x2="20.5" y2="20.5" />
+              </svg>
+            </span>
+            <span className="pd-project-name">Don't work in a project</span>
+            {active == null ? (
+              <span className="pd-menu-check" aria-hidden="true">
+                <IconCheck size={14} />
+              </span>
+            ) : null}
           </button>
         </div>
       ) : null}

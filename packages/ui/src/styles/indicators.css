@@ -252,3 +252,13 @@
     animation: none;
   }
 }
+
+/* "Loading model…" label shown in the composer bar (left of Effort) while the
+ * local server warms up — footnote scale so it sits inline with the bar. */
+.pd-composer-model-loading {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--pd-font-sans);
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-footnote);
+}

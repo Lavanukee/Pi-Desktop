@@ -232,6 +232,35 @@ async function headEtag(
  * cached path is returned rather than throwing — a launch still gets a template.
  * Only a first-ever fetch failure (nothing cached) throws.
  */
+/**
+ * Widely-reported Qwen3 chat-template fix: the reasoning-block gate emits
+ * `<think>` scaffolding for EVERY message past the last user turn even when a
+ * message has no `reasoning_content`, which makes the model contradict its own
+ * CoT (jedd's screenshots). Guarding the gate on `reasoning_content` fixes it:
+ *   `loop.index0 > ns.last_query_index`
+ *     → `loop.index0 > ns.last_query_index and reasoning_content`
+ * Idempotent + a no-op on templates without the pattern (e.g. Gemma). Pure.
+ */
+export function patchReasoningContentGate(content: string): string {
+  return content.replace(
+    /(loop\.index0\s*>\s*ns\.last_query_index)(?!\s+and\s+reasoning_content)/g,
+    '$1 and reasoning_content',
+  );
+}
+
+/** Read a cached template, apply {@link patchReasoningContentGate}, rewrite only
+ * if it changed. So an ALREADY-cached (unpatched) template gets fixed without a
+ * re-fetch. Best-effort — a read/write hiccup just leaves the file untouched. */
+async function patchCachedTemplate(tplPath: string): Promise<void> {
+  try {
+    const body = await readFile(tplPath, 'utf8');
+    const patched = patchReasoningContentGate(body);
+    if (patched !== body) await writeFile(tplPath, patched, 'utf8');
+  } catch {
+    // no file / unreadable — nothing to patch
+  }
+}
+
 export async function ensureChatTemplate(
   repo: string,
   opts: EnsureChatTemplateOptions = {},
@@ -244,6 +273,9 @@ export async function ensureChatTemplate(
 
   const meta = await readMeta(mPath);
   const haveFile = await pathExists(tplPath);
+  // Patch any already-cached template in place (idempotent) so the reasoning fix
+  // applies even to templates fetched before this change — no re-fetch needed.
+  if (haveFile) await patchCachedTemplate(tplPath);
 
   if (haveFile && meta !== undefined && opts.force !== true) {
     const age = now() - meta.fetchedAt;
@@ -266,7 +298,7 @@ export async function ensureChatTemplate(
   try {
     const fetched = await fetchTemplate(repo, opts);
     await mkdir(dir, { recursive: true });
-    await writeFile(tplPath, fetched.content, 'utf8');
+    await writeFile(tplPath, patchReasoningContentGate(fetched.content), 'utf8');
     await writeMeta(mPath, {
       repo,
       source: fetched.source,

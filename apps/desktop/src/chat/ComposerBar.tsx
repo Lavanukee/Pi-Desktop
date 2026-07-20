@@ -99,6 +99,11 @@ function ProjectRegion() {
 function ContextRegion() {
   const messages = usePiStore((s) => s.messages);
   const contextWindow = useLlmStore((s) => s.status.model?.contextWindow ?? 0);
+  // While the local server is loading the model, show a "Loading model…" label
+  // right here (left of Effort, by the selector) so the input bar reflects that
+  // the model is warming up (jedd) — it takes over from the context ring, which
+  // has nothing to show pre-first-turn anyway.
+  const serverLoading = useLlmStore((s) => s.status.phase === 'starting');
   const harnessPercent = useHarnessStatus()?.contextPercent;
   // During a corp run, pi's own harness sits idle — the ring fills from the
   // RUN's real context usage instead (threaded off the live worker transcript).
@@ -122,6 +127,13 @@ function ContextRegion() {
   const gauge = stickyContextGauge(fresh, stickyRef.current.gauge);
   stickyRef.current.gauge = gauge;
 
+  if (serverLoading) {
+    return (
+      <span className="pd-composer-model-loading" data-testid="composer-model-loading">
+        <span className="pd-working-label">Loading model…</span>
+      </span>
+    );
+  }
   if (gauge === null) return null;
   return (
     <ContextGaugeTooltip

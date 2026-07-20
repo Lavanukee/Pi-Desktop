@@ -760,7 +760,7 @@ export class CorpEngine implements CoordinationEngine {
         // Pre-promotion the solo node is what's shown, so attribute it there.
         this.setStatus(rt, 'planning');
         this.setNode(rt, SOLO_NODE, 'working');
-        this.addLine(rt, SOLO_NODE, 'note', 'Forming the vision — deciding what to build and why.');
+        this.addLine(rt, SOLO_NODE, 'note', 'Forming the vision.');
         this.emit(rt, activity(SOLO_NODE, 'note', 'Forming the vision'));
         break;
       case 'worker':

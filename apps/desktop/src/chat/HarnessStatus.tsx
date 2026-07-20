@@ -95,26 +95,49 @@ export function ThreadStatusIndicator(): ReactElement | null {
   // the model is generating (no prefill, streaming tokens), it's done processing.
   const processing = promptInFlight || prefillPct !== null;
 
-  // Hold at 100% then fade for a beat after the processing phase ends.
+  // Smooth, capped tick-up (jedd): the raw prefill % can jump 0→100 instantly on a
+  // short prompt, then sit at 100 for the (silent) thinking/first-token gap before
+  // fading — a dead 100% + blank. Instead ease a DISPLAYED percent toward a cap
+  // (~92) while processing — quick at first, slowing as it approaches — using the
+  // real % as a floor so a genuinely slow prefill still shows honest progress. It
+  // never reaches 100 until processing ends (the first token is ready), when it
+  // snaps full and fades.
+  const [display, setDisplay] = useState(0);
   const [fading, setFading] = useState(false);
   const wasProcessing = useRef(false);
   useEffect(() => {
     if (processing) {
       wasProcessing.current = true;
       setFading(false);
-      return;
+      const id = setInterval(() => {
+        setDisplay((prev) => {
+          const floor = prefillPct ?? 0;
+          const target = Math.max(floor, 92); // asymptote toward the cap
+          const next = prev + (target - prev) * 0.18 + 0.6;
+          return Math.min(92, Math.max(prev, next));
+        });
+      }, 55);
+      return () => clearInterval(id);
     }
     if (!wasProcessing.current) return;
     wasProcessing.current = false;
+    setDisplay(100); // snap full the instant the model starts producing
     setFading(true);
-    const t = setTimeout(() => setFading(false), 450);
+    const t = setTimeout(() => {
+      setFading(false);
+      setDisplay(0);
+    }, 450);
     return () => clearTimeout(t);
-  }, [processing]);
+  }, [processing, prefillPct]);
 
   if (!processing && !fading) return null;
+  // During a cold model LOAD there is no real percent — show the indeterminate
+  // pulse (null) + "Loading model"; once we're ingesting the prompt, show the
+  // climbing "N% processing"; on completion, the full 100% before the fade.
+  const percent = processing ? (serverStarting ? null : display) : 100;
   return (
     <ProcessingRing
-      percent={processing ? prefillPct : 100}
+      percent={percent}
       label={serverStarting ? 'Loading model' : 'Processing'}
       fading={fading}
     />

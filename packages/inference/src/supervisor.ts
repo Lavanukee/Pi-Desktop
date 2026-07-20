@@ -112,6 +112,25 @@ export function assembleServerArgs(cfg: LaunchConfig): string[] {
   const args = ['-m', cfg.modelPath, '--host', cfg.host, '--port', String(cfg.port)];
   if (cfg.contextSize !== undefined) args.push('-c', String(cfg.contextSize));
 
+  // Server-wide sampling defaults for thinking-mode precise coding (jedd; the
+  // Qwen-recommended set). These are the server DEFAULTS — a request may still
+  // override any of them. Kept here so regular chat (which doesn't go through the
+  // corp onPayload sampling merge) gets the same tuned params.
+  args.push(
+    '--temp',
+    '0.6',
+    '--top-p',
+    '0.95',
+    '--top-k',
+    '20',
+    '--min-p',
+    '0.0',
+    '--presence-penalty',
+    '0.0',
+    '--repeat-penalty',
+    '1.0',
+  );
+
   if (cfg.launchMode === 'fast-text') {
     // Single slot by default; the OOM-aware corp launcher may request K slots
     // (each getting the full `-c / K` context — the caller sizes `-c` to

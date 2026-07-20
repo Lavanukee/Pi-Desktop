@@ -378,6 +378,12 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
           throw new Error(`llama-server HTTP ${res.status}: ${detail.slice(0, 500)}`);
         }
 
+        // KV-reuse visibility (jedd): log ONCE per turn from the first prefill
+        // frame — the whole context length, how much of it the server reused from
+        // the KV cache (the stable prefix), and how many NEW tokens it had to
+        // prefill (the latest message). A big `reused` + small `new` on a
+        // follow-up means the cache is working and we're not re-prefilling.
+        let kvLogged = false;
         for await (const payload of parseSSE(await readBody(res))) {
           let chunk: OAIChunk;
           try {
@@ -397,10 +403,20 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
           // past choice-less frames — and hand it to the host's "Processing N%"
           // seam.
           if (chunk.prompt_progress !== undefined) {
+            const pp = chunk.prompt_progress;
+            if (!kvLogged && (pp.total ?? 0) > 0) {
+              kvLogged = true;
+              const total = pp.total ?? 0;
+              const reused = pp.cache ?? 0;
+              // eslint-disable-next-line no-console
+              console.log(
+                `[pi-kv] context=${total} tok · reused(cached)=${reused} · new(this msg)=${Math.max(0, total - reused)}`,
+              );
+            }
             deps.onPromptProgress?.({
-              processed: chunk.prompt_progress.processed ?? 0,
-              total: chunk.prompt_progress.total ?? 0,
-              fraction: promptProgressFraction(chunk.prompt_progress),
+              processed: pp.processed ?? 0,
+              total: pp.total ?? 0,
+              fraction: promptProgressFraction(pp),
             });
           }
 

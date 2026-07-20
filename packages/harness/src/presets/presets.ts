@@ -31,8 +31,24 @@ export const TOOL_SEARCH_TOOL_NAME = 'tool_search';
  * over-eagerly drove the browser). It is now front-loaded only for genuinely
  * multi-step classes ({@link SUBAGENT_PRESET_CLASSES}); every other class still
  * reaches it on demand via `tool_search` (it stays globally registered).
+ *
+ * read/write/edit/bash are ALSO always-active (jedd): the model kept disclaiming
+ * an ability it ships ("I can't read/write/edit files") whenever it landed in a
+ * class whose preset omitted them (simple-QA, basic-tools, other, browser-use,
+ * 2d-art, …). Handing it the file tools in EVERY class removes the refusal at the
+ * source. These four are self-sufficient — `bash` covers ls/find/grep navigation
+ * — so a model can locate, read, and edit files in any conversation. They're the
+ * same set every turn, so (with the prefix-cache fix) they never churn the cache.
+ * Tradeoff accepted: browser-use had deliberately dropped `read` as an attractive
+ * nuisance; the global "never refuse a file op" guarantee outweighs it, and the
+ * browser tools are still front-loaded so they read as the primary path there.
  */
-export const ALWAYS_ACTIVE_TOOLS: readonly string[] = ['update_plan', 'ask_user'];
+export const CORE_FILE_TOOLS: readonly string[] = ['read', 'write', 'edit', 'bash'];
+export const ALWAYS_ACTIVE_TOOLS: readonly string[] = [
+  ...CORE_FILE_TOOLS,
+  'update_plan',
+  'ask_user',
+];
 
 /**
  * Classes whose work is genuinely multi-step / parallelizable enough to warrant

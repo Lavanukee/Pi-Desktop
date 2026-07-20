@@ -83,16 +83,22 @@ describe('resolvePresetTools — full tool universe', () => {
     ]);
   });
 
-  it('basic-tools → python + web + tool_search', () => {
+  it('basic-tools → python + web + tool_search + the always-active file tools', () => {
+    // read/write/edit/bash are appended to EVERY class now (jedd: never refuse a
+    // file op), after the class preset + tool_search.
     expect(resolvePresetTools('basic-tools', ALL_TOOLS)).toEqual([
       'python_run',
       'web_search',
       'web_fetch',
       'tool_search',
+      'read',
+      'write',
+      'edit',
+      'bash',
     ]);
   });
 
-  it('browser-use → the REAL browser tools (snapshot present + early) + web_fetch + tool_search', () => {
+  it('browser-use → the REAL browser tools (snapshot present + early) + web_fetch + tool_search + file tools', () => {
     expect(resolvePresetTools('browser-use', ALL_TOOLS)).toEqual([
       'browser_navigate',
       'browser_snapshot',
@@ -106,24 +112,32 @@ describe('resolvePresetTools — full tool universe', () => {
       'browser_key',
       'web_fetch',
       'tool_search',
+      // Globally-active file tools, appended LAST so the browser tools still lead.
+      'read',
+      'write',
+      'edit',
+      'bash',
     ]);
   });
 
-  it('browser-use regression guard (round-10 #9): snapshot active; no fake/attractor tools', () => {
+  it('browser-use regression guard (round-10 #9): snapshot active + early; no fake tools', () => {
     const tools = resolvePresetTools('browser-use', ALL_TOOLS);
     // The perception tool MUST be present so the model can SEE the page, and
     // near the front (right after navigate) so it reaches for it early.
     expect(tools).toContain('browser_snapshot');
     expect(tools.indexOf('browser_snapshot')).toBeLessThanOrEqual(1);
-    // The bug names + the attractive-nuisance file `read` must be gone.
+    // The bug names must be gone.
     expect(tools).not.toContain('browser_eval');
     expect(tools).not.toContain('browser_screenshot');
-    expect(tools).not.toContain('read');
-    // The page-text reader replaces the file reader for browsing.
+    // The page-text reader is present + still leads the file `read` (jedd made
+    // read globally available, but it is appended LAST so browsing stays primary).
     expect(tools).toContain('browser_read');
+    expect(tools.indexOf('browser_read')).toBeLessThan(tools.indexOf('read'));
   });
 
   it('video-edit → ffmpeg façade + fs + video_locate + tool_search (generation stays in advanced-video)', () => {
+    // read/write/edit are already in the preset's CORE_FS; only `bash` is added
+    // by the always-active set (appended at the very end).
     expect(resolvePresetTools('video-edit', ALL_TOOLS)).toEqual([
       'video_edit',
       'extract_frames',
@@ -136,10 +150,11 @@ describe('resolvePresetTools — full tool universe', () => {
       'grep',
       'video_locate',
       'tool_search',
+      'bash',
     ]);
   });
 
-  it('perception → segment/detect/locate/ocr + video_edit + tool_search', () => {
+  it('perception → segment/detect/locate/ocr + video_edit + tool_search + file tools', () => {
     expect(resolvePresetTools('perception', ALL_TOOLS)).toEqual([
       'image_segment',
       'image_detect',
@@ -147,23 +162,33 @@ describe('resolvePresetTools — full tool universe', () => {
       'image_ocr',
       'video_edit',
       'tool_search',
+      'read',
+      'write',
+      'edit',
+      'bash',
     ]);
   });
 
-  it('advanced-video preset is unchanged by the video split (still generation-shaped)', () => {
+  it('advanced-video preset is unchanged by the video split (still generation-shaped) + file tools', () => {
     expect(resolvePresetTools('advanced-video', ALL_TOOLS)).toEqual([
       'video_generate',
       'video_edit',
       'image_generate',
       'image_edit',
       'tool_search',
+      'read',
+      'write',
+      'edit',
+      'bash',
     ]);
   });
 
-  it('simple-QA → tool-search-only', () => {
+  it('simple-QA → tool_search + the always-active file tools (never a bare refusal)', () => {
+    // Was tool-search-only; jedd made read/write/edit/bash globally active so a
+    // simple-QA turn that suddenly needs a file can act instead of disclaiming.
     const tools = resolvePresetTools('simple-QA', ALL_TOOLS);
-    expect(tools).toEqual(['tool_search']);
-    expect(isToolSearchOnly(tools)).toBe(true);
+    expect(tools).toEqual(['tool_search', 'read', 'write', 'edit', 'bash']);
+    expect(isToolSearchOnly(tools)).toBe(false);
   });
 
   it("'other' surfaces the macOS connectors (calendar bug) + tool_search when registered", () => {
@@ -180,11 +205,18 @@ describe('resolvePresetTools — full tool universe', () => {
     expect(isToolSearchOnly(tools)).toBe(false);
   });
 
-  it("'other' collapses to tool-search-only when the connectors are absent (pure fallback)", () => {
-    // With no connector tools registered, 'other' degrades cleanly (the
-    // no-tool-signal fallback keeps its lean tool-search-only shape).
-    const tools = resolvePresetTools('other', ['read', 'bash', TOOL_SEARCH_TOOL_NAME]);
-    expect(isToolSearchOnly(tools)).toBe(true);
+  it("'other' with no connectors falls back to the global file tools + tool_search", () => {
+    // With no connector tools registered, 'other' keeps only the always-active
+    // file tools + tool_search — no longer a bare tool-search-only refusal (jedd).
+    const tools = resolvePresetTools('other', [
+      'read',
+      'write',
+      'edit',
+      'bash',
+      TOOL_SEARCH_TOOL_NAME,
+    ]);
+    expect(tools).toEqual(['tool_search', 'read', 'write', 'edit', 'bash']);
+    expect(isToolSearchOnly(tools)).toBe(false);
   });
 
   it('always keeps tool_search available across every class', () => {
@@ -262,18 +294,20 @@ describe('resolvePresetTools — graceful degradation (v0.1 tool set)', () => {
     TOOL_SEARCH_TOOL_NAME,
   ];
 
-  it('a category whose tools are absent collapses to tool-search-only', () => {
+  it('a category whose domain tools are absent falls back to file tools + tool_search', () => {
     for (const cls of [
       'motion-graphics',
       'advanced-video',
       '3d',
       '2d-art',
-      // browser-use no longer smuggles in the file `read` tool, so with no
-      // browser tools + no web_fetch registered it collapses cleanly.
       'browser-use',
     ] as const) {
+      // No domain tools registered → the class keeps only the always-active file
+      // tools + tool_search. It is NO LONGER bare tool-search-only: jedd made
+      // read/write/edit/bash globally available so even a stripped class can act.
       const tools = resolvePresetTools(cls, V01_TOOLS);
-      expect(isToolSearchOnly(tools)).toBe(true);
+      expect(tools).toEqual(['tool_search', 'read', 'write', 'edit', 'bash']);
+      expect(isToolSearchOnly(tools)).toBe(false);
     }
   });
 

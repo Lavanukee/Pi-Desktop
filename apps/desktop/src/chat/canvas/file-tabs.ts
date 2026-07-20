@@ -56,6 +56,23 @@ export function fileBreadcrumb(absPath: string, cwd: string | undefined): string
 }
 
 const MARKDOWN_EXT = new Set(['md', 'markdown', 'mdx']);
+const HTML_EXT = new Set(['html', 'htm']);
+const SVG_EXT = new Set(['svg']);
+
+/**
+ * The artifact content-kind for a file by extension — the RENDERABLE kinds
+ * (markdown/html/svg) get their real kind so the canvas can offer a rendered↔raw
+ * toggle (jedd); everything else is `code` (raw source only). The raw view still
+ * works for the renderable kinds — it reads `content.text` with `language` below,
+ * so an html file's Raw tab is syntax-highlighted HTML and its Rendered tab is
+ * the live frame.
+ */
+function fileContentKind(ext: string): 'markdown' | 'html' | 'svg' | 'code' {
+  if (MARKDOWN_EXT.has(ext)) return 'markdown';
+  if (HTML_EXT.has(ext)) return 'html';
+  if (SVG_EXT.has(ext)) return 'svg';
+  return 'code';
+}
 
 /** Extension → CodeMirror language id for the read-only code viewer. */
 const LANGUAGE_BY_EXT: Record<string, string> = {
@@ -128,13 +145,12 @@ export function fileArtifact(absPath: string, read: ReadFileResult): Artifact {
       },
     };
   }
-  const isMarkdown = MARKDOWN_EXT.has(ext);
   return {
     id: fileTabKey(absPath),
     title: filename,
     filename,
     content: {
-      kind: isMarkdown ? 'markdown' : 'code',
+      kind: fileContentKind(ext),
       text: read.text ?? '',
       language: LANGUAGE_BY_EXT[ext] ?? 'text',
     },

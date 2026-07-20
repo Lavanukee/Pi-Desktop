@@ -3,10 +3,19 @@ import { type ReactNode, type RefObject, useCallback, useEffect, useRef } from '
 import type { ArtifactContent } from '../model.ts';
 import type { FileViewMode } from '../tabs/tab-model.ts';
 import { CodeSurface } from './code-surface.tsx';
+import { HtmlSurface } from './html-surface.tsx';
+import { SvgSurface } from './svg-surface.tsx';
 
-/** Sensible default view for a file: markdown renders, everything else is raw. */
+/** Content kinds that have a real RENDERED form (vs. raw source) — a file of one
+ * of these gets the rendered↔raw toggle and defaults to Rendered (jedd). */
+function isRenderableKind(kind: ArtifactContent['kind']): boolean {
+  return kind === 'markdown' || kind === 'html' || kind === 'svg';
+}
+
+/** Sensible default view for a file: renderable kinds (md/html/svg) render,
+ * everything else is raw. */
 export function defaultFileViewMode(content: ArtifactContent): FileViewMode {
-  return content.kind === 'markdown' ? 'rendered' : 'raw';
+  return isRenderableKind(content.kind) ? 'rendered' : 'raw';
 }
 
 /**
@@ -175,8 +184,13 @@ export function FileSurface({
 }: FileSurfaceProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const view = mode ?? defaultFileViewMode(content);
-  // Rendered markdown → rich prose; raw markdown + all code → the source viewer.
-  const rendered = view === 'rendered' && content.kind === 'markdown';
+  // Rendered view for the renderable kinds: markdown → rich prose, html → the
+  // sandboxed live frame (same surface + containment as an html artifact tab),
+  // svg → the sanitized inline draw. Raw (and every non-renderable kind, e.g. a
+  // .ts file) → the CodeMirror source viewer. (jedd: html/svg files get the same
+  // rendered↔raw toggle markdown already had; images stay always-rendered — they
+  // never route here, they open on the media surface.)
+  const rendered = view === 'rendered' && isRenderableKind(content.kind);
 
   useStickToBottom(bodyRef, streaming, content.text);
 
@@ -187,9 +201,15 @@ export function FileSurface({
       {showFilename && filename ? <div className="pd-file-name">{filename}</div> : null}
       <div ref={bodyRef} className="pd-file-body">
         {rendered ? (
-          <div className="pd-canvas-markdown pd-scroll">
-            <Markdown>{content.text}</Markdown>
-          </div>
+          content.kind === 'html' ? (
+            <HtmlSurface content={content} streaming={streaming} />
+          ) : content.kind === 'svg' ? (
+            <SvgSurface content={content} streaming={streaming} />
+          ) : (
+            <div className="pd-canvas-markdown pd-scroll">
+              <Markdown>{content.text}</Markdown>
+            </div>
+          )
         ) : (
           <CodeSurface
             content={content}

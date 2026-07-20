@@ -47,18 +47,18 @@ import { useOutsideClose } from './use-outside-close.ts';
 const RENDERABLE_KINDS: ReadonlySet<CanvasTabKind> = new Set(['html', 'svg', 'code', 'markdown']);
 
 /**
- * Whether this tab shows a rendered/raw toggle. File tabs toggle only for
- * markdown (a `.ts` file has no separate rendered form); artifact-backed
- * html/svg/code/markdown tabs always do.
+ * Whether this tab shows a rendered/raw toggle. File tabs toggle for the
+ * RENDERABLE kinds — markdown, html, svg (a `.ts` file has no separate rendered
+ * form); artifact-backed html/svg/code/markdown tabs always do.
  */
 export function hasViewToggle(tab: CanvasTab): boolean {
-  if (tab.kind === 'file') return isMarkdownFile(tab);
+  if (tab.kind === 'file') return isRenderableFile(tab);
   return RENDERABLE_KINDS.has(tab.kind);
 }
 
 /**
- * Default view for any toggle-bearing tab: markdown (file or artifact) and the
- * renderable html/svg previews start RENDERED; a raw code file starts raw.
+ * Default view for any toggle-bearing tab: markdown/html/svg (file or artifact)
+ * start RENDERED; a raw code file starts raw.
  */
 export function viewModeDefault(tab: CanvasTab): FileViewMode {
   if (tab.kind === 'file') return fileViewModeDefault(tab);
@@ -67,7 +67,7 @@ export function viewModeDefault(tab: CanvasTab): FileViewMode {
 
 /**
  * True when a file tab renders as markdown (by content kind or by `.md`/`.mdx`
- * extension) — the only case where the raw↔rendered toggle is meaningful.
+ * extension). Retained for callers that care specifically about markdown.
  */
 export function isMarkdownFile(tab: CanvasTab): boolean {
   if (tab.artifact?.content.kind === 'markdown') return true;
@@ -75,9 +75,21 @@ export function isMarkdownFile(tab: CanvasTab): boolean {
   return /\.(md|markdown|mdx)$/i.test(name);
 }
 
-/** Default view for a file tab: markdown renders, code is raw (round-8 #13). */
+/**
+ * True when a file has a real RENDERED form beside its raw source — markdown,
+ * html, or svg — so the raw↔rendered toggle is meaningful (jedd). By content
+ * kind (set when the file was read) or by extension (before content lands).
+ */
+export function isRenderableFile(tab: CanvasTab): boolean {
+  const kind = tab.artifact?.content.kind;
+  if (kind === 'markdown' || kind === 'html' || kind === 'svg') return true;
+  const name = tab.filePath ?? tab.artifact?.filename ?? tab.title ?? '';
+  return /\.(md|markdown|mdx|html?|svg)$/i.test(name);
+}
+
+/** Default view for a file tab: renderable (md/html/svg) renders, code is raw. */
 export function fileViewModeDefault(tab: CanvasTab): FileViewMode {
-  return isMarkdownFile(tab) ? 'rendered' : 'raw';
+  return isRenderableFile(tab) ? 'rendered' : 'raw';
 }
 
 /**
@@ -245,7 +257,7 @@ function FileOps({
   // The dropdown lists every app EXCEPT the default (it lives on the primary
   // segment) — belt-and-braces even if the app already omitted it.
   const apps = (tab.openApps ?? []).filter((app) => app.id !== defaultApp?.id);
-  const showToggle = isMarkdownFile(tab);
+  const showToggle = isRenderableFile(tab);
   const mode = fileViewMode ?? fileViewModeDefault(tab);
   return (
     <>

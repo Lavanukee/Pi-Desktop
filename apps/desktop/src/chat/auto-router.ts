@@ -565,31 +565,50 @@ let ensureServerPromise: Promise<void> | null = null;
  * activation). No-op under `?piE2E` (probes must not launch a real llama-server).
  * Best-effort — a failed ensure is no worse than before.
  */
+function serverIsReady(): boolean {
+  const s = useLlmStore.getState().status;
+  // llama `/health` returns 503 while the model loads, so the supervisor only
+  // reaches phase 'ready' once inference will actually succeed (no 503).
+  return s.phase === 'ready' && s.serverRunning && s.model?.id != null;
+}
+
 export function ensureChatServerReady(): Promise<void> {
   if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('piE2E'))
     return Promise.resolve();
-  const s = useLlmStore.getState().status;
-  if (s.serverRunning && s.model?.id != null) return Promise.resolve();
+  if (serverIsReady()) return Promise.resolve();
   if (ensureServerPromise !== null) return ensureServerPromise;
   ensureServerPromise = (async () => {
     try {
       const llm = useLlmStore.getState();
-      // Make the tier picks + downloaded set + running-server state current.
       await Promise.all([llm.refreshCatalog(), llm.refreshStatus()]);
-      const fresh = useLlmStore.getState();
-      if (fresh.status.serverRunning && fresh.status.model?.id != null) return;
-      // Resolve the boot model for the CURRENT selection mode — Auto OR a pinned
-      // tier/model. Previously only Auto preloaded, so a relaunched pinned pick
-      // came up with no server and the first send "fetch failed". Now every mode
-      // brings a server online (or reuses the resident one).
-      const target = resolveBootModel(useSettingsStore.getState().settings.modelSelection, {
-        tierModels: fresh.recommendation?.tierModels,
-        downloadedModelIds: fresh.status.downloadedModelIds,
-        serverRunning: fresh.status.serverRunning,
-        currentModelId: fresh.status.model?.id ?? null,
-      });
-      if (target === null) return;
-      await activateLocalModel(target.modelId, target.quant);
+      const phase = useLlmStore.getState().status.phase;
+      // CRITICAL: if a server is already coming up (model loading) or a model is
+      // downloading, WAIT — do NOT re-activate. startServer disposes the current
+      // server and restarts it, so a re-activation mid-load throws away the
+      // in-progress load, the model never finishes, and pi respawns each time
+      // (the bobbing "exec" + an endless 503 "Loading model"). Only start a server
+      // when nothing is coming up (idle / error / no server).
+      if (phase !== 'starting' && phase !== 'downloading' && !serverIsReady()) {
+        const fresh = useLlmStore.getState();
+        const target = resolveBootModel(useSettingsStore.getState().settings.modelSelection, {
+          tierModels: fresh.recommendation?.tierModels,
+          downloadedModelIds: fresh.status.downloadedModelIds,
+          serverRunning: fresh.status.serverRunning,
+          currentModelId: fresh.status.model?.id ?? null,
+        });
+        if (target !== null) await activateLocalModel(target.modelId, target.quant);
+      }
+      // Poll the live (pushed) status until the model is READY (loaded) — so the
+      // send waits out a slow load instead of racing a 503. Bounded generously for
+      // a large model; a terminal 'error'/'idle' releases it (the send then shows
+      // whatever the model returns rather than hanging forever).
+      const deadline = Date.now() + 300_000;
+      while (Date.now() < deadline) {
+        if (serverIsReady()) return;
+        const p = useLlmStore.getState().status.phase;
+        if (p === 'error' || p === 'idle') return;
+        await new Promise((r) => setTimeout(r, 500));
+      }
     } catch {
       // Best-effort; the send may still fetch-fail, which is no worse than before.
     }

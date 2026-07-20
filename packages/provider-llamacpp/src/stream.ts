@@ -69,10 +69,19 @@ export interface PromptProgress {
 
 /** processed/total → a clamped 0..1 fraction (0 when total is unknown/0). Pure. */
 export function promptProgressFraction(p: LlamaPromptProgress): number {
+  // llama-server's `prompt_progress` reports total / cache / processed, where
+  // `processed` runs from `cache` up to `total`. The honest "how much of the work
+  // that ACTUALLY has to happen is done" is the timed fraction (processed − cache)
+  // / (total − cache) — the cached prefix is instant, so counting it would make a
+  // mostly-cached follow-up jump to ~100% immediately. A fully-cached prompt
+  // (nothing left to prefill) is done → 1.
   const total = p.total ?? 0;
-  if (total <= 0) return 0;
+  if (total <= 0) return 0; // total unknown / not reported yet → 0 (no divide-by-zero)
+  const cache = p.cache ?? 0;
   const processed = p.processed ?? 0;
-  return Math.min(1, Math.max(0, processed / total));
+  const remaining = total - cache;
+  if (remaining <= 0) return 1; // fully cached → nothing to prefill → done
+  return Math.min(1, Math.max(0, (processed - cache) / remaining));
 }
 
 export interface LlamaCppStreamDeps {
@@ -114,6 +123,10 @@ export interface LlamaCppStreamDeps {
          * than re-escalating. Absent / undefined → the strict schema is used.
          */
         relaxedSchemaFor?: (toolName: string) => ToolSchemaLike | undefined;
+        /** Prefill fraction (0..1) sink — the harness publishes it on the live
+         * turn's status channel (harness-prefill) for the desktop ring, which the
+         * static provider deps can't reach (no per-turn ctx here). */
+        onPromptProgress?: (fraction: number) => void;
       }
     | undefined;
 }
@@ -413,11 +426,16 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
                 `[pi-kv] context=${total} tok · reused(cached)=${reused} · new(this msg)=${Math.max(0, total - reused)}`,
               );
             }
+            const fraction = promptProgressFraction(pp);
             deps.onPromptProgress?.({
               processed: pp.processed ?? 0,
               total: pp.total ?? 0,
-              fraction: promptProgressFraction(pp),
+              fraction,
             });
+            // The LIVE (harness-provided) sink — the harness has the per-turn ctx
+            // to publish `harness-prefill` for the desktop ring, which the static
+            // provider deps can't reach. Best-effort; absent off-harness.
+            deps.repairProvider?.()?.onPromptProgress?.(fraction);
           }
 
           const choice = chunk.choices?.[0];

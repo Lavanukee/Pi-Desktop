@@ -383,8 +383,15 @@ export function createPiSink(
     // Blocking dialogs cannot outlive the run that raised them — drop any
     // stragglers so a stale dialog never sits over the finished conversation.
     // Clearing promptInFlight here is the belt-and-suspenders exit (a run that
-    // errored before agent_start still releases the flag).
-    agentEnd: () => set({ runningToolCalls: [], uiRequests: [], promptInFlight: false }),
+    // errored before agent_start still releases the flag). Also drop the prefill
+    // % (published by provider-llamacpp per turn) so a stale value can't seed the
+    // next turn's ring.
+    agentEnd: () =>
+      set((s) => {
+        const extensionStatus = { ...s.extensionStatus };
+        delete extensionStatus['harness-prefill'];
+        return { runningToolCalls: [], uiRequests: [], promptInFlight: false, extensionStatus };
+      }),
 
     beginAssistantTurn: (id) =>
       set((s) => ({

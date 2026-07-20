@@ -396,6 +396,17 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
           rung: info.rung,
           ok: info.ok,
         }),
+      // Prefill %: the provider (which can't reach a per-turn ctx) forwards its
+      // `prompt_progress` fraction here; publish it on the LIVE turn's status
+      // channel so the desktop "N% processing" ring shows real prefill progress.
+      // Reads runtime.currentCtx at call time, so the static deps object still
+      // targets whatever turn is active. Capped 99 (renderer drives the final 100).
+      onPromptProgress: (fraction) => {
+        const ctx = runtime.currentCtx;
+        if (ctx?.hasUI === true) {
+          ctx.ui.setStatus('harness-prefill', String(Math.min(99, Math.round(fraction * 100))));
+        }
+      },
     };
   }
 

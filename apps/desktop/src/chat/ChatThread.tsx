@@ -327,6 +327,22 @@ export function ChatThread() {
               const totalTokens = [...group].reverse().find((m) => m.usage !== undefined)
                 ?.usage?.totalTokens;
               const streaming = group.some((m) => m.isStreaming === true);
+              // Pre-first-token: an EMPTY streaming assistant would render a bare row
+              // with the copy/retry (+tps) action bar next to the processing ring
+              // (jedd: no copy/tps bar by the ring). Skip it — the ProcessingRing IS
+              // this phase; the real row appears the moment a token lands.
+              const groupHasContent = group.some(
+                (m) =>
+                  m.kind === 'assistant' &&
+                  m.blocks.some((b) =>
+                    b.type === 'text'
+                      ? b.text.length > 0
+                      : b.type === 'thinking'
+                        ? b.thinking.length > 0
+                        : true,
+                  ),
+              );
+              if (!groupHasContent && streaming) return null;
               return (
                 <MessageRow
                   key={first.id}

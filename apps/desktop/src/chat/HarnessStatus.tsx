@@ -109,15 +109,13 @@ export function ThreadStatusIndicator(): ReactElement | null {
       b.type === 'text' ? b.text.length > 0 : b.type === 'thinking' ? b.thinking.length > 0 : true,
     );
 
-  // Processing = the send is dispatching (promptInFlight), the server is actively
-  // prefilling (prefillPct), OR the turn's assistant exists but hasn't produced a
-  // token yet. Every term self-clears, so it fades on the first token and can't
-  // persist after the reply. The ring must NOT complete before this (prefill
-  // hitting 100% ≠ a token — a thinking model reasons in between).
-  const processing =
-    promptInFlight ||
-    prefillPct !== null ||
-    (streamingAssistant !== undefined && !streamHasContent);
+  // Processing = the send is dispatching (promptInFlight) OR the turn's assistant
+  // exists but hasn't produced a token yet. BOTH self-clear (on agent_start /
+  // first token), so the ring fades exactly on the first token and can NOT persist
+  // into generation. `prefillPct` (a stale value lingers until turn end) drives
+  // only the DISPLAYED number, never the show/hide — otherwise a leftover % would
+  // keep the ring up during the reply.
+  const processing = promptInFlight || (streamingAssistant !== undefined && !streamHasContent);
 
   // Snap to 100% then fade ONLY once the first token lands (processing → false).
   const [fading, setFading] = useState(false);

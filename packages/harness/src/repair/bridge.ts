@@ -27,6 +27,10 @@ export interface LiveRepairDeps {
     readonly rung: number | undefined;
     readonly ok: boolean;
   }) => void;
+  /** Prefill progress (0..1) from the provider's `prompt_progress` frames. The
+   * harness publishes it to the per-turn ctx's status channel (harness-prefill)
+   * for the desktop "N% processing" ring. MUST mirror the provider's bridge. */
+  readonly onPromptProgress?: (fraction: number) => void;
   /**
    * Per-session RELAXED schema lookup (rung-4 relaxation). Returns the looser
    * schema for a tool the harness relaxed this session, so the provider validates

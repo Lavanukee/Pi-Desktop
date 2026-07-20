@@ -34,6 +34,13 @@ export interface LiveRepairDeps {
     readonly rung: number | undefined;
     readonly ok: boolean;
   }) => void;
+  /**
+   * Prefill progress (0..1) forwarded from the provider's `prompt_progress`
+   * frames. The harness wires this to `ctx.ui.setStatus('harness-prefill', …)`
+   * (it owns the per-turn ExtensionContext the provider can't reach), which the
+   * desktop "N% processing" ring reads.
+   */
+  readonly onPromptProgress?: (fraction: number) => void;
 }
 
 /** Mutable holder the streamSimple resolves at call time (see `repairProvider`). */

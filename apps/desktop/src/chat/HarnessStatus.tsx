@@ -102,20 +102,33 @@ export function ThreadStatusIndicator(): ReactElement | null {
   const streamingAssistant = messages.find(
     (m) => m.kind === 'assistant' && m.isStreaming === true,
   );
-  const streamHasContent =
-    streamingAssistant !== undefined &&
-    streamingAssistant.kind === 'assistant' &&
-    streamingAssistant.blocks.some((b) =>
+  const hasContent = (m: (typeof messages)[number]): boolean =>
+    m.kind === 'assistant' &&
+    m.blocks.some((b) =>
       b.type === 'text' ? b.text.length > 0 : b.type === 'thinking' ? b.thinking.length > 0 : true,
     );
 
+  // Has THIS turn produced any content since the last user message? Walk back to
+  // the user turn; any assistant content in between means we're past the initial
+  // prefill. The ring is ONLY the initial prompt-ingest — the re-prefills between
+  // tool calls are near-instant (the cache is reused, just the appended tool
+  // result), so showing "processing" there is noise (jedd).
+  let turnHasContent = false;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m === undefined) continue;
+    if (m.kind === 'user') break;
+    if (hasContent(m)) {
+      turnHasContent = true;
+      break;
+    }
+  }
+
   // Processing = the send is dispatching (promptInFlight) OR the turn's assistant
-  // exists but hasn't produced a token yet. BOTH self-clear (on agent_start /
-  // first token), so the ring fades exactly on the first token and can NOT persist
-  // into generation. `prefillPct` (a stale value lingers until turn end) drives
-  // only the DISPLAYED number, never the show/hide — otherwise a leftover % would
-  // keep the ring up during the reply.
-  const processing = promptInFlight || (streamingAssistant !== undefined && !streamHasContent);
+  // exists but the turn hasn't produced ANY content yet (initial prefill only).
+  // Both self-clear, so the ring fades on the first token and never shows on the
+  // instant tool-call re-prefills. `prefillPct` drives only the displayed number.
+  const processing = promptInFlight || (streamingAssistant !== undefined && !turnHasContent);
 
   // Snap to 100% then fade ONLY once the first token lands (processing → false).
   const [fading, setFading] = useState(false);

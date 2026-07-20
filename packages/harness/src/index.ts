@@ -722,10 +722,26 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
 
   function applyPreset(cls: TaskClass, ctx: ExtensionContext): void {
     const available = pi.getAllTools().map((t) => t.name);
-    const tools = resolvePresetTools(cls, available);
-    pi.setActiveTools(tools);
+    const preset = resolvePresetTools(cls, available);
+    // The active tool list is rendered at the START of the prompt (chat templates
+    // emit tools before the messages), so it is part of the KV-cached prefix. If
+    // we blindly re-set it every turn, a NEW user message churns that prefix and
+    // forces a FULL re-prefill — even for a trivial "hi" follow-up — while the
+    // re-prefills BETWEEN tool calls (same turn, no before_agent_start) stay
+    // instant because the prefix is untouched. That's exactly the asymmetry jedd
+    // observed. So: keep the set STABLE across turns — union the preset onto the
+    // current tools (never drop a tool_search-activated one), APPEND missing ones
+    // (so any reused prefix stays a prefix), and only call setActiveTools when the
+    // set actually grows. Same class + no new tools ⇒ zero prefix change ⇒ the KV
+    // cache is reused and the follow-up prefill is as instant as a tool-call one.
+    const target = runtime.activeTools.slice();
+    for (const name of preset) if (!target.includes(name)) target.push(name);
     runtime.activeClass = cls;
-    runtime.activeTools = tools;
+    // Only touch the tool set (and thus the cached prefix) when it actually grew.
+    if (target.length !== runtime.activeTools.length) {
+      pi.setActiveTools(target);
+      runtime.activeTools = target;
+    }
     // Warn if the current model is too small for an advanced task.
     if (runtime.model !== null) {
       const warning = smallModelWarning(runtime.model, cls);

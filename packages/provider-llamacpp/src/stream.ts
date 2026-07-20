@@ -421,9 +421,18 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
               kvLogged = true;
               const total = pp.total ?? 0;
               const reused = pp.cache ?? 0;
+              const pctReused = total > 0 ? Math.round((reused / total) * 100) : 0;
+              // Fingerprint the cached PREFIX so a churn is visible: the tool count
+              // + system-prompt length are what the chat template renders BEFORE the
+              // messages. A follow-up with the SAME fingerprint but LOW reuse means
+              // the prefix moved for another reason; a CHANGED fingerprint (tools/
+              // sys grew or shrank) is the churn itself. Healthy follow-up = high
+              // reuse% + unchanged fingerprint (jedd: "view actual context changes").
+              const nTools = context.tools?.length ?? 0;
+              const sysLen = context.systemPrompt?.length ?? 0;
               // eslint-disable-next-line no-console
               console.log(
-                `[pi-kv] context=${total} tok · reused(cached)=${reused} · new(this msg)=${Math.max(0, total - reused)}`,
+                `[pi-kv] context=${total} tok · reused=${reused} (${pctReused}%) · new=${Math.max(0, total - reused)} · prefix{tools=${nTools} sys=${sysLen}ch}`,
               );
             }
             const fraction = promptProgressFraction(pp);

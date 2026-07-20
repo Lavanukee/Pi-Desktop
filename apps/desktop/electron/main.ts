@@ -190,6 +190,21 @@ function createMainWindow(): BrowserWindow {
     events.send(win.webContents, 'app:boot', { sentAt: Date.now() });
   });
 
+  // DEV diagnostic: mirror renderer `[pi-diag]` console lines into the terminal so
+  // the server-start / model-load DECISIONS (which live in the renderer, not the
+  // main process) are visible next to the main logs — otherwise a "no server
+  // started, no log" failure is invisible. Handles both Electron console-message
+  // signatures. Dev only; gated on the prefix so it never mirrors general noise.
+  if (!app.isPackaged) {
+    win.webContents.on('console-message', (...args: unknown[]) => {
+      const msg =
+        typeof args[2] === 'string'
+          ? (args[2] as string)
+          : ((args[0] as { message?: string })?.message ?? '');
+      if (msg.includes('[pi-diag]')) log.info(`renderer ${msg}`);
+    });
+  }
+
   // Dev overrides for the experimental features: `PI_DESKTOP_CORP=1` surfaces a
   // `?corp=1` param (settings-store `productionHarnessEnabled`) so a dev launch
   // drives the corp flow, and `PI_DESKTOP_GEN=1` surfaces `?gen=1`

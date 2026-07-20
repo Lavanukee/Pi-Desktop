@@ -224,13 +224,23 @@ const handlers: IpcHandlers<LlmInvokeMap> = {
   'llm:delete-model': (req) => request({ type: 'delete-model', modelId: req.modelId }),
   'llm:verify-model': (req) =>
     request({ type: 'verify-model', modelId: req.modelId, quant: req.quant }),
-  'llm:start-server': (req) =>
-    request({
+  'llm:start-server': (req) => {
+    log.info('llm:start-server requested', {
+      modelId: req.modelId,
+      quant: req.quant,
+      launchMode: req.launchMode,
+    });
+    return request<{ success: boolean; baseUrl?: string; error?: string }>({
       type: 'start-server',
       modelId: req.modelId,
       quant: req.quant,
       launchMode: req.launchMode,
-    }),
+    }).then((res) => {
+      if (res.success) log.info('llm:start-server ok', { baseUrl: res.baseUrl });
+      else log.warn('llm:start-server FAILED', { modelId: req.modelId, error: res.error });
+      return res;
+    });
+  },
   'llm:stop-server': () => request({ type: 'stop-server' }),
 };
 

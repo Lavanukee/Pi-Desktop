@@ -249,14 +249,11 @@ export async function sendPrompt(
   agentMessage?: string,
   forcedClass?: TaskClass,
 ) {
-  // jedd: "if the server is down, check before attempting to post, then start it
-  // then and there." A first send (or one after a crashed/never-started server)
-  // otherwise POSTs to a dead endpoint → a bare "fetch failed". Ensure a server is
-  // up FIRST — before the echo + the epoch capture — so a server-load pi-restart
-  // happens OUTSIDE the session-switch guard (it bumps the epoch) and the echo is
-  // never lost to a thread reset. Fast, synchronous no-op when a server is already
-  // ready; skipped for image turns (the vision branch relaunches its own server).
-  if (!messageNeedsVision({ imageDataUris })) await ensureChatServerReady();
+  // Echo the user's message IMMEDIATELY (before any awaits) — a fresh send inits
+  // the chat + shows the bubble at once, never "delete the text, wait 60s, then
+  // show it" (jedd). Safe because a server-load restart (restartPi) preserves the
+  // local thread and does NOT bump the session epoch, so the echo survives the
+  // ensureChatServerReady wait below.
   usePiStore.getState().appendUser(message, imageDataUris);
   // Mark in-flight the instant we accept the send (before the awaits below, which
   // can be a multi-second vision relaunch). This bridges the dispatch→agent_start
@@ -292,6 +289,12 @@ export async function sendPrompt(
     // switch the running model to the routed tier BEFORE dispatch. Awaited; no-op
     // unless mode==='auto'; never throws.
     await maybeRouteAuto(agentMessage ?? message, { hasImages: false, forcedClass });
+    // Guarantee the selected model's server is up + the model is loaded before we
+    // POST — otherwise pi fetches a dead/loading endpoint → "fetch failed" / 503.
+    // WAITS for a loading server (never restarts it); starts one only if none is
+    // coming up. The echo is already on screen, so this wait is visible as the
+    // model-loading indicator, not a blank pause.
+    await ensureChatServerReady();
   }
 
   // ONE guard after all the awaits: a session switch raced us → drop this send (the

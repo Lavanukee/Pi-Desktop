@@ -572,16 +572,27 @@ function serverIsReady(): boolean {
   return s.phase === 'ready' && s.serverRunning && s.model?.id != null;
 }
 
+// `[pi-diag]` lines are mirrored to the terminal in dev (see main.ts) so the
+// server-start decision is visible instead of a silent no-op.
+const diag = (msg: string): void => {
+  if (typeof console !== 'undefined') console.log(`[pi-diag] ${msg}`);
+};
+
 export function ensureChatServerReady(): Promise<void> {
   if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('piE2E'))
     return Promise.resolve();
-  if (serverIsReady()) return Promise.resolve();
+  if (serverIsReady()) {
+    diag('ensureChatServerReady: server already ready — no-op');
+    return Promise.resolve();
+  }
   if (ensureServerPromise !== null) return ensureServerPromise;
   ensureServerPromise = (async () => {
     try {
       const llm = useLlmStore.getState();
       await Promise.all([llm.refreshCatalog(), llm.refreshStatus()]);
-      const phase = useLlmStore.getState().status.phase;
+      const fresh = useLlmStore.getState();
+      const phase = fresh.status.phase;
+      const sel = useSettingsStore.getState().settings.modelSelection;
       // CRITICAL: if a server is already coming up (model loading) or a model is
       // downloading, WAIT — do NOT re-activate. startServer disposes the current
       // server and restarts it, so a re-activation mid-load throws away the
@@ -589,14 +600,29 @@ export function ensureChatServerReady(): Promise<void> {
       // (the bobbing "exec" + an endless 503 "Loading model"). Only start a server
       // when nothing is coming up (idle / error / no server).
       if (phase !== 'starting' && phase !== 'downloading' && !serverIsReady()) {
-        const fresh = useLlmStore.getState();
-        const target = resolveBootModel(useSettingsStore.getState().settings.modelSelection, {
+        let target = resolveBootModel(sel, {
           tierModels: fresh.recommendation?.tierModels,
           downloadedModelIds: fresh.status.downloadedModelIds,
           serverRunning: fresh.status.serverRunning,
           currentModelId: fresh.status.model?.id ?? null,
         });
+        // Never silently give up with a model on disk: if the selection can't be
+        // resolved (e.g. the recommendation/tier picks haven't loaded, or don't
+        // match what's downloaded), just start the FIRST downloaded model so a
+        // server always comes up.
+        if (target === null && fresh.status.downloadedModelIds.length > 0) {
+          target = { modelId: fresh.status.downloadedModelIds[0] as string };
+        }
+        diag(
+          `ensureChatServerReady: phase=${phase} selection=${JSON.stringify(sel)} ` +
+            `downloaded=[${fresh.status.downloadedModelIds.join(',')}] ` +
+            `recommendation=${fresh.recommendation ? 'loaded' : 'MISSING'} ` +
+            `→ target=${JSON.stringify(target)}`,
+        );
         if (target !== null) await activateLocalModel(target.modelId, target.quant);
+        else diag('ensureChatServerReady: NO model to start — nothing downloaded');
+      } else {
+        diag(`ensureChatServerReady: phase=${phase} (coming up/ready) — waiting, not restarting`);
       }
       // Poll the live (pushed) status until the model is READY (loaded) — so the
       // send waits out a slow load instead of racing a 503. Bounded generously for
@@ -604,13 +630,20 @@ export function ensureChatServerReady(): Promise<void> {
       // whatever the model returns rather than hanging forever).
       const deadline = Date.now() + 300_000;
       while (Date.now() < deadline) {
-        if (serverIsReady()) return;
+        if (serverIsReady()) {
+          diag('ensureChatServerReady: server READY');
+          return;
+        }
         const p = useLlmStore.getState().status.phase;
-        if (p === 'error' || p === 'idle') return;
+        if (p === 'error' || p === 'idle') {
+          diag(`ensureChatServerReady: giving up — phase=${p}`);
+          return;
+        }
         await new Promise((r) => setTimeout(r, 500));
       }
-    } catch {
-      // Best-effort; the send may still fetch-fail, which is no worse than before.
+      diag('ensureChatServerReady: timed out waiting for ready');
+    } catch (e) {
+      diag(`ensureChatServerReady ERROR: ${e instanceof Error ? e.message : String(e)}`);
     }
   })().finally(() => {
     ensureServerPromise = null;

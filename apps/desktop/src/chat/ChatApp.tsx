@@ -28,6 +28,7 @@ import { useProjectStore } from '../state/project-store';
 import { applySavedHarnessConfig, useUserMode } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
 import { preloadFastestModel } from './auto-router';
+import { parsePromoteSignal, PROMOTE_STATUS_KEY } from './harness-status';
 import { ChatComposer } from './ChatComposer';
 import { ChatThread } from './ChatThread';
 import { ChatTitle } from './ChatTitle';
@@ -195,8 +196,12 @@ export function ChatApp({
   // never blanked, never taken over. The situation-room canvas tab only opens when
   // the model PROMOTES (builds a team of subagents); a solo answer never opens it.
   // The prompt is echoed as the user's bubble. Gated by ChatComposer.
-  const onCorpSubmit = (echo: string, imageUris: string[]) => {
-    usePiStore.getState().appendUser(echo, imageUris);
+  // Launch a corp run and fold its events into the store + situation room.
+  // `appendUser` echoes the user's bubble for a fresh corp-mode submit; the
+  // promote-tool path (the model escalated MID-chat) passes false because the
+  // user's message is already in the thread.
+  const launchCorp = (echo: string, imageUris: string[], appendUser = true) => {
+    if (appendUser) usePiStore.getState().appendUser(echo, imageUris);
     void startCorpTask(echo, imageUris.length > 0 ? { images: imageUris } : undefined).then(
       (handle) => {
         useCorpStore.getState().setTask(handle.taskId);
@@ -237,6 +242,33 @@ export function ChatApp({
       },
     );
   };
+
+  const onCorpSubmit = (echo: string, imageUris: string[]) => launchCorp(echo, imageUris, true);
+
+  // The model called `create_production_hierarchy` in NORMAL chat (jedd: the corp
+  // system is an OPTION at high/max effort, not a mode). The harness publishes the
+  // intent on PROMOTE_STATUS_KEY; launch the corp run ONCE per signal with the
+  // user's original prompt — already echoed in the thread, so don't re-append it.
+  // A run already owning this chat is left alone (the team owns the build).
+  const promoteRaw = usePiStore((s) => s.extensionStatus[PROMOTE_STATUS_KEY]);
+  const lastPromoteId = useRef<string | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fire exactly once per new promote signal.
+  useEffect(() => {
+    const signal = parsePromoteSignal(promoteRaw);
+    if (signal === null || signal.id === lastPromoteId.current) return;
+    lastPromoteId.current = signal.id;
+    if (useCorpStore.getState().taskId !== null) return;
+    const msgs = usePiStore.getState().messages;
+    let prompt = '';
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const m = msgs[i];
+      if (m?.kind === 'user') {
+        prompt = m.text;
+        break;
+      }
+    }
+    if (prompt.length > 0) launchCorp(prompt, [], false);
+  }, [promoteRaw]);
 
   // A1/A4 — a follow-up while a corp task already exists is ANSWERED by the CEO from
   // its retained context, NOT a fresh vision ceremony. The question echoes as the

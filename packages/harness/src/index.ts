@@ -33,6 +33,8 @@ import {
 } from './classify/classify.js';
 import { createClassifierEscalation } from './classify/escalation.js';
 import { modelTierForClass } from './classify/tier.js';
+import { CREATE_PRODUCTION_HIERARCHY } from './corp/promotion.js';
+import { corpToolEnabled, registerCreateHierarchyTool } from './corp/promote-tool.js';
 import { effortKnobs, isEffortLevel } from './effort/effort.js';
 import { createLoopDetector, type LoopDetector, loopDetectorConfig } from './loop/loop-detector.js';
 import { parseModelParams, smallModelWarning } from './model/model-size.js';
@@ -648,6 +650,14 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     registerSubagentTool(pi, { scheduler });
   }
 
+  // Corp system as an OPTION (jedd): at high/max effort the model can hand a
+  // large, professional build to a manager + team via `create_production_hierarchy`
+  // — "still just a tool", never a mode that hijacks the prompt. It's registered
+  // globally but only ENTERS the active set at high/max (see applyPreset); calling
+  // it publishes a promote intent (PROMOTE_STATUS_KEY) the desktop catches to
+  // launch the existing corp run.
+  registerCreateHierarchyTool(pi, { getEffort: () => runtime.config.effort });
+
   // Permission gate. In reviewer mode a scary-bash command is flagged first by
   // the regex rules, then — when a utility model is configured — double-checked
   // by the small model (fail-open to the regex result).
@@ -734,11 +744,26 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     // (so any reused prefix stays a prefix), and only call setActiveTools when the
     // set actually grows. Same class + no new tools ⇒ zero prefix change ⇒ the KV
     // cache is reused and the follow-up prefill is as instant as a tool-call one.
-    const target = runtime.activeTools.slice();
+    let target = runtime.activeTools.slice();
     for (const name of preset) if (!target.includes(name)) target.push(name);
+    // The corp system is offered as a tool ONLY at high/max effort (jedd). Add it
+    // at those efforts, strip it below — so lowering effort mid-session hides it
+    // again. Kept at the END of the list so its presence/absence never disturbs
+    // the cached prefix ahead of it.
+    const wantCorp =
+      corpToolEnabled(runtime.config.effort) && available.includes(CREATE_PRODUCTION_HIERARCHY);
+    if (wantCorp && !target.includes(CREATE_PRODUCTION_HIERARCHY)) {
+      target.push(CREATE_PRODUCTION_HIERARCHY);
+    } else if (!wantCorp && target.includes(CREATE_PRODUCTION_HIERARCHY)) {
+      target = target.filter((t) => t !== CREATE_PRODUCTION_HIERARCHY);
+    }
     runtime.activeClass = cls;
-    // Only touch the tool set (and thus the cached prefix) when it actually grew.
-    if (target.length !== runtime.activeTools.length) {
+    // Only touch the tool set (and thus the cached prefix) when it actually
+    // changed — by length OR membership (the corp tool can be added or removed).
+    const changed =
+      target.length !== runtime.activeTools.length ||
+      target.some((t, i) => t !== runtime.activeTools[i]);
+    if (changed) {
       pi.setActiveTools(target);
       runtime.activeTools = target;
     }
@@ -1144,6 +1169,12 @@ export {
   SUBAGENT_PRESET_CLASSES,
   TOOL_SEARCH_TOOL_NAME,
 } from './presets/presets.js';
+export {
+  corpToolEnabled,
+  type PromoteSignal,
+  PROMOTE_STATUS_KEY,
+  registerCreateHierarchyTool,
+} from './corp/promote-tool.js';
 export {
   augmentSystemPrompt,
   CAPABILITY_PROMPT,

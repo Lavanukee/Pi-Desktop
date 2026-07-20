@@ -8,11 +8,11 @@
  *
  * Type-only import from the harness package (erased at build — no runtime pull).
  */
-import type { HarnessStage, HarnessStatus, PlanItem } from '@pi-desktop/harness';
+import type { HarnessStage, HarnessStatus, PlanItem, PromoteSignal } from '@pi-desktop/harness';
 import { useMemo } from 'react';
 import { usePiStore } from '../state/pi-slice';
 
-export type { HarnessStage, HarnessStatus, PlanItem };
+export type { HarnessStage, HarnessStatus, PlanItem, PromoteSignal };
 
 /** Parse the published harness status JSON, tolerating absence/garbage. */
 export function parseHarnessStatus(raw: string | undefined): HarnessStatus | null {
@@ -47,6 +47,27 @@ export function classLabel(cls: string | null | undefined): string | null {
  * (`return_progress`), forwarded by the inference lane exactly like TPS.
  */
 export const PREFILL_STATUS_KEY = 'harness-prefill';
+
+/**
+ * The pi status key the harness publishes a corp-promotion intent on when the
+ * model calls `create_production_hierarchy` in normal chat (offered only at
+ * high/max effort). The value is a JSON {@link PromoteSignal}; ChatApp watches it
+ * and launches the corp run with the user's original prompt. Prefixed `harness`
+ * so a session switch drops it with the rest of the harness panels. MUST equal
+ * the harness's `PROMOTE_STATUS_KEY`.
+ */
+export const PROMOTE_STATUS_KEY = 'harness-promote';
+
+/** Parse the promote-intent JSON, tolerating absence/garbage; requires an `id`. */
+export function parsePromoteSignal(raw: string | undefined): PromoteSignal | null {
+  if (raw === undefined || raw.length === 0) return null;
+  try {
+    const parsed = JSON.parse(raw) as PromoteSignal;
+    return typeof parsed?.id === 'string' && parsed.id.length > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Parse the prefill percent published under {@link PREFILL_STATUS_KEY} into a

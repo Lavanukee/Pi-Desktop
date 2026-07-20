@@ -235,6 +235,29 @@ describe('wireHarness', () => {
     );
     expect(warned).toBe(true);
   });
+
+  it('offers create_production_hierarchy as a tool ONLY at high/max effort (jedd)', async () => {
+    const f = makeFakePi(['read', 'write', 'edit', 'bash', 'create_production_hierarchy']);
+    const handle = wireHarness(f.pi);
+    const { ctx } = makeCtx(f.entries);
+    await f.fire('session_start', { type: 'session_start', reason: 'startup' }, ctx);
+    const run = (args: string) => f.getCommand()?.handler(args, ctx) ?? Promise.resolve();
+
+    // Below high → the corp system is NOT offered in the active set.
+    await run('effort medium');
+    handle.applyPreset('coding', ctx);
+    expect(f.getActiveTools()).not.toContain('create_production_hierarchy');
+
+    // At high → it enters the active set (as an OPTION the model can call).
+    await run('effort high');
+    handle.applyPreset('coding', ctx);
+    expect(f.getActiveTools()).toContain('create_production_hierarchy');
+
+    // Dropping back below high → it is stripped again.
+    await run('effort low');
+    handle.applyPreset('coding', ctx);
+    expect(f.getActiveTools()).not.toContain('create_production_hierarchy');
+  });
 });
 
 describe('/harness command protocol', () => {

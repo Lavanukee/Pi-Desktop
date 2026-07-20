@@ -93,24 +93,31 @@ export function ThreadStatusIndicator(): ReactElement | null {
   const prefillPct = parsePrefillPercent(prefillRaw);
   const messages = usePiStore((s) => s.messages);
 
-  // The FIRST generated token — the moment the in-flight assistant turn produces
-  // ANY content (a text/thinking delta or a tool call). The ring must NOT complete
-  // or fade before this: prefill hitting 100% is not the same as a token (a
-  // thinking model reasons between prefill-done and its first visible token).
-  const last = messages[messages.length - 1];
-  const hasFirstToken =
-    last?.kind === 'assistant' &&
-    last.isStreaming === true &&
-    last.blocks.some(
-      (b) =>
-        (b.type === 'text' && b.text.length > 0) ||
-        (b.type === 'thinking' && b.thinking.length > 0) ||
-        (b.type !== 'text' && b.type !== 'thinking'),
+  // The CURRENT turn's assistant message while it is STILL EMPTY — i.e. the model
+  // has started the turn but not yet produced any content (text / thinking / a
+  // tool call). This is the "prefill / pre-first-token" window. It self-clears the
+  // instant a token lands (the block gains content) OR the turn ends (the message
+  // stops streaming), so — unlike keying off `isStreaming`, which stays true
+  // through an ask_user pause or a long multi-step turn — it can never stick.
+  const streamingAssistant = messages.find(
+    (m) => m.kind === 'assistant' && m.isStreaming === true,
+  );
+  const streamHasContent =
+    streamingAssistant !== undefined &&
+    streamingAssistant.kind === 'assistant' &&
+    streamingAssistant.blocks.some((b) =>
+      b.type === 'text' ? b.text.length > 0 : b.type === 'thinking' ? b.thinking.length > 0 : true,
     );
 
-  // Processing = a turn is in-flight (server load → dispatch → prefill → the
-  // pre-first-token gap) and no token has been generated yet.
-  const processing = (promptInFlight || isStreaming) && !hasFirstToken;
+  // Processing = the send is dispatching (promptInFlight), the server is actively
+  // prefilling (prefillPct), OR the turn's assistant exists but hasn't produced a
+  // token yet. Every term self-clears, so it fades on the first token and can't
+  // persist after the reply. The ring must NOT complete before this (prefill
+  // hitting 100% ≠ a token — a thinking model reasons in between).
+  const processing =
+    promptInFlight ||
+    prefillPct !== null ||
+    (streamingAssistant !== undefined && !streamHasContent);
 
   // Snap to 100% then fade ONLY once the first token lands (processing → false).
   const [fading, setFading] = useState(false);

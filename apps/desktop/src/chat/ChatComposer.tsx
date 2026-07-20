@@ -474,7 +474,22 @@ export function ChatComposer({
     // my new message" reorder. Queued messages drain as their own sequential
     // turns once the current one ends → [msg1, reply1, msg2, reply2].
     const piState = usePiStore.getState();
-    if (piState.agent.isStreaming || piState.promptInFlight) {
+    // Queue ONLY during the pre-first-token window — the dispatch→agent_start gap
+    // (promptInFlight) or the current turn's assistant existing but still EMPTY.
+    // That's the only place a 2nd send reorders ahead of the reply. Once the turn
+    // has produced content (or paused on a question), the send goes THROUGH — so it
+    // can never get stuck behind a turn that never goes idle (ask_user pause / a
+    // long multi-step turn where isStreaming stays true).
+    const streamingAssistant = piState.messages.find(
+      (m) => m.kind === 'assistant' && m.isStreaming === true,
+    );
+    const streamEmpty =
+      streamingAssistant !== undefined &&
+      streamingAssistant.kind === 'assistant' &&
+      !streamingAssistant.blocks.some((b) =>
+        b.type === 'text' ? b.text.length > 0 : b.type === 'thinking' ? b.thinking.length > 0 : true,
+      );
+    if (piState.promptInFlight || streamEmpty) {
       piState.enqueueSend({
         text: echo,
         images: imageUris,

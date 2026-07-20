@@ -44,7 +44,6 @@ import {
   recommend,
   resolveTierModels,
   searchHfModels,
-  startParentDeathWatchdog,
   type TierPick,
   writeModelsJson,
 } from '@pi-desktop/inference';
@@ -766,10 +765,15 @@ async function startServer(
       eagle3Supported: features.eagle3,
       draftPath: draftPath !== undefined && existsSync(draftPath) ? draftPath : undefined,
       extraArgs: chatTemplateArgs.length > 0 ? chatTemplateArgs : undefined,
-      // Guarantee no orphaned llama-server: a detached watchdog SIGKILLs this
-      // child if THIS utilityProcess dies via a hard crash / SIGKILL (where the
-      // signal/exit reap handlers below can never run).
-      watchdogFactory: (pid) => startParentDeathWatchdog({ targetPid: pid }),
+      // The parent-death watchdog (a modtest-only addition; the working repo has
+      // none) was SIGKILLing the healthy llama-server a few seconds after it came
+      // up — the model would load, `phase` go 'ready', then the server die and
+      // chat "fetch failed". DISABLED to match the working baseline; the normal
+      // teardown (this utilityProcess's SIGTERM/exit handlers reap the child on
+      // quit) covers the common case. Re-introduce only once the false-fire is
+      // fixed. TODO(orphan-guard): a hard SIGKILL of this process can still orphan
+      // the llama-server — handle that without a live-server killer.
+      // watchdogFactory: (pid) => startParentDeathWatchdog({ targetPid: pid }),
     });
 
     supervisor.on((event) => {

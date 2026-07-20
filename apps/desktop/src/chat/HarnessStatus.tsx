@@ -85,56 +85,54 @@ function ProcessingRing({
 export function ThreadStatusIndicator(): ReactElement | null {
   const isStreaming = usePiStore((s) => s.agent.isStreaming);
   const promptInFlight = usePiStore((s) => s.promptInFlight);
-  // Prefill progress rides the generic extensionStatus channel (published by the
-  // inference lane from provider-llamacpp's `prompt_progress` frames).
+  // Prefill progress rides the generic extensionStatus channel (the REAL
+  // processed/total the server reports via provider-llamacpp's `prompt_progress`
+  // frames) — no fabricated easing; the ring shows exactly what llama reports.
   const prefillRaw = usePiStore((s) => s.extensionStatus[PREFILL_STATUS_KEY]);
   const serverStarting = useLlmStore((s) => s.status.phase === 'starting');
   const prefillPct = parsePrefillPercent(prefillRaw);
+  const messages = usePiStore((s) => s.messages);
 
-  // Processing spans send → dispatch (promptInFlight) → prefill (prefillPct). Once
-  // the model is generating (no prefill, streaming tokens), it's done processing.
-  const processing = promptInFlight || prefillPct !== null;
+  // The FIRST generated token — the moment the in-flight assistant turn produces
+  // ANY content (a text/thinking delta or a tool call). The ring must NOT complete
+  // or fade before this: prefill hitting 100% is not the same as a token (a
+  // thinking model reasons between prefill-done and its first visible token).
+  const last = messages[messages.length - 1];
+  const hasFirstToken =
+    last?.kind === 'assistant' &&
+    last.isStreaming === true &&
+    last.blocks.some(
+      (b) =>
+        (b.type === 'text' && b.text.length > 0) ||
+        (b.type === 'thinking' && b.thinking.length > 0) ||
+        (b.type !== 'text' && b.type !== 'thinking'),
+    );
 
-  // Smooth, capped tick-up (jedd): the raw prefill % can jump 0→100 instantly on a
-  // short prompt, then sit at 100 for the (silent) thinking/first-token gap before
-  // fading — a dead 100% + blank. Instead ease a DISPLAYED percent toward a cap
-  // (~92) while processing — quick at first, slowing as it approaches — using the
-  // real % as a floor so a genuinely slow prefill still shows honest progress. It
-  // never reaches 100 until processing ends (the first token is ready), when it
-  // snaps full and fades.
-  const [display, setDisplay] = useState(0);
+  // Processing = a turn is in-flight (server load → dispatch → prefill → the
+  // pre-first-token gap) and no token has been generated yet.
+  const processing = (promptInFlight || isStreaming) && !hasFirstToken;
+
+  // Snap to 100% then fade ONLY once the first token lands (processing → false).
   const [fading, setFading] = useState(false);
   const wasProcessing = useRef(false);
   useEffect(() => {
     if (processing) {
       wasProcessing.current = true;
       setFading(false);
-      const id = setInterval(() => {
-        setDisplay((prev) => {
-          const floor = prefillPct ?? 0;
-          const target = Math.max(floor, 92); // asymptote toward the cap
-          const next = prev + (target - prev) * 0.18 + 0.6;
-          return Math.min(92, Math.max(prev, next));
-        });
-      }, 55);
-      return () => clearInterval(id);
+      return;
     }
     if (!wasProcessing.current) return;
     wasProcessing.current = false;
-    setDisplay(100); // snap full the instant the model starts producing
     setFading(true);
-    const t = setTimeout(() => {
-      setFading(false);
-      setDisplay(0);
-    }, 450);
+    const t = setTimeout(() => setFading(false), 450);
     return () => clearTimeout(t);
-  }, [processing, prefillPct]);
+  }, [processing]);
 
   if (!processing && !fading) return null;
-  // During a cold model LOAD there is no real percent — show the indeterminate
-  // pulse (null) + "Loading model"; once we're ingesting the prompt, show the
-  // climbing "N% processing"; on completion, the full 100% before the fade.
-  const percent = processing ? (serverStarting ? null : display) : 100;
+  // Cold model LOAD → indeterminate pulse + "Loading model" (no fake %). Ingesting
+  // → the REAL prefill % (parsePrefillPercent caps at 99, so it never falsely
+  // reads 100 mid-prefill). Completion (first token) → 100 before the fade.
+  const percent = processing ? (serverStarting ? null : prefillPct) : 100;
   return (
     <ProcessingRing
       percent={percent}

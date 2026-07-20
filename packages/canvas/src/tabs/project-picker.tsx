@@ -1,5 +1,6 @@
 import { IconCheck, IconChevronDown, IconFolderPlus, IconSearch } from '@pi-desktop/ui';
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { IconFolder } from '../tab-icons.tsx';
 import { useOutsideClose } from './use-outside-close.ts';
 
@@ -105,7 +106,11 @@ export function ProjectPicker({
   const [pos, setPos] = useState<MenuPos | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
-  useOutsideClose(ref, open, () => setOpen(false));
+  const menuRef = useRef<HTMLDivElement>(null);
+  // The menu is PORTALED to <body> (below) so `.pd-composer`'s backdrop-filter
+  // can't trap its position:fixed — pass menuRef so a click inside the portaled
+  // menu isn't treated as an outside dismiss.
+  useOutsideClose(ref, open, () => setOpen(false), menuRef);
 
   const toggle = (): void => {
     if (open) {
@@ -156,13 +161,15 @@ export function ProjectPicker({
         <span className="pd-project-chip-label">{activeProject?.name ?? placeholder}</span>
         <IconChevronDown size={12} />
       </button>
-      {open ? (
-        <div
-          className="pd-menu pd-project-menu"
-          role="menu"
-          style={pos ? menuStyle(pos) : undefined}
-        >
-          <div className="pd-project-search">
+      {open
+        ? createPortal(
+            <div
+              ref={menuRef}
+              className="pd-menu pd-project-menu"
+              role="menu"
+              style={pos ? menuStyle(pos) : undefined}
+            >
+              <div className="pd-project-search">
             <IconSearch size={14} />
             <input
               className="pd-project-search-input"
@@ -242,8 +249,10 @@ export function ProjectPicker({
               </span>
             ) : null}
           </button>
-        </div>
-      ) : null}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

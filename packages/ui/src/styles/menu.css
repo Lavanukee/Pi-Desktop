@@ -315,13 +315,24 @@
  */
 .pd-project-menu {
   z-index: 1000;
+  /* Zero the horizontal padding so rows reach the menu edges — the hover wash
+   * then spans the full width instead of an inset pill (jedd). Vertical scroll
+   * (from .pd-menu) is preserved for a long project list. */
+  padding-inline: 0;
 }
 
 .pd-project-menu .pd-menu-item {
   border-radius: 0;
-  margin-inline: calc(-1 * var(--pd-menu-padding));
-  padding-inline: calc(10px + var(--pd-menu-padding));
-  width: auto;
+  width: 100%;
+  padding-inline: 12px;
+}
+
+/* Keep the search row + separator aligned with the now-flush rows. */
+.pd-project-menu .pd-project-search {
+  padding-inline: 12px;
+}
+.pd-project-menu .pd-menu-separator {
+  margin-inline: 0;
 }
 
 .pd-menu-item--current {

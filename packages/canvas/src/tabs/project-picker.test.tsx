@@ -1,7 +1,17 @@
 import { act } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { click, render } from '../test-utils.tsx';
 import { ProjectPicker, type ProjectPickerItem, placeProjectMenu } from './project-picker.tsx';
+
+// The open menu is PORTALED to document.body (it must escape the composer's
+// backdrop-filter, which traps position:fixed descendants — round-16). So the
+// menu + its items live in `document`, NOT the render `container`; only the chip
+// trigger is in `container`. `render` never unmounts, so an open menu would leak
+// into body across tests — clear it after each so document-scoped queries only
+// ever see the current test's menu.
+afterEach(() => {
+  document.body.replaceChildren();
+});
 
 /** A fake anchor with a fixed client rect for placement tests. */
 function anchorAt(rect: Partial<DOMRect>): HTMLElement {
@@ -34,10 +44,10 @@ describe('ProjectPicker', () => {
       <ProjectPicker projects={projects} active="b" onSelect={noop} onNew={noop} onClear={noop} />,
     );
     expect(container.querySelector('.pd-project-chip-label')?.textContent).toBe('Beta');
-    expect(container.querySelector('.pd-menu')).toBeNull();
+    expect(document.querySelector('.pd-menu')).toBeNull();
     await click(container.querySelector('.pd-project-chip'));
-    expect(container.querySelector('.pd-menu')).toBeTruthy();
-    const checked = [...container.querySelectorAll('.pd-menu-item')].find(
+    expect(document.querySelector('.pd-menu')).toBeTruthy();
+    const checked = [...document.querySelectorAll('.pd-menu-item')].find(
       (n) => n.getAttribute('aria-checked') === 'true',
     );
     expect(checked?.textContent).toContain('Beta');
@@ -70,12 +80,16 @@ describe('ProjectPicker', () => {
       />,
     );
     await click(container.querySelector('.pd-project-chip'));
-    await typeSearch(container.querySelector<HTMLInputElement>('.pd-project-search-input'), 'ga');
+    await typeSearch(document.querySelector<HTMLInputElement>('.pd-project-search-input'), 'ga');
     expect(onSearch).toHaveBeenCalledWith('ga');
-    const names = [...container.querySelectorAll('.pd-project-name')].map((n) => n.textContent);
-    expect(names).toEqual(['Gamma']);
+    // `.pd-project-name` also styles the persistent "Don't work in a project" row,
+    // so assert the FILTER effect (Gamma in, Alpha/Beta out) rather than an exact list.
+    const names = [...document.querySelectorAll('.pd-project-name')].map((n) => n.textContent);
+    expect(names).toContain('Gamma');
+    expect(names).not.toContain('Alpha');
+    expect(names).not.toContain('Beta');
     await click(
-      [...container.querySelectorAll('.pd-menu-item')].find((n) =>
+      [...document.querySelectorAll('.pd-menu-item')].find((n) =>
         n.textContent?.includes('Gamma'),
       ) ?? null,
     );
@@ -89,10 +103,10 @@ describe('ProjectPicker', () => {
       <ProjectPicker projects={projects} onSelect={noop} onNew={onNew} onClear={onClear} />,
     );
     await click(container.querySelector('.pd-project-chip'));
-    const items = [...container.querySelectorAll('.pd-menu-item')].map((n) => n.textContent);
+    const items = [...document.querySelectorAll('.pd-menu-item')].map((n) => n.textContent);
     expect(items).toContain('New project');
     await click(
-      [...container.querySelectorAll('.pd-menu-item')].find(
+      [...document.querySelectorAll('.pd-menu-item')].find(
         (n) => n.textContent === 'New project',
       ) ?? null,
     );
@@ -100,7 +114,7 @@ describe('ProjectPicker', () => {
 
     await click(container.querySelector('.pd-project-chip'));
     await click(
-      [...container.querySelectorAll('.pd-menu-item')].find((n) =>
+      [...document.querySelectorAll('.pd-menu-item')].find((n) =>
         n.textContent?.includes("Don't work"),
       ) ?? null,
     );
@@ -112,7 +126,7 @@ describe('ProjectPicker', () => {
       <ProjectPicker projects={projects} onSelect={noop} onNew={noop} onClear={noop} />,
     );
     await click(container.querySelector('.pd-project-chip'));
-    const menu = container.querySelector<HTMLElement>('.pd-menu');
+    const menu = document.querySelector<HTMLElement>('.pd-menu');
     expect(menu?.style.position).toBe('fixed');
     // A width + a max-height keep it clamped to the viewport.
     expect(menu?.style.maxHeight).not.toBe('');

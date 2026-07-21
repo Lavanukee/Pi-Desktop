@@ -355,7 +355,18 @@ export function CanvasTabsPanel() {
   // CanvasTabs' empty state — the 4 new-tab options (Files / Browser / Terminal /
   // Subagents) presented directly, each routed through `onNewTab`; a routed-in
   // surface fills it.
-  if (!shown && !exiting && !fullscreen) return null;
+  //
+  // CLOSE-SLIDE FIX (jedd): the `exiting` flag is set by an effect that runs AFTER
+  // this render, so on the FIRST render where an EMPTY canvas closes (shown just
+  // went false, no tabs holding it), `exiting` is still false and this guard would
+  // return null — the rail unmounts instantly, with no slide-out. `justClosed`
+  // catches that one closing-edge render (shown was true last render, false now —
+  // read from the effect-updated `prevShown` ref, which still holds last render's
+  // value here) and keeps the rail mounted at its open width; the width-0
+  // transition then paints from that frame and `exiting` takes over from render 2.
+  // (A tabbed canvas never hit this — `hasTabs` keeps `shown` true through close.)
+  const justClosed = !shown && prevShown.current;
+  if (!shown && !exiting && !justClosed && !fullscreen) return null;
 
   // `onCollapse` closes THIS panel (the app slides it out). `onCopy` defaults to
   // the clipboard inside CanvasTabs; the tab-bar Copy button appears for any

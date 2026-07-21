@@ -16,7 +16,7 @@ import {
   replayableEvents,
 } from '@pi-desktop/canvas';
 import type { Model } from '@pi-desktop/engine';
-import { IconBrainGear, IconButton, IconClose, MainSurface, TopBar } from '@pi-desktop/ui';
+import { IconButton, IconClose, IconGears, MainSurface, TopBar } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
 import type { SettingsSection } from '../settings/SettingsView';
 import { registerCanvasControllerReset, useCanvasStore } from '../state/canvas-store';
@@ -81,7 +81,7 @@ function AdvancedParamsButton() {
         data-testid="advanced-params-toggle"
         onClick={() => setOpen(true)}
       >
-        <IconBrainGear />
+        <IconGears />
       </IconButton>
       <AdvancedParamsPanel open={open} onOpenChange={setOpen} />
     </>

@@ -23,6 +23,7 @@ export const CLASS_LABELS: Record<TaskClass, string> = {
   perception: 'Perception',
   '3d': '3D',
   '2d-art': '2D art',
+  connectors: 'Connectors',
   other: 'Other',
 };
 

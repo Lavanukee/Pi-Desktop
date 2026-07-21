@@ -118,14 +118,19 @@ export const PRESET_TOOLS: Record<TaskClass, readonly string[]> = {
   perception: [...PERCEPTION, 'video_edit'],
   '3d': [...THREE_D_GEN, ...IMAGE_GEN],
   '2d-art': [...IMAGE_GEN],
-  // 'other' is where the classifier routes connector/integration requests —
-  // calendar/mail/messages/contacts/reminders keywords all score into it (see
-  // classify.ts CATEGORY_RULES 'other'). Surface the macOS connectors directly
-  // so a "what's on my calendar" request has the tool in hand rather than having
-  // to discover it (the round-* refusal bug: the model disclaimed an ability it
-  // ships). tool_search stays appended for the pure-fallback 'other' case and to
-  // reach anything else (they degrade gracefully when a connector isn't present).
-  other: [...MAC_CONNECTORS],
+  // A GENUINE macOS personal-app request (calendar/mail/messages/contacts/
+  // reminders keywords → the 'connectors' class, classify.ts). Front-load the
+  // connectors so "what's on my calendar" / "any new mail" / "text mom" has the
+  // tool in hand rather than disclaiming it (the round-* refusal bug). Reached
+  // ONLY by those keywords — never the generic fallback.
+  connectors: [...MAC_CONNECTORS],
+  // 'other' is the GENERIC FALLBACK (no tool signal, no dominant modality) plus
+  // integration/mcp requests (notion/slack/jira/mcp keywords). Tool-search-only:
+  // front-loading nothing keeps a plain "hi" / "list the tools" / open-ended turn
+  // at the minimal set (the always-active file tools + tool_search), instead of
+  // the 10 personal-info connectors it used to drag in on EVERY no-signal query.
+  // Anything genuinely needed is one tool_search away.
+  other: [],
 };
 
 export interface ResolvePresetOptions {

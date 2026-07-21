@@ -186,23 +186,19 @@ export function IconSettings(props: IconProps) {
 }
 
 /**
- * "Advanced params" glyph — half brain (left), half cog (right), split down the
- * middle and sharing a central hub. Marks the power-user advanced-settings entry
- * (thinking ⋈ mechanics). Stroke-only, matches the 16×16 icon grid.
+ * "Advanced settings" glyph — two cogs (a larger one upper-left, a smaller one
+ * lower-right), the standard "machinery / advanced" idiom. Stroke-only, matches
+ * the 16×16 icon grid.
  */
-export function IconBrainGear(props: IconProps) {
+export function IconGears(props: IconProps) {
   return (
     <Icon {...props}>
-      {/* the seam / shared stem down the middle */}
-      <path d="M8 2.9v10.2" />
-      {/* left half — brain: bumpy outline + two inner folds */}
-      <path d="M8 2.9C6.6 2.2 4.9 2.6 4.6 4C3.3 4.1 2.7 5.6 3.6 6.5C2.9 7.4 3.3 8.9 4.5 9C4.6 10.6 6.2 11.6 7.4 11.2C6.9 12 7.5 12.8 8 13" />
-      <path d="M6 4.9c.6.3.8 1 .5 1.6" />
-      <path d="M5.5 8c.7-.1 1.3.4 1.4 1.1" />
-      {/* right half — cog: right-bulging arc, shared hub, three teeth */}
-      <circle cx="8" cy="8" r="1.6" />
-      <path d="M8 4.1a3.9 3.9 0 0 1 0 7.8" />
-      <path d="M11.9 8h1.4M10.75 5.25l.85-.85M10.75 10.75l.85.85" />
+      {/* larger gear (upper-left): body + 6 teeth */}
+      <circle cx="6" cy="6.5" r="1.9" />
+      <path d="M7.9 6.5L8.9 6.5M6.95 8.15L7.45 9.01M5.05 8.15L4.55 9.01M4.1 6.5L3.1 6.5M5.05 4.86L4.55 3.99M6.95 4.86L7.45 3.99" />
+      {/* smaller gear (lower-right): body + 6 teeth (offset half a tooth) */}
+      <circle cx="11" cy="10.5" r="1.35" />
+      <path d="M12.17 11.18L12.95 11.63M11 11.85L11 12.75M9.83 11.18L9.05 11.63M9.83 9.83L9.05 9.38M11 9.15L11 8.25M12.17 9.83L12.95 9.38" />
     </Icon>
   );
 }

@@ -67,10 +67,14 @@ const CORPUS: readonly [string, TaskClass][] = [
   ['Generate an image of a sunset over mountains.', '2d-art'],
   ['Design a logo for my coffee shop.', '2d-art'],
 
-  // other → tool-search-only
+  // other → tool-search-only (integration/mcp requests; the connectors move to
+  // the dedicated `connectors` class below)
   ['Connect my Notion workspace as a connector.', 'other'],
   ['Set up a Slack integration for notifications.', 'other'],
-  ['Sync my Google Calendar events.', 'other'],
+  // connectors → the macOS personal-app tools front-load here, and ONLY here.
+  ['Sync my Google Calendar events.', 'connectors'],
+  ['Any new mail in my inbox?', 'connectors'],
+  ['Remind me to call the dentist.', 'connectors'],
 
   // Fallback — complex, multi-step, no dominant modality. The `full-shebang`
   // everything-tier was removed (round-10 #7): agentic build verbs fall back to

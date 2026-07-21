@@ -20,7 +20,7 @@
  * Pure helpers are exported for unit tests; the file read + registration are the
  * only impure parts.
  */
-import { readFileSync, statSync } from 'node:fs';
+import { appendFileSync, readFileSync, statSync } from 'node:fs';
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
 
 /**
@@ -142,6 +142,18 @@ export function registerAdvancedParamsHook(
     const body = payload as Record<string, unknown>;
     applySamplingOverride(body, readSampling());
     const gt = extractGroundTruth(body);
+    // Diagnostic (off by default): with PI_ADV_DEBUG_TOOLS set to a file path,
+    // append the ACTIVE tool names the model is actually being sent each request.
+    // The ground truth for "does the model know all tools or only its preset?".
+    const dbg = process.env.PI_ADV_DEBUG_TOOLS;
+    if (dbg !== undefined && dbg.length > 0 && gt !== null) {
+      try {
+        const names = gt.tools.map((t) => t.name);
+        appendFileSync(dbg, `tools[${names.length}]: ${names.join(', ')}\n`);
+      } catch {
+        // never break a turn for a diagnostic write.
+      }
+    }
     if (gt !== null && ctx.hasUI === true) {
       try {
         ctx.ui.setStatus(ADVANCED_GROUNDTRUTH_KEY, JSON.stringify(gt));

@@ -191,11 +191,11 @@ describe('resolvePresetTools — full tool universe', () => {
     expect(isToolSearchOnly(tools)).toBe(false);
   });
 
-  it("'other' surfaces the macOS connectors (calendar bug) + tool_search when registered", () => {
-    const tools = resolvePresetTools('other', ALL_TOOLS);
-    // The connector/integration bucket (calendar/mail/messages/… route here) must
-    // hand the model the connector tools directly, not force a tool_search hop —
-    // this is the fix for "I can't access your calendar" refusals.
+  it("'connectors' surfaces the macOS connectors + tool_search when registered", () => {
+    const tools = resolvePresetTools('connectors', ALL_TOOLS);
+    // A GENUINE calendar/mail/messages request (the `connectors` class) must hand
+    // the model the connector tools directly, not force a tool_search hop — the
+    // fix for "I can't access your calendar" refusals.
     expect(tools).toContain('calendar_list_events');
     expect(tools).toContain('mail_recent');
     expect(tools).toContain('messages_send');
@@ -203,6 +203,18 @@ describe('resolvePresetTools — full tool universe', () => {
     expect(tools).toContain('contacts_search');
     expect(tools).toContain('tool_search');
     expect(isToolSearchOnly(tools)).toBe(false);
+  });
+
+  it("'other' (the generic fallback) does NOT drag in the connectors — minimal set", () => {
+    // The bloat fix (jedd): a no-signal query used to route to 'other' and pick
+    // up all 10 personal-info connectors. 'other' is now tool-search-only, so
+    // even with EVERY tool registered it hands back only the always-active file
+    // tools + tool_search — the connectors stay out unless actually asked for.
+    const tools = resolvePresetTools('other', ALL_TOOLS);
+    expect(tools).not.toContain('calendar_list_events');
+    expect(tools).not.toContain('mail_recent');
+    expect(tools).not.toContain('messages_send');
+    expect(tools).toEqual(['tool_search', 'read', 'write', 'edit', 'bash']);
   });
 
   it("'other' with no connectors falls back to the global file tools + tool_search", () => {
@@ -255,9 +267,9 @@ describe('spawn_subagent is front-loaded only for agentic classes (blind-test it
     }
   });
 
-  it("'other' (where 'write a doc' lands) still gets its connectors + tool_search, just no subagent", () => {
+  it("'other' (the generic fallback) gets tool_search + file tools, no connectors, no subagent", () => {
     const tools = resolvePresetTools('other', WITH_HARNESS_TOOLS);
-    expect(tools).toContain('calendar_list_events');
+    expect(tools).not.toContain('calendar_list_events');
     expect(tools).toContain('tool_search');
     expect(tools).not.toContain(SPAWN_SUBAGENT_TOOL_NAME);
   });

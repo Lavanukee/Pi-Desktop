@@ -20,7 +20,9 @@
 /** The complexity tiers. */
 export type TaskTier = 'simple-QA' | 'basic-tools';
 
-/** The specialized category presets. `other` → tool-search-only. */
+/** The specialized category presets. `other` → tool-search-only (the generic
+ * fallback); macOS personal-app requests get their own {@link TaskCategory}
+ * `connectors` so the connector tools front-load ONLY when actually asked for. */
 export type TaskCategory =
   | 'browser-use'
   | 'file-ops'
@@ -31,6 +33,7 @@ export type TaskCategory =
   | 'perception'
   | '3d'
   | '2d-art'
+  | 'connectors'
   | 'other';
 
 /** A classification result: a tier or a category. */
@@ -47,6 +50,7 @@ export const TASK_CATEGORIES: readonly TaskCategory[] = [
   'perception',
   '3d',
   '2d-art',
+  'connectors',
   'other',
 ];
 export const TASK_CLASSES: readonly TaskClass[] = [...TASK_TIERS, ...TASK_CATEGORIES];
@@ -274,6 +278,27 @@ const CATEGORY_RULES: readonly CategoryRule[] = [
     ],
   },
   {
+    // macOS personal-app connectors (Calendar / Reminders / Contacts / Mail /
+    // Messages). These front-load the connector tools (PRESET_TOOLS.connectors),
+    // so they must ONLY match a genuine personal-app request — never the generic
+    // fallback, which is what surfaced 10 personal-info tools on every no-signal
+    // query (e.g. "list all available tools", "hi"). Kept tight to avoid false
+    // positives ("write a text about…" must NOT match).
+    category: 'connectors',
+    patterns: [
+      [/\b(google )?calendar\b/, 2],
+      [/\bremind me\b/, 2],
+      [/\breminders?\b/, 2],
+      [/\b(e-?mail|inbox)\b/, 2],
+      [/\bmy mail\b/, 2],
+      [/\bimessage\b/, 2],
+      [/\btext (mom|dad|him|her|them|my )/, 2],
+      [/\bsend (a |an )?(text|message|sms)\b/, 2],
+      [/\bmy (messages|texts|contacts|reminders)\b/, 2],
+      [/\bphone number\b/, 2],
+    ],
+  },
+  {
     category: 'other',
     patterns: [
       [/\bconnector\b/, 2],
@@ -282,7 +307,6 @@ const CATEGORY_RULES: readonly CategoryRule[] = [
       [/\bnotion\b/, 2],
       [/\bslack\b/, 2],
       [/\bjira\b/, 2],
-      [/\b(google )?calendar\b/, 2],
       [/\bspreadsheet\b/, 2],
       [/\bexcel\b/, 2],
       [/\bplugin\b/, 1],

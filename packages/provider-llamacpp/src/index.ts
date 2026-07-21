@@ -33,6 +33,7 @@
  * The default export is the extension factory pi loads via `-e`.
  */
 import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
+import { registerAdvancedParamsHook } from './advanced-hook.js';
 import { connectRepairBridge, createRepairBridge } from './repair-bridge.js';
 import { createLlamaCppStream, type LlamaCppStreamDeps } from './stream.js';
 
@@ -83,8 +84,14 @@ export default function activate(pi: ExtensionAPI): void {
   const bridge = createRepairBridge();
   registerLlamaCppProvider(pi, { deps: { repairProvider: () => bridge.current } });
   connectRepairBridge(pi, bridge);
+  // Power-user advanced params: stamp the user's sampling overrides onto each
+  // outgoing body + push the ground-truth prompt/tools/messages to the panel.
+  // The override file path is published by the desktop main via env; absent
+  // (bare pi / tests) → sampling untouched, ground truth still captured.
+  registerAdvancedParamsHook(pi, { samplingFilePath: process.env.PI_ADV_SAMPLING_FILE });
 }
 
+export * from './advanced-hook.js';
 export * from './repair.js';
 export * from './repair-bridge.js';
 export * from './sse.js';

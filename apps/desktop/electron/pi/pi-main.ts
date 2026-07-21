@@ -15,7 +15,7 @@ import { resolveBundledPackageAsset } from '../app-paths';
 import { getInferenceUtility } from '../inference/llm-main';
 import type { AppEventMap } from '../ipc-contract';
 import { resolveSessionCwd } from '../sandbox';
-import { generationExperimentEnabled } from '../settings/settings-main';
+import { advancedSamplingFilePath, generationExperimentEnabled } from '../settings/settings-main';
 import { isTrustedIpcEvent } from '../trusted-senders';
 import { extensionPackageDirs } from './extension-dirs';
 import { createPiSessions, type PiSessionHandlers } from './pi-sessions';
@@ -84,6 +84,10 @@ function buildPiEnv(cwd: string | undefined): Record<string, string | undefined>
     // `cwd` is undefined (a resumed session restores its own cwd; the override
     // falls back to pi's per-session ctx.cwd, still never HOME).
     PI_DESKTOP_FS_FENCE: '1',
+    // The sampling-override sidecar the provider's advanced-params hook reads for
+    // live per-request sampling (power-user panel). Pointing at a stable path;
+    // the file may not exist yet (default profile) — the hook no-ops then.
+    PI_ADV_SAMPLING_FILE: advancedSamplingFilePath(),
     ...(cwd !== undefined ? { PI_DESKTOP_WORKSPACE_ROOT: cwd } : {}),
     ...(utility !== null
       ? { PI_DESKTOP_UTILITY_BASE_URL: utility.baseUrl, PI_DESKTOP_UTILITY_MODEL: utility.model }

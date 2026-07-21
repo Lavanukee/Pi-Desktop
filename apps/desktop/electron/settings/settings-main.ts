@@ -29,6 +29,16 @@ const HOME = os.homedir();
 const SETTINGS_PATH = path.join(HOME, '.pi', 'desktop', 'settings.json');
 const ONBOARDING_PATH = path.join(HOME, '.pi', 'desktop', 'onboarding.json');
 const MCP_REGISTRY_PATH = path.join(HOME, '.pi', 'desktop', 'mcp-connectors.json');
+/** Dedicated sidecar the pi child reads for live per-request sampling overrides
+ * (provider-llamacpp's advanced-params hook). Kept SEPARATE from settings.json so
+ * the hot request path parses a tiny file, never the whole (key-bearing) doc. */
+const SAMPLING_PATH = path.join(HOME, '.pi', 'desktop', 'advanced-sampling.json');
+
+/** Absolute path to the sampling-override sidecar; handed to the pi child via
+ * the `PI_ADV_SAMPLING_FILE` env (see pi-main's buildPiEnv). */
+export function advancedSamplingFilePath(): string {
+  return SAMPLING_PATH;
+}
 
 function safeRead(file: string): string | null {
   try {
@@ -108,12 +118,29 @@ function applyMcpMode(mode: McpMode): void {
   }
 }
 
+/**
+ * Mirror the per-request sampling overrides into the sidecar the pi child reads
+ * (camelCase mirror of {@link AdvancedSamplingSettings} == the provider's
+ * SamplingOverride shape). Rewritten on every change so a slider takes effect on
+ * the child's NEXT request (it mtime-caches the file), no relaunch. Best-effort:
+ * a write failure just leaves the server CLI defaults in force.
+ */
+function writeSamplingSidecar(settings: DesktopSettings): void {
+  try {
+    fs.mkdirSync(path.dirname(SAMPLING_PATH), { recursive: true });
+    fs.writeFileSync(SAMPLING_PATH, `${JSON.stringify(settings.advanced.sampling)}\n`, 'utf8');
+  } catch (error) {
+    log.warn('sampling sidecar write failed', { error: String(error) });
+  }
+}
+
 function writeSettings(settings: DesktopSettings): void {
   fs.mkdirSync(path.dirname(SETTINGS_PATH), { recursive: true });
   // 0600: the document carries web-search API keys.
   fs.writeFileSync(SETTINGS_PATH, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
   applySearchEnv(settings);
   applyMcpMode(settings.mcpMode);
+  writeSamplingSidecar(settings);
 }
 
 /**
@@ -123,7 +150,12 @@ function writeSettings(settings: DesktopSettings): void {
  */
 export function applySettingsEnvFromDisk(): void {
   if (safeRead(SETTINGS_PATH) === null) return;
-  applySearchEnv(readSettings());
+  const settings = readSettings();
+  applySearchEnv(settings);
+  // Seed the sampling sidecar so the FIRST pi child already sees a persisted
+  // custom sampling profile (mtime-cached in the provider). A no-op-equivalent
+  // write for a default profile.
+  writeSamplingSidecar(settings);
 }
 
 /**

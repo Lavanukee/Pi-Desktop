@@ -336,7 +336,7 @@
 }
 
 .pd-menu-item--current {
-  color: var(--pd-status-success-fg, #16a34a);
+  color: var(--pd-status-success-fg);
 }
 
 .pd-menu-item--current .pd-menu-icon,

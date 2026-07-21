@@ -33,9 +33,8 @@ import {
 } from './classify/classify.js';
 import { createClassifierEscalation } from './classify/escalation.js';
 import { modelTierForClass } from './classify/tier.js';
-import { CREATE_PRODUCTION_HIERARCHY } from './corp/promotion.js';
 import { corpToolEnabled, registerCreateHierarchyTool } from './corp/promote-tool.js';
-import { truncateToolOutput } from './tools/tool-output-truncate.js';
+import { CREATE_PRODUCTION_HIERARCHY } from './corp/promotion.js';
 import { effortKnobs, isEffortLevel } from './effort/effort.js';
 import { createLoopDetector, type LoopDetector, loopDetectorConfig } from './loop/loop-detector.js';
 import { parseModelParams, smallModelWarning } from './model/model-size.js';
@@ -87,6 +86,7 @@ import {
 import { registerAskUser } from './tools/ask-user.js';
 import { registerPlanTool } from './tools/plan-tool.js';
 import { registerSandboxFileTools } from './tools/sandbox-fs.js';
+import { truncateToolOutput } from './tools/tool-output-truncate.js';
 import { registerToolSearch } from './tools/tool-search.js';
 import {
   detectProjectCheck,
@@ -1116,6 +1116,12 @@ export {
   TIER_LABEL,
 } from './classify/tier.js';
 export {
+  corpToolEnabled,
+  PROMOTE_STATUS_KEY,
+  type PromoteSignal,
+  registerCreateHierarchyTool,
+} from './corp/promote-tool.js';
+export {
   EFFORT_KNOBS,
   EFFORT_LEVELS,
   type EffortKnobs,
@@ -1190,12 +1196,6 @@ export {
   SUBAGENT_PRESET_CLASSES,
   TOOL_SEARCH_TOOL_NAME,
 } from './presets/presets.js';
-export {
-  corpToolEnabled,
-  type PromoteSignal,
-  PROMOTE_STATUS_KEY,
-  registerCreateHierarchyTool,
-} from './corp/promote-tool.js';
 export {
   augmentSystemPrompt,
   CAPABILITY_PROMPT,

@@ -149,7 +149,13 @@ export function registerAdvancedParamsHook(
     if (dbg !== undefined && dbg.length > 0 && gt !== null) {
       try {
         const names = gt.tools.map((t) => t.name);
-        appendFileSync(dbg, `tools[${names.length}]: ${names.join(', ')}\n`);
+        // The exact active tool set + system-prompt size the model receives — the
+        // reproducer for "does the model know only its initial tools?". Set
+        // PI_ADV_DEBUG_TOOLS to a file path to capture it per request.
+        appendFileSync(
+          dbg,
+          `tools[${names.length}] sysPromptChars=${gt.systemPrompt.length}: ${names.join(', ')}\n`,
+        );
       } catch {
         // never break a turn for a diagnostic write.
       }

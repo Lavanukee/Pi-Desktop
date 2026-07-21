@@ -120,7 +120,15 @@ const sessions = createPiSessions<WebContents>({
         // UNHANDLED and dead-ends chat. `--no-extensions` (pi 0.68.1) disables
         // discovery only; explicit `-e` paths still load, so this guarantees the
         // primary path and makes the extension-free respawn a true last resort.
-        extraArgs: ['--no-extensions'],
+        //
+        // `--no-skills`: SAME discipline for skills. pi auto-discovers
+        // `~/.pi/agent/skills/*` and injects an `<available_skills>` catalog into
+        // EVERY turn's system prompt. That leaks a user's UNRELATED global skills
+        // (jedd saw `coding` / `isaac` / `plan` / `unity` from other projects) into
+        // this app's chat — bloat the app never asked for, and skills aren't a
+        // designed feature here yet. Off until we surface a curated set from our
+        // own bundled dir on purpose.
+        extraArgs: ['--no-extensions', '--no-skills'],
         killGraceMs: KILL_GRACE_MS,
         // Spawn pi as its own process-group leader so quit/dispose reaps its
         // subagent grandchildren too, not just the direct child (task #55): a

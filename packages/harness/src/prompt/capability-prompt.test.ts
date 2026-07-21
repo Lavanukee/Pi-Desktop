@@ -3,13 +3,57 @@ import {
   augmentSystemPrompt,
   CAPABILITY_PROMPT,
   CAPABILITY_PROMPT_MARKER,
+  stripToolCatalog,
 } from './capability-prompt.js';
+
+// pi's default base prompt shape (abbreviated): a full-registry tool catalog
+// bounded by "Available tools:" … "In addition to the tools above…", then the
+// rest of the base. The live prompt lists ~40 tools regardless of the active set.
+const PI_BASE = `You are an expert coding assistant operating inside pi.
+
+Available tools:
+- read: Read file contents
+- calendar_list_events: List the user's Calendar events in a date range
+- messages_send: Send an iMessage
+- mac_launch: Launch or focus a Mac app
+
+In addition to the tools above, you may have access to other custom tools depending on the project.
+
+Guidelines:
+- Be concise in your responses`;
+
+describe('stripToolCatalog', () => {
+  it('removes the full "Available tools:" catalog block but keeps the rest', () => {
+    const out = stripToolCatalog(PI_BASE);
+    expect(out).not.toContain('Available tools:');
+    expect(out).not.toContain('calendar_list_events');
+    expect(out).not.toContain('messages_send');
+    expect(out).not.toContain('In addition to the tools above');
+    // The surrounding prose survives.
+    expect(out).toContain('You are an expert coding assistant');
+    expect(out).toContain('Guidelines:');
+    expect(out).toContain('Be concise');
+  });
+
+  it('no-ops (returns the base) when there is no catalog to strip', () => {
+    const plain = 'You are a coding agent.\n\nGuidelines:\n- Be concise';
+    expect(stripToolCatalog(plain)).toBe(plain);
+  });
+});
 
 describe('augmentSystemPrompt', () => {
   it('appends the capability section to a non-empty base', () => {
     const out = augmentSystemPrompt('You are a coding agent.');
     expect(out.startsWith('You are a coding agent.')).toBe(true);
     expect(out).toContain(CAPABILITY_PROMPT_MARKER);
+  });
+
+  it('strips pi’s full-registry tool catalog before appending (the bloat fix)', () => {
+    const out = augmentSystemPrompt(PI_BASE);
+    expect(out).not.toContain('calendar_list_events'); // catalog gone
+    expect(out).not.toContain('Available tools:');
+    expect(out).toContain('You are an expert coding assistant'); // base prose kept
+    expect(out).toContain(CAPABILITY_PROMPT_MARKER); // capability section added
   });
 
   it('returns the capability section alone for an empty/whitespace base', () => {

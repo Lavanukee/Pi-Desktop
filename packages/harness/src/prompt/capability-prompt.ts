@@ -76,7 +76,37 @@ Rules:
 - If a tool is genuinely missing, errors, or a permission is denied, say specifically what failed and what would unblock it — don't fall back to a generic "I can't do that."`;
 
 /**
- * Append {@link CAPABILITY_PROMPT} to a base system prompt.
+ * Strip pi's default "Available tools:" catalog from a base system prompt.
+ *
+ * pi's built-in system prompt dumps EVERY registered tool (name + one-line
+ * description) under an "Available tools:" heading, ending at "In addition to the
+ * tools above…". Empirically (2026-07-21 live probe) that list is the FULL
+ * registry — ~40 tools — regardless of the per-turn active set: narrowing the
+ * active tools (which correctly shrinks the `tools` array the model can CALL)
+ * does NOT shrink this prose catalog. The result is the bug jedd hit — the model
+ * is TOLD about every tool it has (calendar/mail/browser/mac/…) even on a turn
+ * where only 7 are active, the descriptions duplicate the `tools` schemas the
+ * chat template already renders, and it bloats the prefix.
+ *
+ * The capability section below already gives the model its high-level abilities
+ * + the on-demand `tool_search` contract, and the ACTIVE tools arrive as real
+ * schemas in the request `tools`. So this catalog is pure redundant bloat: we
+ * drop it. Anchored on stable substrings; a wording change just no-ops (the
+ * catalog stays, no crash).
+ */
+export function stripToolCatalog(base: string): string {
+  const start = base.indexOf('Available tools:');
+  if (start < 0) return base;
+  const endMarker =
+    'In addition to the tools above, you may have access to other custom tools depending on the project.';
+  const markerIdx = base.indexOf(endMarker, start);
+  const end = markerIdx >= 0 ? markerIdx + endMarker.length : start;
+  return `${base.slice(0, start)}${base.slice(end)}`.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * Append {@link CAPABILITY_PROMPT} to a base system prompt, first stripping pi's
+ * redundant full-registry tool catalog (see {@link stripToolCatalog}).
  *
  * - Idempotent: a base that already contains the marker is returned unchanged.
  * - An empty base yields the capability section alone.
@@ -84,7 +114,7 @@ Rules:
  *   it lands as the most recent instruction, after pi's base guidelines).
  */
 export function augmentSystemPrompt(base: string | undefined): string {
-  const trimmed = (base ?? '').trim();
+  const trimmed = stripToolCatalog((base ?? '').trim());
   if (trimmed.includes(CAPABILITY_PROMPT_MARKER)) return trimmed;
   if (trimmed.length === 0) return CAPABILITY_PROMPT;
   return `${trimmed}\n\n${CAPABILITY_PROMPT}`;

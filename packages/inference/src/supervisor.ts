@@ -112,23 +112,42 @@ export function assembleServerArgs(cfg: LaunchConfig): string[] {
   const args = ['-m', cfg.modelPath, '--host', cfg.host, '--port', String(cfg.port)];
   if (cfg.contextSize !== undefined) args.push('-c', String(cfg.contextSize));
 
-  // Server-wide sampling defaults for thinking-mode precise coding (jedd; the
-  // Qwen-recommended set). These are the server DEFAULTS — a request may still
-  // override any of them. Kept here so regular chat (which doesn't go through the
-  // corp onPayload sampling merge) gets the same tuned params.
+  // Server-wide sampling defaults, tuned to BREAK the repetition/looping jedd
+  // observed in regular chat (2026-07-20). The old set (temp 0.6 / top-p 0.95 /
+  // top-k 20) was too greedy — low temp + tight top-k collapse onto a repeating
+  // groove. The fix, per jedd's diagnosis: raise temperature (>0.75) + top-k
+  // (>40), lower top-p (<0.92) to widen the sampling pool, and — crucially — turn
+  // on the DRY sampler (llama.cpp's sequence-repetition penalty), which is the
+  // targeted anti-loop tool that a flat repeat-penalty is not (a flat penalty
+  // punishes legitimately-repeated code symbols; DRY only penalizes long repeated
+  // *sequences*, and dry_allowed_length=70 leaves short repeats like `}` / `];`
+  // untouched). These are server DEFAULTS — a request may still override any.
   args.push(
     '--temp',
-    '0.6',
+    '0.8',
     '--top-p',
-    '0.95',
+    '0.9',
     '--top-k',
-    '20',
+    '50',
     '--min-p',
     '0.0',
     '--presence-penalty',
     '0.0',
+    // repeat-penalty stays 1.0 (DISABLED) — DRY replaces it (a classic penalty
+    // hurts code, which legitimately repeats tokens).
     '--repeat-penalty',
     '1.0',
+    // DRY: multiplier 1.0 (on), base 1.75 (>1.6, steep growth past the allowed
+    // run), allowed-length 70 (don't punish short/structural repeats), penalty
+    // last-n 4096 (cover the last several reasoning + tool-use activities).
+    '--dry-multiplier',
+    '1.0',
+    '--dry-base',
+    '1.75',
+    '--dry-allowed-length',
+    '70',
+    '--dry-penalty-last-n',
+    '4096',
   );
 
   if (cfg.launchMode === 'fast-text') {

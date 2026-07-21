@@ -40,25 +40,37 @@ describe('toolResultText — captured bash result, text-only + tail-capped', () 
 });
 
 describe('SAMPLING_MODES — the owner qwen params, verbatim', () => {
+  // Anti-repetition set (jedd, 2026-07-20): top_k widened to 50, top_p tightened
+  // to 0.9, and DRY (dry_multiplier 1 / base 1.75 / allowed_length 70 /
+  // penalty_last_n 4096) layered on EVERY profile.
+  const DRY = {
+    dry_multiplier: 1.0,
+    dry_base: 1.75,
+    dry_allowed_length: 70,
+    dry_penalty_last_n: 4096,
+  };
+
   it('thinking-general', () => {
     expect(SAMPLING_MODES['thinking-general']).toEqual({
       temperature: 1.0,
-      top_p: 0.95,
-      top_k: 20,
+      top_p: 0.9,
+      top_k: 50,
       min_p: 0.0,
       presence_penalty: 1.5,
       repetition_penalty: 1.0,
+      ...DRY,
     });
   });
 
-  it('thinking-coding (presence_penalty 0, temp 0.6)', () => {
+  it('thinking-coding (presence_penalty 0, temp 0.6, DRY breaks loops not temp)', () => {
     expect(SAMPLING_MODES['thinking-coding']).toEqual({
       temperature: 0.6,
-      top_p: 0.95,
-      top_k: 20,
+      top_p: 0.9,
+      top_k: 50,
       min_p: 0.0,
       presence_penalty: 0.0,
       repetition_penalty: 1.0,
+      ...DRY,
     });
   });
 
@@ -66,21 +78,23 @@ describe('SAMPLING_MODES — the owner qwen params, verbatim', () => {
     expect(SAMPLING_MODES['instruct-general']).toEqual({
       temperature: 0.7,
       top_p: 0.8,
-      top_k: 20,
+      top_k: 50,
       min_p: 0.0,
       presence_penalty: 1.5,
       repetition_penalty: 1.0,
+      ...DRY,
     });
   });
 
-  it('instruct-reasoning (temp 1.0, top_p 0.95)', () => {
+  it('instruct-reasoning (temp 1.0, top_p 0.9)', () => {
     expect(SAMPLING_MODES['instruct-reasoning']).toEqual({
       temperature: 1.0,
-      top_p: 0.95,
-      top_k: 20,
+      top_p: 0.9,
+      top_k: 50,
       min_p: 0.0,
       presence_penalty: 1.5,
       repetition_penalty: 1.0,
+      ...DRY,
     });
   });
 });
@@ -104,6 +118,11 @@ describe('applySamplingMode — the payload merge per mode', () => {
       expect(out.min_p).toBe(expected.min_p);
       expect(out.presence_penalty).toBe(expected.presence_penalty);
       expect(out.repetition_penalty).toBe(expected.repetition_penalty);
+      // DRY anti-loop set is carried too.
+      expect(out.dry_multiplier).toBe(expected.dry_multiplier);
+      expect(out.dry_base).toBe(expected.dry_base);
+      expect(out.dry_allowed_length).toBe(expected.dry_allowed_length);
+      expect(out.dry_penalty_last_n).toBe(expected.dry_penalty_last_n);
       // Pre-existing keys are preserved.
       expect(out.model).toBe('x');
       expect(out.stream).toBe(true);
@@ -122,7 +141,7 @@ describe('applySamplingMode — the payload merge per mode', () => {
     applySamplingMode(payload, 'instruct-general');
     expect(payload.temperature).toBe(0.7);
     expect(payload.top_p).toBe(0.8);
-    expect(payload.top_k).toBe(20);
+    expect(payload.top_k).toBe(50);
   });
 
   it('passes non-object payloads through untouched', () => {

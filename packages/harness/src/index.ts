@@ -35,6 +35,7 @@ import { createClassifierEscalation } from './classify/escalation.js';
 import { modelTierForClass } from './classify/tier.js';
 import { CREATE_PRODUCTION_HIERARCHY } from './corp/promotion.js';
 import { corpToolEnabled, registerCreateHierarchyTool } from './corp/promote-tool.js';
+import { truncateToolOutput } from './tools/tool-output-truncate.js';
 import { effortKnobs, isEffortLevel } from './effort/effort.js';
 import { createLoopDetector, type LoopDetector, loopDetectorConfig } from './loop/loop-detector.js';
 import { parseModelParams, smallModelWarning } from './model/model-size.js';
@@ -942,6 +943,26 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     if (detector === null) return;
     // Consecutive-error streak → steer once, then abort (can't block post-hoc).
     handleLoopSignal(detector.onToolResult(event.isError === true));
+  });
+
+  // Tool-output truncation (jedd): cap a runaway tool result (`ls -R`, a huge
+  // grep/find, a chatty build) to ~1.5k tokens BEFORE it enters the conversation,
+  // so one command can't blow the whole context (the observed 24.5k-token `ls -R`
+  // → HTTP 400). Applied to the shell/enumeration tools whose output is
+  // disposable; `read` is left alone (its content is the point, and pi already
+  // bounds it). Only the text parts are capped — image parts pass through.
+  const TRUNCATE_TOOLS = new Set(['bash', 'grep', 'find', 'ls']);
+  pi.on('tool_result', (event) => {
+    if (!TRUNCATE_TOOLS.has(event.toolName)) return;
+    let changed = false;
+    const content = event.content.map((part) => {
+      if (part.type !== 'text') return part;
+      const { text, truncated } = truncateToolOutput(part.text);
+      if (!truncated) return part;
+      changed = true;
+      return { ...part, text };
+    });
+    return changed ? { content } : undefined;
   });
 
   // Model changes → small-model warning + status refresh.

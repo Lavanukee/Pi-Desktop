@@ -100,45 +100,72 @@ export interface SamplingParams {
   readonly min_p: number;
   readonly presence_penalty: number;
   readonly repetition_penalty: number;
+  /** DRY sequence-repetition penalty (jedd anti-loop set). 0 multiplier = off. */
+  readonly dry_multiplier: number;
+  readonly dry_base: number;
+  readonly dry_allowed_length: number;
+  readonly dry_penalty_last_n: number;
 }
 
 /**
+ * The DRY sampler settings shared by every role (jedd, 2026-07-20): the targeted
+ * anti-repetition/anti-loop tool. multiplier 1 (on), base 1.75 (>1.6), allowed
+ * length 70 (short/structural repeats like `}`/`];` untouched), penalty last-n
+ * 4096 (covers the last several reasoning + tool-use activities). Applied on top
+ * of each role's temp/top-p/top-k so a role can loop-break without cranking temp.
+ */
+const DRY = {
+  dry_multiplier: 1.0,
+  dry_base: 1.75,
+  dry_allowed_length: 70,
+  dry_penalty_last_n: 4096,
+} as const;
+
+/**
  * The owner's qwen sampling params, verbatim. These are llama.cpp OpenAI-compat
- * extras (`top_k`/`min_p`/`repetition_penalty` are non-standard) merged onto the
- * outgoing request body by the `before_provider_request` hook.
+ * extras (`top_k`/`min_p`/`repetition_penalty`/`dry_*` are non-standard) merged
+ * onto the outgoing request body by the `before_provider_request` hook. top_k
+ * widened to 50 (>40) and top_p tightened to 0.9 (<0.92) across the board — the
+ * anti-repetition pool jedd specified — with DRY layered on every profile.
  */
 export const SAMPLING_MODES: Record<SamplingMode, SamplingParams> = {
   'thinking-general': {
     temperature: 1.0,
-    top_p: 0.95,
-    top_k: 20,
+    top_p: 0.9,
+    top_k: 50,
     min_p: 0.0,
     presence_penalty: 1.5,
     repetition_penalty: 1.0,
+    ...DRY,
   },
   'thinking-coding': {
+    // Coding keeps its deliberately-low temp for determinism; DRY (not temp) is
+    // what breaks its repetition, so correctness isn't traded away.
     temperature: 0.6,
-    top_p: 0.95,
-    top_k: 20,
+    top_p: 0.9,
+    top_k: 50,
     min_p: 0.0,
     presence_penalty: 0.0,
     repetition_penalty: 1.0,
+    ...DRY,
   },
   'instruct-general': {
     temperature: 0.7,
     top_p: 0.8,
-    top_k: 20,
+    top_k: 50,
     min_p: 0.0,
     presence_penalty: 1.5,
     repetition_penalty: 1.0,
+    ...DRY,
   },
   'instruct-reasoning': {
     temperature: 1.0,
-    top_p: 0.95,
-    top_k: 20,
+    top_p: 0.9,
+    top_k: 50,
     min_p: 0.0,
     presence_penalty: 1.5,
     repetition_penalty: 1.0,
+    ...DRY,
   },
 };
 
@@ -157,6 +184,12 @@ export function applySamplingMode(payload: unknown, mode: SamplingMode): unknown
   p.min_p = params.min_p;
   p.presence_penalty = params.presence_penalty;
   p.repetition_penalty = params.repetition_penalty;
+  // DRY sequence-repetition penalty (llama.cpp OpenAI-compat extras) — the
+  // anti-loop set jedd specified, carried on every corp role request.
+  p.dry_multiplier = params.dry_multiplier;
+  p.dry_base = params.dry_base;
+  p.dry_allowed_length = params.dry_allowed_length;
+  p.dry_penalty_last_n = params.dry_penalty_last_n;
   return p;
 }
 

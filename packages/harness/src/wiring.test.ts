@@ -351,15 +351,15 @@ describe('loop detector — live wiring through tool_call / tool_execution_end',
       .filter((e) => e.customType === HARNESS_LOOP_ENTRY)
       .map((e) => e.data as { action?: string; cause?: string });
 
-  it('steers once at the 3rd identical call, then aborts the turn at the 5th', async () => {
-    const rig = makeRig({ effort: 'medium' }); // steerAfter 3 / abortAfter 5
+  it('steers once at the 3rd identical call, but a FAST burst does NOT abort (wall-clock gated)', async () => {
+    const rig = makeRig({ effort: 'medium' }); // steerAfter 3; abort is now wall-clock
     await startSession(rig);
     await startTurn(rig);
     const call = () => rig.fire('tool_call', TOOL_CALL({ command: 'ls' }));
 
     await call();
     await call();
-    await call(); // 3rd → steer
+    await call(); // 3rd → steer (the one nudge)
     expect(rig.steerMessages).toHaveLength(1);
     expect(loopEntries(rig)).toContainEqual({
       action: 'steer',
@@ -368,15 +368,11 @@ describe('loop detector — live wiring through tool_call / tool_execution_end',
     });
     expect(rig.abort).not.toHaveBeenCalled();
 
-    await call(); // 4th → nothing (already steered)
-    expect(rig.steerMessages).toHaveLength(1);
-    await call(); // 5th → abort
-    expect(rig.abort).toHaveBeenCalledOnce();
-    expect(loopEntries(rig)).toContainEqual({
-      action: 'abort',
-      cause: 'identical',
-      reason: expect.any(String),
-    });
+    // jedd: the identical-call abort is now WALL-CLOCK (3 min), not a count — so a
+    // fast burst of many more identical calls within seconds must NOT abort.
+    for (let i = 0; i < 10; i++) await call();
+    expect(rig.abort).not.toHaveBeenCalled();
+    expect(rig.steerMessages).toHaveLength(1); // still just the one nudge
   });
 
   it('steers then aborts on a consecutive tool-execution-error streak', async () => {
@@ -422,12 +418,12 @@ describe('loop detector — live wiring through tool_call / tool_execution_end',
     expect(rig.abort).not.toHaveBeenCalled();
   });
 
-  it('steers then aborts on unproductive wandering — many DIFFERENT reads, no progress (fix #8)', async () => {
-    const rig = makeRig({ effort: 'medium' }); // wander steer 6 / abort 10
+  it('steers ONCE on unproductive wandering but NEVER aborts — different reads are not a loop (jedd)', async () => {
+    const rig = makeRig({ effort: 'medium' }); // wander steer 6
     await startSession(rig);
     await startTurn(rig);
-    // Read a DIFFERENT file each call: ten distinct signatures, so the identical
-    // streak stays inert — only the productivity cap can break this.
+    // Read a DIFFERENT file each call: distinct signatures, so the identical
+    // streak stays inert. Wandering gets one nudge but must never terminate.
     const read = (n: number) =>
       rig.fire('tool_call', {
         type: 'tool_call' as const,
@@ -438,7 +434,7 @@ describe('loop detector — live wiring through tool_call / tool_execution_end',
 
     for (let i = 1; i <= 5; i++) await read(i);
     expect(rig.steerMessages).toHaveLength(0);
-    await read(6); // 6th exploration call → steer
+    await read(6); // 6th exploration call → the single steer
     expect(rig.steerMessages).toHaveLength(1);
     expect(loopEntries(rig)).toContainEqual({
       action: 'steer',
@@ -447,15 +443,9 @@ describe('loop detector — live wiring through tool_call / tool_execution_end',
     });
     expect(rig.abort).not.toHaveBeenCalled();
 
-    for (let i = 7; i <= 9; i++) await read(i);
+    // Read 20 MORE different files — never aborts (productive exploration).
+    for (let i = 7; i <= 26; i++) await read(i);
     expect(rig.abort).not.toHaveBeenCalled();
-    await read(10); // 10th → abort the turn
-    expect(rig.abort).toHaveBeenCalledOnce();
-    expect(loopEntries(rig)).toContainEqual({
-      action: 'abort',
-      cause: 'wander',
-      reason: expect.any(String),
-    });
   });
 });
 

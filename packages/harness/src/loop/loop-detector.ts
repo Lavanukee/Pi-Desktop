@@ -46,8 +46,20 @@ const NONE: LoopSignal = { kind: 'none' };
 export interface LoopDetectorConfig {
   /** Consecutive identical calls / errors that fire the single corrective steer. */
   readonly steerAfter: number;
-  /** Consecutive identical calls / errors that fire the abort. */
+  /** Consecutive ERRORS that fire the abort. (The identical-call abort is now
+   * WALL-CLOCK — see {@link repeatWallMs} — not this count, per jedd: a genuine
+   * loop is "the same call still repeating minutes later", and a fast burst of a
+   * few identical calls is not yet a loop.) */
   readonly abortAfter: number;
+  /**
+   * Wall-clock window (ms) for the identical-call abort: the SAME tool call
+   * (name + args) must keep repeating for at least this long before it aborts.
+   * Reading DIFFERENT files never trips this (each is a distinct signature that
+   * restarts the streak + its clock). Omitted → {@link DEFAULT_REPEAT_WALL_MS}.
+   */
+  readonly repeatWallMs?: number;
+  /** Clock source (injectable for tests). Omitted → {@link Date.now}. */
+  readonly now?: () => number;
   /** Hard per-turn tool-call cap (a generous backstop) that aborts. */
   readonly maxSteps: number;
   /**
@@ -67,6 +79,9 @@ export interface LoopDetectorConfig {
 /** Default streak thresholds (kept constant across effort — a loop is a loop). */
 export const DEFAULT_LOOP_STEER_AFTER = 3;
 export const DEFAULT_LOOP_ABORT_AFTER = 5;
+/** Wall-clock window for the identical-call abort (jedd): the SAME call must keep
+ * repeating for 3 minutes before it's treated as a stuck loop and aborted. */
+export const DEFAULT_REPEAT_WALL_MS = 3 * 60 * 1000;
 
 /**
  * Default unproductive-wandering thresholds, used when a {@link LoopDetectorConfig}
@@ -191,7 +206,7 @@ function reasonFor(cause: LoopCause, streak: number, aborting: boolean): string 
   switch (cause) {
     case 'identical':
       return aborting
-        ? `repeated the same tool call ${streak}× without progress`
+        ? `stuck repeating the same tool call for minutes without progress (${streak}×)`
         : `same tool call repeated ${streak}×`;
     case 'error':
       return aborting
@@ -209,9 +224,14 @@ function reasonFor(cause: LoopCause, streak: number, aborting: boolean): string 
 export function createLoopDetector(config: LoopDetectorConfig): LoopDetector {
   const windowSize = Math.max(1, config.windowSize ?? 8);
   const wanderSteerAfter = config.wanderSteerAfter ?? DEFAULT_WANDER_STEER_AFTER;
-  const wanderAbortAfter = config.wanderAbortAfter ?? DEFAULT_WANDER_ABORT_AFTER;
+  const repeatWallMs = config.repeatWallMs ?? DEFAULT_REPEAT_WALL_MS;
+  const now = config.now ?? Date.now;
   let steps = 0;
   let identicalStreak = 0;
+  // Wall-clock start of the CURRENT identical-call streak (reset whenever the
+  // signature changes — a different tool OR different args, e.g. reading a
+  // different file, starts a fresh streak + clock).
+  let identicalStreakStart = now();
   let errorStreak = 0;
   // Consecutive read-only/exploration calls since the last concrete action.
   let unproductiveStreak = 0;
@@ -242,8 +262,17 @@ export function createLoopDetector(config: LoopDetectorConfig): LoopDetector {
   return {
     onToolCall(toolName, args) {
       steps += 1;
+      const t = now();
       const sig = toolCallSignature(toolName, args);
-      identicalStreak = sig === lastSignature ? identicalStreak + 1 : 1;
+      if (sig === lastSignature) {
+        identicalStreak += 1;
+      } else {
+        // A different tool OR different args (e.g. a DIFFERENT file read) starts a
+        // fresh streak AND restarts its wall clock — so productive exploration
+        // across many files never trips the repeat guard (jedd).
+        identicalStreak = 1;
+        identicalStreakStart = t;
+      }
       lastSignature = sig;
       recent.push(sig);
       if (recent.length > windowSize) recent.shift();
@@ -260,22 +289,36 @@ export function createLoopDetector(config: LoopDetectorConfig): LoopDetector {
           reason: `exceeded the per-turn tool-call cap (${config.maxSteps})`,
         };
       }
-      // Identical-call streak next — a same-call repeat is the strongest signal.
-      const identical = escalate(
-        identicalStreak,
-        'identical',
-        STEER_IDENTICAL,
-        config.steerAfter,
-        config.abortAfter,
-      );
-      if (identical.kind !== 'none') return identical;
-      // Unproductive-wandering last: many DIFFERENT exploration calls, no action.
+      // Identical-call loop (jedd): ABORT only once the SAME call (name + args) has
+      // been repeating for the wall-clock window — a fast burst of a few identical
+      // calls is not yet a stuck loop; a call still repeating minutes later is. One
+      // early corrective steer at the count threshold nudges before the timeout.
+      if (identicalStreak >= 2 && t - identicalStreakStart >= repeatWallMs) {
+        return {
+          kind: 'abort',
+          cause: 'identical',
+          reason: reasonFor('identical', identicalStreak, true),
+        };
+      }
+      if (identicalStreak >= config.steerAfter && !steered) {
+        steered = true;
+        return {
+          kind: 'steer',
+          cause: 'identical',
+          reason: reasonFor('identical', identicalStreak, false),
+          message: STEER_IDENTICAL,
+        };
+      }
+      // Unproductive wandering: many DIFFERENT exploration calls with no action.
+      // jedd: reading different files must NOT abort — so this only ever STEERS
+      // (one gentle nudge), never aborts (Infinity abort threshold). The hard step
+      // cap above is the runaway backstop.
       return escalate(
         unproductiveStreak,
         'wander',
         STEER_WANDER,
         wanderSteerAfter,
-        wanderAbortAfter,
+        Number.POSITIVE_INFINITY,
       );
     },
 
@@ -288,6 +331,7 @@ export function createLoopDetector(config: LoopDetectorConfig): LoopDetector {
     reset() {
       steps = 0;
       identicalStreak = 0;
+      identicalStreakStart = now();
       errorStreak = 0;
       unproductiveStreak = 0;
       steered = false;

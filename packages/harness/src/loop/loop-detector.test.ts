@@ -37,21 +37,31 @@ describe('toolCallSignature', () => {
 });
 
 describe('identical-call streak', () => {
-  it('steers once at steerAfter, then aborts at abortAfter', () => {
-    const d = createLoopDetector(CFG);
+  it('steers once at the count threshold, then aborts only after the WALL-CLOCK window', () => {
+    let clock = 1000;
+    const d = createLoopDetector({
+      ...CFG,
+      maxSteps: 100,
+      now: () => clock,
+      repeatWallMs: 180_000,
+    });
     const call = () => d.onToolCall('bash', { command: 'ls' });
     expect(call().kind).toBe('none'); // 1
     expect(call().kind).toBe('none'); // 2
-    const third = call(); // 3 → steer
+    const third = call(); // 3 → steer (count nudge)
     expect(third.kind).toBe('steer');
     if (third.kind === 'steer') {
       expect(third.cause).toBe('identical');
       expect(third.message.length).toBeGreaterThan(0);
     }
-    expect(call().kind).toBe('none'); // 4 — already steered, no repeat steer
-    const fifth = call(); // 5 → abort
-    expect(fifth.kind).toBe('abort');
-    if (fifth.kind === 'abort') expect(fifth.cause).toBe('identical');
+    // A FAST burst of many more identical calls with NO time elapsed is NOT yet a
+    // loop (jedd: a genuine loop is the same call STILL repeating minutes later).
+    for (let i = 0; i < 20; i++) expect(call().kind).toBe('none');
+    // Once the same call has been repeating past the wall-clock window → abort.
+    clock += 180_001;
+    const late = call();
+    expect(late.kind).toBe('abort');
+    if (late.kind === 'abort') expect(late.cause).toBe('identical');
   });
 
   it('resets the streak when a different call interrupts it', () => {
@@ -168,28 +178,24 @@ describe('unproductive-wandering cap (productivity heuristic)', () => {
     }
   });
 
-  it('steers once after N DIFFERENT read-only calls, then aborts — the case the signature streak misses', () => {
+  it('steers ONCE after N different read-only calls but NEVER aborts (jedd: different files aren’t a loop)', () => {
     const d = createLoopDetector(WCFG);
-    // Ten DIFFERENT files → ten distinct signatures, so the identical-call streak
-    // NEVER trips (stays at 1). Only the productivity cap can catch this wander.
+    // Many DIFFERENT files → distinct signatures, so the identical-call streak
+    // never trips. Wandering gets ONE gentle nudge, but must never terminate the
+    // turn — reading different files is productive exploration, not a loop.
     const readFile = (n: number) => d.onToolCall('read', { path: `/f${n}.txt` });
     expect(readFile(1).kind).toBe('none'); // 1
     expect(readFile(2).kind).toBe('none'); // 2
     expect(readFile(3).kind).toBe('none'); // 3
-    const fourth = readFile(4); // 4 → wander steer
+    const fourth = readFile(4); // 4 → wander steer (the single nudge)
     expect(fourth.kind).toBe('steer');
     if (fourth.kind === 'steer') {
       expect(fourth.cause).toBe('wander');
       expect(fourth.message.length).toBeGreaterThan(0);
     }
-    // Proof the identical-call streak stayed inert (all paths differ).
-    expect(d.snapshot().identicalStreak).toBe(1);
-    expect(d.snapshot().unproductiveStreak).toBe(4);
-    expect(readFile(5).kind).toBe('none'); // 5 — already steered, no repeat steer
-    expect(readFile(6).kind).toBe('none'); // 6
-    const seventh = readFile(7); // 7 → wander abort
-    expect(seventh.kind).toBe('abort');
-    if (seventh.kind === 'abort') expect(seventh.cause).toBe('wander');
+    expect(d.snapshot().identicalStreak).toBe(1); // all paths differ
+    // Reading 25 MORE different files never aborts.
+    for (let n = 5; n < 30; n++) expect(readFile(n).kind).toBe('none');
   });
 
   it('a concrete action resets the unproductive streak', () => {
@@ -217,36 +223,34 @@ describe('unproductive-wandering cap (productivity heuristic)', () => {
     expect(d.snapshot().steered).toBe(false);
   });
 
-  it('shares the single per-turn steer budget with the identical-call cause, yet still aborts on wander', () => {
+  it('shares the single per-turn steer budget with the identical-call cause; wander never aborts', () => {
     // identical trips the ONE steer first; the wander cause can no longer steer,
-    // but it must still be able to ABORT once its own threshold is crossed.
+    // and (jedd) it must NEVER abort no matter how many different files are read.
     const d = createLoopDetector({
       steerAfter: 3,
-      abortAfter: 99, // identical won't abort — only its steer fires
+      abortAfter: 99,
       maxSteps: 50,
       wanderSteerAfter: 4,
-      wanderAbortAfter: 7,
     });
     d.onToolCall('read', { path: '/same' });
     d.onToolCall('read', { path: '/same' });
     expect(d.onToolCall('read', { path: '/same' }).kind).toBe('steer'); // identical steer (budget spent)
-    d.onToolCall('read', { path: '/a' }); // wander=4 → would steer, but budget spent → none
-    d.onToolCall('read', { path: '/b' }); // 5
-    d.onToolCall('read', { path: '/c' }); // 6
-    expect(d.onToolCall('read', { path: '/d' })).toMatchObject({ kind: 'abort', cause: 'wander' }); // 7
+    // Many DIFFERENT reads: wander would steer but budget spent; and never aborts.
+    for (let i = 0; i < 20; i++) {
+      expect(d.onToolCall('read', { path: `/x${i}` }).kind).toBe('none');
+    }
   });
 
-  it('falls back to the default wander thresholds when the config omits them', () => {
-    const d = createLoopDetector({ steerAfter: 3, abortAfter: 5, maxSteps: 100 });
+  it('with the default wander thresholds, steers once but never aborts (different reads)', () => {
+    const d = createLoopDetector({ steerAfter: 3, abortAfter: 5, maxSteps: 200 });
     for (let i = 0; i < DEFAULT_WANDER_STEER_AFTER - 1; i++) {
       expect(d.onToolCall('read', { path: `/f${i}` }).kind).toBe('none');
     }
     expect(d.onToolCall('read', { path: '/final' }).kind).toBe('steer');
-    // Climb the rest of the way to the default abort threshold.
-    for (let i = DEFAULT_WANDER_STEER_AFTER; i < DEFAULT_WANDER_ABORT_AFTER - 1; i++) {
+    // Far PAST the old count-abort threshold — still no abort (they're all different).
+    for (let i = DEFAULT_WANDER_STEER_AFTER; i < DEFAULT_WANDER_ABORT_AFTER + 30; i++) {
       expect(d.onToolCall('read', { path: `/g${i}` }).kind).toBe('none');
     }
-    expect(d.onToolCall('read', { path: '/last' }).kind).toBe('abort');
   });
 });
 

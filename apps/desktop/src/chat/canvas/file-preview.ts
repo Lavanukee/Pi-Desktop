@@ -11,7 +11,22 @@ import type { CanvasTabKind } from '@pi-desktop/canvas';
 // renders as text/svg in the file surface (with a raw↔rendered toggle), so
 // routing it here would lose that. The older binary .doc/.ppt are not covered —
 // mammoth / the pptx reader only handle the OOXML (zip) formats.
-const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'apng']);
+// heic/heif (iPhone's default) can't be decoded by Chromium's <img>, so the
+// pd-file:// handler transcodes them to PNG (macOS sips) before serving — they
+// still open as image tabs here.
+const IMAGE_EXT = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'bmp',
+  'ico',
+  'avif',
+  'apng',
+  'heic',
+  'heif',
+]);
 const VIDEO_EXT = new Set(['mp4', 'webm', 'mov', 'm4v', 'ogv', 'mkv']);
 const AUDIO_EXT = new Set(['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'oga', 'opus']);
 const MODEL_EXT = new Set(['glb', 'gltf', 'obj', 'stl', 'ply']);

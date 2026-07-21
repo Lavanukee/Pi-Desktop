@@ -28,7 +28,14 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
-import { type IpcMainInvokeEvent, ipcMain, protocol, shell, type WebContents } from 'electron';
+import {
+  type IpcMainInvokeEvent,
+  ipcMain,
+  nativeImage,
+  protocol,
+  shell,
+  type WebContents,
+} from 'electron';
 import { allowedWriteRoots } from '../fs-handlers';
 import type {
   AppEventMap,
@@ -221,6 +228,26 @@ export function registerFileProtocol(): void {
     }
 
     const ext = extOf(real);
+
+    // Chromium's <img> can't decode HEIC/HEIF (iPhone's default), so decode it to
+    // PNG with the OS image codec (Electron nativeImage → macOS ImageIO, fully
+    // offline) and serve those bytes directly. Range/streaming is irrelevant for a
+    // small transcoded still.
+    if (ext === 'heic' || ext === 'heif') {
+      const png = heicToPng(real, st.mtimeMs);
+      if (png === null) return new Response('unsupported image', { status: 415, headers: cors });
+      // Wrap the Node Buffer as a plain Uint8Array so it satisfies BodyInit.
+      return new Response(new Uint8Array(png), {
+        status: 200,
+        headers: {
+          ...cors,
+          'content-type': 'image/png',
+          'cache-control': 'no-cache',
+          'content-length': String(png.length),
+        },
+      });
+    }
+
     const contentType = FILE_MIME[ext] ?? 'application/octet-stream';
     const total = st.size;
     const base: Record<string, string> = {
@@ -260,6 +287,31 @@ export function registerFileProtocol(): void {
       return new Response('read error', { status: 500, headers: cors });
     }
   });
+}
+
+// HEIC/HEIF → PNG-bytes cache, keyed by source path + mtime so a file that
+// changes on disk re-decodes. Decoding relies on the OS codec (macOS ImageIO);
+// where it isn't supported, `createFromPath` returns an empty image → null → 415.
+const heicPngCache = new Map<string, Buffer>();
+
+/** Decode a HEIC/HEIF file to PNG bytes via Electron nativeImage (the OS image
+ * codec), cached by path+mtime. Returns the PNG buffer, or null if the codec
+ * couldn't read it. */
+function heicToPng(real: string, mtimeMs: number): Buffer | null {
+  const key = `${real}:${mtimeMs}`;
+  const cached = heicPngCache.get(key);
+  if (cached !== undefined) return cached;
+  try {
+    const img = nativeImage.createFromPath(real);
+    if (img.isEmpty()) return null;
+    const png = img.toPNG();
+    if (png.length === 0) return null;
+    heicPngCache.set(key, png);
+    return png;
+  } catch (error) {
+    log.warn('heic decode failed', { real, error: String(error) });
+    return null;
+  }
 }
 
 /** Guarded statSync → null on any error (missing / permission). */

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 // touches the main bundle unless a model tab is actually opened.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
@@ -238,18 +239,30 @@ export function ModelSurface({
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(initialW, initialH);
+    // ACES tone-mapping + sRGB output so glTF PBR colours/textures read the way
+    // the exporter intended (default in three, set explicitly for clarity).
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.domElement.style.display = 'block';
     host.appendChild(renderer.domElement);
 
-    // Hemisphere for soft sky/ground fill + a key and a gentle back-fill
-    // directional so PBR materials read with form (StandardMaterial is pure
-    // black without lights).
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x30343a, 1.1);
+    // Image-based lighting: a neutral studio environment map drives PBR
+    // reflections. WITHOUT it, metallic-roughness materials (which most textured
+    // glTF/GLB models use) render BLACK or flat and their maps look "missing" —
+    // this is the fix for "textures aren't rendering". PMREM pre-filters the
+    // procedural RoomEnvironment into an env map the whole scene samples.
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environment = envTexture;
+
+    // Direct lights ON TOP of the IBL for crisp highlights + form (the env map
+    // alone is soft/ambient). StandardMaterial is pure black with neither.
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x30343a, 0.6);
     scene.add(hemi);
-    const key = new THREE.DirectionalLight(0xffffff, 2.0);
+    const key = new THREE.DirectionalLight(0xffffff, 1.5);
     key.position.set(4, 6, 5);
     scene.add(key);
-    const fill = new THREE.DirectionalLight(0xffffff, 0.6);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.5);
     fill.position.set(-5, -2, -3);
     scene.add(fill);
 
@@ -308,6 +321,9 @@ export function ModelSurface({
       resizeObserver.disconnect();
       controls.dispose();
       disposeObject(scene);
+      scene.environment = null;
+      envTexture.dispose();
+      pmrem.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
       renderer.domElement.remove();

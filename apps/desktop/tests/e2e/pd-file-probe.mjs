@@ -9,6 +9,7 @@
  *       asserts it ERRORS — proving the realpath fence refuses it (403).
  * Run `pnpm build` first. Exit 0 on success, non-zero on any failed assertion.
  */
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -39,6 +40,19 @@ const PNG_B64 =
 const projectDir = mkdtempSync(path.join(tmpdir(), 'pi-pdfile-proj-'));
 const pngPath = path.join(projectDir, 'red.png');
 writeFileSync(pngPath, Buffer.from(PNG_B64, 'base64'));
+
+// A real HEIC on disk (upscale the 1×1 → 64×64, then encode to HEIC via sips).
+// Skipped where sips can't produce one; the app decodes HEIC with nativeImage.
+const heicPath = path.join(projectDir, 'photo.heic');
+let heicReady = false;
+try {
+  const big = path.join(projectDir, 'big.png');
+  execFileSync('sips', ['-z', '64', '64', pngPath, '--out', big], { stdio: 'ignore' });
+  execFileSync('sips', ['-s', 'format', 'heic', big, '--out', heicPath], { stdio: 'ignore' });
+  heicReady = existsSync(heicPath);
+} catch {
+  heicReady = false;
+}
 
 /** Mirror of the renderer's pdFileUrl(): pd-file://f + encoded abs pathname. */
 const pdFileUrl = (abs) => `pd-file://f${abs.split('/').map(encodeURIComponent).join('/')}`;
@@ -110,6 +124,34 @@ try {
     () => document.querySelector('[data-testid="canvas-tabs-panel"] .pd-media-image')?.naturalWidth,
   );
   assert(naturalW >= 1, `expected decoded image bytes (naturalWidth ≥ 1), got ${naturalW}`);
+
+  // (a2) A HEIC must display too — the handler transcodes it to PNG (nativeImage).
+  if (heicReady) {
+    await page.evaluate(
+      (src) =>
+        window
+          .__pi_canvas()
+          .openTab({ kind: 'image', title: 'photo.heic', mediaSrc: src, mediaType: 'HEIC' }),
+      pdFileUrl(heicPath),
+    );
+    await page.waitForFunction(
+      () => {
+        const imgs = document.querySelectorAll('[data-testid="canvas-tabs-panel"] .pd-media-image');
+        const img = imgs[imgs.length - 1];
+        return (
+          img != null &&
+          img.getAttribute('data-status') === 'loaded' &&
+          !img.hasAttribute('hidden') &&
+          img.naturalWidth > 0
+        );
+      },
+      undefined,
+      { timeout: 8000 },
+    );
+    console.log('  · heic → png transcode displayed OK');
+  } else {
+    console.log('  · heic step skipped (sips could not produce a test file)');
+  }
 
   // (b) An OUT-OF-FENCE path must be refused (403 → <img> error → error panel).
   await page.evaluate(

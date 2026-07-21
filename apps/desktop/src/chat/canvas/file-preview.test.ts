@@ -7,8 +7,21 @@ import { describe, expect, it } from 'vitest';
 import { pdFileUrl, previewKindForExt } from './file-preview';
 
 describe('previewKindForExt', () => {
-  it('routes image extensions to the image surface', () => {
-    for (const ext of ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif', 'apng']) {
+  it('routes image extensions to the image surface (incl. heic/heif)', () => {
+    const exts = [
+      'png',
+      'jpg',
+      'jpeg',
+      'gif',
+      'webp',
+      'bmp',
+      'ico',
+      'avif',
+      'apng',
+      'heic',
+      'heif',
+    ];
+    for (const ext of exts) {
       expect(previewKindForExt(ext)).toEqual({ kind: 'image', mediaType: ext.toUpperCase() });
     }
   });

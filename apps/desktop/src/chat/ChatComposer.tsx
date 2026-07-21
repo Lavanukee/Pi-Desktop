@@ -21,13 +21,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { abortCorpTask } from '../state/corp-connect';
 import { useCorpStore } from '../state/corp-store';
-import {
-  abortPi,
-  applyHarnessPreset,
-  getCommands,
-  runBash,
-  sendPrompt,
-} from '../state/pi-connect';
+import { abortPi, applyHarnessPreset, getCommands, runBash, sendPrompt } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { productionHarnessEnabled } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
@@ -206,6 +200,10 @@ export function ChatComposer({
   const corpRunning = useCorpStore((s) => s.corpRunning);
   const corpTaskId = useCorpStore((s) => s.taskId);
   const cwd = usePiStore((s) => s.session?.cwd ?? '');
+  // The pre-first-token dispatch window: true from send until the turn produces
+  // its first token. Part of "the backend is busy" for the button, so the send↔stop
+  // flip doesn't blink back to Send during the dispatch gap.
+  const promptInFlight = usePiStore((s) => s.promptInFlight);
 
   const apiRef = useRef<ComposerEditorApi | null>(null);
   const [text, setText] = useState('');
@@ -440,6 +438,13 @@ export function ChatComposer({
       await runBash(raw.slice(1).trim());
       return;
     }
+    // INSTANT stop button (jedd #11): flip to Stop NOW, before the async
+    // dispatch makes promptInFlight/streaming true. The reconcile effect drops it
+    // the instant the real turn goes live; the timeout is a safety net so a send
+    // that somehow never starts a turn can't strand the button on Stop.
+    setPendingStop(false);
+    setPendingStart(true);
+    window.setTimeout(() => setPendingStart(false), 5000);
     // Fold attached text-file contents into pi's copy of the message (the send
     // path is otherwise images-only); the visible bubble echoes only the typed
     // text (or the filenames when nothing was typed).
@@ -487,7 +492,11 @@ export function ChatComposer({
       streamingAssistant !== undefined &&
       streamingAssistant.kind === 'assistant' &&
       !streamingAssistant.blocks.some((b) =>
-        b.type === 'text' ? b.text.length > 0 : b.type === 'thinking' ? b.thinking.length > 0 : true,
+        b.type === 'text'
+          ? b.text.length > 0
+          : b.type === 'thinking'
+            ? b.thinking.length > 0
+            : true,
       );
     if (piState.promptInFlight || streamEmpty) {
       piState.enqueueSend({
@@ -518,11 +527,34 @@ export function ChatComposer({
     apiRef.current?.focus();
   };
 
-  const isBusy = isStreaming || corpRunning;
+  // INSTANT send↔stop (jedd #11): the button must snap the MOMENT the user acts,
+  // never wait on the backend. Two optimistic overrides bracket the real busy
+  // signals: `pendingStart` shows Stop the instant Enter is pressed (before
+  // promptInFlight/streaming even flips), and `pendingStop` shows Send the instant
+  // Stop is pressed (even while the backend is still tearing the turn down). Each
+  // clears itself the moment the REAL state catches up, so they only ever cover
+  // the perceptible gap — the button can never get stuck in the optimistic state.
+  const realBusy = isStreaming || corpRunning || promptInFlight;
+  const [pendingStart, setPendingStart] = useState(false);
+  const [pendingStop, setPendingStop] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reconcile on realBusy transitions only
+  useEffect(() => {
+    if (realBusy) {
+      setPendingStart(false); // the real turn is live now — hand off to it
+    } else {
+      // Settled idle: drop both optimistic overrides so the button is Send.
+      setPendingStart(false);
+      setPendingStop(false);
+    }
+  }, [realBusy]);
+  const isBusy = (realBusy || pendingStart) && !pendingStop;
   const showSend = flavor === 'codex' || canSend || isBusy;
   // Stop routes to the right abort: a corp run cooperatively halts its subagents;
-  // a plain chat aborts the pi turn.
+  // a plain chat aborts the pi turn. Flip the button to Send INSTANTLY (pendingStop)
+  // before the async abort has propagated.
   const stopBusy = (): void => {
+    setPendingStop(true);
+    setPendingStart(false);
     if (corpRunning && corpTaskId !== null) void abortCorpTask(corpTaskId);
     else void abortPi();
   };

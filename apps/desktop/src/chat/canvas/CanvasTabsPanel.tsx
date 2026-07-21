@@ -146,8 +146,35 @@ export function CanvasTabsPanel() {
   // below the minimum toward 0 for a provisional-collapse preview; null when idle
   // so the `renderWidth` effect resumes ownership.
   const [dragWidth, setDragWidth] = useState<number | null>(null);
+  // Drive the slide. The subtlety (jedd: "no sliding animation"): the rail returns
+  // null while fully closed, so OPENING mounts the <aside> fresh. A CSS width
+  // transition needs a painted "from" frame, but React 18 can batch the mount
+  // render and this effect's setState into ONE paint — the browser jumps straight
+  // to sideWidth with no 0-frame to transition from, so no slide. Fix: on the
+  // closed→open edge, commit width 0, then grow to sideWidth on the next frame so
+  // a 0-frame is guaranteed painted first. While ALREADY open (a resize changing
+  // sideWidth) we set it directly — no 0-flash.
+  const prevOpen = useRef(open);
   useEffect(() => {
-    setRenderWidth(open ? sideWidth : 0);
+    const wasOpen = prevOpen.current;
+    prevOpen.current = open;
+    if (!open) {
+      setRenderWidth(0);
+      return;
+    }
+    if (wasOpen) {
+      setRenderWidth(sideWidth);
+      return;
+    }
+    setRenderWidth(0);
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => setRenderWidth(sideWidth));
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2 !== 0) cancelAnimationFrame(raf2);
+    };
   }, [open, sideWidth]);
 
   // Round-14 close bug: a native browser WebContentsView paints ABOVE the DOM and

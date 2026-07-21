@@ -159,10 +159,13 @@ try {
     `pi:get-models did not return a list: ${JSON.stringify(models)}`,
   );
   // The main-process bridge log proves the child was resolved to the bundled
-  // cli.js (source: 'bundled'), not a stray `pi` on PATH.
+  // cli.js (source: 'bundled'), not a stray `pi` on PATH. Strip ANSI colour codes
+  // first — the main logger colourises `source: 'bundled'` (→ `source:
+  // \x1b[32m'bundled'\x1b[39m`), which otherwise defeats the literal match.
+  const cleanLog = mainLog.replace(/\x1b\[[0-9;]*m/g, '');
   assert(
-    /pi bridge spawned[\s\S]*source: 'bundled'/.test(mainLog),
-    `main log did not show a bundled pi bridge spawn:\n${mainLog}`,
+    /pi bridge spawned[\s\S]*source: 'bundled'/.test(cleanLog),
+    `main log did not show a bundled pi bridge spawn:\n${cleanLog}`,
   );
   console.log(
     `(b) OK — pi spawned from the bundle (pid ${started.pid}, source: 'bundled'); get-models returned ${models.models.length} model(s)`,

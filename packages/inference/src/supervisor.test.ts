@@ -118,6 +118,13 @@ describe('assembleServerArgs', () => {
     expect(args).not.toContain('--spec-type');
   });
 
+  it('adds --reasoning-preserve by default and omits it when disabled', () => {
+    const on = assembleServerArgs({ ...base, launchMode: 'fast-text' });
+    expect(on).toContain('--reasoning-preserve');
+    const off = assembleServerArgs({ ...base, launchMode: 'fast-text', reasoningPreserve: false });
+    expect(off).not.toContain('--reasoning-preserve');
+  });
+
   it('throws on the fast-text + mmproj contradiction (MTP exclusivity)', () => {
     expect(() =>
       assembleServerArgs({ ...base, launchMode: 'fast-text', mmprojPath: '/x.gguf' }),

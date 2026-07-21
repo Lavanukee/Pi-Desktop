@@ -143,6 +143,12 @@ export type LlamaCppStreamFn = (
 interface OAIMessage {
   role: string;
   content?: string | Array<Record<string, unknown>> | null;
+  /**
+   * Prior-turn <think> trace, fed back so llama-server's `--reasoning-preserve`
+   * can re-render it into the prompt (templates with `supports_preserve_reasoning`).
+   * Ignored by templates without support, so it's always safe to send.
+   */
+  reasoning_content?: string;
   tool_calls?: Array<{
     id: string;
     type: 'function';
@@ -203,7 +209,16 @@ export function buildChatCompletionsRequest(
         .map((c) => c.text)
         .join('');
       const toolCalls = msg.content.filter((c): c is ToolCall => c.type === 'toolCall');
+      // Carry this turn's reasoning back so `--reasoning-preserve` (server) can
+      // re-render it into the prompt. Without this the flag has nothing to
+      // preserve — llama-server is stateless per request and only sees history
+      // we send. No-op for templates that don't support preserved reasoning.
+      const reasoning = msg.content
+        .filter((c) => c.type === 'thinking')
+        .map((c) => (c as { thinking?: string }).thinking ?? '')
+        .join('');
       const out: OAIMessage = { role: 'assistant', content: text.length > 0 ? text : null };
+      if (reasoning.length > 0) out.reasoning_content = reasoning;
       if (toolCalls.length > 0) {
         out.tool_calls = toolCalls.map((tc) => ({
           id: tc.id,

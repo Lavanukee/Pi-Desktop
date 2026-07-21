@@ -1,0 +1,18 @@
+
+{
+  "writeRate": 0.6428571428571429,
+  "written": 9,
+  "total": 14,
+  "bounced": 8,
+  "finalized": 8,
+  "improved": 0,
+  "selfChecked": 9,
+  "maxTok": 806,
+  "maxTurns": 6,
+  "stepCapped": 0,
+  "timedOut": 0,
+  "depAware": 9,
+  "depTotal": 9,
+  "strayTotal": 0
+}
+

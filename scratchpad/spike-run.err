@@ -1,0 +1,8 @@
+[2026-07-17T16:57:12.231Z] starting llama-server: /Users/jedd/.cache/pi-desktop/llamacpp/b9934/llama-b9934/llama-server -m /Users/jedd/.cache/pi-desktop/models/qwen3.5-4b-mtp/Qwen3.5-4B-Q8_0.gguf --host 127.0.0.1 --port 8171 -c 16384 --parallel 1 --spec-type draft-mtp --spec-draft-n-max 2 --jinja --chat-template-file /Users/jedd/.cache/pi-desktop/chat-templates/Qwen--Qwen3.5-4B.jinja
+[2026-07-17T16:57:14.536Z] server healthy: {"status":"ok"}
+[2026-07-17T16:57:14.852Z] ==== running contract: vec3 ====
+[2026-07-17T16:57:29.090Z] contract vec3 done: turns=2 maxTurnOut=900 tools=1 clean=true written=true
+[2026-07-17T16:57:29.090Z] ==== running contract: scene ====
+[2026-07-17T16:57:51.985Z] contract scene done: turns=3 maxTurnOut=1281 tools=2 clean=true written=true
+[2026-07-17T16:57:51.985Z] killing llama-server pid 66123
+report written to /var/folders/4h/nq1c73q107v594j4g0lq6bw00000gn/T/harness-spike-7SmqWI/report.json

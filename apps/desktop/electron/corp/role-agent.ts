@@ -62,6 +62,12 @@ import type { CorpTurnPurpose, RoleAgentActivity } from '@pi-desktop/harness/cor
 // the permissions default is a static denylist flagged BY RULE — no LLM reviewer
 // in the loop.
 import { checkScaryBash } from '@pi-desktop/harness/permissions';
+// The SAME `tool_search` a solo agent gets — full-harness parity for corp roles.
+// Value-imported from the zero-dependency `./tool-search` subpath (only a pi type
+// + typebox), so it stays loadable under Node TS type-stripping and drags in none
+// of the harness/pi barrel. A role starts with its curated tools ACTIVE, then can
+// search the full registered corpus and activate what it needs mid-run.
+import { registerToolSearch } from '@pi-desktop/harness/tool-search';
 
 // ---------------------------------------------------------------------------
 // LAZY pi-SDK loader — the boot-crash fix.
@@ -718,6 +724,29 @@ export interface RoleAgentConfig {
    * throwing sink is swallowed so it can never break the run. Absent → nothing
    * streams (unchanged behaviour). */
   readonly onActivity?: (record: RoleAgentActivity) => void;
+  /**
+   * Full-harness parity (jedd 2026-07-20): when true (the DEFAULT), the role gets
+   * the same `tool_search` a solo agent has. Its {@link RoleAgentConfig.tools} +
+   * customTools become the INITIAL ACTIVE set, but the whole registered corpus
+   * (all builtins + extension tools) stays discoverable, so the role can
+   * `tool_search` and activate anything it needs mid-run instead of being boxed
+   * into a hard allowlist. Set false (tests / a deliberately sandboxed role) to
+   * keep the old hard-allowlist behaviour. */
+  readonly enableToolSearch?: boolean;
+}
+
+/** The name of the tool-search tool (matches {@link registerToolSearch}'s default). */
+export const TOOL_SEARCH_NAME = 'tool_search';
+
+/**
+ * The INITIAL active tool set for a role: its curated tools, plus `tool_search`
+ * when enabled (default). Pure — the single source of truth the session narrows
+ * to after creation, and the unit-test seam for the parity change.
+ */
+export function roleActiveTools(tools: readonly string[], enableToolSearch = true): string[] {
+  const active = [...tools];
+  if (enableToolSearch && !active.includes(TOOL_SEARCH_NAME)) active.push(TOOL_SEARCH_NAME);
+  return active;
 }
 
 /** The BUMP-TO-CONTINUE policy for a run (see {@link RoleAgentConfig.bump}). */
@@ -804,6 +833,16 @@ export async function runRoleAgent(
   let readContextPercent: () => number | undefined = () => undefined;
 
   const corpExt: ExtensionFactory = (pi: ExtensionAPI) => {
+    // FULL-HARNESS PARITY: give the role the same `tool_search` a solo agent has,
+    // so it can discover + activate any registered tool mid-run rather than being
+    // boxed into its starting allowlist. Registered here (extension-load time);
+    // the role's curated set is narrowed to ACTIVE after the session is built
+    // (see the setActiveToolsByName call below). tool_search's own
+    // `pi.setActiveTools` union then works because we no longer pass a hard
+    // `tools` allowlist to createAgentSession (which would force-activate and
+    // filter the searchable corpus down to the allowlist).
+    if (config.enableToolSearch !== false) registerToolSearch(pi);
+
     // LIVE ACTIVITY sink (spec §11) — forward this run's tool/turn lifecycle AND the
     // model's live stream (streaming assistant text + reasoning) the MOMENT it
     // happens, so the situation room shows the model actually working, not "working…".
@@ -999,6 +1038,14 @@ export async function runRoleAgent(
   await loader.reload();
 
   const sessionManager = SessionManager.inMemory();
+  // TOOL PARITY: when tool_search is on we DON'T pass a hard `tools` allowlist —
+  // that would filter the searchable corpus (getAllTools) down to the allowlist
+  // AND force-activate every listed tool, defeating both discovery and a curated
+  // starting set. Instead we register the full corpus (no allowlist) and narrow
+  // the ACTIVE set to the role's curated tools + tool_search right after creation
+  // (session.setActiveToolsByName). With tool_search off we keep the old hard
+  // allowlist (a deliberately sandboxed role / deterministic tests).
+  const useToolSearch = config.enableToolSearch !== false;
   const { session } = await createAgentSession({
     cwd: config.cwd,
     agentDir,
@@ -1006,12 +1053,16 @@ export async function runRoleAgent(
     modelRegistry: handle.registry,
     authStorage: handle.auth,
     thinkingLevel: config.thinking ? 'medium' : 'off',
-    tools: config.tools,
+    tools: useToolSearch ? undefined : config.tools,
     customTools: config.customTools,
     resourceLoader: loader,
     sessionManager,
     settingsManager: settings,
   });
+  // Narrow the active set to the role's curated tools (+ tool_search). The full
+  // registered corpus stays discoverable via tool_search; this is just the
+  // STARTING active set the model sees, keeping its prompt focused.
+  if (useToolSearch) session.setActiveToolsByName(roleActiveTools(config.tools));
 
   // --- run: fully autonomous, guarded ONLY by the per-CALL network abort ---
   sessionRef = session; // arm the watchdog's abort target

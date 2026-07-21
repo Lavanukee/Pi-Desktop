@@ -88,6 +88,11 @@ export interface LaunchConfig {
   /** Whether the build advertises `draft-eagle3` (from probeServerFeatures). */
   readonly eagle3Supported?: boolean;
   readonly specDraftNMax?: number;
+  /**
+   * Preserve <think> reasoning across the whole history via
+   * `--reasoning-preserve` (default true). Set false to omit the flag.
+   */
+  readonly reasoningPreserve?: boolean;
   readonly extraArgs?: readonly string[];
 }
 
@@ -149,6 +154,17 @@ export function assembleServerArgs(cfg: LaunchConfig): string[] {
     '--dry-penalty-last-n',
     '4096',
   );
+
+  // Preserve the model's <think> reasoning across the WHOLE history, not just the
+  // most recent assistant turn (llama.cpp `--reasoning-preserve`, env
+  // LLAMA_ARG_REASONING_PRESERVE). For templates that advertise
+  // `supports_preserve_reasoning` this re-injects each prior turn's reasoning
+  // trace when rendering the prompt, so the model keeps its own chain-of-thought
+  // through a long tool-using turn instead of amnesia'ing after every tool call.
+  // A no-op on templates without support, so it's safe to send unconditionally.
+  // The client side of this is buildChatCompletionsRequest carrying each
+  // assistant turn's reasoning_content back (see provider-llamacpp/stream.ts).
+  if (cfg.reasoningPreserve !== false) args.push('--reasoning-preserve');
 
   if (cfg.launchMode === 'fast-text') {
     // Single slot by default; the OOM-aware corp launcher may request K slots

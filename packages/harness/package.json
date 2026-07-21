@@ -11,7 +11,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./corp": "./src/corp/index.ts",
-    "./permissions": "./src/permissions/rules.ts"
+    "./permissions": "./src/permissions/rules.ts",
+    "./tool-search": "./src/tools/tool-search.ts"
   },
   "pi": {
     "extensions": [

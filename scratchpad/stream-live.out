@@ -1,0 +1,76 @@
+
+{
+  "outcome": "completed",
+  "aborted": true,
+  "sawTextGrowth": true,
+  "sawThinkingLine": true,
+  "sawThinkingAction": true,
+  "sawThinkingGrowth": true,
+  "corpNamedSteps": [
+    {
+      "label": "Ran",
+      "detail": "cat > /tmp/mockup.html << 'EOF'",
+      "tool": "bash"
+    },
+    {
+      "label": "Ran",
+      "detail": "cat > /tmp/mockup.html << 'EOF'",
+      "tool": "bash"
+    },
+    {
+      "label": "Ran",
+      "detail": "cat > /tmp/mockup.html << 'EOF'",
+      "tool": "bash"
+    },
+    {
+      "label": "Ran",
+      "detail": "cat > /tmp/mockup.html << 'EOF'",
+      "tool": "bash"
+    },
+    {
+      "label": "Ran",
+      "detail": "cat > /tmp/mockup.html << 'EOF'",
+      "tool": "bash"
+    },
+    {
+      "label": "Ran",
+      "detail": "cat > /tmp/mockup.html << 'EOF'",
+      "tool": "bash"
+    },
+    {
+      "label": "Ran",
+      "detail": "cat > /tmp/mockup.html << 'EOF'",
+      "tool": "bash"
+    },
+    {
+      "label": "Ran",
+      "detail": "cat > /tmp/mockup.html << 'EOF'",
+      "tool": "bash"
+    }
+  ],
+  "engNamedSteps": [
+    {
+      "label": "Writing",
+      "detail": "hello.ts",
+      "tool": "write"
+    },
+    {
+      "label": "Ran",
+      "detail": "ls",
+      "tool": "bash"
+    }
+  ],
+  "engSawWrite": true,
+  "engHasDetail": true,
+  "sawGenericUsedTool": false,
+  "sawTurnDivider": false,
+  "sawStreamingFlag": true,
+  "currentActions": [
+    "thinking",
+    "Ran: cat > /tmp/mockup.html << 'EOF'",
+    "Used submit vision",
+    "Used create production hierarchy",
+    "Responding"
+  ]
+}
+

@@ -1,0 +1,51 @@
+
+{
+  "terminatedReason": "completed",
+  "vision": {
+    "wallMs": 162780,
+    "turns": 4,
+    "toolsUsed": [
+      "web_search",
+      "submit_vision"
+    ],
+    "submittedVision": true,
+    "filesWritten": [],
+    "isolationHarvest": false,
+    "allowlist": [
+      "read",
+      "write",
+      "bash",
+      "web_search",
+      "web_fetch",
+      "submit_vision"
+    ],
+    "hasPerAgentCap": false,
+    "terminatedReason": "stop",
+    "finalTextPreview": "Vision established and recorded. The project is now clearly defined with scope boundaries, tone, and concrete deliverables — ready for the build team to execute against this brief.",
+    "brief": "WHAT: A browser-based personal finance dashboard web application that enables users to record financial transactions, view monthly spending summaries via charts, and manage per-category budgets with real-time tracking against actuals. The app is self-contained (client-server architecture) with local-first data persistence for privacy.\n\nTONE & SCOPE: Modern, minimalist, and trustworthy — prioritizing clarity and ease of use over flashy features. \n\nIN SCOPE: \n- Transaction logging (amount, date, category, description)\n- Computed monthly summaries aggregating by category and total\n- Interactive charts/visualizations for spending trends\n- Filterable transaction list (date range, category filters)\n- Per-category budget setting with limit tracking\n- Budget progress indicators (percent used vs. allowed)\n\nOUT OF SCOPE: \n- Bank account aggregation/API integration\n- Investment or savings tracking\n- Tax planning tools\n- Multi-user collaboration features\n- Mobile app wrapper\n- Cloud-based data backup\n\nDELIVERABLES — What \"done\" looks like:\n1) Backend/data module: RESTful endpoints (or internal service) for CRUD on transactions and budgets, monthly summary aggregation logic, data persistence layer with local storage or embedded database.\n2) Frontend dashboard: Main landing page with navigation between modules; spending charts (pie/bar line); filterable transaction list with sorting/export.\n3) Budgets module: Interface to create/edit/delete category budgets with limits; visual indicators showing budget health (e.g., circular progress, color-coded status).\n4) Authentication or session handling (browser-based, no external auth required).\n5) Data migration/reset functionality for users.\n\nSuccess criteria: A user can log a transaction within 10 seconds, view monthly spending breakdown via chart with <2 second load time, set up 5 budget categories and see live alerts when approaching limits, and export the full transaction history as CSV."
+  },
+  "divisions": [
+    "Data Persistence",
+    "Business Logic",
+    "API Layer",
+    "Frontend Components",
+    "Visualizations"
+  ],
+  "totalContracts": 55,
+  "contractsDispatched": 1,
+  "briefSeededArchitect": true,
+  "briefSeededManagers": true,
+  "webSearch": {
+    "wiredInAllowlist": true,
+    "available": true,
+    "note": "backend=duckduckgo, results=3"
+  },
+  "budget": {
+    "maxTurns": 200,
+    "maxWallClockMs": 2700000,
+    "turnsUsed": 10,
+    "exceeded": false
+  },
+  "workspace": "/var/folders/4h/nq1c73q107v594j4g0lq6bw00000gn/T/vision-validate-lnYRod/ws"
+}
+

@@ -13,10 +13,33 @@ import {
   SAMPLING_MODES,
   type SamplingMode,
   type StripMessage,
+  roleActiveTools,
   settleActivitiesOnEnd,
   stripPriorThinking,
+  TOOL_SEARCH_NAME,
   toolResultText,
 } from './role-agent';
+
+describe('roleActiveTools — full-harness parity starting active set', () => {
+  it('appends tool_search to the curated set by default', () => {
+    expect(roleActiveTools(['read', 'write', 'edit', 'bash'])).toEqual([
+      'read',
+      'write',
+      'edit',
+      'bash',
+      TOOL_SEARCH_NAME,
+    ]);
+  });
+
+  it('omits tool_search when disabled (deliberately sandboxed role / tests)', () => {
+    expect(roleActiveTools(['read'], false)).toEqual(['read']);
+  });
+
+  it('does not double-add tool_search if the role already lists it', () => {
+    const out = roleActiveTools(['read', TOOL_SEARCH_NAME]);
+    expect(out.filter((t) => t === TOOL_SEARCH_NAME)).toHaveLength(1);
+  });
+});
 
 describe('toolResultText — captured bash result, text-only + tail-capped', () => {
   it('joins text blocks and drops non-text (image) blocks', () => {

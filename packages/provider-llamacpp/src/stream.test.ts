@@ -85,6 +85,43 @@ describe('buildChatCompletionsRequest', () => {
     expect(body.return_progress).toBe(true);
     expect(body.stream_options).toEqual({ include_usage: true });
   });
+
+  it('carries a prior assistant turn thinking back as reasoning_content (preserve-thinking)', () => {
+    const body = buildChatCompletionsRequest(makeModel(), {
+      systemPrompt: 'sys',
+      messages: [
+        { role: 'user', content: 'q', timestamp: 0 },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'thinking', thinking: 'let me reason' },
+            { type: 'text', text: 'answer' },
+          ],
+          timestamp: 1,
+        },
+        { role: 'user', content: 'follow-up', timestamp: 2 },
+      ],
+    } as unknown as Parameters<typeof buildChatCompletionsRequest>[1]) as {
+      messages: Array<{ role: string; content?: unknown; reasoning_content?: string }>;
+    };
+    const assistant = body.messages.find((m) => m.role === 'assistant');
+    expect(assistant?.reasoning_content).toBe('let me reason');
+    expect(assistant?.content).toBe('answer');
+  });
+
+  it('omits reasoning_content when the assistant turn had no thinking', () => {
+    const body = buildChatCompletionsRequest(makeModel(), {
+      systemPrompt: 'sys',
+      messages: [
+        { role: 'user', content: 'q', timestamp: 0 },
+        { role: 'assistant', content: [{ type: 'text', text: 'plain' }], timestamp: 1 },
+      ],
+    } as unknown as Parameters<typeof buildChatCompletionsRequest>[1]) as {
+      messages: Array<{ role: string; reasoning_content?: string }>;
+    };
+    const assistant = body.messages.find((m) => m.role === 'assistant');
+    expect(assistant?.reasoning_content).toBeUndefined();
+  });
 });
 
 describe('contextHasImage (provider-layer vision-need detector)', () => {

@@ -7,11 +7,14 @@ import {
   IconGlobe,
   IconPlus,
   IconTerminal,
+  Spinner,
 } from '@pi-desktop/ui';
 import {
   type ComponentType,
   Fragment,
+  lazy,
   type ReactNode,
+  Suspense,
   useCallback,
   useEffect,
   useRef,
@@ -36,6 +39,46 @@ import { CANVAS_TAB_KINDS } from './tab-kinds.ts';
 import type { CanvasTab, FileTreeNode, FileViewMode } from './tab-model.ts';
 import { useCanvasTabs } from './use-canvas-tabs.tsx';
 import { useOutsideClose } from './use-outside-close.ts';
+
+// Heavy modality surfaces are lazy-loaded so their libraries (three.js for 3D,
+// mammoth/fflate for Office docs) only enter the bundle when such a tab is
+// actually opened — they never weigh down canvas startup.
+const ModelSurface = lazy(() =>
+  import('../surfaces/model-surface.tsx').then((m) => ({ default: m.ModelSurface })),
+);
+const DocSurface = lazy(() =>
+  import('../surfaces/doc-surface.tsx').then((m) => ({ default: m.DocSurface })),
+);
+
+/** Suspense boundary for the lazy modality surfaces — shows the same centered
+ * spinner the media surface uses while the chunk (and its libs) load. */
+function LazyBody({ children }: { children: ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="pd-media-status">
+          <Spinner size={24} />
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
+  );
+}
+
+/** Fallback media type when a media tab carries no explicit `mediaType`. */
+function defaultMediaType(kind: CanvasTab['kind']): string {
+  switch (kind) {
+    case 'pdf':
+      return 'PDF';
+    case 'video':
+      return 'VIDEO';
+    case 'audio':
+      return 'AUDIO';
+    default:
+      return 'PNG';
+  }
+}
 
 /** The tab kinds the `+` menu can open. `filetree` opens the full-canvas project
  * file tree (NOT a blank "untitled" file — round-10 #4); `subagent` opens the
@@ -654,16 +697,42 @@ function DefaultSurface({
         </div>
       );
     case 'image':
+    case 'video':
+    case 'audio':
     case 'pdf':
       return (
         <MediaPreviewSurface
           src={tab.mediaSrc ?? tab.artifact?.content.text}
-          type={tab.mediaType ?? (tab.kind === 'pdf' ? 'PDF' : 'PNG')}
+          type={tab.mediaType ?? defaultMediaType(tab.kind)}
           index={tab.mediaIndex}
           status={tab.mediaStatus}
           reloadNonce={mediaNonce}
           onRefresh={() => handlers?.onMediaRefresh?.(id)}
         />
+      );
+    case 'model':
+      // three.js model viewer (glb/gltf/obj/stl/ply), lazy-loaded.
+      return (
+        <LazyBody>
+          <ModelSurface
+            src={tab.mediaSrc ?? tab.artifact?.content.text}
+            type={(tab.mediaType ?? 'GLB').toUpperCase()}
+            reloadNonce={mediaNonce}
+            onRefresh={() => handlers?.onMediaRefresh?.(id)}
+          />
+        </LazyBody>
+      );
+    case 'doc':
+      // Office document (docx via mammoth / pptx foundation), lazy-loaded.
+      return (
+        <LazyBody>
+          <DocSurface
+            src={tab.mediaSrc ?? tab.artifact?.content.text}
+            type={(tab.mediaType ?? 'DOCX').toUpperCase()}
+            reloadNonce={mediaNonce}
+            onRefresh={() => handlers?.onMediaRefresh?.(id)}
+          />
+        </LazyBody>
       );
     case 'file': {
       // A file tab can open EMPTY and fill incrementally as the model writes it,
@@ -746,7 +815,14 @@ function activeCopyText(tab: CanvasTab | null): string {
   // "copy the URL" doesn't belong on the browser chrome, so the tab-bar Copy
   // control is hidden there.
   if (tab.kind === 'browser') return '';
-  if (tab.kind === 'image' || tab.kind === 'pdf') {
+  if (
+    tab.kind === 'image' ||
+    tab.kind === 'video' ||
+    tab.kind === 'audio' ||
+    tab.kind === 'pdf' ||
+    tab.kind === 'model' ||
+    tab.kind === 'doc'
+  ) {
     return tab.mediaSrc ?? tab.artifact?.content.text ?? '';
   }
   return tab.artifact?.content.text ?? '';

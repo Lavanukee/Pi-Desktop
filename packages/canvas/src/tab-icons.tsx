@@ -55,6 +55,28 @@ export function IconFilm(props: IconProps) {
   );
 }
 
+/** Audio (a music note). */
+export function IconAudio(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6 12V4l7-1.5V10.5" />
+      <circle cx="4.5" cy="12" r="1.5" />
+      <circle cx="11.5" cy="10.5" r="1.5" />
+    </Icon>
+  );
+}
+
+/** Rich document (file glyph + text rules) — docx / pptx previews. */
+export function IconDoc(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9 2H4.5A1.5 1.5 0 0 0 3 3.5v9A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V6L9 2z" />
+      <path d="M9 2v4h4" />
+      <path d="M5.5 8.5h5M5.5 10.5h5M5.5 12h3" />
+    </Icon>
+  );
+}
+
 /** Source file (angle brackets). */
 export function IconCode(props: IconProps) {
   return (

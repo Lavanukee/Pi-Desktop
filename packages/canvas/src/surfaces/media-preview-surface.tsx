@@ -55,6 +55,27 @@ export function isVideoType(type: string): boolean {
   return VIDEO_TYPES.has(type.toUpperCase());
 }
 
+/** Media types that render in an `<audio>` element. */
+const AUDIO_TYPES = new Set([
+  'AUDIO',
+  'MP3',
+  'MPEG',
+  'WAV',
+  'X-WAV',
+  'M4A',
+  'AAC',
+  'FLAC',
+  'OPUS',
+  'OGA',
+]);
+
+/** Whether an upper-cased media type should render as an `<audio>` element.
+ * `OGG` is intentionally treated as VIDEO above (Ogg is ambiguous; the video
+ * element still plays audio-only Ogg), so it is not listed here. */
+export function isAudioType(type: string): boolean {
+  return AUDIO_TYPES.has(type.toUpperCase());
+}
+
 export interface MediaPreviewSurfaceProps {
   /** Source URL or data: URI. */
   src?: string;
@@ -103,6 +124,7 @@ export function MediaPreviewSurface({
   const status = controlledStatus ?? (src ? internalStatus : 'error');
   const isPdf = type.toUpperCase() === 'PDF';
   const isVideo = isVideoType(type);
+  const isAudio = isAudioType(type);
 
   // A new src OR a refresh nonce is a fresh load — both re-run trigger, not read
   // in the body.
@@ -150,7 +172,20 @@ export function MediaPreviewSurface({
                 onError={() => dispatch({ type: 'error' })}
               />
             ) : null}
-            {src && !isVideo && !isPdf ? (
+            {src && isAudio ? (
+              // biome-ignore lint/a11y/useMediaCaption: generated/opened clips have no track.
+              <audio
+                key={attempt}
+                className="pd-media-audio"
+                src={src}
+                controls
+                data-status={status}
+                hidden={status !== 'loaded'}
+                onLoadedData={() => dispatch({ type: 'loaded' })}
+                onError={() => dispatch({ type: 'error' })}
+              />
+            ) : null}
+            {src && !isVideo && !isAudio && !isPdf ? (
               <img
                 key={attempt}
                 className="pd-media-image"

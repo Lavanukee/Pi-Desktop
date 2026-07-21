@@ -2,6 +2,7 @@ import { act } from 'react';
 import { describe, expect, it } from 'vitest';
 import { click, render } from '../test-utils.tsx';
 import {
+  isAudioType,
   isVideoType,
   MediaPreviewSurface,
   mediaPreviewTransition,
@@ -46,7 +47,29 @@ describe('isVideoType', () => {
   });
 });
 
+describe('isAudioType', () => {
+  it('matches audio subtypes/kinds and rejects video + images', () => {
+    for (const t of ['mp3', 'WAV', 'audio', 'flac', 'm4a', 'aac']) {
+      expect(isAudioType(t)).toBe(true);
+    }
+    for (const t of ['mp4', 'MOV', 'png', 'pdf', 'video']) {
+      expect(isAudioType(t)).toBe(false);
+    }
+  });
+});
+
 describe('MediaPreviewSurface (body-only)', () => {
+  it('renders an <audio> element (not <img>/<video>) for an audio type', async () => {
+    const { container } = await render(<MediaPreviewSurface src="song.mp3" type="MP3" />);
+    expect(container.querySelector('audio')).toBeTruthy();
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('video')).toBeNull();
+    // `loadeddata` → loaded: spinner gone, audio visible.
+    await fire(container.querySelector('audio'), 'loadeddata');
+    expect(container.querySelector('.pd-media-status')).toBeNull();
+    expect(container.querySelector('audio')?.hasAttribute('hidden')).toBe(false);
+  });
+
   it('runs loading → error → retry(loading) → loaded', async () => {
     const { container } = await render(<MediaPreviewSurface src="a.png" type="png" index={2} />);
     // The header (name · TYPE + download) lives in the operation bar now.

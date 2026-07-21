@@ -311,8 +311,13 @@ describe('CorpChatStream — pushed deltas stream like the normal chat', () => {
     expect(container.textContent).not.toContain('<function=bash>');
     expect(container.textContent).not.toContain('<parameter=');
 
-    // The trailing prose rendered through Markdown.
-    expect(container.querySelector('.pd-markdown')?.textContent).toContain('Done — files written.');
+    // The trailing prose rendered through Markdown. Thoughts now ALSO render
+    // through Markdown (UI#5), so scope to the one `.pd-markdown` that isn't a
+    // thought (i.e. not inside a `.pd-chain-thought`) — the trailing assistant text.
+    const trailingProse = Array.from(container.querySelectorAll('.pd-markdown')).find(
+      (el) => el.closest('.pd-chain-thought') === null,
+    );
+    expect(trailingProse?.textContent).toContain('Done — files written.');
 
     // CRITICAL (bug 1): the first chain's DOM node is the SAME one — appending all
     // those blocks reconciled the chain in place instead of re-mounting the whole

@@ -23,6 +23,7 @@ import {
   registerCanvasIpc,
   registerCanvasProtocol,
   registerCanvasSchemesAsPrivileged,
+  registerFileProtocol,
 } from './canvas/canvas-main';
 import { registerConnectorsIpc } from './connectors/connectors-main';
 import { registerCorpIpc } from './corp/corp-main';
@@ -485,6 +486,9 @@ if (!hasSingleInstanceLock) {
       });
     }
     registerCanvasProtocol(HARNESS_DIR);
+    // Media scheme: stream project-file bytes (images/video/audio/pdf/3D/docs) to
+    // the canvas surfaces, fenced to the app's working roots (see canvas-main.ts).
+    registerFileProtocol();
     registerCanvasIpc(openCanvasPopoutWindow);
     // ⌘W closes the active tab, not the window (blind-test round-2 #5).
     installAppMenu();

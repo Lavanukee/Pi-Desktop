@@ -5,6 +5,7 @@ import { DiffStat } from './activity.tsx';
 import { CodeBlock } from './code-block.tsx';
 import { type DiffFileData, DiffView } from './diff-view.tsx';
 import { IconCheck, IconChevronRight, IconExternal } from './icons.tsx';
+import { Markdown } from './markdown.tsx';
 import { ShimmerText } from './shimmer.tsx';
 import { Spinner } from './spinner.tsx';
 import { ToolIcon, type ToolIconKind } from './tool-icons.tsx';
@@ -301,8 +302,12 @@ function ChainThought({ text, live = false }: { text: string; live?: boolean }) 
   const clamped = long && !showMore && !live;
   return (
     <div className="pd-chain-thought">
+      {/* jedd UI#5: reasoning renders through the SAME Markdown pipeline as a
+       * regular message (gfm, math, code chrome, hex swatches) — the scoped CSS
+       * on `.pd-chain-thought .pd-markdown` just scales it to the footnote size +
+       * secondary color of a thought. The clamp/fade lives on the wrapper. */}
       <div className="pd-chain-thought-text" data-clamped={clamped}>
-        {text}
+        <Markdown>{text}</Markdown>
       </div>
       {long && !live ? (
         <button

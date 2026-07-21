@@ -360,6 +360,18 @@ button.pd-chain-step-row:hover .pd-chain-step-chevron {
   white-space: pre-wrap;
 }
 
+/* jedd UI#5: an in-chain thought renders through the shared Markdown component
+ * (same pipeline as a regular message), so it lands in a `.pd-prose .pd-markdown`
+ * container that re-asserts the primary text color + response font-size. Scope it
+ * back down to the footnote size + secondary color of a thought; prose sizes
+ * headings/spacing in `em`, so scaling the base scales the whole block down. The
+ * clamp/fade + Show more still ride the `.pd-chain-thought-text` wrapper above. */
+.pd-chain-thought .pd-markdown {
+  color: var(--pd-text-secondary);
+  font-size: var(--pd-font-size-footnote);
+  line-height: var(--pd-leading-footnote);
+}
+
 /* Long in-chain thought: clamp + bottom fade (never a scrollbar). The shared
  * .pd-showmore sits below the fade so it never overlaps the text (round-5 #4). */
 .pd-chain-thought-text[data-clamped="true"] {

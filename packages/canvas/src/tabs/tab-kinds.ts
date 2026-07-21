@@ -8,8 +8,10 @@ import {
 } from '@pi-desktop/ui';
 import type { ComponentType } from 'react';
 import {
+  IconAudio,
   IconCode,
   IconCube,
+  IconDoc,
   IconFilm,
   IconFolder,
   IconMarkup,
@@ -72,6 +74,12 @@ export const CANVAS_TAB_KINDS: Record<CanvasTabKind, CanvasTabKindMeta> = {
   // One video surface carries generated MP4s, HyperFrames output, ffmpeg edits,
   // and burned perception overlays — all via MediaPreviewSurface's <video> branch.
   video: { kind: 'video', label: 'Video', icon: IconFilm, live: false, opensInCanvas: true },
+  audio: { kind: 'audio', label: 'Audio', icon: IconAudio, live: false, opensInCanvas: true },
+  // Static 3D model file preview (glb/gltf/obj/stl/ply) via the three.js
+  // ModelSurface — the preview twin of the `3d` generation workspace.
+  model: { kind: 'model', label: '3D Model', icon: IconCube, live: false, opensInCanvas: true },
+  // Office document preview (docx full render / pptx foundation) via DocSurface.
+  doc: { kind: 'doc', label: 'Document', icon: IconDoc, live: false, opensInCanvas: true },
   pdf: { kind: 'pdf', label: 'PDF', icon: IconPdf, live: false, opensInCanvas: true },
   subagent: {
     kind: 'subagent',

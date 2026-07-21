@@ -17,13 +17,21 @@ function csp(dev: boolean): string {
     dev ? "script-src 'self' 'unsafe-inline'" : "script-src 'self'",
     // Tailwind (dev) and React inline styles require 'unsafe-inline' for styles.
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
+    // pd-file: is the canvas media scheme (canvas-main.ts) that streams project
+    // file bytes for previews — images (+ mammoth's inlined data: images), 3D
+    // models / Office docs fetched as ArrayBuffers (connect-src), video/audio
+    // (media-src), and the PDF iframe (frame-src).
+    "img-src 'self' data: pd-file:",
     "font-src 'self' data:",
+    "media-src 'self' pd-file:",
     // Dev only: Vite HMR websocket.
-    dev ? "connect-src 'self' ws://localhost:* http://localhost:*" : "connect-src 'self'",
+    dev
+      ? "connect-src 'self' ws://localhost:* http://localhost:* pd-file:"
+      : "connect-src 'self' pd-file:",
     // W7 canvas: the sandboxed artifact harness loads over the custom
-    // pd-preview:// scheme (registered privileged+standard+secure in main.ts).
-    'frame-src pd-preview:',
+    // pd-preview:// scheme (registered privileged+standard+secure in main.ts);
+    // pd-file: carries a previewed PDF into the built-in viewer iframe.
+    'frame-src pd-preview: pd-file:',
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",

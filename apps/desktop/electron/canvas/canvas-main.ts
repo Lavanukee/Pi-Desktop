@@ -15,12 +15,21 @@
  * PD_PREVIEW_HARNESS_HOST).
  */
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import {
+  createReadStream,
+  existsSync,
+  readFileSync,
+  realpathSync,
+  type Stats,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
 import { type IpcMainInvokeEvent, ipcMain, protocol, shell, type WebContents } from 'electron';
+import { allowedWriteRoots } from '../fs-handlers';
 import type {
   AppEventMap,
   CanvasArtifactPayload,
@@ -36,6 +45,59 @@ const log = createLogger('desktop:canvas');
 /** Mirrors packages/canvas/src/harness/protocol.ts (frozen). */
 const PD_PREVIEW_SCHEME = 'pd-preview';
 const PD_PREVIEW_HARNESS_HOST = 'canvas';
+
+/**
+ * The `pd-file://` media scheme: serves raw project-file BYTES to the renderer so
+ * the canvas can preview binary modalities — images, video, audio, PDFs, 3D
+ * models (glb/obj/stl/ply) and Office docs (docx/pptx). It exists because the
+ * main window runs with `webSecurity` on and a non-`file://` origin in dev, where
+ * `<img src=file://…>` happens to load but `fetch('file://…')` (needed to hand a
+ * model/doc's ArrayBuffer to three.js / mammoth) is blocked cross-origin. A
+ * privileged `supportFetchAPI` + `corsEnabled` scheme fixes BOTH the element
+ * `src` case and the `fetch()` case uniformly, and — being ours — lets us fence
+ * to the app's working roots and honour HTTP Range so `<video>` can seek.
+ * URL shape: `pd-file://f` + the URL-encoded absolute path (its own pathname).
+ */
+const PD_FILE_SCHEME = 'pd-file';
+const PD_FILE_HOST = 'f';
+
+/** Extension → Content-Type for the media scheme. Elements (img/video/audio/pdf
+ * iframe) rely on this; the fetch()-based surfaces (3D/doc) read the bytes
+ * directly and ignore it. Unknowns fall back to octet-stream. */
+const FILE_MIME: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  avif: 'image/avif',
+  apng: 'image/apng',
+  svg: 'image/svg+xml',
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  mkv: 'video/x-matroska',
+  ogv: 'video/ogg',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  m4a: 'audio/mp4',
+  aac: 'audio/aac',
+  flac: 'audio/flac',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  opus: 'audio/ogg',
+  pdf: 'application/pdf',
+  glb: 'model/gltf-binary',
+  gltf: 'model/gltf+json',
+  obj: 'text/plain',
+  stl: 'application/sla',
+  ply: 'application/octet-stream',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
 
 const events = createIpcEventSender<AppEventMap>();
 
@@ -55,7 +117,158 @@ export function registerCanvasSchemesAsPrivileged(): void {
       scheme: PD_PREVIEW_SCHEME,
       privileges: { standard: true, secure: true, supportFetchAPI: true },
     },
+    {
+      // `stream` lets the handler return a streamed body (large video/models);
+      // `corsEnabled` + our ACAO header make cross-origin fetch() readable so the
+      // 3D/doc surfaces can pull an ArrayBuffer from a `http://localhost` / `file://`
+      // renderer origin.
+      scheme: PD_FILE_SCHEME,
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true,
+        stream: true,
+      },
+    },
   ]);
+}
+
+/** Parse a `Range: bytes=start-end` header against a known total size. Returns
+ * null for no/negative/unsatisfiable ranges (caller then serves the whole file
+ * or a 416). Only the first range of a (rare) multi-range request is honoured. */
+function parseRange(header: string | null, total: number): { start: number; end: number } | null {
+  if (header === null) return null;
+  const m = /bytes=(\d*)-(\d*)/.exec(header.trim());
+  if (m === null) return null;
+  const hasStart = m[1] !== '';
+  const hasEnd = m[2] !== '';
+  if (!hasStart && !hasEnd) return null;
+  let start: number;
+  let end: number;
+  if (!hasStart) {
+    // suffix range: last N bytes
+    const suffix = Number(m[2]);
+    start = Math.max(0, total - suffix);
+    end = total - 1;
+  } else {
+    start = Number(m[1]);
+    end = hasEnd ? Math.min(Number(m[2]), total - 1) : total - 1;
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= total) {
+    return null;
+  }
+  return { start, end };
+}
+
+/** True when `target` sits inside one of the app's working roots (registered
+ * projects, pi session cwds, the sandbox base, pi's agent dir). Both the target
+ * and each root are compared BOTH lexically and via realpath, so a symlinked path
+ * on either side matches (e.g. macOS `/var` → `/private/var`: a project stored as
+ * `/var/folders/…` still contains a file that realpaths to `/private/var/…`). */
+function isUnderAllowedRoot(target: string, real: string): boolean {
+  const contained = (root: string): boolean =>
+    target === root ||
+    target.startsWith(root + path.sep) ||
+    real === root ||
+    real.startsWith(root + path.sep);
+  for (const root of allowedWriteRoots()) {
+    if (contained(root)) return true;
+    let rootReal: string;
+    try {
+      rootReal = realpathSync(root);
+    } catch {
+      continue; // root doesn't exist yet — its lexical form was already checked
+    }
+    if (rootReal !== root && contained(rootReal)) return true;
+  }
+  return false;
+}
+
+/**
+ * Serve `pd-file://f/<abs-path>` from disk with a correct content-type, HTTP
+ * Range support (so `<video>` can seek), and CORS. The path is realpath'd and
+ * fenced to the app's working roots — a page (even the sandboxed canvas iframe)
+ * can never stream a file outside the folders the app already operates in.
+ * Registered after `app.whenReady()` (protocol.handle requirement).
+ */
+export function registerFileProtocol(): void {
+  protocol.handle(PD_FILE_SCHEME, async (request) => {
+    const cors = { 'access-control-allow-origin': '*' } as const;
+    let target: string;
+    try {
+      const { host, pathname } = new URL(request.url);
+      if (host !== PD_FILE_HOST) return new Response('not found', { status: 404, headers: cors });
+      target = path.resolve(decodeURIComponent(pathname));
+    } catch {
+      return new Response('bad request', { status: 400, headers: cors });
+    }
+
+    // realpath (collapse symlinks) then fence — never serve outside the roots.
+    let real: string;
+    try {
+      real = realpathSync(target);
+    } catch {
+      return new Response('not found', { status: 404, headers: cors });
+    }
+    if (!isUnderAllowedRoot(target, real)) {
+      log.warn('pd-file rejected: outside allowed roots', { target });
+      return new Response('forbidden', { status: 403, headers: cors });
+    }
+    const st = statSafe(real);
+    if (st === null || !st.isFile()) {
+      return new Response('not found', { status: 404, headers: cors });
+    }
+
+    const ext = extOf(real);
+    const contentType = FILE_MIME[ext] ?? 'application/octet-stream';
+    const total = st.size;
+    const base: Record<string, string> = {
+      ...cors,
+      'content-type': contentType,
+      'accept-ranges': 'bytes',
+      'cache-control': 'no-cache',
+    };
+
+    const range = parseRange(request.headers.get('range'), total);
+    if (request.headers.get('range') !== null && range === null && total > 0) {
+      // A Range header we couldn't satisfy → 416 with the current size.
+      return new Response(null, {
+        status: 416,
+        headers: { ...base, 'content-range': `bytes */${total}` },
+      });
+    }
+    try {
+      if (range !== null) {
+        const stream = createReadStream(real, { start: range.start, end: range.end });
+        return new Response(Readable.toWeb(stream) as unknown as ReadableStream, {
+          status: 206,
+          headers: {
+            ...base,
+            'content-range': `bytes ${range.start}-${range.end}/${total}`,
+            'content-length': String(range.end - range.start + 1),
+          },
+        });
+      }
+      const stream = createReadStream(real);
+      return new Response(Readable.toWeb(stream) as unknown as ReadableStream, {
+        status: 200,
+        headers: { ...base, 'content-length': String(total) },
+      });
+    } catch (error) {
+      log.warn('pd-file read failed', { target: real, error: String(error) });
+      return new Response('read error', { status: 500, headers: cors });
+    }
+  });
+}
+
+/** Guarded statSync → null on any error (missing / permission). */
+function statSafe(p: string): Stats | null {
+  try {
+    return statSync(p);
+  } catch {
+    return null;
+  }
 }
 
 /**

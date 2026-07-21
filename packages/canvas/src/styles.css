@@ -1072,6 +1072,144 @@
   font-size: var(--pd-font-size-caption);
 }
 
+.pd-media-audio {
+  width: min(100%, 420px);
+}
+
+/* ── 3D model surface (three.js) ─────────────────────────────────────── */
+
+.pd-model {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.pd-model-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* Clip any transient overflow while three.js re-sizes its canvas on resize. */
+  overflow: hidden;
+  /* A subtle inset backdrop; the transparent WebGL canvas sits on top so the
+   * model reads against the app surface, not a hard black box. */
+  background: var(--pd-bg-inset);
+}
+
+/* The three.js <canvas> mounts here and fills the body (three sizes the canvas
+ * itself via renderer.setSize, driven by a ResizeObserver). The spinner/error
+ * overlays (.pd-media-status / .pd-media-error) are absolutely centered above. */
+.pd-model-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.pd-model-canvas canvas {
+  display: block;
+  /* Orbit drag shouldn't select text or show an I-beam. */
+  cursor: grab;
+  touch-action: none;
+}
+
+.pd-model-canvas canvas:active {
+  cursor: grabbing;
+}
+
+.pd-model .pd-media-status,
+.pd-model .pd-media-error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.pd-model .pd-media-error {
+  grid-auto-flow: row;
+}
+
+/* ── Document surface (docx / pptx) ──────────────────────────────────── */
+
+.pd-doc {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  position: relative;
+}
+
+.pd-doc-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: var(--pd-bg-inset);
+  padding: var(--pd-space-lg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--pd-space-lg);
+}
+
+/* A docx renders as one page-like sheet; a pptx renders a stack of slide cards.
+ * Both ride the same paper-on-inset look for a document feel. */
+.pd-doc-page,
+.pd-doc-slide {
+  width: min(100%, 820px);
+  box-sizing: border-box;
+  padding: var(--pd-space-xl);
+  background: var(--pd-bg-raised);
+  color: var(--pd-text-primary);
+  border: 1px solid var(--pd-border-subtle);
+  border-radius: var(--pd-radius-md);
+  box-shadow: var(--pd-shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.12));
+  line-height: var(--pd-leading-response, 1.6);
+  overflow-wrap: anywhere;
+}
+
+/* mammoth emits plain semantic HTML; give its elements sane document rhythm. */
+.pd-doc-page :is(h1, h2, h3, h4, h5, h6) {
+  margin: 1.1em 0 0.5em;
+  line-height: 1.25;
+}
+.pd-doc-page p {
+  margin: 0 0 0.75em;
+}
+.pd-doc-page :is(ul, ol) {
+  margin: 0 0 0.75em;
+  padding-left: 1.5em;
+}
+.pd-doc-page img {
+  max-width: 100%;
+  height: auto;
+}
+.pd-doc-page table {
+  border-collapse: collapse;
+  margin: 0 0 0.75em;
+}
+.pd-doc-page :is(th, td) {
+  border: 1px solid var(--pd-border-default);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.pd-doc-slide-num {
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-muted);
+  margin-bottom: var(--pd-space-sm);
+  user-select: none;
+}
+
+.pd-doc-slide p {
+  margin: 0 0 0.4em;
+}
+
+.pd-doc .pd-media-status,
+.pd-doc .pd-media-error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
 /* ── Subagent surface ────────────────────────────────────────────────── */
 
 .pd-subagent-list {

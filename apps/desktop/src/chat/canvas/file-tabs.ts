@@ -14,6 +14,7 @@
 import {
   type Artifact,
   type CanvasController,
+  type CanvasTabKind,
   type CanvasTabSpec,
   type FileTreeNode,
   type OpenWithApp,
@@ -23,6 +24,7 @@ import type { ChatMsg } from '@pi-desktop/engine';
 import { useEffect, useRef } from 'react';
 import { usePiStore } from '../../state/pi-slice';
 import { useProjectStore } from '../../state/project-store';
+import { pdFileUrl, previewKindForExt } from './file-preview';
 import { basename, detectFileWrites, dirname } from './file-writes';
 
 /** Same `?piE2E=1` opt-in as the other E2E hooks — skips the real app-list
@@ -238,6 +240,30 @@ function fileTabSpec(absPath: string, cwd: string | undefined): CanvasTabSpec {
   };
 }
 
+/** Spec for a binary MODALITY preview tab (image/video/audio/pdf/model/doc): a
+ * media-style tab whose surface streams the file over `pd-file://`. It keeps the
+ * same key/breadcrumb/tree-root as a file tab (so re-open focuses, and the
+ * operation bar can still Open/Reveal the real file) and carries `filePath` for
+ * that Open/Reveal targeting. `mediaType` picks the concrete renderer. */
+function previewTabSpec(
+  absPath: string,
+  cwd: string | undefined,
+  preview: { kind: CanvasTabKind; mediaType: string },
+): CanvasTabSpec {
+  const { label } = treeRootFor(absPath, cwd);
+  const base = useProjectStore.getState().activePath ?? cwd;
+  return {
+    kind: preview.kind,
+    key: fileTabKey(absPath),
+    title: basename(absPath),
+    filePath: absPath,
+    breadcrumb: fileBreadcrumb(absPath, base),
+    fileTreeRootLabel: label,
+    mediaSrc: pdFileUrl(absPath),
+    mediaType: preview.mediaType,
+  };
+}
+
 /**
  * Fetch the system apps that can open this file (round-8 #14) and set the tab's
  * `defaultApp` + `openApps` so the "Open" split button shows the default's icon
@@ -302,10 +328,24 @@ export async function openFileInCanvas(
   cwd?: string,
 ): Promise<void> {
   const key = fileTabKey(absPath);
+  const preview = previewKindForExt(extname(basename(absPath)));
   const existing = controller.getState().tabs.find((t) => t.key === key);
   if (existing) controller.focusTab(existing.id);
+  else if (preview !== null) controller.upsertTab(key, previewTabSpec(absPath, cwd, preview));
   else controller.upsertTab(key, { ...fileTabSpec(absPath, cwd), streaming: false });
+
   const { root } = treeRootFor(absPath, cwd);
+  if (preview !== null) {
+    // A binary modality (image/video/audio/pdf/3D/doc): the surface streams the
+    // bytes over `pd-file://` — there is NOTHING to read as text. Still populate
+    // the file tree + the "Open with" app list in the background.
+    const tree = await readTree(root);
+    const tab = controller.getState().tabs.find((t) => t.key === key);
+    if (tab !== undefined) controller.updateTab(tab.id, { fileTree: tree });
+    void hydrateOpenApps(controller, key, absPath);
+    return;
+  }
+
   const [read, tree] = await Promise.all([readFileSettled(absPath), readTree(root)]);
   const tab = controller.getState().tabs.find((t) => t.key === key);
   if (tab === undefined) return;
@@ -337,7 +377,33 @@ export function useFileWriteCanvasRouting(): void {
   useEffect(() => {
     for (const ev of detectFileWrites(messages, cwd)) {
       const key = fileTabKey(ev.path);
+      const preview = previewKindForExt(extname(basename(ev.path)));
       const existing = controller.getState().tabs.find((t) => t.key === key);
+
+      if (preview !== null) {
+        // A binary modality write (image/pdf/3D/doc): there's no partial text to
+        // stream and fetching a half-written file would flash an error, so open
+        // the preview tab only when the write COMPLETES. A user-closed tab is not
+        // reopened; a later write to an already-open tab reloads the bytes via a
+        // cache-busting `?v=` (the pathname is unchanged, so the fence still hits).
+        if (existing === undefined && !ev.running && !opened.current.has(key)) {
+          opened.current.add(key);
+          controller.upsertTab(key, previewTabSpec(ev.path, cwd, preview));
+          const { root } = treeRootFor(ev.path, cwd);
+          void readTree(root).then((tree) => {
+            const tab = controller.getState().tabs.find((t) => t.key === key);
+            if (tab) controller.updateTab(tab.id, { fileTree: tree });
+          });
+          void hydrateOpenApps(controller, key, ev.path);
+        } else if (existing !== undefined && !ev.running && !finalized.current.has(ev.callId)) {
+          finalized.current.add(ev.callId);
+          controller.updateTab(existing.id, {
+            streaming: false,
+            mediaSrc: `${pdFileUrl(ev.path)}?v=${encodeURIComponent(ev.callId)}`,
+          });
+        }
+        continue;
+      }
 
       if (existing === undefined) {
         // Open once per path; a tab the user closed is not reopened.

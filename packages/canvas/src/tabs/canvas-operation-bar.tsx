@@ -176,7 +176,11 @@ function renderOps(props: CanvasOperationBarProps): ReactNode {
     case 'browser':
       return <BrowserOps {...props} />;
     case 'image':
+    case 'video':
+    case 'audio':
     case 'pdf':
+    case 'model':
+    case 'doc':
       return <MediaOps {...props} />;
     case 'html':
     case 'svg':
@@ -235,6 +239,88 @@ function ViewModeToggle({
 
 /* ── File ───────────────────────────────────────────────────────────────── */
 
+/**
+ * The "Open" split button: a primary segment that opens the file in the OS
+ * DEFAULT app, and a divided ▾ that lists the other apps + "Open in folder".
+ * Shared by {@link FileOps} and {@link MediaOps} so file / media / model / doc
+ * tabs all open + reveal the real on-disk file the same way (targets tab.filePath).
+ */
+function OpenSplit({
+  tab,
+  onOpen,
+  onOpenWith,
+  onReveal,
+}: Pick<CanvasOperationBarProps, 'tab' | 'onOpen' | 'onOpenWith' | 'onReveal'>) {
+  const [openMenu, setOpenMenu] = useState(false);
+  const openRef = useRef<HTMLDivElement>(null);
+  useOutsideClose(openRef, openMenu, () => setOpenMenu(false));
+  const defaultApp = tab.defaultApp;
+  // The dropdown lists every app EXCEPT the default (it lives on the primary
+  // segment) — belt-and-braces even if the app already omitted it.
+  const apps = (tab.openApps ?? []).filter((app) => app.id !== defaultApp?.id);
+  return (
+    <div ref={openRef} className="pd-canvas-opbar-pop">
+      {/* Split button: primary "Open" (default app) + a divided ▾ that lists
+          the other apps — one connected control (round-8 #14). */}
+      <div className="pd-canvas-split">
+        <button
+          type="button"
+          className="pd-canvas-split-main"
+          aria-label={defaultApp ? `Open with ${defaultApp.name}` : 'Open'}
+          onClick={() => onOpen?.()}
+        >
+          <AppIcon app={defaultApp} />
+          Open
+        </button>
+        <span className="pd-canvas-split-divider" aria-hidden="true" />
+        <button
+          type="button"
+          className="pd-canvas-split-caret"
+          aria-label="Open with…"
+          aria-expanded={openMenu}
+          onClick={() => setOpenMenu((open) => !open)}
+        >
+          <IconChevronDown size={14} />
+        </button>
+      </div>
+      {openMenu ? (
+        <div className="pd-menu pd-canvas-popmenu" role="menu">
+          {apps.map((app) => (
+            <button
+              key={app.id}
+              type="button"
+              role="menuitem"
+              className="pd-menu-item"
+              onClick={() => {
+                setOpenMenu(false);
+                onOpenWith?.(app.id);
+              }}
+            >
+              <AppIcon app={app} slot="menu" />
+              {app.name}
+            </button>
+          ))}
+          {apps.length > 0 ? <div className="pd-menu-separator" aria-hidden="true" /> : null}
+          <button
+            type="button"
+            role="menuitem"
+            className="pd-menu-item"
+            onClick={() => {
+              setOpenMenu(false);
+              onReveal?.();
+            }}
+          >
+            <span className="pd-menu-icon" aria-hidden="true">
+              <IconFolder size={16} />
+            </span>
+            Open in folder
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function FileOps({
   tab,
   onOpen,
@@ -245,18 +331,11 @@ function FileOps({
   onFileViewModeChange,
 }: CanvasOperationBarProps) {
   const [treeOpen, setTreeOpen] = useState(false);
-  const [openMenu, setOpenMenu] = useState(false);
   const treeRef = useRef<HTMLDivElement>(null);
-  const openRef = useRef<HTMLDivElement>(null);
 
   useOutsideClose(treeRef, treeOpen, () => setTreeOpen(false));
-  useOutsideClose(openRef, openMenu, () => setOpenMenu(false));
 
   const crumbs = deriveBreadcrumb(tab);
-  const defaultApp = tab.defaultApp;
-  // The dropdown lists every app EXCEPT the default (it lives on the primary
-  // segment) — belt-and-braces even if the app already omitted it.
-  const apps = (tab.openApps ?? []).filter((app) => app.id !== defaultApp?.id);
   const showToggle = isRenderableFile(tab);
   const mode = fileViewMode ?? fileViewModeDefault(tab);
   return (
@@ -309,65 +388,7 @@ function FileOps({
           </div>
         ) : null}
       </div>
-      <div ref={openRef} className="pd-canvas-opbar-pop">
-        {/* Split button: primary "Open" (default app) + a divided ▾ that lists
-            the other apps — one connected control (round-8 #14). */}
-        <div className="pd-canvas-split">
-          <button
-            type="button"
-            className="pd-canvas-split-main"
-            aria-label={defaultApp ? `Open with ${defaultApp.name}` : 'Open'}
-            onClick={() => onOpen?.()}
-          >
-            <AppIcon app={defaultApp} />
-            Open
-          </button>
-          <span className="pd-canvas-split-divider" aria-hidden="true" />
-          <button
-            type="button"
-            className="pd-canvas-split-caret"
-            aria-label="Open with…"
-            aria-expanded={openMenu}
-            onClick={() => setOpenMenu((open) => !open)}
-          >
-            <IconChevronDown size={14} />
-          </button>
-        </div>
-        {openMenu ? (
-          <div className="pd-menu pd-canvas-popmenu" role="menu">
-            {apps.map((app) => (
-              <button
-                key={app.id}
-                type="button"
-                role="menuitem"
-                className="pd-menu-item"
-                onClick={() => {
-                  setOpenMenu(false);
-                  onOpenWith?.(app.id);
-                }}
-              >
-                <AppIcon app={app} slot="menu" />
-                {app.name}
-              </button>
-            ))}
-            {apps.length > 0 ? <div className="pd-menu-separator" aria-hidden="true" /> : null}
-            <button
-              type="button"
-              role="menuitem"
-              className="pd-menu-item"
-              onClick={() => {
-                setOpenMenu(false);
-                onReveal?.();
-              }}
-            >
-              <span className="pd-menu-icon" aria-hidden="true">
-                <IconFolder size={16} />
-              </span>
-              Open in folder
-            </button>
-          </div>
-        ) : null}
-      </div>
+      <OpenSplit tab={tab} onOpen={onOpen} onOpenWith={onOpenWith} onReveal={onReveal} />
     </>
   );
 }
@@ -500,12 +521,17 @@ function MediaOps({
   onMediaRefresh,
   onMediaExpand,
   onClose,
+  onOpen,
+  onOpenWith,
+  onReveal,
 }: CanvasOperationBarProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   useOutsideClose(menuRef, menuOpen, () => setMenuOpen(false));
 
-  const type = (tab.mediaType ?? (tab.kind === 'pdf' ? 'PDF' : 'PNG')).toUpperCase();
+  const type = (
+    tab.mediaType ?? (tab.kind === 'pdf' ? 'PDF' : tab.kind === 'model' ? '3D' : 'PNG')
+  ).toUpperCase();
   const formats = tab.downloadFormats ?? [type];
   const primary = formats[0] ?? type;
   return (
@@ -554,6 +580,12 @@ function MediaOps({
       <IconButton size="sm" aria-label="Refresh preview" onClick={() => onMediaRefresh?.()}>
         <IconRefresh size={16} />
       </IconButton>
+      {/* A previewed file that lives on disk (opened from the tree / written by a
+          tool) can be opened in its native app or revealed in Finder — same
+          control the file tabs use. Generated media with no filePath omits it. */}
+      {tab.filePath ? (
+        <OpenSplit tab={tab} onOpen={onOpen} onOpenWith={onOpenWith} onReveal={onReveal} />
+      ) : null}
       <IconButton size="sm" aria-label="Expand preview" onClick={() => onMediaExpand?.()}>
         <IconExpand size={16} />
       </IconButton>

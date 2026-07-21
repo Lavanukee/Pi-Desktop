@@ -23,10 +23,21 @@ export type CanvasTabKind =
   // surface (registered additively) so it streams candidates as a job runs.
   | 'gen-image'
   | 'video'
+  // Audio file preview (waveform-free <audio> element), routed by extension the
+  // same way image/video are (MediaPreviewSurface's <audio> branch).
+  | 'audio'
   // The 3D workspace surface (generate → preview → export GLB). Placeholder kind
   // for the TRELLIS 3D pillar; no surface is registered for it yet, so a `3d`
   // tab renders the "no surface" state until that workspace lands.
   | '3d'
+  // A static 3D MODEL file preview (glb/gltf/obj/stl/ply) rendered by the
+  // three.js ModelSurface — the preview twin of the `3d` generation workspace,
+  // mirroring how `image` (preview) pairs with `gen-image` (generation).
+  | 'model'
+  // An Office DOCUMENT preview: Word (docx, full render via mammoth) and
+  // PowerPoint (pptx, a foundation slide render). One `doc` kind; the DocSurface
+  // branches on `mediaType` ('DOCX' | 'PPTX').
+  | 'doc'
   | 'pdf'
   | 'subagent'
   | 'situation'

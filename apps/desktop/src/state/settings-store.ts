@@ -9,15 +9,17 @@
  *   - search keys / mcp mode → handled main-side by settings:set
  */
 import { create } from 'zustand';
-import type {
-  DesktopSettings,
-  DesktopSettingsPatch,
-  EffortLevel,
-  EffortMode,
-  EnginePreference,
-  ModelSelection,
-  ThemeModePref,
-  UserMode,
+import {
+  type AdvancedSettings,
+  DEFAULT_ADVANCED,
+  type DesktopSettings,
+  type DesktopSettingsPatch,
+  type EffortLevel,
+  type EffortMode,
+  type EnginePreference,
+  type ModelSelection,
+  type ThemeModePref,
+  type UserMode,
 } from '../../electron/settings/settings-contract';
 import { type ThemeFlavor, useThemeStore } from '../store/theme';
 import { applyHarnessConfig } from './pi-connect';
@@ -45,6 +47,7 @@ const DEFAULTS: DesktopSettings = {
   hfToken: '',
   experimentalProductionHarness: false,
   experimentalGeneration: false,
+  advanced: DEFAULT_ADVANCED,
 };
 
 function prefersDark(): boolean {
@@ -113,6 +116,10 @@ export const useSettingsStore = create<SettingsStoreState>((set, get) => ({
       theme: { ...get().settings.theme, ...patch.theme },
       search: { ...get().settings.search, ...patch.search },
       capabilities: { ...get().settings.capabilities, ...patch.capabilities },
+      advanced: {
+        sampling: { ...get().settings.advanced.sampling, ...patch.advanced?.sampling },
+        reasoning: { ...get().settings.advanced.reasoning, ...patch.advanced?.reasoning },
+      },
     };
     set({ settings: optimistic });
     if (patch.theme !== undefined) applyTheme(optimistic);
@@ -170,6 +177,24 @@ export function useUserMode(): UserMode {
 /** Persist the experience level (no-op re-write is harmless). */
 export async function setUserMode(userMode: UserMode): Promise<void> {
   await useSettingsStore.getState().update({ userMode });
+}
+
+/**
+ * advanced-knobs API (power-user brain/gear panel). The panel read-modify-writes
+ * whole sampling/reasoning groups; the store + main deep-merge one level so a
+ * single-field write is safe. Follows the userMode selector/hook/setter shape.
+ */
+export const selectAdvanced = (state: SettingsStoreState): AdvancedSettings =>
+  state.settings.advanced;
+
+/** Reactive hook: the current advanced inference knobs. */
+export function useAdvancedSettings(): AdvancedSettings {
+  return useSettingsStore(selectAdvanced);
+}
+
+/** Persist a partial advanced patch (sampling and/or reasoning group). */
+export async function setAdvanced(patch: DesktopSettingsPatch['advanced']): Promise<void> {
+  await useSettingsStore.getState().update({ advanced: patch });
 }
 
 /**

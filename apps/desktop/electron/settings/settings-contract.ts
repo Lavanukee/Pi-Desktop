@@ -76,6 +76,59 @@ export interface GenerationCapabilities {
   threeD: boolean;
 }
 
+/**
+ * Power-user advanced inference knobs (the "brain/gear" panel). Split by WHERE
+ * each applies:
+ *   - `sampling`  → per-REQUEST body params (temperature/top_p/…). Take effect on
+ *     the NEXT turn, no server relaunch. Defaults mirror the llama-server CLI
+ *     defaults in `assembleServerArgs`, so an untouched install is identical.
+ *   - `reasoning` → LAUNCH args (`--reasoning-*`). Changing them needs a server
+ *     relaunch to take effect.
+ * Everything defaults to the current behaviour, so this whole block is inert
+ * until a power user touches a control.
+ */
+export interface AdvancedSamplingSettings {
+  temperature: number;
+  topP: number;
+  topK: number;
+  minP: number;
+  /** llama.cpp `repeat_penalty`; 1.0 = disabled (DRY does the anti-loop work). */
+  repetitionPenalty: number;
+  presencePenalty: number;
+  /** Per-request output cap; 0 = unset (omit `max_tokens`, use the server/model default). */
+  maxTokens: number;
+}
+export interface AdvancedReasoningSettings {
+  /** `--reasoning-preserve`: keep <think> across the whole history. */
+  preserve: boolean;
+  /** `--reasoning-budget`: -1 unrestricted, 0 = end immediately, N>0 = token cap. */
+  budget: number;
+  /** `--reasoning-budget-message`: injected before the end-of-thinking tag. */
+  budgetMessage: string;
+}
+export interface AdvancedSettings {
+  sampling: AdvancedSamplingSettings;
+  reasoning: AdvancedReasoningSettings;
+}
+
+/** The single source of truth for advanced defaults (mirrors the server CLI). */
+export const DEFAULT_ADVANCED: AdvancedSettings = {
+  sampling: {
+    temperature: 0.8,
+    topP: 0.9,
+    topK: 50,
+    minP: 0,
+    repetitionPenalty: 1.0,
+    presencePenalty: 0,
+    maxTokens: 0,
+  },
+  reasoning: {
+    preserve: true,
+    budget: -1,
+    budgetMessage: 'time limit for reasoning reached',
+  },
+};
+
 /** Web-search backend keys. Sensitive — persisted to settings.json (mode 0600)
  * and mirrored into the main process env so a (re)spawned pi's web-tools
  * extension reads them (`PI_BRAVE_API_KEY` / `PI_TAVILY_API_KEY`). Empty string
@@ -144,6 +197,9 @@ export interface DesktopSettings {
    * query param). Sibling to {@link experimentalProductionHarness}.
    */
   experimentalGeneration: boolean;
+  /** Power-user advanced inference knobs (sampling + reasoning). Defaults to
+   * {@link DEFAULT_ADVANCED} — inert until touched. */
+  advanced: AdvancedSettings;
 }
 
 /** A partial patch merged over the current document (one level deep on the
@@ -173,6 +229,9 @@ export interface DesktopSettingsPatch {
   experimentalProductionHarness?: boolean;
   /** Experimental generation-stack toggle (default FALSE). */
   experimentalGeneration?: boolean;
+  /** Full replacement of the advanced knobs (renderer read-modify-writes the
+   * whole object; deep-merged one level over the two nested groups in the store). */
+  advanced?: Partial<AdvancedSettings>;
 }
 
 /** Icon-stroke bounds — mirrors the IconStrokeControl slider range. */

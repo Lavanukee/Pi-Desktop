@@ -16,7 +16,7 @@ import {
   replayableEvents,
 } from '@pi-desktop/canvas';
 import type { Model } from '@pi-desktop/engine';
-import { IconButton, IconClose, MainSurface, TopBar } from '@pi-desktop/ui';
+import { IconBrainGear, IconButton, IconClose, MainSurface, TopBar } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
 import type { SettingsSection } from '../settings/SettingsView';
 import { registerCanvasControllerReset, useCanvasStore } from '../state/canvas-store';
@@ -27,13 +27,14 @@ import { usePiStore } from '../state/pi-slice';
 import { useProjectStore } from '../state/project-store';
 import { applySavedHarnessConfig, useUserMode } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
+import { AdvancedParamsPanel } from './AdvancedParamsPanel';
 import { preloadFastestModel } from './auto-router';
-import { parsePromoteSignal, PROMOTE_STATUS_KEY } from './harness-status';
 import { ChatComposer } from './ChatComposer';
 import { ChatThread } from './ChatThread';
 import { ChatTitle } from './ChatTitle';
 import { CanvasTabsPanel } from './canvas/CanvasTabsPanel';
 import { CorpDebugHud } from './corp/CorpDebugHud';
+import { PROMOTE_STATUS_KEY, parsePromoteSignal } from './harness-status';
 import { useHarnessTitleSync } from './harness-title';
 import { SessionSidebar, type SidebarStub } from './SessionSidebar';
 import { ToastHost } from './ToastHost';
@@ -60,6 +61,30 @@ function CanvasTopBarControls() {
     >
       <IconPanelRight />
     </IconButton>
+  );
+}
+
+/**
+ * Power-user only (userMode === 'power'): the brain/gear entry to the advanced
+ * parameters panel (sampling + reasoning knobs + the live ground-truth context).
+ * Hidden entirely in simple ('user') mode, so a normal install never sees it.
+ */
+function AdvancedParamsButton() {
+  const power = useUserMode() === 'power';
+  const [open, setOpen] = useState(false);
+  if (!power) return null;
+  return (
+    <>
+      <IconButton
+        aria-label="Advanced parameters"
+        aria-pressed={open}
+        data-testid="advanced-params-toggle"
+        onClick={() => setOpen(true)}
+      >
+        <IconBrainGear />
+      </IconButton>
+      <AdvancedParamsPanel open={open} onOpenChange={setOpen} />
+    </>
   );
 }
 
@@ -341,10 +366,13 @@ export function ChatApp({
               <ChatTitle title={title} onRename={(name) => void setSessionName(name)} />
             }
             right={
-              // Round-8 #11/#16: the ONLY top-right control is the canvas toggle,
-              // and only while the canvas is closed (it moves into the canvas when
-              // open). No terminal icon, no duplicate.
-              <CanvasTopBarControls />
+              // The canvas toggle (round-8 #11/#16) plus, for power users only,
+              // the brain/gear advanced-params entry to its left. In simple mode
+              // the top-right is exactly the canvas toggle, unchanged.
+              <div className="flex items-center gap-1">
+                <AdvancedParamsButton />
+                <CanvasTopBarControls />
+              </div>
             }
           />
 

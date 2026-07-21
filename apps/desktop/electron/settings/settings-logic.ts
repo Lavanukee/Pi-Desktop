@@ -6,6 +6,8 @@
  */
 import type { OnboardingChoices } from '../import/import-contract';
 import {
+  type AdvancedSettings,
+  DEFAULT_ADVANCED,
   type DesktopSettings,
   type DesktopSettingsPatch,
   EFFORT_MODES,
@@ -74,6 +76,7 @@ export const DEFAULT_SETTINGS: DesktopSettings = {
   hfToken: '',
   experimentalProductionHarness: false,
   experimentalGeneration: false,
+  advanced: DEFAULT_ADVANCED,
 };
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
@@ -103,6 +106,37 @@ function strArray(value: unknown): string[] {
     if (typeof v === 'string' && v.length > 0) seen.add(v);
   }
   return [...seen];
+}
+
+/** Normalize the untrusted advanced knobs (sampling + reasoning) with bounds. */
+function clampAdvanced(value: unknown): AdvancedSettings {
+  const o = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>;
+  const s = (typeof o.sampling === 'object' && o.sampling !== null ? o.sampling : {}) as Record<
+    string,
+    unknown
+  >;
+  const r = (typeof o.reasoning === 'object' && o.reasoning !== null ? o.reasoning : {}) as Record<
+    string,
+    unknown
+  >;
+  const ds = DEFAULT_ADVANCED.sampling;
+  const dr = DEFAULT_ADVANCED.reasoning;
+  return {
+    sampling: {
+      temperature: num(s.temperature, ds.temperature, 0, 2),
+      topP: num(s.topP, ds.topP, 0, 1),
+      topK: num(s.topK, ds.topK, 0, 500),
+      minP: num(s.minP, ds.minP, 0, 1),
+      repetitionPenalty: num(s.repetitionPenalty, ds.repetitionPenalty, 0, 2),
+      presencePenalty: num(s.presencePenalty, ds.presencePenalty, -2, 2),
+      maxTokens: Math.round(num(s.maxTokens, ds.maxTokens, 0, 1_000_000)),
+    },
+    reasoning: {
+      preserve: bool(r.preserve, dr.preserve),
+      budget: Math.round(num(r.budget, dr.budget, -1, 1_000_000)),
+      budgetMessage: str(r.budgetMessage, dr.budgetMessage),
+    },
+  };
 }
 
 /** Record<modelId, EffortLevel>, dropping entries with an invalid effort. */
@@ -164,6 +198,7 @@ export function clampSettings(raw: unknown): DesktopSettings {
       d.experimentalProductionHarness,
     ),
     experimentalGeneration: bool(o.experimentalGeneration, d.experimentalGeneration),
+    advanced: clampAdvanced(o.advanced),
   };
 }
 
@@ -178,6 +213,13 @@ export function mergeSettingsPatch(
     theme: { ...current.theme, ...patch.theme },
     search: { ...current.search, ...patch.search },
     capabilities: { ...current.capabilities, ...patch.capabilities },
+    // Deep-merge the two advanced groups so a patch touching one sampling field
+    // doesn't wipe the rest (the panel read-modify-writes the whole group, but a
+    // narrower patch stays safe).
+    advanced: {
+      sampling: { ...current.advanced.sampling, ...patch.advanced?.sampling },
+      reasoning: { ...current.advanced.reasoning, ...patch.advanced?.reasoning },
+    },
   });
 }
 

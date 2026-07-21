@@ -152,9 +152,10 @@ export function registerAdvancedParamsHook(
         // The exact active tool set + system-prompt size the model receives — the
         // reproducer for "does the model know only its initial tools?". Set
         // PI_ADV_DEBUG_TOOLS to a file path to capture it per request.
+        const cwdLine = gt.systemPrompt.match(/Current working directory: (.+)/)?.[1] ?? '?';
         appendFileSync(
           dbg,
-          `tools[${names.length}] sysPromptChars=${gt.systemPrompt.length}: ${names.join(', ')}\n`,
+          `cwd=${cwdLine} tools[${names.length}] sysPromptChars=${gt.systemPrompt.length}: ${names.join(', ')}\n`,
         );
       } catch {
         // never break a turn for a diagnostic write.

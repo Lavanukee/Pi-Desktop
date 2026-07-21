@@ -14,6 +14,7 @@ import { app, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electro
 import { resolveBundledPackageAsset } from '../app-paths';
 import { getInferenceUtility } from '../inference/llm-main';
 import type { AppEventMap } from '../ipc-contract';
+import { activeProjectPath } from '../project/project-main';
 import { resolveSessionCwd } from '../sandbox';
 import { advancedSamplingFilePath, generationExperimentEnabled } from '../settings/settings-main';
 import { isTrustedIpcEvent } from '../trusted-senders';
@@ -103,7 +104,12 @@ const sessions = createPiSessions<WebContents>({
     // wins; resuming a session defers to its recorded cwd. See electron/sandbox.ts.
     // Also published to the pi child (buildPiEnv) as PI_DESKTOP_WORKSPACE_ROOT so
     // the harness file-tool override roots relative writes here, not HOME (#2).
-    const cwd = resolveSessionCwd(req);
+    // Root EVERY spawn at the active project when one is selected: a resume /
+    // model-switch respawn carries no explicit cwd, so without this the session's
+    // stale recorded cwd (the sandbox) wins and bash/file ops silently leave the
+    // project. An explicit request cwd (a fresh start already carrying the project)
+    // still takes precedence.
+    const cwd = resolveSessionCwd({ ...req, cwd: req.cwd ?? activeProjectPath() ?? undefined });
     return new PiBridge(
       {
         cwd,

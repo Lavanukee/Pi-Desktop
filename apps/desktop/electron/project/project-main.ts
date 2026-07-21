@@ -91,6 +91,23 @@ function readDoc(): ProjectsDoc {
   }
 }
 
+/**
+ * The active project's folder path when a valid project is selected AND its
+ * folder still exists — else null (no project, or the folder is gone). Used to
+ * root EVERY pi spawn (fresh start, chat/branch RESUME, or model-switch respawn)
+ * at the active project. Without this, a resumed session respawns with no cwd, so
+ * resolveSessionCwd restores the session's OWN recorded cwd — which is the
+ * sandbox for any session first created outside a project — and the working dir
+ * silently drops back to the sandbox even though the UI still shows the project
+ * (jedd: "!ls shows a sandbox even though I have Desktop selected").
+ */
+export function activeProjectPath(): string | null {
+  const doc = readDoc();
+  const active = doc.projects.find((p) => p.id === doc.activeId) ?? null;
+  if (active === null || pathMissing(active)) return null;
+  return active.path;
+}
+
 function writeDoc(doc: ProjectsDoc): void {
   try {
     fs.mkdirSync(path.dirname(PROJECTS_PATH), { recursive: true });

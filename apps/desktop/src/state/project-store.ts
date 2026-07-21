@@ -53,13 +53,23 @@ interface ProjectState {
 
 /**
  * Switch the working folder: respawn pi rooted at `path` (undefined = the pi
- * default cwd) and reset the rendered thread so the new folder starts clean.
+ * default cwd) WHILE KEEPING the current conversation (jedd: "swapping the
+ * directory should just swap the directory, not open a new chat + clear the
+ * input"). We mirror the model-switch graceful-restart: respawn on the SAME
+ * session file so pi resumes the conversation it was already writing, and do NOT
+ * reset the rendered thread — so the messages stay, and the composer (keyed on
+ * `sessionEpoch`, bumped only by setMessagesExternal) never remounts, so its
+ * typed input survives too. The new cwd still wins (resolveSessionCwd), so bash /
+ * file ops now root at the freshly-selected folder.
  * Best-effort — a failed restart leaves the UI's project selection intact.
  */
 async function applyWorkingFolder(path: string | null): Promise<void> {
   try {
-    await restartPi({ cwd: path ?? undefined });
-    usePiStore.getState().setMessagesExternal([]);
+    const sessionFile = usePiStore.getState().session?.sessionFile;
+    await restartPi({
+      cwd: path ?? undefined,
+      ...(sessionFile !== undefined ? { sessionPath: sessionFile } : {}),
+    });
   } catch {
     // Non-fatal: the file-tree root still follows the selection.
   }

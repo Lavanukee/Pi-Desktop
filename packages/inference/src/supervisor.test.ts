@@ -125,6 +125,25 @@ describe('assembleServerArgs', () => {
     expect(off).not.toContain('--reasoning-preserve');
   });
 
+  it('defaults reasoning budget to unrestricted (-1) with the wrap-up message', () => {
+    const args = assembleServerArgs({ ...base, launchMode: 'fast-text' });
+    expect(args[args.indexOf('--reasoning-budget') + 1]).toBe('-1');
+    expect(args[args.indexOf('--reasoning-budget-message') + 1]).toBe(
+      'time limit for reasoning reached',
+    );
+  });
+
+  it('honours an explicit reasoning budget + custom budget message', () => {
+    const args = assembleServerArgs({
+      ...base,
+      launchMode: 'fast-text',
+      reasoningBudget: 2048,
+      reasoningBudgetMessage: 'wrap it up',
+    });
+    expect(args[args.indexOf('--reasoning-budget') + 1]).toBe('2048');
+    expect(args[args.indexOf('--reasoning-budget-message') + 1]).toBe('wrap it up');
+  });
+
   it('throws on the fast-text + mmproj contradiction (MTP exclusivity)', () => {
     expect(() =>
       assembleServerArgs({ ...base, launchMode: 'fast-text', mmprojPath: '/x.gguf' }),

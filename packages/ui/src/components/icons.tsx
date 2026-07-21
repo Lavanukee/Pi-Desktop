@@ -185,6 +185,28 @@ export function IconSettings(props: IconProps) {
   );
 }
 
+/**
+ * "Advanced params" glyph — half brain (left), half cog (right), split down the
+ * middle and sharing a central hub. Marks the power-user advanced-settings entry
+ * (thinking ⋈ mechanics). Stroke-only, matches the 16×16 icon grid.
+ */
+export function IconBrainGear(props: IconProps) {
+  return (
+    <Icon {...props}>
+      {/* the seam / shared stem down the middle */}
+      <path d="M8 2.9v10.2" />
+      {/* left half — brain: bumpy outline + two inner folds */}
+      <path d="M8 2.9C6.6 2.2 4.9 2.6 4.6 4C3.3 4.1 2.7 5.6 3.6 6.5C2.9 7.4 3.3 8.9 4.5 9C4.6 10.6 6.2 11.6 7.4 11.2C6.9 12 7.5 12.8 8 13" />
+      <path d="M6 4.9c.6.3.8 1 .5 1.6" />
+      <path d="M5.5 8c.7-.1 1.3.4 1.4 1.1" />
+      {/* right half — cog: right-bulging arc, shared hub, three teeth */}
+      <circle cx="8" cy="8" r="1.6" />
+      <path d="M8 4.1a3.9 3.9 0 0 1 0 7.8" />
+      <path d="M11.9 8h1.4M10.75 5.25l.85-.85M10.75 10.75l.85.85" />
+    </Icon>
+  );
+}
+
 /** "Opens in canvas" glyph (box + arrow leaving to the corner). */
 export function IconExternal(props: IconProps) {
   return (

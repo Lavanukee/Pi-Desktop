@@ -93,6 +93,18 @@ export interface LaunchConfig {
    * `--reasoning-preserve` (default true). Set false to omit the flag.
    */
   readonly reasoningPreserve?: boolean;
+  /**
+   * Thinking-token budget (`--reasoning-budget`). -1 = unrestricted (default),
+   * 0 = end thinking immediately, N>0 = cap reasoning at N tokens. Power-user
+   * knob; a launch arg, so changing it needs a server relaunch.
+   */
+  readonly reasoningBudget?: number;
+  /**
+   * Message injected before the end-of-thinking tag when the reasoning budget is
+   * exhausted (`--reasoning-budget-message`). Default 'time limit for reasoning
+   * reached' so the model wraps up rather than being cut mid-token.
+   */
+  readonly reasoningBudgetMessage?: string;
   readonly extraArgs?: readonly string[];
 }
 
@@ -165,6 +177,20 @@ export function assembleServerArgs(cfg: LaunchConfig): string[] {
   // The client side of this is buildChatCompletionsRequest carrying each
   // assistant turn's reasoning_content back (see provider-llamacpp/stream.ts).
   if (cfg.reasoningPreserve !== false) args.push('--reasoning-preserve');
+
+  // Thinking-budget guardrail (llama.cpp `--reasoning-budget`, env
+  // LLAMA_ARG_THINK_BUDGET): -1 = unrestricted (default, current behaviour),
+  // 0 = end thinking immediately, N>0 = cap the reasoning at N tokens. Exposed
+  // so a power user can bound runaway chain-of-thought. When the budget is
+  // exhausted the server injects `--reasoning-budget-message` just before the
+  // end-of-thinking tag so the model wraps up cleanly instead of being cut mid
+  // word. These are LAUNCH args (a change needs a server relaunch), unlike the
+  // per-request sampling params.
+  args.push('--reasoning-budget', String(cfg.reasoningBudget ?? -1));
+  args.push(
+    '--reasoning-budget-message',
+    cfg.reasoningBudgetMessage ?? 'time limit for reasoning reached',
+  );
 
   if (cfg.launchMode === 'fast-text') {
     // Single slot by default; the OOM-aware corp launcher may request K slots

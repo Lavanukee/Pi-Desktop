@@ -187,6 +187,9 @@ export function DocSurface({
 }: DocSurfaceProps): JSX.Element {
   const [status, setStatus] = useState<Status>('loading');
   const [result, setResult] = useState<ParsedDoc | null>(null);
+  // A specific error line (corrupt file vs. fetch failure vs. unsupported) so the
+  // user can tell "the app broke" from "this file isn't a real .pptx".
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   // `attempt` is the retry trigger: the [Try again] button bumps it to re-run the
   // fetch effect on the SAME src (like reloadNonce, but user-driven).
   const [attempt, setAttempt] = useState(0);
@@ -227,9 +230,20 @@ export function DocSurface({
         if (cancelled) return;
         setResult(parsed);
         setStatus('loaded');
-      } catch {
+      } catch (err) {
         // An abort is an expected teardown, not a user-facing failure.
         if (cancelled || controller.signal.aborted) return;
+        const m = err instanceof Error ? err.message : '';
+        // A fetch failure is an app/permission problem; anything else here is a
+        // decode failure — mammoth/fflate throwing means the bytes aren't a valid
+        // OOXML package (corrupt, or a flat-XML export mislabeled .docx/.pptx).
+        setErrorMsg(
+          m.startsWith('Failed to fetch')
+            ? 'Couldn’t load this file.'
+            : kind
+              ? `This ${kind.toUpperCase()} couldn’t be read — the file may be corrupt or not a valid Office document.`
+              : m || 'Unsupported document.',
+        );
         setResult(null);
         setStatus('error');
       }
@@ -243,6 +257,7 @@ export function DocSurface({
 
   const retry = (): void => {
     setStatus('loading');
+    setErrorMsg(null);
     setAttempt((n) => n + 1);
     onRefresh?.();
   };
@@ -252,7 +267,7 @@ export function DocSurface({
     <div className={rootClass}>
       {status === 'error' ? (
         <div className="pd-media-error" role="alert">
-          <p className="pd-media-error-title">Failed to load file content</p>
+          <p className="pd-media-error-title">{errorMsg ?? 'Failed to load file content'}</p>
           <Button size="sm" variant="secondary" onClick={retry}>
             Try again
           </Button>

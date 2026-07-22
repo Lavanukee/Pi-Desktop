@@ -28,14 +28,7 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
-import {
-  type IpcMainInvokeEvent,
-  ipcMain,
-  nativeImage,
-  protocol,
-  shell,
-  type WebContents,
-} from 'electron';
+import { type IpcMainInvokeEvent, ipcMain, protocol, shell, type WebContents } from 'electron';
 import { allowedWriteRoots } from '../fs-handlers';
 import type {
   AppEventMap,
@@ -229,27 +222,20 @@ export function registerFileProtocol(): void {
 
     const ext = extOf(real);
 
-    // Chromium's <img> can't decode HEIC/HEIF (iPhone's default), so decode it to
-    // PNG with the OS image codec (Electron nativeImage → macOS ImageIO, fully
-    // offline) and serve those bytes directly. Range/streaming is irrelevant for a
-    // small transcoded still.
+    // Chromium's <img> can't decode HEIC/HEIF (iPhone's default), so transcode to
+    // PNG with macOS `sips` (offline; the OS's own codec — nativeImage's decoder
+    // returns empty for real camera HEICs) and stream THAT instead.
+    let serveFile = real;
+    let contentType = FILE_MIME[ext] ?? 'application/octet-stream';
     if (ext === 'heic' || ext === 'heif') {
-      const png = heicToPng(real, st.mtimeMs);
+      const png = await heicToPng(real, st.mtimeMs);
       if (png === null) return new Response('unsupported image', { status: 415, headers: cors });
-      // Wrap the Node Buffer as a plain Uint8Array so it satisfies BodyInit.
-      return new Response(new Uint8Array(png), {
-        status: 200,
-        headers: {
-          ...cors,
-          'content-type': 'image/png',
-          'cache-control': 'no-cache',
-          'content-length': String(png.length),
-        },
-      });
+      serveFile = png;
+      contentType = 'image/png';
     }
-
-    const contentType = FILE_MIME[ext] ?? 'application/octet-stream';
-    const total = st.size;
+    const serveStat = serveFile === real ? st : statSafe(serveFile);
+    if (serveStat === null) return new Response('not found', { status: 404, headers: cors });
+    const total = serveStat.size;
     const base: Record<string, string> = {
       ...cors,
       'content-type': contentType,
@@ -267,7 +253,7 @@ export function registerFileProtocol(): void {
     }
     try {
       if (range !== null) {
-        const stream = createReadStream(real, { start: range.start, end: range.end });
+        const stream = createReadStream(serveFile, { start: range.start, end: range.end });
         return new Response(Readable.toWeb(stream) as unknown as ReadableStream, {
           status: 206,
           headers: {
@@ -277,7 +263,7 @@ export function registerFileProtocol(): void {
           },
         });
       }
-      const stream = createReadStream(real);
+      const stream = createReadStream(serveFile);
       return new Response(Readable.toWeb(stream) as unknown as ReadableStream, {
         status: 200,
         headers: { ...base, 'content-length': String(total) },
@@ -289,27 +275,26 @@ export function registerFileProtocol(): void {
   });
 }
 
-// HEIC/HEIF → PNG-bytes cache, keyed by source path + mtime so a file that
-// changes on disk re-decodes. Decoding relies on the OS codec (macOS ImageIO);
-// where it isn't supported, `createFromPath` returns an empty image → null → 415.
-const heicPngCache = new Map<string, Buffer>();
+// HEIC/HEIF → temp-PNG cache, keyed by source path + mtime so a file that changes
+// on disk re-transcodes. macOS only (sips); elsewhere → null → 415.
+const heicPngCache = new Map<string, string>();
 
-/** Decode a HEIC/HEIF file to PNG bytes via Electron nativeImage (the OS image
- * codec), cached by path+mtime. Returns the PNG buffer, or null if the codec
- * couldn't read it. */
-function heicToPng(real: string, mtimeMs: number): Buffer | null {
+/** Transcode a HEIC/HEIF file to a temp PNG via macOS `sips` (offline, the OS's
+ * own HEIF codec — reliable on real camera HEICs where nativeImage returns an
+ * empty image), cached by path+mtime. Returns the PNG path, or null on failure. */
+async function heicToPng(real: string, mtimeMs: number): Promise<string | null> {
+  if (process.platform !== 'darwin') return null;
   const key = `${real}:${mtimeMs}`;
   const cached = heicPngCache.get(key);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined && existsSync(cached)) return cached;
+  const out = path.join(tmpdir(), `pi-heic-${Buffer.from(key).toString('hex').slice(0, 32)}.png`);
   try {
-    const img = nativeImage.createFromPath(real);
-    if (img.isEmpty()) return null;
-    const png = img.toPNG();
-    if (png.length === 0) return null;
-    heicPngCache.set(key, png);
-    return png;
+    await execFileAsync('sips', ['-s', 'format', 'png', real, '--out', out]);
+    if (!existsSync(out)) return null;
+    heicPngCache.set(key, out);
+    return out;
   } catch (error) {
-    log.warn('heic decode failed', { real, error: String(error) });
+    log.warn('heic transcode failed', { real, error: String(error) });
     return null;
   }
 }
@@ -517,14 +502,112 @@ function isBundleId(value: string): boolean {
   return value.includes('.') && !value.includes('/') && !value.endsWith('.app');
 }
 
-/** Pragmatic candidate apps probed by their standard install locations. */
-const KNOWN_APP_PATHS = [
-  '/Applications/Visual Studio Code - Insiders.app',
+// Candidate apps by FILE CATEGORY, probed at their standard install locations —
+// only the ones present on THIS machine are offered (existsSync filter in
+// listOpenApps), and the LaunchServices default (duti) is prepended as primary.
+// So an image offers Preview/Photos, a pptx offers Keynote/PowerPoint, a video
+// offers IINA/VLC/QuickTime, etc. — never Xcode-for-everything.
+type AppCategory =
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'pdf'
+  | 'document'
+  | 'presentation'
+  | 'spreadsheet'
+  | 'model'
+  | 'code';
+
+const TEXT_EDITORS = [
   '/Applications/Visual Studio Code.app',
+  '/Applications/Visual Studio Code - Insiders.app',
+  '/Applications/Cursor.app',
+  '/Applications/Zed.app',
+  '/Applications/Sublime Text.app',
   '/Applications/Xcode.app',
-  '/System/Applications/Utilities/Terminal.app',
-  '/Applications/Utilities/Terminal.app',
+  '/System/Applications/TextEdit.app',
 ];
+
+const CATEGORY_APPS: Record<AppCategory, string[]> = {
+  image: [
+    '/System/Applications/Preview.app',
+    '/System/Applications/Photos.app',
+    '/Applications/Pixelmator Pro.app',
+    '/Applications/Affinity Photo 2.app',
+    '/Applications/GIMP.app',
+  ],
+  video: [
+    '/Applications/IINA.app',
+    '/Applications/VLC.app',
+    '/System/Applications/QuickTime Player.app',
+  ],
+  audio: [
+    '/System/Applications/Music.app',
+    '/Applications/VLC.app',
+    '/System/Applications/QuickTime Player.app',
+  ],
+  pdf: [
+    '/System/Applications/Preview.app',
+    '/Applications/Adobe Acrobat Reader.app',
+    '/Applications/Adobe Acrobat.app',
+  ],
+  document: [
+    '/Applications/Microsoft Word.app',
+    '/Applications/Pages.app',
+    '/System/Applications/Pages.app',
+    '/System/Applications/TextEdit.app',
+  ],
+  presentation: [
+    '/Applications/Keynote.app',
+    '/System/Applications/Keynote.app',
+    '/Applications/Microsoft PowerPoint.app',
+  ],
+  spreadsheet: [
+    '/Applications/Numbers.app',
+    '/System/Applications/Numbers.app',
+    '/Applications/Microsoft Excel.app',
+  ],
+  // Preview opens usdz; Blender/Xcode handle the rest. Kept short on purpose.
+  model: [
+    '/Applications/Blender.app',
+    '/Applications/Xcode.app',
+    '/System/Applications/Preview.app',
+  ],
+  code: [...TEXT_EDITORS, '/System/Applications/Utilities/Terminal.app'],
+};
+
+const IMAGE_EXTS = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'bmp',
+  'ico',
+  'avif',
+  'apng',
+  'heic',
+  'heif',
+  'tiff',
+  'tif',
+  'svg',
+]);
+const VIDEO_EXTS = new Set(['mp4', 'webm', 'mov', 'm4v', 'ogv', 'mkv', 'avi']);
+const AUDIO_EXTS = new Set(['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'oga', 'opus', 'aiff']);
+const MODEL_EXTS = new Set(['glb', 'gltf', 'obj', 'stl', 'ply', 'usdz', 'fbx', '3mf', 'dae']);
+
+/** Map a file extension to the app category whose candidate list we offer. */
+function categoryForExt(ext: string): AppCategory {
+  if (IMAGE_EXTS.has(ext)) return 'image';
+  if (VIDEO_EXTS.has(ext)) return 'video';
+  if (AUDIO_EXTS.has(ext)) return 'audio';
+  if (ext === 'pdf') return 'pdf';
+  if (['docx', 'doc', 'rtf', 'odt'].includes(ext)) return 'document';
+  if (['pptx', 'ppt', 'key', 'odp'].includes(ext)) return 'presentation';
+  if (['xlsx', 'xls', 'csv', 'tsv', 'numbers', 'ods'].includes(ext)) return 'spreadsheet';
+  if (MODEL_EXTS.has(ext)) return 'model';
+  return 'code';
+}
 
 const appMetaCache = new Map<string, CanvasOpenApp>();
 const openAppsByExt = new Map<string, { apps: CanvasOpenApp[]; defaultAppId: string | null }>();
@@ -610,15 +693,22 @@ async function listOpenApps(
   const cached = openAppsByExt.get(ext);
   if (cached !== undefined) return cached;
 
+  // LaunchServices default first (primary "Open"), then the category's installed
+  // candidates. existsSync keeps it to apps actually on this machine.
   const defPath = await defaultAppPath(ext);
   const paths: string[] = [];
   if (defPath !== null && existsSync(defPath)) paths.push(defPath);
-  for (const p of KNOWN_APP_PATHS) if (existsSync(p) && !paths.includes(p)) paths.push(p);
+  for (const p of CATEGORY_APPS[categoryForExt(ext)]) {
+    if (existsSync(p) && !paths.includes(p)) paths.push(p);
+  }
 
   const apps: CanvasOpenApp[] = [];
   let defaultAppId: string | null = null;
   for (const p of paths) {
     const meta = await appMeta(p);
+    // Some apps ship at two paths (/Applications + /System/Applications) — dedupe
+    // by bundle id so the same app isn't listed twice.
+    if (apps.some((a) => a.id === meta.id)) continue;
     apps.push(meta);
     if (p === defPath) defaultAppId = meta.id;
   }

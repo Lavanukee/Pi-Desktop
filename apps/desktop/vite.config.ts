@@ -20,14 +20,16 @@ function csp(dev: boolean): string {
     // pd-file: is the canvas media scheme (canvas-main.ts) that streams project
     // file bytes for previews — images (+ mammoth's inlined data: images), 3D
     // models / Office docs fetched as ArrayBuffers (connect-src), video/audio
-    // (media-src), and the PDF iframe (frame-src).
-    "img-src 'self' data: pd-file:",
+    // (media-src), and the PDF iframe (frame-src). blob: is required by
+    // three.js GLTFLoader, which decodes a GLB's embedded textures into blob:
+    // URLs and loads them as images (without it, models render UNTEXTURED).
+    "img-src 'self' data: blob: pd-file:",
     "font-src 'self' data:",
-    "media-src 'self' pd-file:",
+    "media-src 'self' blob: pd-file:",
     // Dev only: Vite HMR websocket.
     dev
-      ? "connect-src 'self' ws://localhost:* http://localhost:* pd-file:"
-      : "connect-src 'self' pd-file:",
+      ? "connect-src 'self' ws://localhost:* http://localhost:* blob: pd-file:"
+      : "connect-src 'self' blob: pd-file:",
     // W7 canvas: the sandboxed artifact harness loads over the custom
     // pd-preview:// scheme (registered privileged+standard+secure in main.ts);
     // pd-file: carries a previewed PDF into the built-in viewer iframe.

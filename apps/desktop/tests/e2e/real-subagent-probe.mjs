@@ -21,7 +21,7 @@ const require = createRequire(import.meta.url);
 const electronBinary = require('electron');
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT_DIR = process.env.SUBAGENT_OUT ?? path.join(tmpdir(), 'real-subagent-shots');
-const MODEL_ID = process.env.SUBAGENT_MODEL ?? 'qwen3.5-4b-mtp';
+const MODEL_ID = process.env.SUBAGENT_MODEL ?? 'qwen3.6-27b-mtp';
 
 const fail = (m) => {
   throw new Error(`real-subagent-probe failed: ${m}`);
@@ -71,12 +71,19 @@ try {
   );
   console.log('model set:', target.id);
 
-  // A prompt that forces a spawn_subagent call with a deterministic child answer.
+  // CODING-flavored (so the classifier front-loads spawn_subagent — trivial
+  // classes omit it) AND the sub-task's answer is NOT in the prompt, so the model
+  // cannot shortcut with python_run/bash and fake it: it must actually delegate to
+  // learn the answer. That removes the escape hatch a deterministic-answer prompt
+  // leaves open (the model would just print the known word).
   const ack = await page.evaluate(() =>
     window.piDesktop.invoke('pi:prompt', {
       message:
-        'Call the spawn_subagent tool. Set its goal to exactly: "Reply with only the word PINEAPPLE and nothing else." ' +
-        'When the subagent returns, tell me the single word it replied with.',
+        "I'm building a feature in my codebase and need an isolated sub-decision made by a fresh agent " +
+        'so it does not bias my own context. Use the spawn_subagent tool with goal set to exactly ' +
+        '"Pick any single fruit at random and reply with ONLY that fruit\'s name in UPPERCASE, nothing else." ' +
+        'You do not know which fruit it will choose, so you cannot answer this yourself — you must call ' +
+        'spawn_subagent and wait for it. When the child agent returns, tell me the exact word it replied with.',
     }),
   );
   if (!ack.success) fail(`prompt: ${ack.error}`);
@@ -113,7 +120,9 @@ try {
   let s = await snap();
   let sawChild = s.children.length > 0;
   let screenshotted = false;
-  const deadline = Date.now() + 240_000;
+  // Two 27B agent loops serialize on the single llama-server slot (the parent's
+  // turn + the subagent it awaits), so give it generous headroom.
+  const deadline = Date.now() + 480_000;
   while (Date.now() < deadline) {
     s = await snap();
     if (s.children.length > 0 && !sawChild) sawChild = true;

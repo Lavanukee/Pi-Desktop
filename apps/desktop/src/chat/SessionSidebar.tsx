@@ -248,6 +248,14 @@ export function SessionSidebar({
   const [query, setQuery] = useState('');
   const currentFile = usePiStore((s) => s.session?.sessionFile ?? null);
   const sessionId = usePiStore((s) => s.session?.sessionId ?? null);
+  // Fields for the optimistic row a brand-new chat needs before its file lands.
+  const cwd = usePiStore((s) => s.session?.cwd ?? '');
+  const windowTitle = usePiStore((s) => s.windowTitle);
+  const messageCount = usePiStore((s) => s.messages.length);
+  const firstUserText = usePiStore((s) => {
+    const first = s.messages.find((m) => m.kind === 'user');
+    return first !== undefined && first.kind === 'user' ? first.text : null;
+  });
 
   // Is the (single, active) chat working? — the same signal the composer reads.
   // The app runs one pi session at a time, so only the active chat's row can show
@@ -281,6 +289,14 @@ export function SessionSidebar({
   useEffect(() => {
     refresh();
   }, [refresh, sessionId]);
+
+  // A brand-new chat's session file is only written on its first turn, so re-list
+  // when a turn starts/ends: the real disk row appears (replacing the optimistic
+  // one) and its timestamp updates. `busy` is the trigger.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: busy is a refresh trigger
+  useEffect(() => {
+    refresh();
+  }, [refresh, busy]);
 
   // On the busy→idle edge of the active chat, pop the notice for that row.
   useEffect(() => {
@@ -318,12 +334,36 @@ export function SessionSidebar({
     refresh();
   };
 
+  // Optimistic row: a brand-new chat has no `.jsonl` until its first write, so it
+  // wouldn't list. The instant it has content, show it immediately (jedd: "appear
+  // as soon as the first message is sent, that snappy") from the live session
+  // pointer; the real disk row replaces it (same file key) on the next refresh.
+  const displaySessions = useMemo(() => {
+    if (currentFile === null || messageCount === 0) return sessions;
+    if (sessions.some((s) => s.file === currentFile)) return sessions;
+    const now = new Date().toISOString();
+    const optimistic: SessionSummary = {
+      file: currentFile,
+      id: sessionId ?? '',
+      cwd,
+      cwdLabel: '',
+      startedAt: now,
+      modifiedAt: now,
+      messageCount,
+      firstUserText,
+      title: windowTitle ?? firstUserText ?? 'New chat',
+    };
+    return [optimistic, ...sessions];
+  }, [sessions, currentFile, sessionId, cwd, messageCount, firstUserText, windowTitle]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list =
-      q.length === 0 ? sessions : sessions.filter((s) => s.title.toLowerCase().includes(q));
+      q.length === 0
+        ? displaySessions
+        : displaySessions.filter((s) => s.title.toLowerCase().includes(q));
     return list.slice(0, 50);
-  }, [sessions, query]);
+  }, [displaySessions, query]);
 
   // Round-5 #22 / round-8 #4/#5: Workspace nav above the Chats list. Artifacts
   // removed; "Model management" routes to the settings model-manager surface

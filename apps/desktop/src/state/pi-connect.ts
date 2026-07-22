@@ -46,6 +46,19 @@ export function agentInFlight(): boolean {
   return agent.isStreaming || agent.pendingMessageCount > 0;
 }
 
+/**
+ * Invalidate any PRE-DISPATCH send parked mid-await (promptInFlight, not yet
+ * streaming). `sendPrompt` snapshots `sessionEpoch` before its awaits and drops
+ * the dispatch if the epoch moved; bumping it the instant the user switches /
+ * starts a chat guarantees a parked send can never land in the session we're
+ * about to point pi at — the "the message I sent showed up in the chat I flipped
+ * to" bug. Cheap and safe: the epoch also bumps in `setMessagesExternal`, so a
+ * double-bump here is a no-op beyond dropping the stale send.
+ */
+function invalidateInFlightSend(): void {
+  usePiStore.setState((s) => ({ sessionEpoch: s.sessionEpoch + 1 }));
+}
+
 let disconnect: (() => void) | null = null;
 
 /**
@@ -210,6 +223,8 @@ export async function newSession(): Promise<{ ok: boolean; cancelled?: boolean; 
   // Preserve the chat we're leaving (its messages + canvas) so it restores on
   // return, and halt any in-flight turn so it can't leak into the new chat.
   captureCurrentSession();
+  // Drop any parked pre-dispatch send so it can't fire into the fresh session.
+  invalidateInFlightSend();
   if (agentInFlight()) await abortPi();
   const res = await window.piDesktop.invoke('pi:new-session', undefined);
   // Reset the rendered thread + transient run/branch state to the fresh session
@@ -662,6 +677,9 @@ export async function switchSession(
 ): Promise<{ ok: boolean; truncated: boolean; cancelled?: boolean; error?: string }> {
   instructionsArmed = false;
   captureCurrentSession();
+  // Drop any parked pre-dispatch send BEFORE we point pi at another session, so it
+  // can't land in the chat we're switching to (wrong-chat association bug).
+  invalidateInFlightSend();
   if (agentInFlight()) await abortPi();
 
   const switched = await window.piDesktop.invoke('pi:switch-session', { sessionPath });

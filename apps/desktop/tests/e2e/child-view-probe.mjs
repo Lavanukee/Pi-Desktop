@@ -27,6 +27,9 @@ const assert = (c, m) => {
 const home = mkdtempSync(path.join(tmpdir(), 'pi-e2e-home-'));
 const sessionsDir = path.join(home, '.pi', 'agent', 'sessions', 'proj');
 mkdirSync(sessionsDir, { recursive: true });
+// A real file the subagent "read", so clicking its row opens it in the canvas (MP4).
+const readFile = path.join(home, 'notes.md');
+writeFileSync(readFile, '# Launch notes\n\n- ship the thing\n');
 const l = (o) => JSON.stringify(o);
 const alphaFile = path.join(sessionsDir, 'alpha.jsonl');
 writeFileSync(
@@ -69,7 +72,7 @@ try {
 
   // Inject a child agent under this chat with a realistic transcript (thinking +
   // tool call + text), as the fold would have produced from its event stream.
-  await page.evaluate((parentId) => {
+  await page.evaluate(({ parentId, readPath }) => {
     const store = window.__child_store.getState();
     store.ensureChild('sub-1', parentId, 'Research subagent');
     store.replaceMessages('sub-1', [
@@ -82,6 +85,7 @@ try {
         blocks: [
           { type: 'thinking', thinking: 'Let me look at the recent papers in the folder.' },
           { type: 'toolCall', id: 't1', name: 'bash', arguments: { command: 'ls papers/' } },
+          { type: 'toolCall', id: 't2', name: 'read_file', arguments: { path: readPath } },
           { type: 'text', text: 'Found 3 papers. The surface-code approach looks most promising.' },
         ],
       },
@@ -96,7 +100,7 @@ try {
       },
     ]);
     store.setRunning('sub-1', false);
-  }, alphaFile);
+  }, { parentId: alphaFile, readPath: readFile });
 
   // MP3: the child appears as an indented row under its parent in the sidebar.
   await page.waitForSelector('[data-testid="child-rows"]', { timeout: 8000 });
@@ -121,6 +125,22 @@ try {
   );
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(OUT_DIR, '02-child-transcript.png') });
+
+  // MP4 (canvas): the child view reuses the same thread rows, so its file-op rows
+  // are the SAME openable rows the main chat has (they open files in the shared
+  // canvas controller via the identical ThreadActivityChain). Expand the chain
+  // (collapsed like the main chat) and confirm the "Read a file" row is present
+  // and openable, then click it to open the file in the canvas.
+  await page.click('[data-testid="activity-chain"]');
+  const readRow = page.locator('.pd-chain-step[data-kind="read"]').first();
+  await readRow.waitFor({ timeout: 8000 });
+  const readInfo = await readRow.evaluate((el) => ({
+    text: el.textContent ?? '',
+    openable: el.querySelector('button') !== null,
+  }));
+  assert(readInfo.text.includes('notes.md'), `MP4-canvas: read row names its file: ${readInfo.text}`);
+  assert(readInfo.openable, 'MP4-canvas: the child view read row is a button (opens the file in canvas, same as the main chat)');
+  await page.screenshot({ path: path.join(OUT_DIR, '03-child-canvas.png') });
 
   // Back returns to the main chat.
   await page.click('[data-testid="child-chat-back"]');

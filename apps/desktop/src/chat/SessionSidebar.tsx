@@ -57,14 +57,6 @@ import { usePiStore } from '../state/pi-slice';
 import { setUserMode, useSettingsStore, useUserMode } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
 import { PROFILE_MENU_ACTIONS, USER_MODE_OPTIONS, userModeBlurb } from './profile-menu';
-import { type ChatNotice, SidebarChatNotice } from './SidebarChatNotice';
-
-/** How long each chat notice lingers before its fill bar runs out. A prompt that
- * needs the user's input stays up longer than a plain completion. */
-const NOTICE_MS: Record<ChatNotice['kind'], number> = {
-  finished: 4500,
-  'needs-input': 9000,
-};
 
 /** Nav destinations that don't have a real page yet — open a "coming soon" stub. */
 export type SidebarStub = 'projects' | 'scheduled' | 'skills';
@@ -286,24 +278,15 @@ export function SessionSidebar({
   const promptInFlight = usePiStore((s) => s.promptInFlight);
   const corpRunning = useCorpStore((s) => s.corpRunning);
   const busy = isStreaming || promptInFlight || corpRunning;
-  // A Pause halts the turn (busy→idle) without finishing it, so the busy→idle
-  // edge below must NOT pop a completion notice when the chat is now paused.
-  const pausedChat = usePiStore((s) => s.pausedChat);
-  // A turn that ends with a blocking dialog open is "needs your input", not done.
-  const awaitingInput = usePiStore((s) => s.uiRequests.length > 0);
   // A chat generating in the BACKGROUND (the user is viewing another): its row —
-  // not the viewed one — shows the spinner + gets the finished notice.
+  // not the viewed one — shows the spinner + gets the unread dot when it finishes.
   const bgRun = usePiStore((s) => s.bgRun);
-
-  // The rectangular popout that replaces the old "<title> finished" pseudo-row:
-  // on the busy→idle edge the row's spinner collapses to a dot and this notice
-  // floats out to the right of that row. `busyFile` remembers which chat was
-  // working so we name + anchor it even if the active file shifts.
-  const [notice, setNotice] = useState<ChatNotice | null>(null);
-  const prevBusy = useRef(false);
-  const busyFile = useRef<string | null>(null);
-  // Row DOM nodes by session file, so the notice can pin to the right chat's row.
-  const rowRefs = useRef<Map<string, HTMLElement>>(new Map());
+  // Per-chat "unread" markers (blue = finished, orange = needs-input) shown as a dot
+  // on the row until the user opens that chat. Only BACKGROUND chats get one — the
+  // chat you're looking at needs no marker.
+  const unread = usePiStore((s) => s.unread);
+  const markUnread = usePiStore((s) => s.markUnread);
+  const prevBgStreaming = useRef(false);
 
   const refresh = useCallback(() => {
     void listSessions().then(setSessions);
@@ -323,44 +306,16 @@ export function SessionSidebar({
     refresh();
   }, [refresh, busy]);
 
-  // On the busy→idle edge of the VIEWED chat (no background run in play), pop the
-  // notice for that row. When a chat is running in the BACKGROUND, its completion
-  // is handled by the bgRun effect below (against ITS row, not the viewed one).
-  useEffect(() => {
-    if (busy && bgRun === null) busyFile.current = effectiveCurrentFile;
-    if (prevBusy.current && !busy && bgRun === null && busyFile.current !== null) {
-      const file = busyFile.current;
-      // Paused ≠ finished — a Pause frees the model but keeps the reply resumable,
-      // so it must not read as a completion.
-      if (pausedChat === null) {
-        const title = sessions.find((s) => s.file === file)?.title ?? 'Chat';
-        setNotice({
-          sessionFile: file,
-          title,
-          kind: awaitingInput ? 'needs-input' : 'finished',
-          at: Date.now(),
-        });
-      }
-      busyFile.current = null;
-    }
-    prevBusy.current = busy;
-  }, [busy, effectiveCurrentFile, sessions, pausedChat, awaitingInput, bgRun]);
-
-  // A background chat finished (bgRun.streaming true→false): pop the notice against
-  // ITS row, so "response finished" points at the chat that actually completed.
-  const prevBgStreaming = useRef(false);
+  // A background chat finished (bgRun.streaming true→false) → mark ITS row unread so
+  // a dot sits there until the user opens it. needs-input is marked when the request
+  // arrives (see UiRequestHost), so it isn't downgraded here.
   useEffect(() => {
     const streaming = bgRun?.streaming === true;
     if (prevBgStreaming.current && !streaming && bgRun !== null) {
-      setNotice({
-        sessionFile: bgRun.sessionFile,
-        title: bgRun.title ?? sessions.find((s) => s.file === bgRun.sessionFile)?.title ?? 'Chat',
-        kind: 'finished',
-        at: Date.now(),
-      });
+      markUnread(bgRun.sessionFile, 'finished');
     }
     prevBgStreaming.current = streaming;
-  }, [bgRun, sessions]);
+  }, [bgRun, markUnread]);
 
   // New chat starts a fresh session in the RUNNING pi (new_session RPC): it
   // resets the thread but does NOT dispose/respawn pi, so no "pi exited" crash
@@ -383,25 +338,46 @@ export function SessionSidebar({
   // pointer; the real disk row replaces it (same file key) on the next refresh.
   const displaySessions = useMemo(() => {
     // Hide fork-branch files (they belong to a base chat's ‹/› switcher).
-    const base =
+    let list =
       nonBaseBranchFiles.size > 0
         ? sessions.filter((s) => !nonBaseBranchFiles.has(s.file))
         : sessions;
-    if (effectiveCurrentFile === null || messageCount === 0) return base;
-    if (base.some((s) => s.file === effectiveCurrentFile)) return base;
     const now = new Date().toISOString();
-    const optimistic: SessionSummary = {
-      file: effectiveCurrentFile,
-      id: sessionId ?? '',
+    const optimisticRow = (file: string, title: string): SessionSummary => ({
+      file,
+      id: file === effectiveCurrentFile ? (sessionId ?? '') : '',
       cwd,
       cwdLabel: '',
       startedAt: now,
       modifiedAt: now,
-      messageCount,
-      firstUserText,
-      title: windowTitle ?? firstUserText ?? 'New chat',
-    };
-    return [optimistic, ...base];
+      messageCount: file === effectiveCurrentFile ? messageCount : 0,
+      firstUserText: file === effectiveCurrentFile ? firstUserText : null,
+      title,
+    });
+    // A chat generating in the BACKGROUND that has no disk file yet (a new chat
+    // still on its first turn) would otherwise vanish from the sidebar until its
+    // reply lands — keep it visible + spinning via an optimistic row.
+    if (
+      bgRun !== null &&
+      bgRun.streaming &&
+      !list.some((s) => s.file === bgRun.sessionFile) &&
+      bgRun.sessionFile !== effectiveCurrentFile
+    ) {
+      list = [optimisticRow(bgRun.sessionFile, bgRun.title ?? 'New chat'), ...list];
+    }
+    // Optimistic row for the VIEWED brand-new chat (has content, no disk row yet) —
+    // shows the moment its first message is sent (jedd: "that snappy").
+    if (
+      effectiveCurrentFile !== null &&
+      messageCount > 0 &&
+      !list.some((s) => s.file === effectiveCurrentFile)
+    ) {
+      list = [
+        optimisticRow(effectiveCurrentFile, windowTitle ?? firstUserText ?? 'New chat'),
+        ...list,
+      ];
+    }
+    return list;
   }, [
     sessions,
     nonBaseBranchFiles,
@@ -411,6 +387,7 @@ export function SessionSidebar({
     messageCount,
     firstUserText,
     windowTitle,
+    bgRun,
   ]);
 
   const filtered = useMemo(() => {
@@ -575,24 +552,25 @@ export function SessionSidebar({
               const running =
                 (busy && bgRun === null && effectiveCurrentFile === s.file) ||
                 (bgRun?.streaming === true && bgRun.sessionFile === s.file);
-              const notifying = notice !== null && notice.sessionFile === s.file;
+              // "this chat has something you haven't looked at" — a blue (finished)
+              // or orange (needs-input) dot, until you open the chat.
+              const unreadKind = unread[s.file];
               return (
                 <SidebarRow
                   key={s.file}
-                  ref={(el) => {
-                    if (el !== null) rowRefs.current.set(s.file, el);
-                    else rowRefs.current.delete(s.file);
-                  }}
                   icon={<IconChat size={16} />}
                   label={s.title}
-                  // jedd: the running spinner + the collapsed status dot live on the
-                  // RIGHT — the spinner runs, then collapses to a smaller dot while the
-                  // popout is up, then the resting timestamp returns.
+                  // Right side, in priority order: waiting-for-input dot (a paused
+                  // turn — beats the spinner), else the running spinner (actively
+                  // generating), else a finished dot, else the time. "Waiting for
+                  // input" and "streaming" are distinct states: dot vs animation.
                   meta={
-                    running ? (
+                    unreadKind === 'needs-input' ? (
+                      <span className="pd-chat-dot pd-chat-dot--needs-input" />
+                    ) : running ? (
                       <Spinner size={14} />
-                    ) : notifying && notice !== null ? (
-                      <span className={`pd-chat-dot pd-chat-dot--${notice.kind}`} />
+                    ) : unreadKind === 'finished' ? (
+                      <span className="pd-chat-dot pd-chat-dot--finished" />
                     ) : (
                       relativeTime(s.modifiedAt)
                     )
@@ -605,22 +583,6 @@ export function SessionSidebar({
           )}
         </SidebarSection>
       </SidebarScroll>
-
-      {/* The rectangular finish / needs-input popout, pinned to the right of its
-          chat's row (replaces the old fake "<title> finished" pseudo-row). */}
-      {notice !== null ? (
-        <SidebarChatNotice
-          notice={notice}
-          anchorEl={rowRefs.current.get(notice.sessionFile) ?? null}
-          durationMs={NOTICE_MS[notice.kind]}
-          onDismiss={() => setNotice(null)}
-          onView={() => {
-            const file = notice.sessionFile;
-            setNotice(null);
-            void onOpen(file);
-          }}
-        />
-      ) : null}
 
       {/* Bottom-left footer: ONE profile button that opens the dropup holding
           Settings, Toggle theme, and the User / Power-user toggle (round-12 #4).

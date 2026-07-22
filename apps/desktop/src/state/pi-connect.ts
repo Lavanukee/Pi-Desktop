@@ -809,6 +809,8 @@ export async function switchSession(
   instructionsArmed = false;
   // Switching to a real chat abandons any deferred (unsent) new chat.
   pendingNewSession = false;
+  // Opening a chat clears its "unread" dot (you've now looked at it).
+  usePiStore.getState().clearUnread(sessionPath);
 
   // ── Case B: returning to the background chat. pi is already on it.
   if (bg !== null && sessionPath === bg.sessionFile) {

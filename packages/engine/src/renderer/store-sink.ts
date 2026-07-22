@@ -60,6 +60,10 @@ export interface UiDialogRequest {
    * {@link StoreSink.resolveUiRequest} — answers sent after that are ids pi
    * already resolved and are dropped by the bridge. */
   timeout?: number;
+  /** Renderer-stamped: the session that raised this request (inferred from the
+   * background-run state at arrival). Lets the UI show the dialog only for the
+   * viewed chat and route a background chat's request to a banner + dot instead. */
+  sessionFile?: string;
 }
 
 /**

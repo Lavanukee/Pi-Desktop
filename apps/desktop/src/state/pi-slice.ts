@@ -142,6 +142,16 @@ interface PiSliceState {
   pausedChat: PausedChat | null;
   /** A chat generating in the background while the user views another. See {@link BgRun}. */
   bgRun: BgRun | null;
+  /** Chats with something the user hasn't looked at yet — a completed reply
+   * ('finished' → blue dot) or a pending input request ('needs-input' → orange dot)
+   * on a chat they are NOT currently viewing. Keyed by session file; cleared when
+   * the user opens that chat. Drives the sidebar row dot + the needs-input banner. */
+  unread: Record<string, 'finished' | 'needs-input'>;
+  /** Flag a chat as unread; 'needs-input' outranks 'finished' (never downgrade an
+   * unanswered question to a plain completion). */
+  markUnread: (sessionFile: string, kind: 'finished' | 'needs-input') => void;
+  /** Clear a chat's unread marker (the user opened it). */
+  clearUnread: (sessionFile: string) => void;
   /** Tool calls currently executing (spinner state for W3 rows). */
   runningToolCalls: string[];
   extensionStatus: Record<string, string>;
@@ -228,6 +238,19 @@ export const usePiStore = create<PiSliceState>((set) => ({
   enqueueSend: (item) => set((s) => ({ queuedSends: [...s.queuedSends, item] })),
   pausedChat: null,
   bgRun: null,
+  unread: {},
+  markUnread: (sessionFile, kind) =>
+    set((s) => {
+      if (s.unread[sessionFile] === 'needs-input' && kind === 'finished') return {};
+      return { unread: { ...s.unread, [sessionFile]: kind } };
+    }),
+  clearUnread: (sessionFile) =>
+    set((s) => {
+      if (s.unread[sessionFile] === undefined) return {};
+      const unread = { ...s.unread };
+      delete unread[sessionFile];
+      return { unread };
+    }),
   runningToolCalls: [],
   extensionStatus: {},
   widgets: {},
@@ -276,7 +299,11 @@ export const usePiStore = create<PiSliceState>((set) => ({
       // switched session either restores its own (snapshot) or starts unpaused.
       pausedChat: null,
       runningToolCalls: [],
-      uiRequests: [],
+      // Keep session-TAGGED dialog requests across a switch — a background chat's
+      // ask_user must survive until the user swaps in to answer it (it's gated to
+      // its own chat by UiRequestDialogs). Untagged stragglers are dropped. A
+      // finished/aborted turn's request is cleared by agentEnd / bridgeExit instead.
+      uiRequests: s.uiRequests.filter((r) => r.sessionFile !== undefined),
       bridgeExited: null,
       branches: {},
       // Reset the top-bar title on every new/switched session so the PREVIOUS
@@ -590,11 +617,26 @@ export function createPiSink(
     // reload replays pending dialogs via pi:start, and the router can re-emit the
     // same request; a duplicate id must never stack a second dialog over the first.
     uiRequest: (request) =>
-      set((s) =>
-        s.uiRequests.some((r) => r.id === request.id)
-          ? {}
-          : { uiRequests: [...s.uiRequests, request] },
-      ),
+      set((s) => {
+        if (s.uiRequests.some((r) => r.id === request.id)) return {};
+        // Tag the request with the session that raised it — a background chat's
+        // ask_user blocks pi mid-turn, so `bgRun.streaming` is true iff the bg chat
+        // asked (same invariant threadSet uses). A bg request is NOT shown as a
+        // dialog over the viewed chat; instead its chat gets a needs-input dot +
+        // the top banner picks it up (UiRequestDialogs gates on this tag).
+        const bgAsking = s.bgRun !== null && s.bgRun.streaming;
+        const sessionFile = bgAsking
+          ? s.bgRun?.sessionFile
+          : (s.session?.sessionFile ?? undefined);
+        const tagged = { ...request, ...(sessionFile !== undefined ? { sessionFile } : {}) };
+        if (bgAsking && s.bgRun !== null) {
+          return {
+            uiRequests: [...s.uiRequests, tagged],
+            unread: { ...s.unread, [s.bgRun.sessionFile]: 'needs-input' as const },
+          };
+        }
+        return { uiRequests: [...s.uiRequests, tagged] };
+      }),
 
     resolveUiRequest: (id) => set((s) => ({ uiRequests: s.uiRequests.filter((r) => r.id !== id) })),
 

@@ -38,6 +38,7 @@ import { PROMOTE_STATUS_KEY, parsePromoteSignal } from './harness-status';
 import { useHarnessTitleSync } from './harness-title';
 import { SessionSidebar, type SidebarStub } from './SessionSidebar';
 import { ToastHost } from './ToastHost';
+import { InputNeededBanner } from './InputNeededBanner';
 import { UiRequestDialogs } from './UiRequestDialogs';
 import { WhyQueuedModal } from './WhyQueuedModal';
 import { WindowDropOverlay } from './WindowDropOverlay';
@@ -127,6 +128,7 @@ export function ChatApp({
   onOpenConnectors: () => void;
 }) {
   const messageCount = usePiStore((s) => s.messages.length);
+  const queuedCount = usePiStore((s) => s.queuedSends.length);
   const windowTitle = usePiStore((s) => s.windowTitle);
   // Remount the composer on each session boundary so its editor text + attachments
   // don't leak across chats (BUG: switching chats retained the input state).
@@ -313,7 +315,9 @@ export function ChatApp({
   };
 
   const title = windowTitle ?? (messageCount > 0 ? 'Chat' : 'New chat');
-  const empty = messageCount === 0;
+  // A queued (not-yet-sent) message should show the THREAD (its queued bubble), not
+  // the empty greeting — otherwise a deferred send reads as a blank chat.
+  const empty = messageCount === 0 && queuedCount === 0;
 
   // ONE composer instance ACROSS the empty→thread transition (same session → stable
   // key → focus survives the first send), but a FRESH instance per session: keying on
@@ -418,6 +422,7 @@ export function ChatApp({
         <CanvasTabsPanel />
 
         <UiRequestDialogs />
+        <InputNeededBanner />
         <WhyQueuedModal />
         <ToastHost />
         <WindowDropOverlay />

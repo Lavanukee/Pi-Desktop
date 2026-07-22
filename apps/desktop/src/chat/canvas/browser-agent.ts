@@ -19,15 +19,34 @@ import { usePiStore } from '../../state/pi-slice';
 /** Stable upsert key for the model's browser tab. */
 const AGENT_TAB_KEY = 'pi:agent-browser';
 
+/** Fixed id of the main-owned headless agent view (must match the main bridge). */
+const HEADLESS_AGENT_TAB_ID = 'pi:agent-headless';
+
 export function useBrowserAgent(controller: CanvasController): void {
   const agentTabId = useRef<string | null>(null);
+
+  // When a background browse ends, release the headless view so the NEXT browse
+  // re-opens fresh — a visible canvas tab if the chat is now viewed (otherwise the
+  // hidden view would be reused and the browsing would stay invisible).
+  const bgStreaming = usePiStore((s) => s.bgRun?.streaming === true);
+  const prevBgStreaming = useRef(false);
+  useEffect(() => {
+    if (prevBgStreaming.current && !bgStreaming) {
+      void window.piDesktop.invoke('browser:agent-release', { tabId: HEADLESS_AGENT_TAB_ID });
+    }
+    prevBgStreaming.current = bgStreaming;
+  }, [bgStreaming]);
 
   useEffect(() => {
     const openTab = (): void => {
       // A chat browsing in the BACKGROUND must not open its "Pi is browsing" tab
-      // in the chat the user is currently VIEWING (the reported canvas leak). The
-      // browse event is a session-agnostic IPC channel, so gate it on bgRun here.
-      if (usePiStore.getState().bgRun?.streaming === true) return;
+      // in the chat the user is currently VIEWING (the reported canvas leak). Tell
+      // main to browse HEADLESSLY instead (a hidden main-owned view) — the model
+      // keeps browsing via DOM snapshots; nothing surfaces in the viewed canvas.
+      if (usePiStore.getState().bgRun?.streaming === true) {
+        void window.piDesktop.invoke('browser:agent-headless', {});
+        return;
+      }
       const id = controller.upsertTab(AGENT_TAB_KEY, {
         kind: 'browser',
         title: 'Pi Browser',

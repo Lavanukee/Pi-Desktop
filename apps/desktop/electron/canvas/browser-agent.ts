@@ -63,6 +63,10 @@ let token = '';
 let server: net.Server | null = null;
 let getAgentWindow: () => WebContents | null = () => null;
 
+/** Fixed id for the main-owned HEADLESS agent view (a chat browsing in the
+ * background — no visible canvas tab). */
+const HEADLESS_AGENT_TAB_ID = 'pi:agent-headless';
+
 /** The browser tab the model currently drives (renderer-owned id). */
 let agentTabId: string | null = null;
 /**
@@ -422,6 +426,17 @@ export function registerBrowserAgentIpc(getWindow: () => WebContents | null): vo
     guard(event, 'browser:agent-release');
     if (agentTabId === req.tabId) agentTabId = null;
     return { ok: true };
+  });
+  // The browsing chat is in the BACKGROUND: create a hidden main-owned view (no
+  // canvas tab) and resolve the in-flight ensureAgentTab with it, so the model can
+  // still browse headlessly. See src/chat/canvas/browser-agent.ts (renderer gate).
+  ipcMain.handle('browser:agent-headless', (event) => {
+    guard(event, 'browser:agent-headless');
+    const wc = getAgentWindow();
+    if (wc === null || wc.isDestroyed()) return { ok: false };
+    const ok = browserManager.ensureAgentView(HEADLESS_AGENT_TAB_ID, wc);
+    if (ok) onRegister(HEADLESS_AGENT_TAB_ID);
+    return { ok };
   });
   // Canvas-awareness: the renderer pushes a compact snapshot of what's on the
   // canvas whenever surfaces / the active tab change (debounced). We just cache

@@ -17,11 +17,17 @@ export type BrowserAgentInvokeMap = {
   'browser:agent-register': { request: { tabId: string }; response: { ok: boolean } };
   /** Renderer → main: the agent browser tab was closed. */
   'browser:agent-release': { request: { tabId: string }; response: { ok: boolean } };
+  /** Renderer → main: the chat that's browsing is running in the BACKGROUND, so
+   * DON'T open a visible canvas tab (it would leak into the viewed chat). Main
+   * creates a hidden, fixed-size headless view and drives it — the model browses
+   * via DOM snapshots (screenshots degrade to null offscreen). */
+  'browser:agent-headless': { request: Record<string, never>; response: { ok: boolean } };
 };
 
 export const BROWSER_AGENT_INVOKE_CHANNELS = [
   'browser:agent-register',
   'browser:agent-release',
+  'browser:agent-headless',
 ] as const satisfies readonly (keyof BrowserAgentInvokeMap)[];
 
 export type BrowserAgentEventMap = {

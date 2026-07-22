@@ -25,7 +25,14 @@ import { respondUi } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 
 export function UiRequestDialogs() {
-  const request = usePiStore((s) => s.uiRequests[0] ?? null);
+  // Only show a dialog for the chat the user is VIEWING. A request raised by a chat
+  // running in the BACKGROUND is tagged with its own sessionFile (see the sink) and
+  // surfaces as a top banner + an orange dot instead of popping over this chat.
+  const viewed = usePiStore((s) => s.session?.sessionFile ?? null);
+  const request = usePiStore(
+    (s) =>
+      s.uiRequests.find((r) => r.sessionFile === undefined || r.sessionFile === viewed) ?? null,
+  );
 
   if (request === null) return null;
   const cancel = () => void respondUi(request.id, { cancelled: true });

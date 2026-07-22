@@ -331,7 +331,22 @@ export const browserManager = {
   navigateAndWait,
   waitForLoad,
   historyAndWait,
+  ensureAgentView,
 };
+
+/**
+ * Create (or reuse) a HEADLESS agent view: attached to the window but hidden, at a
+ * fixed non-zero size so the page still lays out (DOM perception drops zero-rect
+ * elements). Lets a chat browse in the background without a visible canvas tab.
+ * `capturePage` returns an empty image (→ null) while hidden, so screenshots
+ * gracefully degrade to DOM snapshots — the model's default perception path.
+ */
+function ensureAgentView(tabId: string, owner: WebContents): boolean {
+  const entry = ensureView(tabId, owner);
+  if (entry === undefined) return false;
+  setBounds(tabId, { x: 0, y: 0, width: 1280, height: 800 }, false);
+  return true;
+}
 
 /** Register the trusted-sender-gated `browser:*` channels. */
 export function registerBrowserIpc(): void {

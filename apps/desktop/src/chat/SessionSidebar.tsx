@@ -13,6 +13,7 @@
  * Sessions are read from the fs channels; mutations go through pi.
  */
 
+import type { OrgNodeView } from '@pi-desktop/coordination';
 import {
   CollapsibleSearch,
   DropdownMenu,
@@ -200,6 +201,9 @@ function RailButton({
   );
 }
 
+/** Stable empty-nodes reference so the corp-nodes selector never thrashes zustand. */
+const NO_CORP_NODES: readonly OrgNodeView[] = [];
+
 function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '';
@@ -295,6 +299,13 @@ export function SessionSidebar({
   const childrenByParent = useChildrenByParent();
   const viewedChildId = useChildAgentStore((s) => s.viewedChildId);
   const setViewedChild = useChildAgentStore((s) => s.setViewedChild);
+  // Running corp/hierarchy roles appear in the SAME nested dropdown under the chat
+  // hosting the run; clicking one pins it so corp's own inline view shows it.
+  // Default to a STABLE empty array OUTSIDE the selector — a `?? []` inside would
+  // return a fresh reference every render and thrash zustand's snapshot.
+  const corpNodes = useCorpStore((s) => s.situation?.chart.nodes) ?? NO_CORP_NODES;
+  const pinnedNode = useCorpStore((s) => s.pinnedNode);
+  const selectCorpNode = useCorpStore((s) => s.selectNode);
   const [collapsedParents, setCollapsedParents] = useState<Set<string>>(new Set());
   const toggleParent = (file: string) =>
     setCollapsedParents((prev) => {
@@ -574,13 +585,16 @@ export function SessionSidebar({
               // Child agents (subagents / roles) running under THIS chat — a nested
               // dropdown of their own chat views. Expanded by default; a caret folds.
               const kids = childrenByParent.get(s.file) ?? [];
-              const expanded = kids.length > 0 && !collapsedParents.has(s.file);
+              // Corp/hierarchy roles belong to the chat hosting the (inline) run.
+              const corpKids = corpRunning && effectiveCurrentFile === s.file ? corpNodes : [];
+              const hasKids = kids.length > 0 || corpKids.length > 0;
+              const expanded = hasKids && !collapsedParents.has(s.file);
               return (
                 <div key={s.file}>
                   <div className="flex items-center">
                     {/* Left caret reveals/folds the child agents (empty gutter keeps
                         childless rows aligned). */}
-                    {kids.length > 0 ? (
+                    {hasKids ? (
                       <button
                         type="button"
                         className="pd-child-toggle pd-focusable"
@@ -636,6 +650,27 @@ export function SessionSidebar({
                           </span>
                           <span className="pd-child-row-label">{c.title}</span>
                           {c.running ? <Spinner size={12} /> : null}
+                        </button>
+                      ))}
+                      {corpKids.map((node) => (
+                        <button
+                          type="button"
+                          key={`corp:${node.id}`}
+                          className="pd-child-row pd-focusable"
+                          data-testid={`corp-row-${node.id}`}
+                          data-selected={pinnedNode?.id === node.id || undefined}
+                          // Pin the role so corp's inline view shows it; leave any
+                          // child view first so the main (corp-hosting) chat is shown.
+                          onClick={() => {
+                            setViewedChild(null);
+                            selectCorpNode(node);
+                          }}
+                        >
+                          <span className="pd-child-row-icon">
+                            <IconChat size={13} />
+                          </span>
+                          <span className="pd-child-row-label">{node.name}</span>
+                          {node.state === 'working' ? <Spinner size={12} /> : null}
                         </button>
                       ))}
                     </div>

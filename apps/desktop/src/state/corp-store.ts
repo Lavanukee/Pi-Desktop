@@ -349,6 +349,12 @@ export const useCorpStore = create<CorpStoreState>((set) => ({
     }),
 }));
 
+// E2E hook (?piE2E): probes read/drive the corp store to assert the nested
+// dropdown surfaces running roles. Mirrors the __pi_store / __child_store hooks.
+if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('piE2E')) {
+  (window as unknown as { __corp_store?: typeof useCorpStore }).__corp_store = useCorpStore;
+}
+
 /**
  * Stamp per-node working timing from one chart snapshot. `startedAt` lands the
  * first time a node is seen `working`; `finishedAt` lands when a node that had a

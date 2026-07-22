@@ -17,6 +17,7 @@ function fakeBridge(onEvent: (e: PiBridgeEvent) => void, pid = 1234) {
     ready: () => Promise.resolve(),
     prompt,
     abort: () => Promise.resolve(),
+    send: () => Promise.resolve({ success: true, data: { messages: [] } }),
     whenExited: () => Promise.resolve(),
     killNow: () => {},
     dispose,

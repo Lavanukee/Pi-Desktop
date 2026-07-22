@@ -102,6 +102,9 @@ export function buildChildSpawnPlan(
 export interface RunChildAgentOptions {
   /** The task the child agent should carry out (its prompt). */
   readonly goal: string;
+  /** Display name (the app bridge titles the nested chat with it; the in-process
+   * runner ignores it). */
+  readonly name?: string;
   /** Hard timeout; on expiry the child is torn down and the run fails. */
   readonly timeoutMs: number;
   readonly provider?: string;

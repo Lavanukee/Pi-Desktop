@@ -74,6 +74,7 @@ import {
   type StoredEntryLike,
   updateConfig,
 } from './state.js';
+import { subagentBridgeRunChildFromEnv } from './subagent/bridge-client.js';
 import { detectBudget } from './subagent/budget.js';
 import { type SchedulerSnapshot, SubagentScheduler } from './subagent/scheduler.js';
 import { registerSubagentTool } from './subagent/subagent-tool.js';
@@ -648,7 +649,15 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
         if (runtime.currentCtx !== null) publishSubagents(runtime.currentCtx);
       },
     });
-    registerSubagentTool(pi, { scheduler });
+    // Pi Desktop publishes a bridge socket on the env → route spawn_subagent to
+    // the APP (it runs the subagent as its own pi, streamed to the sidebar dropdown
+    // as a live nested chat, and hands back the summary). Outside the app the env is
+    // absent → fall back to the in-process child runner (unchanged behaviour).
+    const bridgeRunChild = subagentBridgeRunChildFromEnv();
+    registerSubagentTool(
+      pi,
+      bridgeRunChild !== null ? { scheduler, runChild: bridgeRunChild } : { scheduler },
+    );
   }
 
   // Corp system as an OPTION (jedd): at high/max effort the model can hand a

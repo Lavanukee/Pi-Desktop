@@ -475,7 +475,12 @@ if (!hasSingleInstanceLock) {
       if (icon !== null) app.dock.setIcon(icon);
     }
     registerAppIpc();
-    registerPiIpc({ extraTeardown: reapChildProcesses });
+    registerPiIpc({
+      extraTeardown: reapChildProcesses,
+      // The window subagents run under: spawn_subagent routes to the app bridge,
+      // which spawns each subagent as its own pi + streams it to the dropdown.
+      getWindow: () => (mainWindow !== null ? mainWindow.webContents : null),
+    });
     // Native canvas surfaces (Phase 2b): per-tab WebContentsView + PTY managers.
     registerBrowserIpc();
     registerPtyIpc();

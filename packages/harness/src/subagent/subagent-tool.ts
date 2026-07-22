@@ -118,6 +118,7 @@ export function registerSubagentTool(pi: ExtensionAPI, deps: SubagentToolDeps): 
         setStep('Working…');
         const child = await runChild({
           goal,
+          name,
           timeoutMs,
           ...(params.model !== undefined ? { model: params.model } : {}),
           ...(params.provider !== undefined ? { provider: params.provider } : {}),

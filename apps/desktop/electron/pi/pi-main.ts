@@ -24,6 +24,7 @@ import type { PiInvokeMap } from './contract';
 import { extensionPackageDirs } from './extension-dirs';
 import { createPiSessions, type PiSessionHandlers } from './pi-sessions';
 import { installPiQuitHold } from './quit-hold';
+import { registerSubagentBridge } from './subagent-bridge';
 
 const log = createLogger('desktop:pi');
 const events = createIpcEventSender<AppEventMap>();
@@ -254,9 +255,18 @@ function registerAll(handlers: PiSessionHandlers<WebContents>): void {
  *   pi-mac helper, and terminal PTYs. Composed in main.ts (the wiring root) and
  *   awaited (bounded by the quit grace) before `app.exit()`.
  */
-export function registerPiIpc(opts: { extraTeardown?: () => Promise<void> } = {}): void {
+export function registerPiIpc(
+  opts: {
+    extraTeardown?: () => Promise<void>;
+    /** The app window subagents run under (spawn_subagent → app bridge). When
+     * given, the subagent socket bridge stands up + publishes its env before the
+     * first pi spawn, so the child's harness routes spawn_subagent to the app. */
+    getWindow?: () => WebContents | null;
+  } = {},
+): void {
   registerAll(sessions.handlers);
   registerChildAgentIpc();
+  if (opts.getWindow !== undefined) registerSubagentBridge(opts.getWindow, childAgents);
 
   installPiQuitHold(app, {
     // Reap child-agent pi instances in the same held quit window as the main

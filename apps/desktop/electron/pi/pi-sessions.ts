@@ -86,7 +86,11 @@ export interface PiSessionsDeps<S extends SessionSender> {
 /** Channels handled OUTSIDE the per-window session registry: child agents run
  * their OWN app-owned pi bridges (pi-main's createChildAgents), not the
  * per-window main bridge, so they're excluded from the session handler map. */
-type NonSessionChannel = 'pi:child-spawn' | 'pi:child-dispose' | 'pi:child-list';
+type NonSessionChannel =
+  | 'pi:child-spawn'
+  | 'pi:child-dispose'
+  | 'pi:child-list'
+  | 'pi:report-active-session';
 
 export type PiSessionHandlers<S extends SessionSender> = {
   [K in Exclude<keyof PiInvokeMap, NonSessionChannel>]: (

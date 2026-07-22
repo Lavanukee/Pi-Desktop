@@ -132,9 +132,20 @@ export function connectPi(): () => void {
       });
   });
 
+  // Report the viewed chat's session to main so a model-spawned subagent
+  // (spawn_subagent → app bridge) nests under it in the sidebar dropdown.
+  let lastReportedSession = '';
+  const unsubscribeSession = usePiStore.subscribe((state) => {
+    const file = state.session?.sessionFile ?? '';
+    if (file === lastReportedSession) return;
+    lastReportedSession = file;
+    void window.piDesktop.invoke('pi:report-active-session', { sessionFile: file });
+  });
+
   disconnect = () => {
     unsubscribe();
     unsubscribeQueue();
+    unsubscribeSession();
     disconnect = null;
   };
   return disconnect;

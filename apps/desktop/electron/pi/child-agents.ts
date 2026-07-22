@@ -21,6 +21,11 @@ export interface ChildBridge {
   ready(): Promise<void>;
   prompt(message: string): Promise<unknown>;
   abort(): Promise<unknown>;
+  /** Query the child (e.g. get_messages, to read its final answer as a summary). */
+  send(cmd: {
+    type: string;
+    [key: string]: unknown;
+  }): Promise<{ success: boolean; data?: unknown }>;
   whenExited(): Promise<void>;
   /** Immediate SIGKILL (no grace) — the quit hold's last-resort reap. */
   killNow(): void;
@@ -64,6 +69,16 @@ export interface ChildAgents<S extends SessionSender> {
     sender: S,
     req: ChildSpawnRequest,
   ): Promise<{ success: boolean; pid?: number; error?: string }>;
+  /** Spawn a child, stream it to the renderer (so it shows in the dropdown), and
+   * AWAIT its turn — resolving with the child's final answer as the summary. This
+   * is the spawn_subagent bridge path: the model gets the result back in-context.
+   * The child's pi process is disposed once the summary is captured; its transcript
+   * lives on in the renderer store, so it stays viewable in the dropdown. */
+  spawnAndWait(
+    sender: S,
+    req: ChildSpawnRequest,
+    timeoutMs: number,
+  ): Promise<{ ok: boolean; summary: string; error?: string }>;
   disposeChild(childId: string): { success: boolean; error?: string };
   list(senderId: number): ChildAgentInfo[];
   /** Reap every child owned by a window (called when its WebContents dies). */
@@ -131,6 +146,100 @@ export function createChildAgents<S extends SessionSender>(
     return { success: true, pid: bridge.pid };
   }
 
+  async function spawnAndWait(
+    sender: S,
+    req: ChildSpawnRequest,
+    timeoutMs: number,
+  ): Promise<{ ok: boolean; summary: string; error?: string }> {
+    children.get(req.childId)?.bridge.dispose();
+
+    let settle: (v: { ok: boolean; summary: string; error?: string }) => void = () => {};
+    const done = new Promise<{ ok: boolean; summary: string; error?: string }>((r) => {
+      settle = r;
+    });
+    let ended = false;
+    // The child's answer, accumulated from its streamed text_deltas (get_messages
+    // only returns the seed transcript, so we fold the response ourselves — the same
+    // shape the renderer's event router reads). Reset each new assistant message so
+    // the summary is the LAST message's text (the final answer, after any tools).
+    let summary = '';
+
+    const bridge = deps.createChildBridge({ cwd: req.cwd }, (event) => {
+      if (!sender.isDestroyed()) {
+        deps.sendChildEvent(sender, {
+          childId: req.childId,
+          parentId: req.parentId,
+          title: req.title,
+          event,
+        });
+      }
+      const e = event as {
+        type?: string;
+        assistantMessageEvent?: { type?: string; delta?: string };
+      };
+      if (e.type === 'message_start') summary = '';
+      else if (
+        e.type === 'message_update' &&
+        e.assistantMessageEvent?.type === 'text_delta' &&
+        typeof e.assistantMessageEvent.delta === 'string'
+      ) {
+        summary += e.assistantMessageEvent.delta;
+      }
+      // The child's top-level turn ended (or it crashed) → its final answer is ready.
+      if (!ended && (event.type === 'agent_end' || event.type === '_bridge_exit')) {
+        ended = true;
+        settle({ ok: true, summary });
+      }
+    });
+    children.set(req.childId, {
+      childId: req.childId,
+      parentId: req.parentId,
+      title: req.title,
+      senderId: sender.id,
+      bridge,
+    });
+
+    try {
+      await bridge.ready();
+      if (!bridge.alive) {
+        children.delete(req.childId);
+        return { ok: false, summary: '', error: 'child pi exited at startup' };
+      }
+    } catch (error) {
+      children.delete(req.childId);
+      return {
+        ok: false,
+        summary: '',
+        error: String(error instanceof Error ? error.message : error),
+      };
+    }
+
+    void bridge.prompt(req.goal).catch((error) => {
+      deps.log.warn('subagent prompt failed', {
+        childId: req.childId,
+        error: String(error instanceof Error ? error.message : error),
+      });
+    });
+    deps.log.info('subagent spawned (awaiting)', { childId: req.childId, pid: bridge.pid });
+
+    const timer = setTimeout(() => {
+      if (!ended) {
+        ended = true;
+        void bridge.abort().catch(() => undefined);
+        settle({ ok: false, summary: '', error: 'subagent timed out' });
+      }
+    }, timeoutMs);
+    timer.unref?.();
+
+    const result = await done;
+    clearTimeout(timer);
+    // Free the child pi process; its transcript persists in the renderer store, so
+    // it stays viewable in the dropdown.
+    children.get(req.childId)?.bridge.dispose();
+    children.delete(req.childId);
+    return result;
+  }
+
   function disposeChild(childId: string): { success: boolean; error?: string } {
     const record = children.get(childId);
     if (record === undefined) return { success: false, error: 'no such child agent' };
@@ -160,5 +269,5 @@ export function createChildAgents<S extends SessionSender>(
     return [...children.values()].map((r) => r.bridge);
   }
 
-  return { spawn, disposeChild, list, disposeForSender, disposeAll, bridges };
+  return { spawn, spawnAndWait, disposeChild, list, disposeForSender, disposeAll, bridges };
 }

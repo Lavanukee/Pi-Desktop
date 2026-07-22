@@ -119,6 +119,9 @@ export type PiInvokeMap = {
     request: undefined;
     response: { children: Array<{ childId: string; parentId: string; title: string }> };
   };
+  /** Renderer → main: the chat currently viewed, so a model-spawned subagent
+   * (spawn_subagent → app bridge) nests under it in the dropdown. */
+  'pi:report-active-session': { request: { sessionFile: string }; response: { ok: boolean } };
 };
 
 /** One child-agent record for the sidebar dropdown. */
@@ -162,6 +165,7 @@ export const PI_INVOKE_CHANNELS = [
   'pi:child-spawn',
   'pi:child-dispose',
   'pi:child-list',
+  'pi:report-active-session',
 ] as const satisfies readonly (keyof PiInvokeMap)[];
 
 export type PiEventMap = {

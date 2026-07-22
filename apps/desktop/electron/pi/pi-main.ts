@@ -8,6 +8,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import type { PiBridgeEvent } from '@pi-desktop/engine';
 import { PiBridge } from '@pi-desktop/engine/main';
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
 import { app, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
@@ -18,6 +19,8 @@ import { activeProjectPath } from '../project/project-main';
 import { resolveSessionCwd } from '../sandbox';
 import { advancedSamplingFilePath, generationExperimentEnabled } from '../settings/settings-main';
 import { isTrustedIpcEvent } from '../trusted-senders';
+import { type ChildAgents, createChildAgents } from './child-agents';
+import type { PiInvokeMap } from './contract';
 import { extensionPackageDirs } from './extension-dirs';
 import { createPiSessions, type PiSessionHandlers } from './pi-sessions';
 import { installPiQuitHold } from './quit-hold';
@@ -151,6 +154,82 @@ const sessions = createPiSessions<WebContents>({
   log,
 });
 
+/**
+ * Build an app-owned CHILD pi instance (a subagent / role as its own first-class
+ * `pi --mode rpc`, driven by the app exactly like the main chat). Same base
+ * config as the main bridge, but a fresh `--no-session` and a bumped subagent
+ * depth so the child's own harness won't register spawn_subagent — no runaway
+ * recursion of children spawning children.
+ */
+function createChildBridge(
+  opts: { cwd?: string },
+  onEvent: (event: PiBridgeEvent) => void,
+): PiBridge {
+  const cwd = resolveSessionCwd({ cwd: opts.cwd ?? activeProjectPath() ?? undefined });
+  return new PiBridge(
+    {
+      cwd,
+      env: {
+        ...buildPiEnv(cwd),
+        // Matches SUBAGENT_DEPTH_ENV (packages/harness subagent/types.ts): a child
+        // at depth >= 1 does NOT register the spawn tool.
+        PI_DESKTOP_SUBAGENT_DEPTH: '1',
+      },
+      noSession: true,
+      extensionPaths: EXTENSION_PATHS,
+      extraArgs: ['--no-extensions', '--no-skills'],
+      killGraceMs: KILL_GRACE_MS,
+      detached: true,
+      appRoot: app.getAppPath(),
+    },
+    onEvent,
+  );
+}
+
+const childAgents: ChildAgents<WebContents> = createChildAgents<WebContents>({
+  createChildBridge,
+  sendChildEvent: (sender, msg) => events.send(sender, 'pi:child-event', msg),
+  log,
+});
+
+/** Senders whose child-agent reap-on-destroy hook is already installed. */
+const childReapHooked = new Set<number>();
+
+/** Register the pi:child-* handlers (guarded like the main pi channels). A child
+ * pi is exec-capable, so only trusted main frames may spawn/drive one; children
+ * are reaped when their owning window is destroyed and in the quit hold. */
+function registerChildAgentIpc(): void {
+  const guard = (event: IpcMainInvokeEvent, channel: string): void => {
+    if (!isTrustedIpcEvent(event)) {
+      log.warn('rejected child-agent invoke from untrusted sender', {
+        channel,
+        wcId: event.sender.id,
+      });
+      throw new Error(`[pi] rejected "${channel}": untrusted sender`);
+    }
+  };
+  ipcMain.handle('pi:child-spawn', (event, req: PiInvokeMap['pi:child-spawn']['request']) => {
+    guard(event, 'pi:child-spawn');
+    const sender = event.sender;
+    if (!childReapHooked.has(sender.id)) {
+      childReapHooked.add(sender.id);
+      sender.once('destroyed', () => {
+        childAgents.disposeForSender(sender.id);
+        childReapHooked.delete(sender.id);
+      });
+    }
+    return childAgents.spawn(sender, req);
+  });
+  ipcMain.handle('pi:child-dispose', (event, req: PiInvokeMap['pi:child-dispose']['request']) => {
+    guard(event, 'pi:child-dispose');
+    return childAgents.disposeChild(req.childId);
+  });
+  ipcMain.handle('pi:child-list', (event) => {
+    guard(event, 'pi:child-list');
+    return { children: childAgents.list(event.sender.id) };
+  });
+}
+
 /** Sender-aware variant of the shared register helper: pi channels route to a
  * per-window bridge, so handlers need event.sender. Exhaustive by type, and
  * gated on the trusted-sender registry — pi is an exec-capable agent, so only
@@ -177,10 +256,16 @@ function registerAll(handlers: PiSessionHandlers<WebContents>): void {
  */
 export function registerPiIpc(opts: { extraTeardown?: () => Promise<void> } = {}): void {
   registerAll(sessions.handlers);
+  registerChildAgentIpc();
 
   installPiQuitHold(app, {
-    bridges: () => sessions.bridges(),
-    disposeAll: () => sessions.disposeAll(),
+    // Reap child-agent pi instances in the same held quit window as the main
+    // bridges, so no orphaned subagent/role pi processes leak on quit.
+    bridges: () => [...sessions.bridges(), ...childAgents.bridges()],
+    disposeAll: () => {
+      sessions.disposeAll();
+      childAgents.disposeAll();
+    },
     graceMs: KILL_GRACE_MS,
     extraTeardown: opts.extraTeardown,
   });

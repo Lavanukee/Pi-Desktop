@@ -103,7 +103,38 @@ export type PiInvokeMap = {
     request: { cwd?: string; sessionPath?: string; conversationId?: string } | undefined;
     response: { success: boolean; pid?: number; error?: string };
   };
+
+  // ── Child agents (subagents / roles as their own app-owned pi instances) ─────
+  /** Spawn an app-owned `pi --mode rpc` instance for a subagent/role and drive
+   * it with `goal`. Its events stream to the renderer over `pi:child-event`
+   * tagged with `childId`, so it renders as a nested chat under `parentId`. */
+  'pi:child-spawn': {
+    request: { childId: string; parentId: string; title: string; goal: string; cwd?: string };
+    response: { success: boolean; pid?: number; error?: string };
+  };
+  /** Tear down a child agent's pi instance. */
+  'pi:child-dispose': { request: { childId: string }; response: PiCommandAck };
+  /** The child agents currently alive for this window (sidebar dropdown data). */
+  'pi:child-list': {
+    request: undefined;
+    response: { children: Array<{ childId: string; parentId: string; title: string }> };
+  };
 };
+
+/** One child-agent record for the sidebar dropdown. */
+export interface ChildAgentInfo {
+  childId: string;
+  parentId: string;
+  title: string;
+}
+
+/** A single child pi instance's bridge event, tagged so the renderer folds it
+ * into that child's own transcript (a nested chat). */
+export interface ChildAgentEvent {
+  childId: string;
+  parentId: string;
+  event: PiBridgeEvent;
+}
 
 /** Runtime list of every pi invoke channel, composed into the preload
  * allowlist (../ipc-contract.ts). `satisfies` checks membership; the
@@ -126,9 +157,15 @@ export const PI_INVOKE_CHANNELS = [
   'pi:get-commands',
   'pi:bash',
   'pi:restart',
+  'pi:child-spawn',
+  'pi:child-dispose',
+  'pi:child-list',
 ] as const satisfies readonly (keyof PiInvokeMap)[];
 
 export type PiEventMap = {
   /** Every bridge event for this window, verbatim (renderer router consumes). */
   'pi:event': PiBridgeEvent;
+  /** A child agent's bridge event, tagged with its childId/parentId so the
+   * renderer folds it into that child's own transcript (a nested chat). */
+  'pi:child-event': ChildAgentEvent;
 };

@@ -298,6 +298,43 @@ describe('mapToolStep', () => {
     expect(step).toMatchObject({ kind: 'read', filename: 'a.ts', preview: 'file body' });
   });
 
+  it('ticks +N up from the streaming argsText before the args parse (LC4)', () => {
+    // While a whole-file write streams, `arguments` is still empty — the count is
+    // read from the raw argsText so +N grows in real time and matches the canvas.
+    const streaming = (argsText: string): ToolCall => ({
+      type: 'toolCall',
+      id: 'w1',
+      name: 'write_file',
+      arguments: {},
+      argsText,
+    });
+    const early = mapToolStep(
+      streaming('{"path":"/tmp/a.py","content":"one\\ntwo'),
+      undefined,
+      true,
+    ).data;
+    expect(early.kind).toBe('edit');
+    if (early.kind === 'edit') {
+      expect(early.added).toBe(2);
+      expect(early.deleted).toBe(0);
+      expect(early.filename).toBe('a.py');
+    }
+    // More content arrives → the count ticks up.
+    const later = mapToolStep(
+      streaming('{"path":"/tmp/a.py","content":"one\\ntwo\\nthree\\nfour'),
+      undefined,
+      true,
+    ).data;
+    if (later.kind === 'edit') expect(later.added).toBe(4);
+    // Once the args parse (done), the real diff takes over.
+    const done = mapToolStep(
+      call('w1', 'write_file', { path: '/tmp/a.py', content: 'one\ntwo' }),
+      result('w1', 'ok'),
+      false,
+    ).data;
+    if (done.kind === 'edit') expect(done.diff).toBeDefined();
+  });
+
   it('classifies a SKILL / skills-dir read as `skill` → "Read a skill" (Wave B #3a)', () => {
     const step = mapToolStep(
       call('c1', 'read', { path: '/Users/jedd/.pi/agent/skills/code-review/SKILL.md' }),

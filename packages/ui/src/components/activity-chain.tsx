@@ -2,7 +2,6 @@ import { clsx } from 'clsx';
 import type { HTMLAttributes, ReactNode } from 'react';
 import { forwardRef, useState } from 'react';
 import { DiffStat } from './activity.tsx';
-import { CodeBlock } from './code-block.tsx';
 import { type DiffFileData, DiffView } from './diff-view.tsx';
 import { IconCheck, IconChevronRight, IconExternal } from './icons.tsx';
 import { Markdown } from './markdown.tsx';
@@ -341,16 +340,39 @@ function editTotals(step: Extract<ActivityStepData, { kind: 'edit' }>): {
 }
 
 /**
- * A labeled, scroll-inside output frame (round-5 #6): border + radius ride the
- * frame (overflow clipped) so it never gets cut off under horizontal scroll.
- * Shared by bash/python terminals and generic tool/connector result reveals.
+ * One terminal-style block: an optional `$ command` prompt line followed by its
+ * output, in a single scroll-inside frame — exactly as it appeared in the shell.
+ * Replaces the old split CodeBlock(input) + OutputBlock(output) so a bash / tool
+ * row reads as ONE thing, with no generic "Input"/"Output" code-block framing and
+ * no schema/JSON dump (jedd: "nothing should have that generic code block input
+ * code block output"). A row with only output (a generic tool result) just shows
+ * the result; the row header already carries the tool name + its primary arg.
  */
-function OutputBlock({ text, label = 'Output' }: { text: string; label?: string }) {
+function TerminalBlock({
+  command,
+  output,
+  prompt = '$',
+}: {
+  command?: string;
+  output?: string;
+  prompt?: string;
+}) {
+  const hasCmd = command !== undefined && command.length > 0;
+  const hasOut = output !== undefined && output.length > 0;
+  if (!hasCmd && !hasOut) return null;
   return (
-    <div className="pd-chain-output">
-      <div className="pd-chain-output-label">{label}</div>
+    <div className="pd-chain-output pd-chain-termblock">
       <div className="pd-chain-output-frame">
-        <pre className="pd-chain-output-body pd-scroll">{text}</pre>
+        <pre className="pd-chain-output-body pd-scroll">
+          {hasCmd ? (
+            <span className="pd-term-cmd">
+              <span className="pd-term-prompt">{prompt} </span>
+              {command}
+            </span>
+          ) : null}
+          {hasCmd && hasOut ? '\n' : null}
+          {hasOut ? output : null}
+        </pre>
       </div>
     </div>
   );
@@ -363,12 +385,11 @@ function StepContent({ step, live = false }: { step: ActivityStepData; live?: bo
     case 'bash':
     case 'python':
       return (
-        <div className="pd-chain-terminal">
-          {step.command !== undefined ? (
-            <CodeBlock code={step.command} language={step.kind === 'python' ? 'python' : 'bash'} />
-          ) : null}
-          {step.output !== undefined ? <OutputBlock text={step.output} /> : null}
-        </div>
+        <TerminalBlock
+          command={step.command}
+          output={step.output}
+          prompt={step.kind === 'python' ? '>>>' : '$'}
+        />
       );
     case 'edit':
       return step.diff ? <DiffView files={step.diff} /> : null;
@@ -387,22 +408,13 @@ function StepContent({ step, live = false }: { step: ActivityStepData; live?: bo
       return step.preview !== undefined ? (
         <div className="pd-chain-preview">{step.preview}</div>
       ) : null;
-    // Generic tool / connector / tool_search: the reveal shows the raw call args
-    // (input) then the tool's result (output) — so every tool row, even one we
-    // don't specifically model, is transparent about what it did.
+    // Generic tool / connector / tool_search: show ONLY the tool's result, as one
+    // clean block — never the raw args JSON (that's the schema noise jedd called
+    // out). The row header already surfaces the tool name + its primary arg.
     case 'tool-search':
     case 'tool':
     case 'connector':
-      return (
-        <div className="pd-chain-terminal">
-          {step.argsText !== undefined && step.argsText.length > 0 ? (
-            <OutputBlock text={step.argsText} label="Input" />
-          ) : null}
-          {step.output !== undefined && step.output.length > 0 ? (
-            <OutputBlock text={step.output} />
-          ) : null}
-        </div>
-      );
+      return <TerminalBlock output={step.output} />;
     default:
       return null;
   }
@@ -429,10 +441,9 @@ function hasInlineContent(step: ActivityStepData): boolean {
     case 'tool-search':
     case 'tool':
     case 'connector':
-      return (
-        (step.argsText !== undefined && step.argsText.length > 0) ||
-        (step.output !== undefined && step.output.length > 0)
-      );
+      // Only the result opens a reveal now — the raw args JSON is no longer shown,
+      // so args alone must not produce an empty reveal.
+      return step.output !== undefined && step.output.length > 0;
     default:
       return false;
   }

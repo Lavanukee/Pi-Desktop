@@ -80,13 +80,12 @@ let cachedCanvasState: CanvasState | null = null;
 let pendingOpen: { resolve: (id: string) => void; reject: (e: Error) => void } | null = null;
 /** Cached page reduced-motion preference (refreshed on navigate). */
 let reducedMotion = false;
-/** Whether the model is actively driving (between setDriving true/false). Drives
- * whether the virtual cursor is re-asserted after a navigation (persistence). */
-let isDriving = false;
 /** Last virtual-cursor position, so the overlay can be re-injected at the same
- * spot after a page navigation wipes it (persistent cursor, round-14). */
-let lastCursorX = 0;
-let lastCursorY = 0;
+ * spot after a page navigation wipes it (persistent cursor). Seeded to a visible
+ * resting spot near the top-left so the pointer is on-screen before the first
+ * move rather than parked off-canvas. */
+let lastCursorX = 48;
+let lastCursorY = 48;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => {
@@ -149,16 +148,20 @@ async function ensureAgentTab(): Promise<string> {
   if (state !== null && state.url === '') {
     await browserManager.navigateAndWait(tabId, 'about:blank', OPEN_TIMEOUT_MS);
   }
+  // Show the pointer at rest immediately, so it's on-screen the moment the
+  // browser tab appears rather than only after the first move.
+  await reassertCursor();
   return tabId;
 }
 
 function setDriving(driving: boolean): void {
-  isDriving = driving;
   const wc = getAgentWindow();
   if (wc !== null && !wc.isDestroyed()) events.send(wc, 'browser:agent-driving', { driving });
+  // The cursor no longer hides when a driving batch ends — it stays put at its
+  // last position (a resting pointer). Only the transient typing pill is cleared.
   if (!driving && agentTabId !== null && browserManager.has(agentTabId)) {
     void browserManager
-      .evaluate(agentTabId, cursorCommand({ kind: 'hide' }))
+      .evaluate(agentTabId, cursorCommand({ kind: 'typing', active: false }))
       .catch(() => undefined);
   }
 }
@@ -181,11 +184,12 @@ async function moveCursor(x: number, y: number): Promise<void> {
 /**
  * Persist the virtual cursor across a navigation. A page load wipes the injected
  * overlay, so once the new document has settled we re-inject it at its last
- * position — but only while the model is still driving — so the pointer feels
- * continuous instead of vanishing between pages (round-14 persistent cursor).
+ * position. This is NO LONGER gated on driving — the pointer stays visible and
+ * resting between action batches and across pages, so it never vanishes while a
+ * browsing chat is on screen (jedd: always visible, rests until needed again).
  */
 async function reassertCursor(): Promise<void> {
-  if (!isDriving || agentTabId === null) return;
+  if (agentTabId === null) return;
   await cursor({ kind: 'move', x: lastCursorX, y: lastCursorY });
 }
 
@@ -454,5 +458,4 @@ export function disposeBrowserAgent(): void {
   server = null;
   agentTabId = null;
   cachedCanvasState = null;
-  isDriving = false;
 }

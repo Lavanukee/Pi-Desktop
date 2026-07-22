@@ -9,6 +9,7 @@
  */
 import type { ChatMsg, ContentBlock } from '@pi-desktop/engine';
 import { toolStepKind } from '../activity-mapping';
+import { CONTENT_KEYS, PATH_KEYS, partialJsonString } from '../partial-json';
 
 type ToolCallBlock = Extract<ContentBlock, { type: 'toolCall' }>;
 
@@ -112,10 +113,23 @@ export function bashRedirectTarget(command: string): string | undefined {
 function classifyWrite(block: ToolCallBlock): { path: string; contentHint?: string } | undefined {
   const args = block.arguments ?? {};
   const kind = toolStepKind(block.name);
+  const finalized = Object.keys(args).length > 0;
   if (kind === 'edit') {
-    const path = pickPath(args);
-    if (path === undefined) return undefined;
-    return { path, contentHint: wholeFileContent(args) };
+    if (finalized) {
+      const path = pickPath(args);
+      if (path === undefined) return undefined;
+      return { path, contentHint: wholeFileContent(args) };
+    }
+    // Still streaming (args haven't parsed yet): read the growing content out of
+    // the raw argsText so a whole-file write DRAWS as it streams. Wait for the
+    // path field to CLOSE before opening a tab (a half-typed path would target
+    // the wrong file); then feed whatever content has arrived so far.
+    const buf = block.argsText;
+    if (buf === undefined || buf.length === 0) return undefined;
+    const pathField = partialJsonString(buf, PATH_KEYS);
+    if (pathField === undefined || !pathField.complete) return undefined;
+    const content = partialJsonString(buf, CONTENT_KEYS);
+    return { path: pathField.value, contentHint: content?.value };
   }
   if (kind === 'bash') {
     const command = str(args.command);

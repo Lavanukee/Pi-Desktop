@@ -24,6 +24,7 @@ import type {
 // `HarnessStatus.tsx`/`composer-bar-logic.ts` use for harness/src.
 import { connectorIconSvg } from '../../../../packages/mcp-lite/src/connector-icons.ts';
 import { type DetectedArtifact, segmentMessageText } from './canvas/artifacts';
+import { CONTENT_KEYS, PATH_KEYS, partialJsonString } from './partial-json';
 
 type ToolCallBlock = Extract<ContentBlock, { type: 'toolCall' }>;
 type ThinkingBlock = Extract<ContentBlock, { type: 'thinking' }>;
@@ -634,16 +635,35 @@ export function mapToolStep(
       // step, which has the growing +N/−N but not the bytes) passes them through
       // explicit `addedLines`/`removedLines` args so the ±stat still counts up —
       // real edit tool calls never carry those keys, so normal chat is unchanged.
-      const added = typeof args.addedLines === 'number' ? args.addedLines : undefined;
-      const deleted = typeof args.removedLines === 'number' ? args.removedLines : undefined;
+      let added = typeof args.addedLines === 'number' ? args.addedLines : undefined;
+      let deleted = typeof args.removedLines === 'number' ? args.removedLines : undefined;
+      const diff = editDiff(args);
+      let editPath = path;
+      let editName = filename;
+      // Still streaming (args haven't parsed): read the growing whole-file content
+      // out of the raw argsText and count its lines, so +N ticks up in real time
+      // and matches the canvas draw. str_replace edits carry no `content` field, so
+      // this only fires for whole-file writes; parsed edits keep the real diff.
+      if (diff === undefined && running && block.argsText !== undefined) {
+        const p = partialJsonString(block.argsText, PATH_KEYS);
+        const c = partialJsonString(block.argsText, CONTENT_KEYS);
+        if (p?.complete === true) {
+          editPath = p.value;
+          editName = baseName(p.value);
+        }
+        if (c !== undefined && c.value.length > 0) {
+          added = c.value.split('\n').length;
+          deleted = 0;
+        }
+      }
       return {
         data: {
           kind,
           label,
           status,
-          detail: path,
-          filename,
-          diff: editDiff(args),
+          detail: editPath,
+          filename: editName,
+          ...(diff !== undefined ? { diff } : {}),
           ...(added !== undefined ? { added } : {}),
           ...(deleted !== undefined ? { deleted } : {}),
         },

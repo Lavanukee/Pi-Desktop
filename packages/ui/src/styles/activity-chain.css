@@ -421,3 +421,15 @@ button.pd-chain-step-row:hover .pd-chain-step-chevron {
   white-space: pre;
   overflow-x: auto;
 }
+
+/* One-block terminal reveal: a dimmed `$ ` prompt + the typed command on the
+ * first line, then the output below — all in a single frame, as it appeared in
+ * the shell. Replaces the old split input/output code blocks. */
+.pd-term-prompt {
+  color: var(--pd-text-muted);
+  user-select: none;
+}
+.pd-term-cmd {
+  color: var(--pd-text-primary);
+  font-weight: 600;
+}

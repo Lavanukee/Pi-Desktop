@@ -169,19 +169,49 @@ describe('ActivityStep — connector + generic tool rows', () => {
     expect(html).toContain('pd-chain-step-chevron');
   });
 
-  it('reveals a generic tool row’s input + output on expand', () => {
+  it('reveals ONLY a generic tool row’s result — never the raw args JSON (LC7)', () => {
     const html = renderToStaticMarkup(
       <ActivityStep
-        data={{ kind: 'tool', label: 'Do thing', argsText: 'input-args-here', output: 'result' }}
+        data={{
+          kind: 'tool',
+          label: 'Do thing',
+          argsText: '{"secret_token":"SHOULD_NOT_RENDER"}',
+          output: 'result',
+        }}
         expanded
       />,
     );
     expect(html).toContain('Do thing');
-    expect(html).toContain('input-args-here');
     expect(html).toContain('result');
-    // Labeled Input + Output frames inside the reveal.
-    expect(html).toContain('>Input<');
-    expect(html).toContain('>Output<');
+    // The raw args JSON (schema noise) is gone — no Input block, no args dump.
+    expect(html).not.toContain('SHOULD_NOT_RENDER');
+    expect(html).not.toContain('>Input<');
+    expect(html).not.toContain('>Output<');
+    // One clean block frame carries the result.
+    expect(html).toContain('pd-chain-termblock');
+  });
+});
+
+/**
+ * LC5 — a bash/terminal row reveals ONE terminal block: a dimmed `$ ` prompt +
+ * the command on the first line, then the output below, all in a single frame —
+ * never a split command-code-block + output-block.
+ */
+describe('ActivityStep — one-block terminal (LC5/LC6)', () => {
+  it('renders command + output in a single terminal block with a $ prompt', () => {
+    const html = renderToStaticMarkup(
+      <ActivityStep
+        data={{ kind: 'bash', label: 'Ran a command', command: 'ls -la /tmp', output: 'total 8' }}
+        expanded
+      />,
+    );
+    // Exactly one output frame — not a separate CodeBlock for the command.
+    expect(html.match(/pd-chain-output-frame/g)?.length).toBe(1);
+    expect(html).not.toContain('pd-code-block');
+    // The `$ ` prompt + command, then the output, in that one block.
+    expect(html).toContain('pd-term-prompt');
+    expect(html).toContain('ls -la /tmp');
+    expect(html).toContain('total 8');
   });
 });
 

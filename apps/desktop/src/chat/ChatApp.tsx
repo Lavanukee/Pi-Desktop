@@ -39,6 +39,7 @@ import { useHarnessTitleSync } from './harness-title';
 import { SessionSidebar, type SidebarStub } from './SessionSidebar';
 import { ToastHost } from './ToastHost';
 import { UiRequestDialogs } from './UiRequestDialogs';
+import { WhyQueuedModal } from './WhyQueuedModal';
 import { WindowDropOverlay } from './WindowDropOverlay';
 
 /**
@@ -417,6 +418,7 @@ export function ChatApp({
         <CanvasTabsPanel />
 
         <UiRequestDialogs />
+        <WhyQueuedModal />
         <ToastHost />
         <WindowDropOverlay />
       </div>

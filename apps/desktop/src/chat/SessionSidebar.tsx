@@ -249,6 +249,9 @@ export function SessionSidebar({
   const promptInFlight = usePiStore((s) => s.promptInFlight);
   const corpRunning = useCorpStore((s) => s.corpRunning);
   const busy = isStreaming || promptInFlight || corpRunning;
+  // A Pause halts the turn (busy→idle) without finishing it, so the busy→idle
+  // edge below must NOT flash "<title> finished" when the chat is now paused.
+  const pausedChat = usePiStore((s) => s.pausedChat);
 
   const [justFinished, setJustFinished] = useState<{ title: string; at: number } | null>(null);
   const prevBusy = useRef(false);
@@ -270,12 +273,16 @@ export function SessionSidebar({
   useEffect(() => {
     if (busy) busyFile.current = currentFile;
     if (prevBusy.current && !busy && busyFile.current !== null) {
-      const title = sessions.find((s) => s.file === busyFile.current)?.title ?? 'Chat';
-      setJustFinished({ title, at: Date.now() });
+      // Paused ≠ finished — a Pause frees the model but keeps the reply resumable,
+      // so it must not read as a completion in the sidebar.
+      if (pausedChat === null) {
+        const title = sessions.find((s) => s.file === busyFile.current)?.title ?? 'Chat';
+        setJustFinished({ title, at: Date.now() });
+      }
       busyFile.current = null;
     }
     prevBusy.current = busy;
-  }, [busy, currentFile, sessions]);
+  }, [busy, currentFile, sessions, pausedChat]);
 
   // Clear the finished notice once its fade has run.
   useEffect(() => {

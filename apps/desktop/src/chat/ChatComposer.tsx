@@ -19,10 +19,20 @@ import {
   IconClose,
 } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
+import { IconPause } from '../settings/icons';
 import { abortCorpTask } from '../state/corp-connect';
 import { useCorpStore } from '../state/corp-store';
-import { abortPi, applyHarnessPreset, getCommands, runBash, sendPrompt } from '../state/pi-connect';
+import {
+  abortPi,
+  applyHarnessPreset,
+  getCommands,
+  pausePi,
+  resumePausedChat,
+  runBash,
+  sendPrompt,
+} from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
+import { assessCurrentSend } from '../state/running-chats';
 import { productionHarnessEnabled } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
 import { ComposerBar } from './ComposerBar';
@@ -499,11 +509,17 @@ export function ChatComposer({
             : true,
       );
     if (piState.promptInFlight || streamEmpty) {
+      // Snapshot WHY it's waiting (same-model wait vs a model swap vs a model that
+      // won't fit) so the faded queued line + the "Why isn't my message sending?"
+      // modal can explain it instead of leaving a non-technical user on a silent
+      // cooldown. A turn is in flight here, so turnInFlight = true.
+      const { reason } = assessCurrentSend(true);
       piState.enqueueSend({
         text: echo,
         images: imageUris,
         agentMessage,
         taskClass: pinnedClass ?? undefined,
+        reason,
       });
       return;
     }
@@ -558,6 +574,17 @@ export function ChatComposer({
     if (corpRunning && corpTaskId !== null) void abortCorpTask(corpTaskId);
     else void abortPi();
   };
+  // Pause (plain chat only; left of Stop): halt the reply to free the model but
+  // keep it resumable + let any queued message through. Flip the button back to
+  // Send instantly — the turn is ending.
+  const pauseBusy = (): void => {
+    setPendingStop(true);
+    setPendingStart(false);
+    void pausePi();
+  };
+  // A chat whose turn the user paused — drives the "Paused · Resume" strip shown
+  // when the chat has settled idle (nothing is streaming to interrupt).
+  const pausedChat = usePiStore((s) => s.pausedChat);
   // jedd #12: the primary placeholder is friendly for a first-timer — the
   // developer-jargon @ / ! hints were demoted to the subtle helper line below
   // (home only), not baked into the placeholder. A single short line also stops
@@ -607,6 +634,25 @@ export function ChatComposer({
     // sticking-out ComposerBar (mounted below the input card) protrudes cleanly
     // — the whole input bar reads as nudged up to make room for the thin ledge.
     <div className="mx-auto w-full max-w-[700px] pb-1.5">
+      {/* A paused turn (Pause, not Stop): once the chat settles idle, offer to
+          resume it. Hidden while busy (there's a live reply to Pause/Stop instead). */}
+      {pausedChat !== null && !isBusy ? (
+        <div
+          className="mb-1.5 flex items-center gap-2 px-1 text-footnote"
+          data-testid="composer-paused"
+        >
+          <IconPause size={12} className="text-text-muted" />
+          <span className="text-text-muted">Paused</span>
+          <button
+            type="button"
+            className="text-text-link hover:underline"
+            onClick={() => void resumePausedChat()}
+            data-testid="composer-resume"
+          >
+            Resume
+          </button>
+        </div>
+      ) : null}
       <div className="pd-composer-root relative">
         <Autocomplete
           items={token.mode !== null ? items : []}
@@ -691,15 +737,30 @@ export function ChatComposer({
             <ComposerFooter piModels={piModels} onOpenModels={onOpenModels} />
             {showSend ? (
               isBusy ? (
-                <IconButton
-                  aria-label={corpRunning ? 'Stop — halt all agents' : 'Stop'}
-                  variant="primary"
-                  circle
-                  onClick={() => stopBusy()}
-                  data-testid="composer-stop"
-                >
-                  <IconClose size={14} />
-                </IconButton>
+                <div className="flex items-center gap-1.5">
+                  {/* Pause sits to the LEFT of Stop (jedd). Plain chat only — a
+                      corp run's cooperative halt has no resumable single turn. */}
+                  {!corpRunning ? (
+                    <IconButton
+                      aria-label="Pause — keep this reply to resume later"
+                      variant="secondary"
+                      circle
+                      onClick={() => pauseBusy()}
+                      data-testid="composer-pause"
+                    >
+                      <IconPause size={13} />
+                    </IconButton>
+                  ) : null}
+                  <IconButton
+                    aria-label={corpRunning ? 'Stop — halt all agents' : 'Stop'}
+                    variant="primary"
+                    circle
+                    onClick={() => stopBusy()}
+                    data-testid="composer-stop"
+                  >
+                    <IconClose size={14} />
+                  </IconButton>
+                </div>
               ) : (
                 <IconButton
                   aria-label="Send message"

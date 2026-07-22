@@ -14,7 +14,7 @@ import type { TaskClass } from '@pi-desktop/harness';
 import { ensureChatServerReady, maybeRouteAuto } from '../chat/auto-router';
 import { resetCanvasForNewSession, restoreCanvas, snapshotCanvas } from './canvas-store';
 import { ensureVisionMode } from './local-model';
-import { createPiSink, usePiStore } from './pi-slice';
+import { createPiSink, type PausedChat, type QueuedSend, usePiStore } from './pi-slice';
 import { useSettingsStore } from './settings-store';
 
 /** An outgoing message's vision-relevant shape (pure helper input). */
@@ -345,8 +345,60 @@ export async function steerPrompt(message: string, agentMessage?: string) {
 export async function abortPi() {
   // Stopping interrupts the current turn AND drops anything queued behind it —
   // the user asked to halt, so pending messages must not fire after the abort.
-  usePiStore.setState({ queuedSends: [] });
+  usePiStore.setState({ queuedSends: [], pausedChat: null });
   return window.piDesktop.invoke('pi:abort', undefined);
+}
+
+/**
+ * PAUSE the current turn (distinct from Stop): halt generation to free the local
+ * model, but — unlike {@link abortPi} — KEEP any queued sends so they can now go
+ * through, and record the chat as paused (with its last user prompt) so a Resume
+ * affordance can re-run it. The frozen partial reply is left in the thread. This
+ * is the "free the model for another message, but I may come back to this reply"
+ * control jedd asked for, sitting left of Stop in the composer + the queue modal.
+ *
+ * Note (single-child reality): the local llama-server can't byte-resume an
+ * interrupted generation, so Resume REGENERATES from the same prompt rather than
+ * continuing token-exact. Honest + good enough until true continuation lands.
+ */
+export async function pausePi(): Promise<void> {
+  const store = usePiStore.getState();
+  const lastUser = [...store.messages].reverse().find((m) => m.kind === 'user');
+  const userText = lastUser !== undefined && lastUser.kind === 'user' ? lastUser.text : '';
+  usePiStore.setState({
+    pausedChat: { sessionFile: store.session?.sessionFile ?? null, userText },
+  });
+  await window.piDesktop.invoke('pi:abort', undefined);
+}
+
+/**
+ * Resume a paused chat: clear the paused marker and re-run its last user prompt as
+ * a fresh turn. The frozen partial reply is dropped so the regenerate replaces it
+ * in place under the existing user bubble (no duplicate echo). A no-op if nothing
+ * is paused or the prompt was empty.
+ */
+export async function resumePausedChat(): Promise<void> {
+  const paused = usePiStore.getState().pausedChat;
+  if (paused === null) return;
+  const text = paused.userText.trim();
+  usePiStore.setState({ pausedChat: null });
+  if (text.length === 0) return;
+  // Drop the last message if it's the frozen (non-streaming) partial assistant
+  // reply, then mark in-flight and re-dispatch the same prompt to pi.
+  usePiStore.setState((s) => {
+    const messages = [...s.messages];
+    const last = messages[messages.length - 1];
+    if (last !== undefined && last.kind === 'assistant' && last.isStreaming !== true)
+      messages.pop();
+    return { messages, promptInFlight: true };
+  });
+  const epoch = usePiStore.getState().sessionEpoch;
+  await ensureChatServerReady();
+  if (usePiStore.getState().sessionEpoch !== epoch) {
+    usePiStore.setState({ promptInFlight: false });
+    return;
+  }
+  await window.piDesktop.invoke('pi:prompt', { message: text });
 }
 
 export async function setModel(provider: string, modelId: string) {
@@ -528,7 +580,16 @@ export async function listSessions(cwd?: string) {
  * canvas tabs) so returning RESTORES it instead of a blank thread + a leaked
  * canvas. In-memory only, bounded by the chats visited this app-run.
  */
-const sessionSnapshots = new Map<string, { messages: ChatMsg[]; canvas: CanvasState | null }>();
+interface SessionSnapshot {
+  messages: ChatMsg[];
+  canvas: CanvasState | null;
+  /** The chat's pending queue (jedd: each conversation holds its own queued
+   * messages) — captured before the switch-abort drops it, restored on return. */
+  queuedSends: QueuedSend[];
+  /** A paused turn, so returning to the chat still offers Resume. */
+  pausedChat: PausedChat | null;
+}
+const sessionSnapshots = new Map<string, SessionSnapshot>();
 
 /** Canvas tab kinds that are EPHEMERAL/live (a native WebContentsView / PTY, or
  * re-derived from live state) — excluded from a per-chat snapshot so restoring a
@@ -564,7 +625,12 @@ function captureCurrentSession(): void {
   const messages = store.messages.map((m) =>
     m.kind === 'assistant' && m.isStreaming === true ? { ...m, isStreaming: false } : m,
   );
-  sessionSnapshots.set(file, { messages, canvas: preservableCanvas() });
+  sessionSnapshots.set(file, {
+    messages,
+    canvas: preservableCanvas(),
+    queuedSends: store.queuedSends,
+    pausedChat: store.pausedChat,
+  });
 }
 
 /** Point the store at the session we just switched to. `sessionFile` is set to
@@ -609,6 +675,10 @@ export async function switchSession(
     usePiStore.getState().setMessagesExternal(snap.messages);
     if (snap.canvas !== null) restoreCanvas(snap.canvas);
     else resetCanvasForNewSession();
+    // setMessagesExternal cleared the queue + paused marker as part of the
+    // session-boundary reset; put this chat's own back so it holds its pending
+    // messages + Resume affordance across the round-trip.
+    usePiStore.setState({ queuedSends: snap.queuedSends, pausedChat: snap.pausedChat });
   } else {
     // First visit this app-run — clean canvas + rehydrate from the JSONL.
     resetCanvasForNewSession();

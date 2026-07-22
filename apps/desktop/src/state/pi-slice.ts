@@ -18,6 +18,7 @@ import type {
 } from '@pi-desktop/engine';
 import { create } from 'zustand';
 import { useCorpStore } from './corp-store';
+import type { QueueReason } from './send-feasibility';
 
 export interface PiNotification {
   id: string;
@@ -71,6 +72,25 @@ export interface QueuedSend {
   agentMessage?: string;
   /** Pinned task class (Auto-router override), passed straight to sendPrompt. */
   taskClass?: string;
+  /**
+   * Why this send is waiting (RAM/model snapshot computed at enqueue). Drives the
+   * faded queued line's reason + the "Why isn't my message sending?" modal. Absent
+   * on legacy/programmatic enqueues → the UI falls back to the generic wording.
+   */
+  reason?: QueueReason;
+}
+
+/**
+ * A chat whose in-flight turn the user PAUSED — aborted to free the model, but
+ * kept (intending to resume) rather than abandoned like Stop. The frozen partial
+ * reply stays in `messages`; {@link resumePausedChat} re-runs `userText`. Keyed by
+ * session file (null for a projectless not-yet-saved chat). Reset on every session
+ * boundary; snapshotted per-chat so returning to a paused chat still offers Resume.
+ */
+export interface PausedChat {
+  sessionFile: string | null;
+  /** The last user prompt, replayed by Resume. */
+  userText: string;
 }
 
 interface PiSliceState {
@@ -96,6 +116,8 @@ interface PiSliceState {
   queuedSends: QueuedSend[];
   /** Queue a send for after the current turn ends (composer → drain). */
   enqueueSend: (item: QueuedSend) => void;
+  /** The user-paused turn for THIS chat (aborted-but-resumable), or null. */
+  pausedChat: PausedChat | null;
   /** Tool calls currently executing (spinner state for W3 rows). */
   runningToolCalls: string[];
   extensionStatus: Record<string, string>;
@@ -180,6 +202,7 @@ export const usePiStore = create<PiSliceState>((set) => ({
   promptInFlight: false,
   queuedSends: [],
   enqueueSend: (item) => set((s) => ({ queuedSends: [...s.queuedSends, item] })),
+  pausedChat: null,
   runningToolCalls: [],
   extensionStatus: {},
   widgets: {},
@@ -224,6 +247,9 @@ export const usePiStore = create<PiSliceState>((set) => ({
       // fresh chat.
       promptInFlight: false,
       queuedSends: [],
+      // The paused-turn marker belongs to the session we're leaving; a fresh /
+      // switched session either restores its own (snapshot) or starts unpaused.
+      pausedChat: null,
       runningToolCalls: [],
       uiRequests: [],
       bridgeExited: null,

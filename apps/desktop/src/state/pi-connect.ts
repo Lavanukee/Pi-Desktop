@@ -606,17 +606,14 @@ interface SessionSnapshot {
 }
 const sessionSnapshots = new Map<string, SessionSnapshot>();
 
-/** Canvas tab kinds that are EPHEMERAL/live (a native WebContentsView / PTY, or
- * re-derived from live state) — excluded from a per-chat snapshot so restoring a
- * chat re-inits nothing and can never strand a native view. Document/media tabs
- * (file/image/pdf/model/doc/markdown/code/…) preserve cleanly and ARE kept. */
-const EPHEMERAL_CANVAS_KINDS = new Set([
-  'browser',
-  'terminal',
-  'subagent',
-  'situation',
-  'filetree',
-]);
+/** Canvas tab kinds that are EPHEMERAL/live and can't be reconstructed from a tab
+ * spec — excluded from a per-chat snapshot so restoring a chat re-inits nothing
+ * and can never strand a PTY or a live-derived surface. Everything else preserves:
+ * document/media tabs (file/image/pdf/model/doc/markdown/code/…) carry their own
+ * data, the `filetree` carries its tree nodes, and a `browser` tab carries its URL
+ * (re-navigated on restore — see native-surfaces `#onMount`). Kept ephemeral:
+ * `terminal` (a live PTY), `subagent`/`situation` (re-derived from live corp state). */
+const EPHEMERAL_CANVAS_KINDS = new Set(['terminal', 'subagent', 'situation']);
 
 /** The snapshot-safe canvas state: drop live tabs, and re-anchor the active tab
  * to a surviving one so the restored canvas is always well-formed. */

@@ -238,8 +238,19 @@ export class NativeSurfaces {
   // ── mount / rect ─────────────────────────────────────────────────────────
   #onMount(tabId: string, kind: CanvasTab['kind'], el: HTMLElement | null): void {
     if (kind === 'browser') {
-      if (el !== null) void window.piDesktop.invoke('browser:create', { tabId });
-      else this.#hideBrowser(tabId);
+      if (el !== null) {
+        void window.piDesktop.invoke('browser:create', { tabId }).then((res) => {
+          // A browser tab restored from a per-chat snapshot re-creates a BLANK
+          // WebContentsView; nothing else reacts to `tab.url`. On FIRST creation
+          // only (idempotent create ⇒ never on a same-session re-mount, so in-tab
+          // navigation is preserved), navigate the fresh view back to its URL.
+          if (res.created !== true) return;
+          const url = this.#tab(tabId)?.url;
+          if (url !== undefined && url.length > 0) {
+            void window.piDesktop.invoke('browser:navigate', { tabId, url });
+          }
+        });
+      } else this.#hideBrowser(tabId);
       return;
     }
     if (kind === 'terminal') {

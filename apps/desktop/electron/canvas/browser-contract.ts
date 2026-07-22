@@ -18,7 +18,12 @@ export interface BrowserBounds {
 
 export type BrowserInvokeMap = {
   /** Create (idempotent) the tab's WebContentsView, attached to the sender window. */
-  'browser:create': { request: { tabId: string }; response: { ok: boolean } };
+  'browser:create': {
+    request: { tabId: string };
+    // `created` is true only when a NEW view was made (not an idempotent re-mount),
+    // so the caller can navigate a freshly-restored tab back to its saved URL once.
+    response: { ok: boolean; created?: boolean };
+  };
   /** Destroy the tab's view and free its WebContents (tab closed). */
   'browser:destroy': { request: { tabId: string }; response: { ok: boolean } };
   /** Position the view over the content slot and show/hide it (tab switch = hide). */

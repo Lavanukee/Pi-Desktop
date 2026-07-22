@@ -348,7 +348,13 @@ export function registerBrowserIpc(): void {
     });
   };
 
-  handle('browser:create', (owner, req) => ({ ok: ensureView(req.tabId, owner) !== undefined }));
+  handle('browser:create', (owner, req) => {
+    const existed = entries.has(req.tabId);
+    const ok = ensureView(req.tabId, owner) !== undefined;
+    // `created` distinguishes a fresh view from an idempotent re-mount, so the
+    // renderer only re-navigates a restored tab to its saved URL on first creation.
+    return { ok, created: ok && !existed };
+  });
   handle('browser:destroy', (_owner, req) => {
     destroyView(req.tabId);
     return { ok: true };

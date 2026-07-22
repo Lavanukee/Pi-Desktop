@@ -171,3 +171,52 @@ describe('SubagentScheduler failure handling', () => {
     if (r.accepted) expect(r.outcome.ok).toBe(false);
   });
 });
+
+/** A runner that exposes its `setStep` and lets the test finish it — for
+ * asserting the activity timeline + captured output (UI#12 "view work"). */
+function steppingRunner(): {
+  run: SubagentRunner;
+  step: (s: string) => void;
+  finish: (o: SubagentRunOutcome) => void;
+} {
+  let setStep!: (s: string) => void;
+  let resolveOutcome!: (o: SubagentRunOutcome) => void;
+  const run: SubagentRunner = (ctx) => {
+    setStep = ctx.setStep;
+    return new Promise<SubagentRunOutcome>((res) => {
+      resolveOutcome = res;
+    });
+  };
+  return { run, step: (s) => setStep(s), finish: (o) => resolveOutcome(o) };
+}
+
+describe('SubagentScheduler activity + output (UI#12 view-work)', () => {
+  it('accumulates a deduped step timeline and captures the final output', async () => {
+    const sched = new SubagentScheduler({ budget: budget() });
+    const r = steppingRunner();
+    const p = sched.submit({ id: 'a', name: 'A', run: r.run });
+    r.step('bash');
+    r.step('bash'); // consecutive duplicate — collapses (one tool fires twice)
+    r.step('read');
+    // While running the timeline is already visible.
+    expect(sched.snapshot().items.find((i) => i.id === 'a')?.activity).toEqual(['bash', 'read']);
+
+    r.finish({ ok: true, summary: 'All checks passed.\nDetails follow.' });
+    await p;
+    const done = sched.snapshot().items.find((i) => i.id === 'a');
+    expect(done?.status).toBe('done');
+    expect(done?.activity).toEqual(['bash', 'read']);
+    expect(done?.output).toBe('All checks passed.\nDetails follow.');
+  });
+
+  it('captures the error message as output on failure', async () => {
+    const sched = new SubagentScheduler({ budget: budget() });
+    const r = steppingRunner();
+    const p = sched.submit({ id: 'e', name: 'E', run: r.run });
+    r.finish({ ok: false, summary: '', error: 'boom' });
+    await p;
+    const rec = sched.snapshot().items.find((i) => i.id === 'e');
+    expect(rec?.status).toBe('error');
+    expect(rec?.output).toBe('boom');
+  });
+});

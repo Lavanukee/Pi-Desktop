@@ -21,6 +21,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   IconChat,
+  IconCheck,
   IconChevronDown,
   IconClock,
   IconConnector,
@@ -36,6 +37,7 @@ import {
   SidebarRow,
   SidebarScroll,
   SidebarSection,
+  Spinner,
 } from '@pi-desktop/ui';
 import {
   type ComponentType,
@@ -43,12 +45,14 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import type { SessionSummary } from '../../electron/ipc-contract';
 import type { UserMode } from '../../electron/settings/settings-contract';
 import { IconCpu, IconMoon, IconSun } from '../settings/icons';
 import type { SettingsSection } from '../settings/SettingsView';
+import { useCorpStore } from '../state/corp-store';
 import { listSessions, newSession, switchSession } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { setUserMode, useSettingsStore, useUserMode } from '../state/settings-store';
@@ -238,6 +242,18 @@ export function SessionSidebar({
   const currentFile = usePiStore((s) => s.session?.sessionFile ?? null);
   const sessionId = usePiStore((s) => s.session?.sessionId ?? null);
 
+  // Is the (single, active) chat working? — the same signal the composer reads.
+  // The app runs one pi session at a time, so only the active chat's row can show
+  // a live spinner; when it goes idle we flash a "<title> finished" fade (#10).
+  const isStreaming = usePiStore((s) => s.agent.isStreaming);
+  const promptInFlight = usePiStore((s) => s.promptInFlight);
+  const corpRunning = useCorpStore((s) => s.corpRunning);
+  const busy = isStreaming || promptInFlight || corpRunning;
+
+  const [justFinished, setJustFinished] = useState<{ title: string; at: number } | null>(null);
+  const prevBusy = useRef(false);
+  const busyFile = useRef<string | null>(null);
+
   const refresh = useCallback(() => {
     void listSessions().then(setSessions);
   }, []);
@@ -247,6 +263,26 @@ export function SessionSidebar({
   useEffect(() => {
     refresh();
   }, [refresh, sessionId]);
+
+  // On the busy→idle edge of the active chat, flash a "<title> finished" fade.
+  // `busyFile` remembers which chat was working so we name it even if the store's
+  // active file shifts at the same tick.
+  useEffect(() => {
+    if (busy) busyFile.current = currentFile;
+    if (prevBusy.current && !busy && busyFile.current !== null) {
+      const title = sessions.find((s) => s.file === busyFile.current)?.title ?? 'Chat';
+      setJustFinished({ title, at: Date.now() });
+      busyFile.current = null;
+    }
+    prevBusy.current = busy;
+  }, [busy, currentFile, sessions]);
+
+  // Clear the finished notice once its fade has run.
+  useEffect(() => {
+    if (justFinished === null) return;
+    const timer = setTimeout(() => setJustFinished(null), 3600);
+    return () => clearTimeout(timer);
+  }, [justFinished]);
 
   // New chat starts a fresh session in the RUNNING pi (new_session RPC): it
   // resets the thread but does NOT dispose/respawn pi, so no "pi exited" crash
@@ -411,6 +447,22 @@ export function SessionSidebar({
         </SidebarSection>
 
         <SidebarSection label="Chats">
+          {justFinished !== null ? (
+            // A transient "<title> finished" notice that fades out (#10). Keyed on
+            // `at` so a fresh finish restarts the animation; unmounted by the timer.
+            <div
+              key={justFinished.at}
+              className="mx-1 mb-1 flex items-center gap-1.5 rounded-md bg-bg-hover px-2 py-1 text-footnote text-text-secondary"
+              style={{
+                animation:
+                  'pd-fade-in 0.2s ease, pd-fade-out 0.6s var(--pd-easing-standard) 3s forwards',
+              }}
+            >
+              <IconCheck size={13} className="shrink-0 text-text-primary" />
+              <span className="truncate">{justFinished.title}</span>
+              <span className="shrink-0 text-text-muted">finished</span>
+            </div>
+          ) : null}
           {filtered.length === 0 ? (
             <div className="px-2 py-1.5 text-footnote text-text-muted">
               {query.trim().length > 0 ? 'No matching chats.' : 'No sessions yet.'}
@@ -419,7 +471,10 @@ export function SessionSidebar({
             filtered.map((s) => (
               <SidebarRow
                 key={s.file}
-                icon={<IconChat size={16} />}
+                // The active chat's row shows a live spinner while it works (#10).
+                icon={
+                  busy && currentFile === s.file ? <Spinner size={16} /> : <IconChat size={16} />
+                }
                 label={s.title}
                 meta={relativeTime(s.modifiedAt)}
                 selected={currentFile === s.file}

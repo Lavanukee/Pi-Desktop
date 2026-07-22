@@ -88,6 +88,12 @@ export interface SubagentItem {
   /** The subagent's current step ("Reading files…"); shimmered while running. */
   step?: string;
   status?: 'queued' | 'running' | 'done' | 'error';
+  /** The ordered tool/step labels the subagent ran (its activity timeline) —
+   * shown when the row is clicked to "view work". */
+  activity?: string[];
+  /** The subagent's full final output (its summary) or error — set on completion,
+   * shown in the "view work" detail. */
+  output?: string;
 }
 
 /**

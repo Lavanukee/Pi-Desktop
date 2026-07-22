@@ -42,6 +42,8 @@ export function toSubagentItems(status: HarnessSubagentsStatus): SubagentItem[] 
     name: s.name,
     status: s.status,
     ...(s.step !== undefined ? { step: s.step } : {}),
+    ...(s.activity !== undefined ? { activity: [...s.activity] } : {}),
+    ...(s.output !== undefined ? { output: s.output } : {}),
   }));
 }
 

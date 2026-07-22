@@ -43,6 +43,14 @@ export interface SubagentStatusItem {
   /** Current step ("Reading files…"); shimmered while running. */
   readonly step?: string;
   readonly status: SubagentStatus;
+  /** The ordered tool/step labels the subagent ran — its activity timeline, for
+   * the "view work" detail (the child's full transcript never crosses back, but
+   * the sequence of tools it used does). */
+  readonly activity?: readonly string[];
+  /** The subagent's full final output (its summary), or the error message — set
+   * once it finishes. This is the same summary that returns to the parent chat;
+   * carried here so the panel can show the child's work on click. */
+  readonly output?: string;
 }
 
 /** The JSON payload published under {@link HARNESS_SUBAGENTS_STATUS_KEY}. */

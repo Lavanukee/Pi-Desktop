@@ -26,7 +26,14 @@ export interface SubagentRecord {
   step?: string;
   status: SubagentStatus;
   readonly estRamGB: number;
+  /** Ordered tool/step labels seen so far (the activity timeline). */
+  readonly activity: string[];
+  /** Full final output (summary) or error, set on completion. */
+  output?: string;
 }
+
+/** Cap on the retained activity timeline per subagent (keep the newest). */
+const MAX_ACTIVITY = 100;
 
 /** Outcome the injected runner resolves with. */
 export interface SubagentRunOutcome {
@@ -127,6 +134,7 @@ export class SubagentScheduler {
       status: 'queued',
       step: 'Queued',
       estRamGB,
+      activity: [],
     };
     this.#records.push(record);
     this.#emit();
@@ -144,6 +152,8 @@ export class SubagentScheduler {
         name: r.name,
         status: r.status,
         ...(r.step !== undefined ? { step: r.step } : {}),
+        ...(r.activity.length > 0 ? { activity: [...r.activity] } : {}),
+        ...(r.output !== undefined ? { output: r.output } : {}),
       })),
       running: this.#running,
       queued: this.#queue.length,
@@ -180,11 +190,18 @@ export class SubagentScheduler {
     const setStep = (step: string): void => {
       if (record.status !== 'running') return;
       record.step = step;
+      // Append to the activity timeline, skipping a consecutive duplicate (a tool
+      // fires both toolcall_start + tool_execution_start with the same name).
+      if (record.activity[record.activity.length - 1] !== step) {
+        record.activity.push(step);
+        if (record.activity.length > MAX_ACTIVITY) record.activity.shift();
+      }
       this.#emit();
     };
 
     const done = (outcome: SubagentRunOutcome): void => {
       record.status = outcome.ok ? 'done' : 'error';
+      record.output = outcome.ok ? outcome.summary : (outcome.error ?? outcome.summary);
       record.step = outcome.ok
         ? firstLine(outcome.summary) || 'Done'
         : `Failed: ${firstLine(outcome.error ?? outcome.summary) || 'error'}`;

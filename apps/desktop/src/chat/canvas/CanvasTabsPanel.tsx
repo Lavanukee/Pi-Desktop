@@ -15,7 +15,14 @@
  * container + exposes the controller to the E2E probes.
  */
 
-import { type CanvasTab, CanvasTabs, type NewTabKind, useCanvasTabs } from '@pi-desktop/canvas';
+import {
+  type Artifact,
+  type CanvasTab,
+  CanvasTabs,
+  type NewTabKind,
+  type SubagentItem,
+  useCanvasTabs,
+} from '@pi-desktop/canvas';
 import type { ArtifactRef, OrgNodeView, ProductPeek } from '@pi-desktop/coordination';
 import { IconButton, IconClose } from '@pi-desktop/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -42,6 +49,39 @@ import { useGen } from './useGen';
 /** E2E: probes open browser/terminal tabs through the shared controller. Gated
  * on the same `?piE2E=1` opt-in as `window.__pi_store` (see pi-connect.ts). */
 const IS_E2E = new URLSearchParams(window.location.search).has('piE2E');
+
+/**
+ * Build a markdown artifact showing a subagent's WORK (UI#12): its status, the
+ * ordered tool/step timeline it ran, and its full output (the summary). Regular
+ * subagents are headless (summary-only) — their live transcript never returns —
+ * so this is the honest, complete picture of what the child produced.
+ */
+function subagentWorkArtifact(item: SubagentItem): Artifact {
+  const statusLabel =
+    item.status === 'done'
+      ? 'Completed'
+      : item.status === 'error'
+        ? 'Failed'
+        : item.status === 'running'
+          ? 'Working…'
+          : 'Queued';
+  const lines: string[] = [`# ${item.name}`, '', `**Status:** ${statusLabel}`, ''];
+  if (item.activity !== undefined && item.activity.length > 0) {
+    lines.push(`## Steps (${item.activity.length})`, '');
+    for (const step of item.activity) lines.push(`- ${step}`);
+    lines.push('');
+  }
+  if (item.output !== undefined && item.output.trim().length > 0) {
+    lines.push('## Output', '', item.output);
+  } else if (item.status === 'running' || item.status === 'queued') {
+    lines.push(`_${item.step ?? 'Working…'}_`);
+  }
+  return {
+    id: `subagent-work:${item.id}`,
+    title: item.name,
+    content: { kind: 'markdown', text: lines.join('\n') },
+  };
+}
 
 /** Escape a string for safe interpolation into the peek preview HTML. */
 function escapeHtml(text: string): string {
@@ -280,14 +320,33 @@ export function CanvasTabsPanel() {
     [controller, cwd, setCanvasOpen],
   );
 
-  // Clicking a subagent row focuses the (live) subagent tab. During an active corp
-  // run, route to the situation room instead (the chat-subagent surface is empty
-  // then). Only the summary of each child returns to chat, so there is no separate
-  // per-subagent transcript surface to open — focusing keeps the list in view.
+  // Clicking a subagent row opens (or refreshes) a per-subagent "work" tab — a
+  // markdown view of what that child did: its activity timeline + its full output
+  // (the summary that also returns to chat). The child's live transcript never
+  // crosses back, so this is a snapshot on click (re-click to refresh a running
+  // one). During an active corp run, route to the situation room instead (the
+  // chat-subagent surface is empty then).
   const onSubagentSelect = useCallback(
-    (tabId: string) => {
+    (tabId: string, subagentId: string) => {
       if (focusSituationTab(controller, useCorpStore.getState().taskId)) return;
-      controller.focusTab(tabId);
+      const tab = controller.getState().tabs.find((t) => t.id === tabId);
+      const item = tab?.subagents?.find((s) => s.id === subagentId);
+      if (item === undefined) {
+        controller.focusTab(tabId);
+        setCanvasOpen(true);
+        return;
+      }
+      const key = `subagent-work:${subagentId}`;
+      const artifact = subagentWorkArtifact(item);
+      const existing = controller.getState().tabs.find((t) => t.key === key);
+      if (existing !== undefined) {
+        controller.updateTab(existing.id, { artifact });
+        controller.focusTab(existing.id);
+      } else {
+        controller.upsertTab(key, { kind: 'markdown', key, title: item.name, artifact });
+        const opened = controller.getState().tabs.find((t) => t.key === key);
+        if (opened !== undefined) controller.focusTab(opened.id);
+      }
       setCanvasOpen(true);
     },
     [controller, setCanvasOpen],

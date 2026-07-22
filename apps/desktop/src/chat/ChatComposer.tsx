@@ -32,7 +32,7 @@ import {
   sendPrompt,
 } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
-import { assessCurrentSend } from '../state/running-chats';
+import { assessCurrentSend, useQueueExplainer } from '../state/running-chats';
 import { productionHarnessEnabled } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
 import { ComposerBar } from './ComposerBar';
@@ -218,6 +218,10 @@ export function ChatComposer({
   // is true but it isn't THIS view's turn — so the composer shows Send (not Stop),
   // and a send here queues (pi is busy) rather than dispatching into that chat.
   const bgStreaming = usePiStore((s) => s.bgRun?.streaming === true);
+  // Whether this chat has any message waiting to send — drives the "Queued · Why
+  // isn't my message sending?" hint below the input.
+  const hasQueued = usePiStore((s) => s.queuedSends.length > 0);
+  const openQueueExplainer = useQueueExplainer((s) => s.setOpen);
 
   const apiRef = useRef<ComposerEditorApi | null>(null);
   const [text, setText] = useState('');
@@ -515,7 +519,7 @@ export function ChatComposer({
     // A DIFFERENT chat streaming in the background also means pi is busy — this send
     // must queue (and drain once that chat finishes + pi switches here), never
     // dispatch into the background session.
-    const bgBusy = piState.bgRun !== null && piState.bgRun.streaming;
+    const bgBusy = piState.bgRun?.streaming === true;
     if (piState.promptInFlight || streamEmpty || bgBusy) {
       // Snapshot WHY it's waiting (same-model wait vs a model swap vs a model that
       // won't fit) so the faded queued line + the "Why isn't my message sending?"
@@ -793,6 +797,25 @@ export function ChatComposer({
             below it: project chip · active tier · effort slider. */}
         <ComposerBar />
       </div>
+
+      {/* jedd: when a message is queued, a small line UNDER the input — a plain
+          "Queued" prefix + the blue explainer link (no per-bubble reason text). */}
+      {hasQueued ? (
+        <div
+          className="mt-1.5 flex items-center gap-1.5 px-1 text-caption"
+          data-testid="composer-queued-hint"
+        >
+          <span className="text-text-muted">Queued</span>
+          <button
+            type="button"
+            className="text-text-link hover:underline"
+            onClick={() => openQueueExplainer(true)}
+            data-testid="why-queued-link"
+          >
+            Why isn't my message sending?
+          </button>
+        </div>
+      ) : null}
 
       {/* jedd #12: the @ / / ! shortcuts, demoted out of the placeholder to a
           subtle helper line under the composer — shown only on the empty home

@@ -14,6 +14,7 @@
 import type { CanvasController } from '@pi-desktop/canvas';
 import { useEffect, useRef } from 'react';
 import { useCanvasStore } from '../../state/canvas-store';
+import { usePiStore } from '../../state/pi-slice';
 
 /** Stable upsert key for the model's browser tab. */
 const AGENT_TAB_KEY = 'pi:agent-browser';
@@ -23,6 +24,10 @@ export function useBrowserAgent(controller: CanvasController): void {
 
   useEffect(() => {
     const openTab = (): void => {
+      // A chat browsing in the BACKGROUND must not open its "Pi is browsing" tab
+      // in the chat the user is currently VIEWING (the reported canvas leak). The
+      // browse event is a session-agnostic IPC channel, so gate it on bgRun here.
+      if (usePiStore.getState().bgRun?.streaming === true) return;
       const id = controller.upsertTab(AGENT_TAB_KEY, {
         kind: 'browser',
         title: 'Pi Browser',
@@ -35,6 +40,7 @@ export function useBrowserAgent(controller: CanvasController): void {
     };
 
     const applyDriving = (payload: { driving: boolean }): void => {
+      if (usePiStore.getState().bgRun?.streaming === true) return;
       const id = agentTabId.current;
       if (id !== null) controller.updateTab(id, { driving: payload.driving });
     };

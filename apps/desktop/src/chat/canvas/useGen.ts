@@ -17,6 +17,7 @@ import type { CanvasController } from '@pi-desktop/canvas';
 import { genImageContent, registerGenSurfacesDefault } from '@pi-desktop/gen-canvas';
 import { useEffect } from 'react';
 import { useCanvasStore } from '../../state/canvas-store';
+import { usePiStore } from '../../state/pi-slice';
 import { useExperimentalGeneration } from '../../state/settings-store';
 
 /** Launch-time dev override (`?gen=1`, surfaced by main from `PI_DESKTOP_GEN=1`). */
@@ -46,6 +47,9 @@ export function useGen(controller: CanvasController): void {
     };
 
     const unsubOpen = window.piDesktop.onEvent('gen:open', ({ tabId, payload }) => {
+      // A chat generating media in the BACKGROUND must not pop its Generation tab
+      // into the chat the user is currently viewing (session-agnostic IPC channel).
+      if (usePiStore.getState().bgRun?.streaming === true) return;
       const id = upsert(tabId, payload);
       // Ensure the rail is open so the freshly-routed surface is visible.
       useCanvasStore.getState().setCanvasOpen(true);

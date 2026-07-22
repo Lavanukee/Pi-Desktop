@@ -256,6 +256,28 @@ export function SessionSidebar({
     const first = s.messages.find((m) => m.kind === 'user');
     return first !== undefined && first.kind === 'user' ? first.text : null;
   });
+  // Fork branches are shown IN-THREAD via the ‹/› BranchSwitcher, never as their
+  // own sidebar rows. pi:fork writes a real branch session file to disk, so without
+  // this every edit-and-save would add a duplicate chat. Map each non-base branch
+  // file → its group's base (files[0]); base files map to themselves.
+  const branches = usePiStore((s) => s.branches);
+  const { branchToBase, nonBaseBranchFiles } = useMemo(() => {
+    const toBase = new Map<string, string>();
+    const nonBase = new Set<string>();
+    for (const group of Object.values(branches)) {
+      const base = group.files[0];
+      if (base === null || base === undefined) continue;
+      group.files.forEach((f, i) => {
+        if (f === null || i === 0) return;
+        nonBase.add(f);
+        toBase.set(f, base);
+      });
+    }
+    return { branchToBase: toBase, nonBaseBranchFiles: nonBase };
+  }, [branches]);
+  // When viewing a branch, the BASE chat's row is the one that highlights / spins.
+  const effectiveCurrentFile =
+    currentFile !== null ? (branchToBase.get(currentFile) ?? currentFile) : null;
 
   // Is the (single, active) chat working? — the same signal the composer reads.
   // The app runs one pi session at a time, so only the active chat's row can show
@@ -305,7 +327,7 @@ export function SessionSidebar({
   // notice for that row. When a chat is running in the BACKGROUND, its completion
   // is handled by the bgRun effect below (against ITS row, not the viewed one).
   useEffect(() => {
-    if (busy && bgRun === null) busyFile.current = currentFile;
+    if (busy && bgRun === null) busyFile.current = effectiveCurrentFile;
     if (prevBusy.current && !busy && bgRun === null && busyFile.current !== null) {
       const file = busyFile.current;
       // Paused ≠ finished — a Pause frees the model but keeps the reply resumable,
@@ -322,7 +344,7 @@ export function SessionSidebar({
       busyFile.current = null;
     }
     prevBusy.current = busy;
-  }, [busy, currentFile, sessions, pausedChat, awaitingInput, bgRun]);
+  }, [busy, effectiveCurrentFile, sessions, pausedChat, awaitingInput, bgRun]);
 
   // A background chat finished (bgRun.streaming true→false): pop the notice against
   // ITS row, so "response finished" points at the chat that actually completed.
@@ -360,11 +382,16 @@ export function SessionSidebar({
   // as soon as the first message is sent, that snappy") from the live session
   // pointer; the real disk row replaces it (same file key) on the next refresh.
   const displaySessions = useMemo(() => {
-    if (currentFile === null || messageCount === 0) return sessions;
-    if (sessions.some((s) => s.file === currentFile)) return sessions;
+    // Hide fork-branch files (they belong to a base chat's ‹/› switcher).
+    const base =
+      nonBaseBranchFiles.size > 0
+        ? sessions.filter((s) => !nonBaseBranchFiles.has(s.file))
+        : sessions;
+    if (effectiveCurrentFile === null || messageCount === 0) return base;
+    if (base.some((s) => s.file === effectiveCurrentFile)) return base;
     const now = new Date().toISOString();
     const optimistic: SessionSummary = {
-      file: currentFile,
+      file: effectiveCurrentFile,
       id: sessionId ?? '',
       cwd,
       cwdLabel: '',
@@ -374,8 +401,17 @@ export function SessionSidebar({
       firstUserText,
       title: windowTitle ?? firstUserText ?? 'New chat',
     };
-    return [optimistic, ...sessions];
-  }, [sessions, currentFile, sessionId, cwd, messageCount, firstUserText, windowTitle]);
+    return [optimistic, ...base];
+  }, [
+    sessions,
+    nonBaseBranchFiles,
+    effectiveCurrentFile,
+    sessionId,
+    cwd,
+    messageCount,
+    firstUserText,
+    windowTitle,
+  ]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -537,7 +573,7 @@ export function SessionSidebar({
               // a chat running in the background spins on its own row while you view
               // another.
               const running =
-                (busy && bgRun === null && currentFile === s.file) ||
+                (busy && bgRun === null && effectiveCurrentFile === s.file) ||
                 (bgRun?.streaming === true && bgRun.sessionFile === s.file);
               const notifying = notice !== null && notice.sessionFile === s.file;
               return (
@@ -561,7 +597,7 @@ export function SessionSidebar({
                       relativeTime(s.modifiedAt)
                     )
                   }
-                  selected={currentFile === s.file}
+                  selected={effectiveCurrentFile === s.file}
                   onClick={() => void onOpen(s.file)}
                 />
               );

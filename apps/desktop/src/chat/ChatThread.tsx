@@ -37,14 +37,12 @@ import { useCorpStore } from '../state/corp-store';
 import { useLlmStore } from '../state/llm-store';
 import { forkAndReprompt, switchBranch } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
-import { useQueueExplainer } from '../state/running-chats';
 import { AssistantGroup } from './AssistantGroup';
 import { focusSituationTab } from './canvas/corp-canvas-routing';
 import { CorpChatStream } from './corp/CorpChatStream';
 import { CorpInlineTurn } from './corp/CorpInlineTurn';
 import { corpChatView, corpPeekAvailable } from './corp/corp-thread-view';
 import { HarnessChecklistPanel, ThreadStatusIndicator } from './HarnessStatus';
-import { queuedLineText } from './queue-explainer';
 
 /** Concatenated visible text of an assistant response group (for copy). */
 function groupPlainText(group: AssistantMsg[]): string {
@@ -91,7 +89,6 @@ function toRenderItems(messages: ChatMsg[], claimed: Set<string>): RenderItem[] 
 export function ChatThread() {
   const messages = usePiStore((s) => s.messages);
   const queuedSends = usePiStore((s) => s.queuedSends);
-  const openQueueExplainer = useQueueExplainer((s) => s.setOpen);
   const runningToolCalls = usePiStore((s) => s.runningToolCalls);
   const historyTruncated = usePiStore((s) => s.historyTruncated);
   const branches = usePiStore((s) => s.branches);
@@ -446,6 +443,7 @@ export function ChatThread() {
               (the message-ordering fix). They convert to real bubbles as the
               queue drains, one turn at a time. */}
           {queuedSends.map((q, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: queued sends have no stable id; FIFO order is the identity
             <MessageRow key={`queued-${i}`} kind="user" data-testid="queued-message">
               <div className="flex flex-col gap-2 opacity-55">
                 {q.images.length > 0 ? (
@@ -457,21 +455,6 @@ export function ChatThread() {
                   </div>
                 ) : null}
                 {q.text.length > 0 ? <span className="whitespace-pre-wrap">{q.text}</span> : null}
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-footnote text-text-muted">{queuedLineText(q.reason)}</span>
-                  {/* jedd: a little blue link under the FIRST queued message opens a
-                      high-quality explainer with the running chats + pause/stop. */}
-                  {i === 0 ? (
-                    <button
-                      type="button"
-                      className="self-start text-footnote text-text-link hover:underline"
-                      onClick={() => openQueueExplainer(true)}
-                      data-testid="why-queued-link"
-                    >
-                      Why isn't my message sending?
-                    </button>
-                  ) : null}
-                </div>
               </div>
             </MessageRow>
           ))}

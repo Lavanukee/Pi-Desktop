@@ -73,6 +73,13 @@ let disconnect: (() => void) | null = null;
  */
 let instructionsArmed = false;
 
+/** A "New chat" opened while another chat was still streaming: pi stays pinned to
+ * the streaming chat (backgrounded), and the fresh pi session is DEFERRED — created
+ * lazily on this new chat's first send (once the running chat finishes), because
+ * `pi:new-session` would otherwise dispose the running turn. See newSession +
+ * ensurePiOnViewedSession. */
+let pendingNewSession = false;
+
 function armSessionInstructions(): void {
   instructionsArmed = true;
 }
@@ -94,16 +101,21 @@ export function connectPi(): () => void {
   // buffers anything main pushed before this point and flushes it here.
   const unsubscribe = window.piDesktop.onEvent('pi:event', (event) => router.handleEvent(event));
 
-  // Drain queued sends on the in-flight → idle edge. A message typed while a turn
-  // was in-flight is held in the store (ChatComposer) and dispatched here as its
-  // OWN sequential turn once the current one ends, so [msg1, reply1, msg2, reply2]
-  // instead of both user echoes stacking above a single reply. FIFO, one at a
-  // time — sendPrompt re-sets promptInFlight, so the next drain waits for it.
+  // Drain queued sends whenever the pipe is IDLE. A message typed while a turn was
+  // in-flight (or while another chat streams in the background) is held in the
+  // store (ChatComposer) and dispatched here as its OWN sequential turn the moment
+  // there's capacity, so [msg1, reply1, msg2, reply2] instead of stacking echoes.
+  // LEVEL-triggered (idle now?), not edge-triggered: a backgrounded chat's
+  // completion never moves `agent.isStreaming` (it was forced false when the chat
+  // was backgrounded), so an edge on isStreaming would MISS it and the queue would
+  // stick — idle here means no live turn, no dispatch gap, and no bg run streaming.
+  // FIFO, one at a time — `draining` + sendPrompt re-setting promptInFlight gate the
+  // next drain.
   let draining = false;
-  const unsubscribeQueue = usePiStore.subscribe((state, prev) => {
-    const inFlight = state.agent.isStreaming || state.promptInFlight;
-    const wasInFlight = prev.agent.isStreaming || prev.promptInFlight;
-    if (draining || inFlight || !wasInFlight) return;
+  const unsubscribeQueue = usePiStore.subscribe((state) => {
+    const idle =
+      !state.agent.isStreaming && !state.promptInFlight && state.bgRun?.streaming !== true;
+    if (draining || !idle) return;
     const head = state.queuedSends[0];
     if (head === undefined) return;
     draining = true;
@@ -220,12 +232,46 @@ export async function restartPi(
  * old restart path), and points the store at pi's new session.
  */
 export async function newSession(): Promise<{ ok: boolean; cancelled?: boolean; error?: string }> {
+  const store = usePiStore.getState();
+  const bg = store.bgRun;
+  const viewed = store.session?.sessionFile ?? null;
+  const activeStreaming = store.agent.isStreaming || store.promptInFlight;
+
+  // A chat is streaming — the viewed one, OR one already in the background. Open a
+  // DEFERRED new chat WITHOUT touching pi: `pi:new-session` would dispose the
+  // running turn (killing the reply + popping a false "finished"). Keep pi pinned
+  // to the running chat; the fresh pi session is created lazily on this chat's
+  // first send (ensurePiOnViewedSession), which queues until that chat finishes.
+  if (activeStreaming || bg?.streaming === true) {
+    captureCurrentSession();
+    if (activeStreaming && bg === null && viewed !== null) {
+      usePiStore.setState({
+        bgRun: {
+          sessionFile: viewed,
+          messages: usePiStore.getState().messages,
+          streaming: true,
+          title: store.windowTitle,
+        },
+      });
+    }
+    pendingNewSession = true;
+    usePiStore.getState().setMessagesExternal([]);
+    resetCanvasForNewSession();
+    armSessionInstructions();
+    // No pi session yet — a null pointer so nothing dispatches into the bg chat.
+    usePiStore.setState((s) => ({
+      session: { ...(s.session ?? {}), sessionFile: undefined, sessionId: undefined },
+    }));
+    return { ok: true };
+  }
+
   // Preserve the chat we're leaving (its messages + canvas) so it restores on
   // return, and halt any in-flight turn so it can't leak into the new chat.
   captureCurrentSession();
   // Drop any parked pre-dispatch send so it can't fire into the fresh session.
   invalidateInFlightSend();
   if (agentInFlight()) await abortPi();
+  pendingNewSession = false;
   const res = await window.piDesktop.invoke('pi:new-session', undefined);
   // Reset the rendered thread + transient run/branch state to the fresh session
   // (also clears any stale bridgeExited/notifications). Unconditional so New
@@ -279,7 +325,7 @@ export async function sendPrompt(
   // one (the composer normally queues first; this is the safety net for the drain /
   // programmatic callers). No echo here — it shows as a queued bubble.
   const bgNow = usePiStore.getState().bgRun;
-  if (bgNow !== null && bgNow.streaming) {
+  if (bgNow?.streaming === true) {
     usePiStore.getState().enqueueSend({
       text: message,
       images: imageDataUris,
@@ -761,6 +807,8 @@ export async function switchSession(
   const bg = store.bgRun;
   const activeStreaming = store.agent.isStreaming || store.promptInFlight;
   instructionsArmed = false;
+  // Switching to a real chat abandons any deferred (unsent) new chat.
+  pendingNewSession = false;
 
   // ── Case B: returning to the background chat. pi is already on it.
   if (bg !== null && sessionPath === bg.sessionFile) {
@@ -824,6 +872,27 @@ export async function switchSession(
 async function ensurePiOnViewedSession(): Promise<void> {
   const store = usePiStore.getState();
   const bg = store.bgRun;
+  // A DEFERRED new chat (opened while another was streaming): now create its fresh
+  // pi session. Save the finished bg thread first, then repoint the store at pi's
+  // new session so the sidebar row + dispatch target the new chat, not the bg one.
+  if (pendingNewSession) {
+    pendingNewSession = false;
+    if (bg !== null) stashBgRun(bg);
+    await window.piDesktop.invoke('pi:new-session', undefined);
+    const state = await getPiState();
+    usePiStore.setState((s) => ({
+      bgRun: null,
+      session:
+        state.success && state.state !== undefined
+          ? {
+              ...(s.session ?? {}),
+              sessionFile: state.state.sessionFile,
+              sessionId: state.state.sessionId,
+            }
+          : (s.session ?? null),
+    }));
+    return;
+  }
   if (bg === null || bg.streaming) return;
   const viewed = store.session?.sessionFile ?? null;
   if (viewed === null || viewed === bg.sessionFile) {

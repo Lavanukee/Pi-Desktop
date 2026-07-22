@@ -90,15 +90,18 @@ export function useSubagentCanvasRouting(controller: CanvasController): void {
   // blank generic "Subagents" tab beside it. Suppress this routing while a corp
   // task is active.
   const corpActive = useCorpStore((s) => s.taskId !== null);
+  // A chat's subagents streaming in the BACKGROUND publish to the global
+  // extensionStatus; don't pop their Subagents tab into the chat being viewed.
+  const bgStreaming = usePiStore((s) => s.bgRun?.streaming === true);
   // Count of active (queued/running) subagents at the previous tick — used to
   // detect the rising edge that opens the tab.
   const prevActive = useRef(0);
 
   useEffect(() => {
-    if (corpActive) return;
+    if (corpActive || bgStreaming) return;
     prevActive.current = applySubagentStatus(controller, raw, prevActive.current, () =>
       // Ensure the rail is visible so the surface actually renders.
       useCanvasStore.getState().setCanvasOpen(true),
     );
-  }, [raw, controller, corpActive]);
+  }, [raw, controller, corpActive, bgStreaming]);
 }

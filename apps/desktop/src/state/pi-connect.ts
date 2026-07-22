@@ -3,10 +3,16 @@
  * event router → StoreSink (pi-slice). Also installs the `window.__pi_store`
  * test hook and exposes the thin invoke wrappers the chat UI calls.
  */
-import { createEventRouter, type ImageContent, rehydrateSessionJsonl } from '@pi-desktop/engine';
+import type { CanvasState } from '@pi-desktop/canvas';
+import {
+  type ChatMsg,
+  createEventRouter,
+  type ImageContent,
+  rehydrateSessionJsonl,
+} from '@pi-desktop/engine';
 import type { TaskClass } from '@pi-desktop/harness';
 import { ensureChatServerReady, maybeRouteAuto } from '../chat/auto-router';
-import { resetCanvasForNewSession } from './canvas-store';
+import { resetCanvasForNewSession, restoreCanvas, snapshotCanvas } from './canvas-store';
 import { ensureVisionMode } from './local-model';
 import { createPiSink, usePiStore } from './pi-slice';
 import { useSettingsStore } from './settings-store';
@@ -201,6 +207,10 @@ export async function restartPi(
  * old restart path), and points the store at pi's new session.
  */
 export async function newSession(): Promise<{ ok: boolean; cancelled?: boolean; error?: string }> {
+  // Preserve the chat we're leaving (its messages + canvas) so it restores on
+  // return, and halt any in-flight turn so it can't leak into the new chat.
+  captureCurrentSession();
+  if (agentInFlight()) await abortPi();
   const res = await window.piDesktop.invoke('pi:new-session', undefined);
   // Reset the rendered thread + transient run/branch state to the fresh session
   // (also clears any stale bridgeExited/notifications). Unconditional so New
@@ -513,29 +523,105 @@ export async function listSessions(cwd?: string) {
 }
 
 /**
- * Switches pi to another session and rehydrates the thread from its JSONL so
- * history renders immediately (pi does not replay past turns). Surfaces the
- * `truncated` flag from the leaf→root walk so the UI can note a clipped branch.
+ * Per-chat state snapshots, keyed by session file. Switching away SAVES the chat
+ * we're leaving (its messages — including a frozen in-flight partial — and its
+ * canvas tabs) so returning RESTORES it instead of a blank thread + a leaked
+ * canvas. In-memory only, bounded by the chats visited this app-run.
+ */
+const sessionSnapshots = new Map<string, { messages: ChatMsg[]; canvas: CanvasState | null }>();
+
+/** Canvas tab kinds that are EPHEMERAL/live (a native WebContentsView / PTY, or
+ * re-derived from live state) — excluded from a per-chat snapshot so restoring a
+ * chat re-inits nothing and can never strand a native view. Document/media tabs
+ * (file/image/pdf/model/doc/markdown/code/…) preserve cleanly and ARE kept. */
+const EPHEMERAL_CANVAS_KINDS = new Set([
+  'browser',
+  'terminal',
+  'subagent',
+  'situation',
+  'filetree',
+]);
+
+/** The snapshot-safe canvas state: drop live tabs, and re-anchor the active tab
+ * to a surviving one so the restored canvas is always well-formed. */
+function preservableCanvas(): CanvasState | null {
+  const raw = snapshotCanvas();
+  if (raw === null) return null;
+  const tabs = raw.tabs.filter((t) => !EPHEMERAL_CANVAS_KINDS.has(t.kind));
+  const activeTabId = tabs.some((t) => t.id === raw.activeTabId)
+    ? raw.activeTabId
+    : (tabs[0]?.id ?? null);
+  return { ...raw, tabs, activeTabId };
+}
+
+/** Snapshot the CURRENTLY-active chat before we leave it. A still-streaming
+ * assistant turn is FROZEN (isStreaming cleared) — the single pi child can't keep
+ * generating it once we switch, so the restored view must not look "live". */
+function captureCurrentSession(): void {
+  const store = usePiStore.getState();
+  const file = store.session?.sessionFile;
+  if (file === undefined || file === null) return;
+  const messages = store.messages.map((m) =>
+    m.kind === 'assistant' && m.isStreaming === true ? { ...m, isStreaming: false } : m,
+  );
+  sessionSnapshots.set(file, { messages, canvas: preservableCanvas() });
+}
+
+/** Point the store at the session we just switched to. `sessionFile` is set to
+ * the EXACT path the sidebar row carries so the row highlights + its spinner
+ * attach (switchSession otherwise never syncs the pointer — pi emits no session
+ * event on switch, so it stays stale). We deliberately do NOT call getPiState()
+ * here: its response is applied by the event router as a `sessionChanged`, which
+ * would race in AFTER this and clobber the clicked path with pi's own path
+ * format. The streaming flag is cleared — the target isn't generating in this
+ * child (any old turn was halted above). */
+function syncSessionPointer(sessionPath: string): void {
+  usePiStore.setState((s) => ({
+    session: { ...(s.session ?? {}), sessionFile: sessionPath },
+    agent: { ...s.agent, isStreaming: false },
+  }));
+}
+
+/**
+ * Switch pi to another chat, preserving BOTH chats' state (jedd: switching must
+ * not wipe an in-flight reply, leak the other chat's canvas, or leave the row
+ * un-highlighted). Steps: (1) snapshot the chat we're leaving; (2) HALT its
+ * in-flight turn — the one pi child can't serve two sessions, and a still-running
+ * old turn would stream stray subagents / a browser tab into THIS chat; (3) switch
+ * pi; (4) restore the target's saved snapshot if we've been there, else load it
+ * from disk with a clean canvas; (5) point the store at the exact target path.
  */
 export async function switchSession(
   sessionPath: string,
 ): Promise<{ ok: boolean; truncated: boolean; cancelled?: boolean; error?: string }> {
-  // Continuing an existing session: its turns already carry their own history,
-  // so do not re-inject the custom-instructions preamble.
   instructionsArmed = false;
+  captureCurrentSession();
+  if (agentInFlight()) await abortPi();
+
   const switched = await window.piDesktop.invoke('pi:switch-session', { sessionPath });
   if (!switched.success) return { ok: false, truncated: false, error: switched.error };
   if (switched.cancelled === true) return { ok: false, truncated: false, cancelled: true };
-  // Session isolation (backlog #2): switching to another conversation gives it
-  // its own clean canvas — clear the tabs the previous session accumulated.
-  resetCanvasForNewSession();
-  const read = await window.piDesktop.invoke('fs:read-session', { file: sessionPath });
-  if (read.text === null) {
-    usePiStore.getState().setMessagesExternal([]);
-    return { ok: true, truncated: false };
+
+  let truncated = false;
+  const snap = sessionSnapshots.get(sessionPath);
+  if (snap !== undefined) {
+    // Returning to a chat we've visited — restore its messages + canvas exactly.
+    usePiStore.getState().setMessagesExternal(snap.messages);
+    if (snap.canvas !== null) restoreCanvas(snap.canvas);
+    else resetCanvasForNewSession();
+  } else {
+    // First visit this app-run — clean canvas + rehydrate from the JSONL.
+    resetCanvasForNewSession();
+    const read = await window.piDesktop.invoke('fs:read-session', { file: sessionPath });
+    if (read.text === null) {
+      usePiStore.getState().setMessagesExternal([]);
+    } else {
+      const r = rehydrateSessionJsonl(read.text);
+      truncated = r.truncated;
+      usePiStore.getState().setMessagesExternal(r.messages);
+    }
   }
-  const { messages, truncated } = rehydrateSessionJsonl(read.text);
-  usePiStore.getState().setMessagesExternal(messages);
+  syncSessionPointer(sessionPath);
   return { ok: true, truncated };
 }
 

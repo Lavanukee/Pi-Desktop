@@ -19,7 +19,7 @@ import type { Model } from '@pi-desktop/engine';
 import { IconButton, IconClose, IconGears, MainSurface, TopBar } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
 import type { SettingsSection } from '../settings/SettingsView';
-import { registerCanvasControllerReset, useCanvasStore } from '../state/canvas-store';
+import { registerCanvasController, useCanvasStore } from '../state/canvas-store';
 import { askCorpTask, startCorpTask } from '../state/corp-connect';
 import { useCorpStore } from '../state/corp-store';
 import { getModels, setSessionName, startPi } from '../state/pi-connect';
@@ -192,8 +192,8 @@ export function ChatApp({
   useEffect(() => {
     const controller = canvasController.current;
     if (controller === null) return;
-    registerCanvasControllerReset(() => controller.reset());
-    return () => registerCanvasControllerReset(null);
+    registerCanvasController(controller);
+    return () => registerCanvasController(null);
   }, []);
 
   // ⌘W → close the active canvas tab (blind-test round-2 #5). The Electron menu

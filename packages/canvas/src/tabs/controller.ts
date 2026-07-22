@@ -138,6 +138,12 @@ export class CanvasController {
   reset(): void {
     this.#commit({ ...emptyCanvasState });
   }
+
+  /** Replace the entire tab set with a saved snapshot (per-session restore). A
+   * partial snapshot is filled from the empty state, so it's always well-formed. */
+  restore(state: CanvasState): void {
+    this.#commit({ ...emptyCanvasState, ...state });
+  }
 }
 
 /** Convenience factory mirroring the store idiom. */

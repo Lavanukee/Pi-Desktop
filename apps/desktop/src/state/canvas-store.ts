@@ -5,6 +5,7 @@
  * canvas routing is derived per-artifact via `shouldGoToCanvas`. Width is kept
  * here so the rail persists a user's drag independent of the tab set.
  */
+import type { CanvasController, CanvasState } from '@pi-desktop/canvas';
 import { create } from 'zustand';
 
 export const CANVAS_MIN_WIDTH = 320;
@@ -36,29 +37,40 @@ export const useCanvasStore = create<CanvasUiState>((set) => ({
   toggleCanvasOpen: () => set((s) => ({ canvasOpen: !s.canvasOpen })),
 }));
 
-// ── Canvas-reset bridge (session isolation) ────────────────────────────────
+// ── Canvas controller bridge (per-session isolation) ───────────────────────
 // The canvas TAB set lives in the React-owned CanvasController (@pi-desktop/
 // canvas), which the non-React session lifecycle (pi-connect's newSession /
 // switchSession) can't reach directly. The app shell registers the live
-// controller's `reset` here on mount, so starting or switching a conversation
-// can clear the PREVIOUS conversation's canvas — each chat gets its own clean
-// canvas instead of accumulating tabs across "separate" chats (backlog #2).
+// controller here on mount, so the session lifecycle can reset / SNAPSHOT /
+// RESTORE the canvas — each chat keeps its OWN canvas (its tabs are saved on
+// switch-away and restored on switch-back) instead of leaking across chats.
 
-let controllerReset: (() => void) | null = null;
+let controller: CanvasController | null = null;
 
-/** App shell → register (or, with `null`, unregister) the live CanvasController's
- * tab-reset. Idempotent; the latest registration wins. */
-export function registerCanvasControllerReset(fn: (() => void) | null): void {
-  controllerReset = fn;
+/** App shell → register (or, with `null`, unregister) the live CanvasController.
+ * Idempotent; the latest registration wins. */
+export function registerCanvasController(c: CanvasController | null): void {
+  controller = c;
 }
 
 /**
- * Reset the canvas for a fresh / switched conversation: drop every tab
- * (CanvasController.reset via the registered bridge) and slide the rail closed
- * so the new chat starts with an empty canvas. Safe to call when nothing is
- * registered (a no-op before the shell mounts).
+ * Reset the canvas for a conversation with no saved state: drop every tab and
+ * slide the rail closed so it starts empty. Safe before the shell mounts (no-op).
  */
 export function resetCanvasForNewSession(): void {
-  controllerReset?.();
+  controller?.reset();
   useCanvasStore.getState().setCanvasOpen(false);
+}
+
+/** Snapshot the live canvas state (tabs/active/collapsed/fullscreen) so the
+ * current chat's canvas can be restored on return. Null before the shell mounts. */
+export function snapshotCanvas(): CanvasState | null {
+  return controller?.getState() ?? null;
+}
+
+/** Restore a previously-snapshotted canvas for a returned-to chat, opening the
+ * rail only when the snapshot actually had tabs (else it stays closed). */
+export function restoreCanvas(state: CanvasState): void {
+  controller?.restore(state);
+  useCanvasStore.getState().setCanvasOpen(state.tabs.length > 0);
 }

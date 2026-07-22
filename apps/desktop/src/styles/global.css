@@ -1164,6 +1164,75 @@ body {
   }
 }
 
+/* ── Nested child-agent dropdown: subagents / roles running as their own pi
+   instances, listed under their parent chat. A left caret folds them; each child
+   row opens that agent's own chat view (ChildChatView). ─────────────────────── */
+.pd-child-toggle,
+.pd-child-toggle-spacer {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex: none;
+  align-self: stretch;
+}
+.pd-child-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--pd-text-muted);
+  cursor: pointer;
+  border-radius: var(--pd-radius-sm);
+}
+.pd-child-toggle:hover {
+  color: var(--pd-text-primary);
+}
+.pd-child-toggle svg {
+  transition: transform 0.15s var(--pd-easing-standard);
+}
+.pd-child-rows {
+  display: flex;
+  flex-direction: column;
+  /* Indent so the children read as belonging to the chat above (jedd). */
+  margin-left: 26px;
+  padding-left: 6px;
+  border-left: 1px solid var(--pd-border-subtle);
+}
+.pd-child-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--pd-text-secondary);
+  font: inherit;
+  font-size: var(--pd-font-size-footnote);
+  text-align: left;
+  padding: 4px 8px;
+  border-radius: var(--pd-radius-md);
+  cursor: pointer;
+}
+.pd-child-row:hover {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-primary);
+}
+.pd-child-row[data-selected="true"] {
+  background: var(--pd-bg-selected, var(--pd-bg-hover));
+  color: var(--pd-text-primary);
+}
+.pd-child-row-icon {
+  display: inline-flex;
+  color: var(--pd-text-muted);
+  flex: none;
+}
+.pd-child-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* The top-of-screen "a chat needs your input" banner (clickable → swap to it). */
 .pd-input-banner {
   animation: pd-input-banner-in 0.22s var(--pd-easing-standard);

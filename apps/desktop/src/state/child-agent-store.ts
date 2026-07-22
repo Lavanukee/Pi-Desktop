@@ -35,6 +35,10 @@ export interface ChildAgentEntry {
 
 interface ChildAgentState {
   children: Record<string, ChildAgentEntry>;
+  /** The child whose transcript is being VIEWED (the nested dropdown selection),
+   * or null when the main chat is shown. Cleared on a main-chat switch. */
+  viewedChildId: string | null;
+  setViewedChild(childId: string | null): void;
   /** Create the entry if absent (idempotent — never clobbers an existing title). */
   ensureChild(childId: string, parentId: string, title: string): void;
   removeChild(childId: string): void;
@@ -45,6 +49,8 @@ interface ChildAgentState {
 
 export const useChildAgentStore = create<ChildAgentState>()((set) => ({
   children: {},
+  viewedChildId: null,
+  setViewedChild: (childId) => set({ viewedChildId: childId }),
   ensureChild: (childId, parentId, title) =>
     set((s) =>
       s.children[childId] !== undefined
@@ -87,6 +93,18 @@ export const useChildAgentStore = create<ChildAgentState>()((set) => ({
 export function childrenOf(parentId: string): ChildAgentEntry[] {
   const all = useChildAgentStore.getState().children;
   return Object.values(all).filter((c) => c.parentId === parentId);
+}
+
+/** Reactive: child agents grouped by parent chat id (the nested-dropdown source). */
+export function useChildrenByParent(): Map<string, ChildAgentEntry[]> {
+  const children = useChildAgentStore((s) => s.children);
+  const byParent = new Map<string, ChildAgentEntry[]>();
+  for (const c of Object.values(children)) {
+    const arr = byParent.get(c.parentId);
+    if (arr === undefined) byParent.set(c.parentId, [c]);
+    else arr.push(c);
+  }
+  return byParent;
 }
 
 /**

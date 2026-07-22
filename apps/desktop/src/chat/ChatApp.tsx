@@ -20,6 +20,7 @@ import { IconButton, IconClose, IconGears, MainSurface, TopBar } from '@pi-deskt
 import { useEffect, useRef, useState } from 'react';
 import type { SettingsSection } from '../settings/SettingsView';
 import { registerCanvasController, useCanvasStore } from '../state/canvas-store';
+import { useChildAgentStore } from '../state/child-agent-store';
 import { askCorpTask, startCorpTask } from '../state/corp-connect';
 import { useCorpStore } from '../state/corp-store';
 import { getModels, setSessionName, startPi } from '../state/pi-connect';
@@ -32,13 +33,14 @@ import { preloadFastestModel } from './auto-router';
 import { ChatComposer } from './ChatComposer';
 import { ChatThread } from './ChatThread';
 import { ChatTitle } from './ChatTitle';
+import { ChildChatView } from './ChildChatView';
 import { CanvasTabsPanel } from './canvas/CanvasTabsPanel';
 import { CorpDebugHud } from './corp/CorpDebugHud';
 import { PROMOTE_STATUS_KEY, parsePromoteSignal } from './harness-status';
 import { useHarnessTitleSync } from './harness-title';
+import { InputNeededBanner } from './InputNeededBanner';
 import { SessionSidebar, type SidebarStub } from './SessionSidebar';
 import { ToastHost } from './ToastHost';
-import { InputNeededBanner } from './InputNeededBanner';
 import { UiRequestDialogs } from './UiRequestDialogs';
 import { WhyQueuedModal } from './WhyQueuedModal';
 import { WindowDropOverlay } from './WindowDropOverlay';
@@ -318,6 +320,9 @@ export function ChatApp({
   // A queued (not-yet-sent) message should show the THREAD (its queued bubble), not
   // the empty greeting — otherwise a deferred send reads as a blank chat.
   const empty = messageCount === 0 && queuedCount === 0;
+  // When a child agent (subagent / role) is selected in the nested dropdown, its
+  // read-only chat view replaces the main thread + composer.
+  const viewedChildId = useChildAgentStore((s) => s.viewedChildId);
 
   // ONE composer instance ACROSS the empty→thread transition (same session → stable
   // key → focus survives the first send), but a FRESH instance per session: keying on
@@ -381,40 +386,46 @@ export function ChatApp({
             }
           />
 
-          {/* One flex column that hosts BOTH states so the keyed composer slot
+          {/* A selected child agent (subagent / role) shows its own read-only chat
+              view in place of the main thread + composer. */}
+          {viewedChildId !== null ? (
+            <ChildChatView childId={viewedChildId} />
+          ) : (
+            /* One flex column that hosts BOTH states so the keyed composer slot
               below keeps the same DOM parent across empty→thread. #A3: the empty
-              state centers the greeting + composer vertically. */}
-          <div
-            className={`flex min-h-0 flex-1 flex-col ${
-              empty ? 'items-center justify-center gap-6 px-6' : ''
-            }`}
-          >
-            {empty ? (
-              <div key="lead" className="flex flex-col items-center gap-2">
-                <h1 className="text-title">Pi Desktop</h1>
-                <p className="text-body text-text-muted">
-                  {flavor === 'claude' ? 'How can I help you today?' : 'What are we building?'}
-                </p>
-              </div>
-            ) : (
-              // The thread is ALWAYS the lead surface — a corp run renders
-              // inline inside it (CorpInlineTurn) instead of swapping it out.
-              <div key="lead" className="flex min-h-0 flex-1 flex-col">
-                <ChatThread />
-              </div>
-            )}
-            <div key="composer-slot" className={empty ? 'w-full' : 'shrink-0 px-4 pb-4 pt-2'}>
-              {!empty && truncatedNote ? (
-                <div className="mx-auto mb-2 max-w-[700px] text-caption text-text-muted">
-                  Restored an earlier session; some history was truncated.
+              state centers the greeting + composer vertically. */
+            <div
+              className={`flex min-h-0 flex-1 flex-col ${
+                empty ? 'items-center justify-center gap-6 px-6' : ''
+              }`}
+            >
+              {empty ? (
+                <div key="lead" className="flex flex-col items-center gap-2">
+                  <h1 className="text-title">Pi Desktop</h1>
+                  <p className="text-body text-text-muted">
+                    {flavor === 'claude' ? 'How can I help you today?' : 'What are we building?'}
+                  </p>
                 </div>
-              ) : null}
-              {/* Round-12 W2: the project (working-folder) chip moved OFF the
+              ) : (
+                // The thread is ALWAYS the lead surface — a corp run renders
+                // inline inside it (CorpInlineTurn) instead of swapping it out.
+                <div key="lead" className="flex min-h-0 flex-1 flex-col">
+                  <ChatThread />
+                </div>
+              )}
+              <div key="composer-slot" className={empty ? 'w-full' : 'shrink-0 px-4 pb-4 pt-2'}>
+                {!empty && truncatedNote ? (
+                  <div className="mx-auto mb-2 max-w-[700px] text-caption text-text-muted">
+                    Restored an earlier session; some history was truncated.
+                  </div>
+                ) : null}
+                {/* Round-12 W2: the project (working-folder) chip moved OFF the
                   top of the composer into the sticking-out ComposerBar below the
                   input (mounted inside ChatComposer). */}
-              {composer}
+                {composer}
+              </div>
             </div>
-          </div>
+          )}
 
           {stub !== null ? <StubPanel stub={stub} onClose={() => setStub(null)} /> : null}
         </MainSurface>

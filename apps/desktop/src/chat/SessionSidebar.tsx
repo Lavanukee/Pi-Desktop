@@ -51,6 +51,7 @@ import type { SessionSummary } from '../../electron/ipc-contract';
 import type { UserMode } from '../../electron/settings/settings-contract';
 import { IconCpu, IconMoon, IconSun } from '../settings/icons';
 import type { SettingsSection } from '../settings/SettingsView';
+import { useChildAgentStore, useChildrenByParent } from '../state/child-agent-store';
 import { useCorpStore } from '../state/corp-store';
 import { listSessions, newSession, switchSession } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
@@ -287,6 +288,21 @@ export function SessionSidebar({
   const unread = usePiStore((s) => s.unread);
   const markUnread = usePiStore((s) => s.markUnread);
   const prevBgStreaming = useRef(false);
+
+  // Child agents (subagents / roles running as their own pi instances) grouped by
+  // their parent chat, for the nested dropdown. Expanded by default so a running
+  // child is visible; a caret collapses it.
+  const childrenByParent = useChildrenByParent();
+  const viewedChildId = useChildAgentStore((s) => s.viewedChildId);
+  const setViewedChild = useChildAgentStore((s) => s.setViewedChild);
+  const [collapsedParents, setCollapsedParents] = useState<Set<string>>(new Set());
+  const toggleParent = (file: string) =>
+    setCollapsedParents((prev) => {
+      const next = new Set(prev);
+      if (next.has(file)) next.delete(file);
+      else next.add(file);
+      return next;
+    });
 
   const refresh = useCallback(() => {
     void listSessions().then(setSessions);
@@ -555,29 +571,76 @@ export function SessionSidebar({
               // "this chat has something you haven't looked at" — a blue (finished)
               // or orange (needs-input) dot, until you open the chat.
               const unreadKind = unread[s.file];
+              // Child agents (subagents / roles) running under THIS chat — a nested
+              // dropdown of their own chat views. Expanded by default; a caret folds.
+              const kids = childrenByParent.get(s.file) ?? [];
+              const expanded = kids.length > 0 && !collapsedParents.has(s.file);
               return (
-                <SidebarRow
-                  key={s.file}
-                  icon={<IconChat size={16} />}
-                  label={s.title}
-                  // Right side, in priority order: waiting-for-input dot (a paused
-                  // turn — beats the spinner), else the running spinner (actively
-                  // generating), else a finished dot, else the time. "Waiting for
-                  // input" and "streaming" are distinct states: dot vs animation.
-                  meta={
-                    unreadKind === 'needs-input' ? (
-                      <span className="pd-chat-dot pd-chat-dot--needs-input" />
-                    ) : running ? (
-                      <Spinner size={14} />
-                    ) : unreadKind === 'finished' ? (
-                      <span className="pd-chat-dot pd-chat-dot--finished" />
+                <div key={s.file}>
+                  <div className="flex items-center">
+                    {/* Left caret reveals/folds the child agents (empty gutter keeps
+                        childless rows aligned). */}
+                    {kids.length > 0 ? (
+                      <button
+                        type="button"
+                        className="pd-child-toggle pd-focusable"
+                        aria-expanded={expanded}
+                        aria-label={expanded ? 'Hide agents' : 'Show agents'}
+                        data-testid={`child-toggle-${s.title}`}
+                        onClick={() => toggleParent(s.file)}
+                      >
+                        <IconChevronDown size={12} className={expanded ? '' : '-rotate-90'} />
+                      </button>
                     ) : (
-                      relativeTime(s.modifiedAt)
-                    )
-                  }
-                  selected={effectiveCurrentFile === s.file}
-                  onClick={() => void onOpen(s.file)}
-                />
+                      <span className="pd-child-toggle-spacer" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <SidebarRow
+                        icon={<IconChat size={16} />}
+                        label={s.title}
+                        // Right side, in priority order: waiting-for-input dot (a paused
+                        // turn — beats the spinner), else the running spinner (actively
+                        // generating), else a finished dot, else the time.
+                        meta={
+                          unreadKind === 'needs-input' ? (
+                            <span className="pd-chat-dot pd-chat-dot--needs-input" />
+                          ) : running ? (
+                            <Spinner size={14} />
+                          ) : unreadKind === 'finished' ? (
+                            <span className="pd-chat-dot pd-chat-dot--finished" />
+                          ) : (
+                            relativeTime(s.modifiedAt)
+                          )
+                        }
+                        selected={effectiveCurrentFile === s.file && viewedChildId === null}
+                        onClick={() => {
+                          setViewedChild(null);
+                          void onOpen(s.file);
+                        }}
+                      />
+                    </div>
+                  </div>
+                  {expanded ? (
+                    <div className="pd-child-rows" data-testid="child-rows">
+                      {kids.map((c) => (
+                        <button
+                          type="button"
+                          key={c.childId}
+                          className="pd-child-row pd-focusable"
+                          data-testid={`child-row-${c.childId}`}
+                          data-selected={viewedChildId === c.childId || undefined}
+                          onClick={() => setViewedChild(c.childId)}
+                        >
+                          <span className="pd-child-row-icon">
+                            <IconChat size={13} />
+                          </span>
+                          <span className="pd-child-row-label">{c.title}</span>
+                          {c.running ? <Spinner size={12} /> : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               );
             })
           )}

@@ -19,6 +19,7 @@ import type {
 import { create } from 'zustand';
 import { useCorpStore } from './corp-store';
 import type { QueueReason } from './send-feasibility';
+import { appendOrMergeBlock, mutateAssistant } from './transcript-fold';
 
 export interface PiNotification {
   id: string;
@@ -417,38 +418,6 @@ export const usePiStore = create<PiSliceState>((set) => ({
 // StoreSink implementation over the store
 // ---------------------------------------------------------------------------
 
-function mutateAssistant(
-  messages: ChatMsg[],
-  id: string,
-  mutate: (msg: AssistantMsg) => AssistantMsg,
-): ChatMsg[] {
-  return messages.map((m) => (m.kind === 'assistant' && m.id === id ? mutate(m) : m));
-}
-
-function appendOrMergeBlock(
-  messages: ChatMsg[],
-  id: string,
-  kind: 'text' | 'thinking',
-  delta: string,
-): ChatMsg[] {
-  return mutateAssistant(messages, id, (m) => {
-    const blocks = [...m.blocks];
-    const last = blocks[blocks.length - 1];
-    if (kind === 'text') {
-      if (last?.type === 'text')
-        blocks[blocks.length - 1] = { type: 'text', text: last.text + delta };
-      else blocks.push({ type: 'text', text: delta });
-    } else {
-      if (last?.type === 'thinking') {
-        blocks[blocks.length - 1] = { type: 'thinking', thinking: last.thinking + delta };
-      } else {
-        blocks.push({ type: 'thinking', thinking: delta });
-      }
-    }
-    return { ...m, blocks };
-  });
-}
-
 /** The StoreSink the event router drives. Exported for tests. */
 export function createPiSink(
   store: Pick<typeof usePiStore, 'setState' | 'getState'> = usePiStore,
@@ -625,9 +594,7 @@ export function createPiSink(
         // dialog over the viewed chat; instead its chat gets a needs-input dot +
         // the top banner picks it up (UiRequestDialogs gates on this tag).
         const bgAsking = s.bgRun !== null && s.bgRun.streaming;
-        const sessionFile = bgAsking
-          ? s.bgRun?.sessionFile
-          : (s.session?.sessionFile ?? undefined);
+        const sessionFile = bgAsking ? s.bgRun?.sessionFile : (s.session?.sessionFile ?? undefined);
         const tagged = { ...request, ...(sessionFile !== undefined ? { sessionFile } : {}) };
         if (bgAsking && s.bgRun !== null) {
           return {

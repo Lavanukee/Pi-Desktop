@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { connectChildAgents } from './state/child-agent-store';
 import { connectGen } from './state/gen-store';
 import { connectHf } from './state/hf-store';
 import { connectLlm } from './state/llm-store';
@@ -14,6 +15,7 @@ import './styles/global.css';
 // canvas, so it needs none of these.
 if (!new URLSearchParams(window.location.search).has('canvasPopout')) {
   connectPi();
+  connectChildAgents();
   connectLlm();
   connectHf();
   connectGen();

@@ -129,10 +129,12 @@ export interface ChildAgentInfo {
 }
 
 /** A single child pi instance's bridge event, tagged so the renderer folds it
- * into that child's own transcript (a nested chat). */
+ * into that child's own transcript (a nested chat). Carries the title so the
+ * renderer can name the child from its first event, no pre-seeding required. */
 export interface ChildAgentEvent {
   childId: string;
   parentId: string;
+  title: string;
   event: PiBridgeEvent;
 }
 

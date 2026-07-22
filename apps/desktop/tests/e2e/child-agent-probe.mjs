@@ -71,6 +71,38 @@ try {
   assert(summary.count > 0, 'child should emit events');
   assert(summary.allTaggedC1, 'every child event must carry its childId/parentId tag');
 
+  // MP2: the child's events fold into a real transcript in the store (ChatMsg[]),
+  // through the SAME router/fold as the main chat — so it renders identically.
+  await page.waitForFunction(
+    () => {
+      const c = window.__child_store?.getState().children['child-1'];
+      return (
+        c !== undefined &&
+        c.messages.some(
+          (m) =>
+            m.kind === 'assistant' && m.blocks.some((b) => b.type === 'text' && b.text.length > 0),
+        )
+      );
+    },
+    { timeout: 12000 },
+  );
+  const transcript = await page.evaluate(() => {
+    const c = window.__child_store.getState().children['child-1'];
+    return {
+      title: c.title,
+      parentId: c.parentId,
+      msgKinds: c.messages.map((m) => m.kind),
+      assistantText: c.messages
+        .filter((m) => m.kind === 'assistant')
+        .flatMap((m) => m.blocks.filter((b) => b.type === 'text').map((b) => b.text))
+        .join(''),
+    };
+  });
+  assert(transcript.title === 'Test subagent', `MP2: child keeps its title: ${transcript.title}`);
+  assert(transcript.parentId === 'parent-1', 'MP2: child records its parent');
+  assert(transcript.msgKinds.includes('assistant'), 'MP2: transcript has an assistant message');
+  assert(transcript.assistantText.length > 0, 'MP2: assistant message has folded text');
+
   // The list endpoint should report the running child.
   const list = await page.evaluate(() => window.piDesktop.invoke('pi:child-list', undefined));
   assert(
@@ -85,7 +117,7 @@ try {
   assert(disposed.success === true, 'dispose should succeed');
 
   console.log(
-    `child-agent-probe OK — spawned an independent pi (pid ${res.pid}), ${summary.count} tagged events [${summary.types.join(', ')}], listed + disposed`,
+    `child-agent-probe OK — spawned an independent pi (pid ${res.pid}), ${summary.count} tagged events, folded into a "${transcript.title}" transcript (${transcript.msgKinds.length} msgs, assistant text "${transcript.assistantText.slice(0, 40)}…"), listed + disposed`,
   );
 } finally {
   await app.close();

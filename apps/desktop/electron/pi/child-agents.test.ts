@@ -30,7 +30,12 @@ const log = { info: () => {}, warn: () => {} };
 
 describe('createChildAgents', () => {
   it('spawns a child, tags + forwards its events, lists it, disposes it', async () => {
-    const sent: Array<{ childId: string; parentId: string; event: PiBridgeEvent }> = [];
+    const sent: Array<{
+      childId: string;
+      parentId: string;
+      title: string;
+      event: PiBridgeEvent;
+    }> = [];
     let captured: ((e: PiBridgeEvent) => void) | null = null;
     const bridge = fakeBridge((e) => captured?.(e));
 
@@ -55,7 +60,9 @@ describe('createChildAgents', () => {
 
     // An event from the child is forwarded, tagged with childId/parentId.
     bridge.emit({ type: 'agent_start' } as PiBridgeEvent);
-    expect(sent).toEqual([{ childId: 'c1', parentId: 'p1', event: { type: 'agent_start' } }]);
+    expect(sent).toEqual([
+      { childId: 'c1', parentId: 'p1', title: 'Sub', event: { type: 'agent_start' } },
+    ]);
 
     expect(agents.list(7)).toEqual([{ childId: 'c1', parentId: 'p1', title: 'Sub' }]);
     expect(agents.list(999)).toEqual([]); // scoped to the owning window

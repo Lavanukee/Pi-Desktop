@@ -14,7 +14,7 @@ import type { TaskClass } from '@pi-desktop/harness';
 import { ensureChatServerReady, maybeRouteAuto } from '../chat/auto-router';
 import { resetCanvasForNewSession, restoreCanvas, snapshotCanvas } from './canvas-store';
 import { ensureVisionMode } from './local-model';
-import { createPiSink, type PausedChat, type QueuedSend, usePiStore } from './pi-slice';
+import { type BgRun, createPiSink, type PausedChat, type QueuedSend, usePiStore } from './pi-slice';
 import { useSettingsStore } from './settings-store';
 
 /** An outgoing message's vision-relevant shape (pure helper input). */
@@ -274,6 +274,20 @@ export async function sendPrompt(
   agentMessage?: string,
   forcedClass?: TaskClass,
 ) {
+  // A chat is still streaming in the BACKGROUND ⇒ pi is busy on another session.
+  // Queue this send for the viewed chat rather than dispatch it into the background
+  // one (the composer normally queues first; this is the safety net for the drain /
+  // programmatic callers). No echo here — it shows as a queued bubble.
+  const bgNow = usePiStore.getState().bgRun;
+  if (bgNow !== null && bgNow.streaming) {
+    usePiStore.getState().enqueueSend({
+      text: message,
+      images: imageDataUris,
+      ...(agentMessage !== undefined ? { agentMessage } : {}),
+      ...(forcedClass !== undefined ? { taskClass: forcedClass } : {}),
+    });
+    return;
+  }
   // Echo the user's message IMMEDIATELY (before any awaits) — a fresh send inits
   // the chat + shows the bubble at once, never "delete the text, wait 60s, then
   // show it" (jedd). Safe because a server-load restart (restartPi) preserves the
@@ -286,6 +300,9 @@ export async function sendPrompt(
   // send (which reorders the echoes ahead of the first assistant turn). Cleared by
   // agent_start / agent_end, and on every early return below.
   usePiStore.setState({ promptInFlight: true });
+  // pi may be parked on a chat that finished streaming in the background — move it
+  // onto the viewed chat (saving the finished bg thread) before we dispatch.
+  await ensurePiOnViewedSession();
   // Capture the session boundary: the awaits below can hard-restart llama (a vision
   // relaunch or an Auto tier switch), and if the user switches / starts a new chat
   // during that window, this prompt must NOT land in the new chat (BUG: sent message
@@ -362,6 +379,18 @@ export async function abortPi() {
   // the user asked to halt, so pending messages must not fire after the abort.
   usePiStore.setState({ queuedSends: [], pausedChat: null });
   return window.piDesktop.invoke('pi:abort', undefined);
+}
+
+/**
+ * Halt the CURRENT turn but KEEP the queue — the "Why isn't my message sending?"
+ * modal's Stop. Stopping the running chat there is meant to FREE the slot so the
+ * user's queued message goes through, so (unlike {@link abortPi}) it must not drop
+ * the queue. A background run ends → the drain switches pi over + sends the queued
+ * message; the same-chat case simply ends the current reply and the queue drains.
+ */
+export async function stopRunningForQueue(): Promise<void> {
+  usePiStore.setState({ pausedChat: null });
+  await window.piDesktop.invoke('pi:abort', undefined);
 }
 
 /**
@@ -660,54 +689,150 @@ function syncSessionPointer(sessionPath: string): void {
   }));
 }
 
+/** Load a session's thread + canvas into the VIEW (messages, canvas, queue, paused)
+ * WITHOUT touching which session pi is bound to. Shared by a normal switch (after
+ * pi has moved) and by merely VIEWING a chat while another runs pinned in the
+ * background. Does NOT set the view pointer or `agent.isStreaming` — the caller owns
+ * those. Returns whether the rehydrated history was truncated. */
+async function loadViewedThread(sessionPath: string): Promise<{ truncated: boolean }> {
+  const snap = sessionSnapshots.get(sessionPath);
+  if (snap !== undefined) {
+    usePiStore.getState().setMessagesExternal(snap.messages);
+    if (snap.canvas !== null) restoreCanvas(snap.canvas);
+    else resetCanvasForNewSession();
+    usePiStore.setState({ queuedSends: snap.queuedSends, pausedChat: snap.pausedChat });
+    return { truncated: false };
+  }
+  resetCanvasForNewSession();
+  const read = await window.piDesktop.invoke('fs:read-session', { file: sessionPath });
+  if (read.text === null) {
+    usePiStore.getState().setMessagesExternal([]);
+    return { truncated: false };
+  }
+  const r = rehydrateSessionJsonl(read.text);
+  usePiStore.getState().setMessagesExternal(r.messages);
+  return { truncated: r.truncated };
+}
+
+/** Persist a finished background run's thread into the per-chat snapshot (freezing
+ * any still-streaming marker) so returning to that chat later shows the completed
+ * reply. Preserves its canvas/queue/paused if already snapshotted. */
+function stashBgRun(bg: BgRun): void {
+  const existing = sessionSnapshots.get(bg.sessionFile);
+  sessionSnapshots.set(bg.sessionFile, {
+    messages: bg.messages.map((m) =>
+      m.kind === 'assistant' && m.isStreaming === true ? { ...m, isStreaming: false } : m,
+    ),
+    canvas: existing?.canvas ?? null,
+    queuedSends: existing?.queuedSends ?? [],
+    pausedChat: existing?.pausedChat ?? null,
+  });
+}
+
+/** Set the VIEW pointer to `sessionPath`, optionally forcing the streaming flag
+ * (a background chat you return to may still be live). */
+function setViewPointer(sessionPath: string, isStreaming?: boolean): void {
+  usePiStore.setState((s) => ({
+    session: { ...(s.session ?? {}), sessionFile: sessionPath },
+    ...(isStreaming !== undefined ? { agent: { ...s.agent, isStreaming } } : {}),
+  }));
+}
+
 /**
- * Switch pi to another chat, preserving BOTH chats' state (jedd: switching must
- * not wipe an in-flight reply, leak the other chat's canvas, or leave the row
- * un-highlighted). Steps: (1) snapshot the chat we're leaving; (2) HALT its
- * in-flight turn — the one pi child can't serve two sessions, and a still-running
- * old turn would stream stray subagents / a browser tab into THIS chat; (3) switch
- * pi; (4) restore the target's saved snapshot if we've been there, else load it
- * from disk with a clean canvas; (5) point the store at the exact target path.
+ * Switch which chat the user is looking at. The ONE pi child runs ONE turn on ONE
+ * session (pi's switch_session DISPOSES a running turn), so the rules are:
+ *
+ *  - Case B — RETURN to the chat running in the background: pi is already on it;
+ *    swap its live/finished buffer back into the view and clear the bg run.
+ *  - Case A — LEAVE a chat whose turn is STREAMING: DON'T abort it. Pin pi to it,
+ *    mirror its events into `bgRun` (see the sink's threadSet), and just view the
+ *    target. The chat keeps generating off-screen with a sidebar spinner.
+ *  - Case C — a bg run is already going and you switch to yet ANOTHER chat: just
+ *    change the view; pi stays pinned to the bg session.
+ *  - Case D — the plain switch (nothing streaming, no bg run): move pi over.
  */
 export async function switchSession(
   sessionPath: string,
 ): Promise<{ ok: boolean; truncated: boolean; cancelled?: boolean; error?: string }> {
+  const store = usePiStore.getState();
+  const viewed = store.session?.sessionFile ?? null;
+  if (sessionPath === viewed) return { ok: true, truncated: false };
+
+  const bg = store.bgRun;
+  const activeStreaming = store.agent.isStreaming || store.promptInFlight;
   instructionsArmed = false;
+
+  // ── Case B: returning to the background chat. pi is already on it.
+  if (bg !== null && sessionPath === bg.sessionFile) {
+    captureCurrentSession(); // snapshot the chat we're leaving (the viewed one)
+    invalidateInFlightSend();
+    usePiStore.getState().setMessagesExternal(bg.messages);
+    const snap = sessionSnapshots.get(sessionPath);
+    if (snap?.canvas != null) restoreCanvas(snap.canvas);
+    else resetCanvasForNewSession();
+    usePiStore.setState({ bgRun: null });
+    setViewPointer(sessionPath, bg.streaming);
+    return { ok: true, truncated: false };
+  }
+
+  // ── Case A: leaving a STREAMING chat → background it (keep pi on it).
+  if (activeStreaming && bg === null && viewed !== null) {
+    captureCurrentSession(); // canvas/queue/paused for the backgrounded chat
+    usePiStore.setState({
+      bgRun: {
+        sessionFile: viewed,
+        messages: usePiStore.getState().messages,
+        streaming: true,
+        title: store.windowTitle,
+      },
+    });
+    const { truncated } = await loadViewedThread(sessionPath);
+    // The viewed chat isn't the one streaming; drop its streaming flag for this view
+    // (the bg run drives the sidebar spinner instead).
+    setViewPointer(sessionPath, false);
+    return { ok: true, truncated };
+  }
+
+  // ── Case C: a bg run is going; view another chat without moving pi.
+  if (bg !== null) {
+    captureCurrentSession();
+    invalidateInFlightSend();
+    const { truncated } = await loadViewedThread(sessionPath);
+    setViewPointer(sessionPath, false);
+    return { ok: true, truncated };
+  }
+
+  // ── Case D: the plain switch — move pi to the target.
   captureCurrentSession();
-  // Drop any parked pre-dispatch send BEFORE we point pi at another session, so it
-  // can't land in the chat we're switching to (wrong-chat association bug).
   invalidateInFlightSend();
   if (agentInFlight()) await abortPi();
-
   const switched = await window.piDesktop.invoke('pi:switch-session', { sessionPath });
   if (!switched.success) return { ok: false, truncated: false, error: switched.error };
   if (switched.cancelled === true) return { ok: false, truncated: false, cancelled: true };
-
-  let truncated = false;
-  const snap = sessionSnapshots.get(sessionPath);
-  if (snap !== undefined) {
-    // Returning to a chat we've visited — restore its messages + canvas exactly.
-    usePiStore.getState().setMessagesExternal(snap.messages);
-    if (snap.canvas !== null) restoreCanvas(snap.canvas);
-    else resetCanvasForNewSession();
-    // setMessagesExternal cleared the queue + paused marker as part of the
-    // session-boundary reset; put this chat's own back so it holds its pending
-    // messages + Resume affordance across the round-trip.
-    usePiStore.setState({ queuedSends: snap.queuedSends, pausedChat: snap.pausedChat });
-  } else {
-    // First visit this app-run — clean canvas + rehydrate from the JSONL.
-    resetCanvasForNewSession();
-    const read = await window.piDesktop.invoke('fs:read-session', { file: sessionPath });
-    if (read.text === null) {
-      usePiStore.getState().setMessagesExternal([]);
-    } else {
-      const r = rehydrateSessionJsonl(read.text);
-      truncated = r.truncated;
-      usePiStore.getState().setMessagesExternal(r.messages);
-    }
-  }
+  const { truncated } = await loadViewedThread(sessionPath);
   syncSessionPointer(sessionPath);
   return { ok: true, truncated };
+}
+
+/**
+ * Before dispatching a send into the VIEWED chat, make pi actually be on it. pi may
+ * be parked on a chat that finished streaming in the background while the user moved
+ * on; in that case save the finished bg thread, switch pi to the viewed chat, and
+ * clear the run. A STILL-streaming bg run is not switched here — such a send is
+ * queued upstream (the composer) rather than dispatched.
+ */
+async function ensurePiOnViewedSession(): Promise<void> {
+  const store = usePiStore.getState();
+  const bg = store.bgRun;
+  if (bg === null || bg.streaming) return;
+  const viewed = store.session?.sessionFile ?? null;
+  if (viewed === null || viewed === bg.sessionFile) {
+    usePiStore.setState({ bgRun: null });
+    return;
+  }
+  stashBgRun(bg);
+  await window.piDesktop.invoke('pi:switch-session', { sessionPath: viewed });
+  usePiStore.setState({ bgRun: null });
 }
 
 // E2E hook (load-bearing for W3 + the pi probe): expose the store accessor on

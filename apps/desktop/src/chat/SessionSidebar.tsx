@@ -269,6 +269,9 @@ export function SessionSidebar({
   const pausedChat = usePiStore((s) => s.pausedChat);
   // A turn that ends with a blocking dialog open is "needs your input", not done.
   const awaitingInput = usePiStore((s) => s.uiRequests.length > 0);
+  // A chat generating in the BACKGROUND (the user is viewing another): its row —
+  // not the viewed one — shows the spinner + gets the finished notice.
+  const bgRun = usePiStore((s) => s.bgRun);
 
   // The rectangular popout that replaces the old "<title> finished" pseudo-row:
   // on the busy→idle edge the row's spinner collapses to a dot and this notice
@@ -298,10 +301,12 @@ export function SessionSidebar({
     refresh();
   }, [refresh, busy]);
 
-  // On the busy→idle edge of the active chat, pop the notice for that row.
+  // On the busy→idle edge of the VIEWED chat (no background run in play), pop the
+  // notice for that row. When a chat is running in the BACKGROUND, its completion
+  // is handled by the bgRun effect below (against ITS row, not the viewed one).
   useEffect(() => {
-    if (busy) busyFile.current = currentFile;
-    if (prevBusy.current && !busy && busyFile.current !== null) {
+    if (busy && bgRun === null) busyFile.current = currentFile;
+    if (prevBusy.current && !busy && bgRun === null && busyFile.current !== null) {
       const file = busyFile.current;
       // Paused ≠ finished — a Pause frees the model but keeps the reply resumable,
       // so it must not read as a completion.
@@ -317,7 +322,23 @@ export function SessionSidebar({
       busyFile.current = null;
     }
     prevBusy.current = busy;
-  }, [busy, currentFile, sessions, pausedChat, awaitingInput]);
+  }, [busy, currentFile, sessions, pausedChat, awaitingInput, bgRun]);
+
+  // A background chat finished (bgRun.streaming true→false): pop the notice against
+  // ITS row, so "response finished" points at the chat that actually completed.
+  const prevBgStreaming = useRef(false);
+  useEffect(() => {
+    const streaming = bgRun?.streaming === true;
+    if (prevBgStreaming.current && !streaming && bgRun !== null) {
+      setNotice({
+        sessionFile: bgRun.sessionFile,
+        title: bgRun.title ?? sessions.find((s) => s.file === bgRun.sessionFile)?.title ?? 'Chat',
+        kind: 'finished',
+        at: Date.now(),
+      });
+    }
+    prevBgStreaming.current = streaming;
+  }, [bgRun, sessions]);
 
   // New chat starts a fresh session in the RUNNING pi (new_session RPC): it
   // resets the thread but does NOT dispose/respawn pi, so no "pi exited" crash
@@ -512,7 +533,12 @@ export function SessionSidebar({
             </div>
           ) : (
             filtered.map((s) => {
-              const running = busy && currentFile === s.file;
+              // The viewed chat spins when IT is the one running (no bg run in play);
+              // a chat running in the background spins on its own row while you view
+              // another.
+              const running =
+                (busy && bgRun === null && currentFile === s.file) ||
+                (bgRun?.streaming === true && bgRun.sessionFile === s.file);
               const notifying = notice !== null && notice.sessionFile === s.file;
               return (
                 <SidebarRow

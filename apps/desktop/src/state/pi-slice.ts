@@ -93,6 +93,28 @@ export interface PausedChat {
   userText: string;
 }
 
+/**
+ * A chat that keeps generating in the BACKGROUND while the user views another one.
+ *
+ * The app has ONE pi child that runs ONE turn on ONE session (pi's `switch_session`
+ * DISPOSES a running turn). So true background continuation pins pi to the running
+ * session and mirrors its streaming events HERE instead of into the viewed thread:
+ * while `bgRun` is set, the sink writes deltas to `bgRun.messages` (pi is on this
+ * session, so every event belongs to it), leaving the viewed `messages` untouched.
+ * On return to this chat we swap `bgRun.messages` back into `messages`.
+ *
+ * `streaming` is true until the turn ends; it lingers (false) afterwards so we still
+ * know pi is parked on this session (and hold its finished thread) until the user
+ * returns to it or sends into the viewed chat (which switches pi over + drains).
+ */
+export interface BgRun {
+  sessionFile: string;
+  messages: ChatMsg[];
+  streaming: boolean;
+  /** The chat's title, for the sidebar spinner + finished notice while off-screen. */
+  title: string | null;
+}
+
 interface PiSliceState {
   messages: ChatMsg[];
   agent: PiAgentStatus;
@@ -118,6 +140,8 @@ interface PiSliceState {
   enqueueSend: (item: QueuedSend) => void;
   /** The user-paused turn for THIS chat (aborted-but-resumable), or null. */
   pausedChat: PausedChat | null;
+  /** A chat generating in the background while the user views another. See {@link BgRun}. */
+  bgRun: BgRun | null;
   /** Tool calls currently executing (spinner state for W3 rows). */
   runningToolCalls: string[];
   extensionStatus: Record<string, string>;
@@ -203,6 +227,7 @@ export const usePiStore = create<PiSliceState>((set) => ({
   queuedSends: [],
   enqueueSend: (item) => set((s) => ({ queuedSends: [...s.queuedSends, item] })),
   pausedChat: null,
+  bgRun: null,
   runningToolCalls: [],
   extensionStatus: {},
   widgets: {},
@@ -402,6 +427,16 @@ export function createPiSink(
   store: Pick<typeof usePiStore, 'setState' | 'getState'> = usePiStore,
 ): StoreSink {
   const set = store.setState;
+  // Route a thread mutation to the BACKGROUND buffer while a non-viewed session is
+  // still streaming (pi is pinned to it, so every streaming event belongs to it),
+  // else to the viewed `messages`. This is what lets a chat keep generating while
+  // the user looks at another one, without its tokens leaking into that view.
+  const threadSet = (mutate: (msgs: ChatMsg[]) => ChatMsg[]) =>
+    set((s) =>
+      s.bgRun !== null && s.bgRun.streaming
+        ? { bgRun: { ...s.bgRun, messages: mutate(s.bgRun.messages) } }
+        : { messages: mutate(s.messages) },
+    );
   return {
     // `agent_start` flips isStreaming true (that now governs steer-routing), so
     // the renderer-side in-flight bridge has done its job — clear it.
@@ -416,20 +451,28 @@ export function createPiSink(
       set((s) => {
         const extensionStatus = { ...s.extensionStatus };
         delete extensionStatus['harness-prefill'];
-        return { runningToolCalls: [], uiRequests: [], promptInFlight: false, extensionStatus };
+        const patch = {
+          runningToolCalls: [],
+          uiRequests: [],
+          promptInFlight: false,
+          extensionStatus,
+        };
+        // A backgrounded turn just finished — mark it done (its buffer stays for a
+        // restore; the sidebar flips its spinner to the finished notice).
+        return s.bgRun !== null && s.bgRun.streaming
+          ? { ...patch, bgRun: { ...s.bgRun, streaming: false } }
+          : patch;
       }),
 
     beginAssistantTurn: (id) =>
-      set((s) => ({
-        messages: [
-          ...s.messages,
-          { kind: 'assistant', id, blocks: [], timestamp: Date.now(), isStreaming: true },
-        ],
-      })),
+      threadSet((msgs) => [
+        ...msgs,
+        { kind: 'assistant', id, blocks: [], timestamp: Date.now(), isStreaming: true },
+      ]),
 
     endTurn: (id, stopReason, message) =>
-      set((s) => ({
-        messages: mutateAssistant(s.messages, id, (m) => ({
+      threadSet((msgs) =>
+        mutateAssistant(msgs, id, (m) => ({
           ...m,
           isStreaming: false,
           stopReason,
@@ -438,25 +481,22 @@ export function createPiSink(
           provider: message?.provider ?? m.provider,
           usage: message?.usage ?? m.usage,
         })),
-      })),
+      ),
 
     appendTextDelta: (id, delta) =>
-      set((s) => ({ messages: appendOrMergeBlock(s.messages, id, 'text', delta) })),
+      threadSet((msgs) => appendOrMergeBlock(msgs, id, 'text', delta)),
 
     appendThinkingDelta: (id, delta) =>
-      set((s) => ({ messages: appendOrMergeBlock(s.messages, id, 'thinking', delta) })),
+      threadSet((msgs) => appendOrMergeBlock(msgs, id, 'thinking', delta)),
 
     beginToolCall: (id, call) =>
-      set((s) => ({
-        messages: mutateAssistant(s.messages, id, (m) => ({
-          ...m,
-          blocks: [...m.blocks, call],
-        })),
-      })),
+      threadSet((msgs) =>
+        mutateAssistant(msgs, id, (m) => ({ ...m, blocks: [...m.blocks, call] })),
+      ),
 
     appendToolCallArgs: (id, callId, argsDelta) =>
-      set((s) => ({
-        messages: mutateAssistant(s.messages, id, (m) => {
+      threadSet((msgs) =>
+        mutateAssistant(msgs, id, (m) => {
           const blocks: ContentBlock[] = m.blocks.map((b) =>
             b.type === 'toolCall' && b.id === callId
               ? { ...b, argsText: (b.argsText ?? '') + argsDelta }
@@ -464,11 +504,11 @@ export function createPiSink(
           );
           return { ...m, blocks };
         }),
-      })),
+      ),
 
     finalizeToolCall: (id, callId, toolCall) =>
-      set((s) => ({
-        messages: mutateAssistant(s.messages, id, (m) => ({
+      threadSet((msgs) =>
+        mutateAssistant(msgs, id, (m) => ({
           ...m,
           blocks: m.blocks.map((b) =>
             b.type === 'toolCall' && b.id === callId
@@ -476,7 +516,7 @@ export function createPiSink(
               : b,
           ),
         })),
-      })),
+      ),
 
     toolExecutionStart: (callId) =>
       set((s) => ({
@@ -491,17 +531,20 @@ export function createPiSink(
 
     upsertToolResult: (result: ToolResultMsg) =>
       set((s) => {
+        // Route into the background buffer while a non-viewed session streams.
+        const bg = s.bgRun !== null && s.bgRun.streaming;
+        const thread = bg ? (s.bgRun as BgRun).messages : s.messages;
         // Match by row id (assistant-scoped), never bare toolCallId: providers
         // reuse toolCallIds across runs, and an unscoped match would overwrite
         // a historical row with the new run's result.
-        const existing = s.messages.findIndex((m) => m.kind === 'toolResult' && m.id === result.id);
-        const messages =
-          existing >= 0
-            ? s.messages.map((m, i) => (i === existing ? result : m))
-            : [...s.messages, result];
+        const existing = thread.findIndex((m) => m.kind === 'toolResult' && m.id === result.id);
+        const next =
+          existing >= 0 ? thread.map((m, i) => (i === existing ? result : m)) : [...thread, result];
+        const runningToolCalls = s.runningToolCalls.filter((id) => id !== result.toolCallId);
+        if (bg) return { bgRun: { ...(s.bgRun as BgRun), messages: next }, runningToolCalls };
         return {
-          messages,
-          runningToolCalls: s.runningToolCalls.filter((id) => id !== result.toolCallId),
+          messages: next,
+          runningToolCalls,
         };
       }),
 
@@ -575,19 +618,26 @@ export function createPiSink(
     setComposerText: (text) => set({ composerText: text }),
 
     artifactCandidate: (candidate) =>
-      set((s) => ({
+      set((s) => {
+        // A backgrounded turn's artifacts must not surface in the chat the user is
+        // VIEWING (they'd auto-focus a canvas tab for the wrong chat). Drop them
+        // while a bg run streams — the artifact still exists as a tool row in the
+        // bg thread, and canvas routing re-derives from the active chat on return.
+        if (s.bgRun !== null && s.bgRun.streaming) return {};
         // Dedupe by identity (path per kind): the router intentionally pushes
         // again on tool_execution_start as a re-focus signal — the newest
         // touch moves to the head instead of duplicating the entry.
-        artifacts: [
-          candidate,
-          ...s.artifacts.filter((a) => {
-            if (a.kind === 'file' && candidate.kind === 'file') return a.path !== candidate.path;
-            if (a.kind === 'url' && candidate.kind === 'url') return a.url !== candidate.url;
-            return true;
-          }),
-        ].slice(0, 50),
-      })),
+        return {
+          artifacts: [
+            candidate,
+            ...s.artifacts.filter((a) => {
+              if (a.kind === 'file' && candidate.kind === 'file') return a.path !== candidate.path;
+              if (a.kind === 'url' && candidate.kind === 'url') return a.url !== candidate.url;
+              return true;
+            }),
+          ].slice(0, 50),
+        };
+      }),
 
     bridgeExit: (info) =>
       set((s) =>

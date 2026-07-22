@@ -214,6 +214,10 @@ export function ChatComposer({
   // its first token. Part of "the backend is busy" for the button, so the send↔stop
   // flip doesn't blink back to Send during the dispatch gap.
   const promptInFlight = usePiStore((s) => s.promptInFlight);
+  // A DIFFERENT chat is streaming in the background. While it runs, `isStreaming`
+  // is true but it isn't THIS view's turn — so the composer shows Send (not Stop),
+  // and a send here queues (pi is busy) rather than dispatching into that chat.
+  const bgStreaming = usePiStore((s) => s.bgRun?.streaming === true);
 
   const apiRef = useRef<ComposerEditorApi | null>(null);
   const [text, setText] = useState('');
@@ -508,7 +512,11 @@ export function ChatComposer({
             ? b.thinking.length > 0
             : true,
       );
-    if (piState.promptInFlight || streamEmpty) {
+    // A DIFFERENT chat streaming in the background also means pi is busy — this send
+    // must queue (and drain once that chat finishes + pi switches here), never
+    // dispatch into the background session.
+    const bgBusy = piState.bgRun !== null && piState.bgRun.streaming;
+    if (piState.promptInFlight || streamEmpty || bgBusy) {
       // Snapshot WHY it's waiting (same-model wait vs a model swap vs a model that
       // won't fit) so the faded queued line + the "Why isn't my message sending?"
       // modal can explain it instead of leaving a non-technical user on a silent
@@ -550,7 +558,9 @@ export function ChatComposer({
   // Stop is pressed (even while the backend is still tearing the turn down). Each
   // clears itself the moment the REAL state catches up, so they only ever cover
   // the perceptible gap — the button can never get stuck in the optimistic state.
-  const realBusy = isStreaming || corpRunning || promptInFlight;
+  // `isStreaming` counts only when it's THIS view's turn — a background chat's turn
+  // (bgStreaming) must not make the viewed chat's composer show Stop.
+  const realBusy = (isStreaming && !bgStreaming) || corpRunning || promptInFlight;
   const [pendingStart, setPendingStart] = useState(false);
   const [pendingStop, setPendingStop] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: reconcile on realBusy transitions only
@@ -590,11 +600,12 @@ export function ChatComposer({
   // (home only), not baked into the placeholder. A single short line also stops
   // the empty composer from looking oversized (the old 3-line jargon overflowed
   // and faded, inflating the card).
-  const placeholder = isStreaming
-    ? 'Send — it goes right after this reply…'
-    : bashMode
-      ? 'Run a shell command…'
-      : 'Ask Pi anything…';
+  const placeholder =
+    isStreaming && !bgStreaming
+      ? 'Send — it goes right after this reply…'
+      : bashMode
+        ? 'Run a shell command…'
+        : 'Ask Pi anything…';
   // Only the empty home screen (no messages yet) shows the shortcut helper line.
   const isHome = usePiStore((s) => s.messages.length === 0);
 

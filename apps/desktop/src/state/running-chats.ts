@@ -76,6 +76,7 @@ export function useRunningChats(): readonly RunningChat[] {
   const title = usePiStore((s) => s.windowTitle);
   const agentModel = usePiStore((s) => s.agent.model);
   const prefillRaw = usePiStore((s) => s.extensionStatus[PREFILL_STATUS_KEY]);
+  const bgRun = usePiStore((s) => s.bgRun);
   const loadedModel = useLlmStore((s) => s.status.model);
 
   // Has the current turn produced content since the last user message? (Same walk
@@ -102,9 +103,13 @@ export function useRunningChats(): readonly RunningChat[] {
     return false;
   }, [messages]);
 
+  // While a chat streams in the BACKGROUND, IT is the running chat — not the viewed
+  // one (which is idle). So the viewed chat only counts as running when there is no
+  // background run in play.
+  const bgStreaming = bgRun?.streaming === true;
   const chat = buildActiveRunningChat({
-    isStreaming,
-    promptInFlight,
+    isStreaming: isStreaming && !bgStreaming,
+    promptInFlight: promptInFlight && !bgStreaming,
     turnHasContent,
     sessionFile,
     title,
@@ -114,8 +119,24 @@ export function useRunningChats(): readonly RunningChat[] {
     prefillPct: parsePrefillPercent(prefillRaw),
   });
 
+  const bgChat: RunningChat | null =
+    bgRun !== null && bgRun.streaming
+      ? {
+          sessionFile: bgRun.sessionFile,
+          title: bgRun.title !== null && bgRun.title.length > 0 ? bgRun.title : 'Chat',
+          modelId: agentModel?.id ?? loadedModel?.id ?? null,
+          modelName: agentModel?.name ?? loadedModel?.displayName ?? null,
+          status: 'generating',
+          prefillPct: null,
+          isActive: false,
+        }
+      : null;
+
   // Stable identity when idle so consumers don't re-render on every store tick.
-  return useMemo(() => (chat === null ? EMPTY : [chat]), [chat]);
+  return useMemo(() => {
+    const list = [chat, bgChat].filter((c): c is RunningChat => c !== null);
+    return list.length === 0 ? EMPTY : list;
+  }, [chat, bgChat]);
 }
 
 /**

@@ -20,7 +20,7 @@ import {
   Spinner,
 } from '@pi-desktop/ui';
 import { IconPause, IconStop } from '../settings/icons';
-import { abortPi, pausePi } from '../state/pi-connect';
+import { pausePi, stopRunningForQueue } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { type RunningChat, useQueueExplainer, useRunningChats } from '../state/running-chats';
 import { queueExplainer } from './queue-explainer';
@@ -76,15 +76,16 @@ export function WhyQueuedModal() {
   const firstReason = usePiStore((s) => s.queuedSends[0]?.reason);
   const explainer = queueExplainer(firstReason);
 
-  // Today the only running chat is the active one, so Pause/Stop map to the single
-  // pi child's pause/abort. (When background continuation lands, a non-active chat
-  // will carry its own controls; the guard keeps us honest until then.)
-  const pause = (chat: RunningChat): void => {
-    if (chat.isActive) void pausePi();
+  // The listed chat IS pi's current turn (whether it's the viewed chat or one
+  // running in the background), so Pause/Stop map straight to the single child's
+  // controls. Stop KEEPS the queue so the user's waiting message goes through
+  // (that's the whole point of stopping the running chat here); Pause keeps it too.
+  const pause = (_chat: RunningChat): void => {
+    void pausePi();
     setOpen(false);
   };
-  const stop = (chat: RunningChat): void => {
-    if (chat.isActive) void abortPi();
+  const stop = (_chat: RunningChat): void => {
+    void stopRunningForQueue();
     setOpen(false);
   };
 

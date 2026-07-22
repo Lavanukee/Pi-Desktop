@@ -133,11 +133,15 @@ export interface ChildAgentInfo {
 
 /** A single child pi instance's bridge event, tagged so the renderer folds it
  * into that child's own transcript (a nested chat). Carries the title so the
- * renderer can name the child from its first event, no pre-seeding required. */
+ * renderer can name the child from its first event, and the goal so the renderer
+ * can seed the child's opening USER bubble (the app drives the goal via
+ * bridge.prompt, so it never arrives as an event) — no pre-seeding required. */
 export interface ChildAgentEvent {
   childId: string;
   parentId: string;
   title: string;
+  /** The task the child was spawned with — seeds its first user message. */
+  goal: string;
   event: PiBridgeEvent;
 }
 

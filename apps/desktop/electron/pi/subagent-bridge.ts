@@ -41,7 +41,7 @@ interface SpawnRequest {
   id: number;
   token: string;
   method: string;
-  params?: { goal?: string; name?: string; timeoutMs?: number };
+  params?: { goal?: string; name?: string; childId?: string; timeoutMs?: number };
 }
 
 async function handleSpawn(
@@ -60,7 +60,13 @@ async function handleSpawn(
     params.timeoutMs > 0
       ? params.timeoutMs
       : DEFAULT_TIMEOUT_MS;
-  const childId = `sub-${randomBytes(5).toString('hex')}`;
+  // Prefer the harness scheduler's id (the tool-call id) so the canvas subagents
+  // panel and the sidebar dropdown key the SAME child instance; fall back to a
+  // random id for hand-built callers that omit it.
+  const childId =
+    typeof params?.childId === 'string' && params.childId.trim().length > 0
+      ? params.childId.trim()
+      : `sub-${randomBytes(5).toString('hex')}`;
   const res = await childAgents.spawnAndWait(
     wc,
     { childId, parentId: activeSession, title: name, goal },

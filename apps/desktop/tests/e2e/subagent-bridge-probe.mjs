@@ -102,6 +102,7 @@ try {
     return c
       ? {
           title: c.title,
+          userText: c.messages.find((m) => m.kind === 'user')?.text ?? null,
           text: c.messages
             .filter((m) => m.kind === 'assistant')
             .flatMap((m) => m.blocks.filter((b) => b.type === 'text').map((b) => b.text))
@@ -112,6 +113,12 @@ try {
   assert(child !== null, 'the subagent should appear in the childAgentStore (dropdown)');
   assert(child.title === 'Researcher', `child keeps its bridge title: ${child?.title}`);
   assert(child.text.length > 0, 'child transcript folded from its event stream');
+  // The child's opening USER bubble must carry the goal it was spawned with, so a
+  // viewed subagent reads like a real chat (prompt → thinking → tools → answer).
+  assert(
+    child.userText === 'introduce yourself in one line',
+    `child seeds its goal as the opening user bubble: ${JSON.stringify(child.userText)}`,
+  );
 
   console.log(
     `subagent-bridge-probe OK — bridge spawned a subagent pi, streamed it to the dropdown ("${child.title}": "${child.text.slice(0, 40)}…"), and returned its answer as the summary ("${reply.summary.slice(0, 40)}…")`,

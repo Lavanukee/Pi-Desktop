@@ -102,6 +102,10 @@ export function buildChildSpawnPlan(
 export interface RunChildAgentOptions {
   /** The task the child agent should carry out (its prompt). */
   readonly goal: string;
+  /** Scheduler id (the tool-call id) — the app bridge uses it as the child's
+   * stable childId so the canvas subagents panel and the sidebar dropdown key the
+   * SAME instance; the in-process runner ignores it. */
+  readonly id?: string;
   /** Display name (the app bridge titles the nested chat with it; the in-process
    * runner ignores it). */
   readonly name?: string;

@@ -62,7 +62,12 @@ function runViaBridge(
           id: 1,
           token,
           method: 'spawn',
-          params: { goal: opts.goal, name: opts.name, timeoutMs: opts.timeoutMs },
+          params: {
+            goal: opts.goal,
+            name: opts.name,
+            childId: opts.id,
+            timeoutMs: opts.timeoutMs,
+          },
         })}\n`,
       );
     });

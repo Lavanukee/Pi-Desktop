@@ -1233,6 +1233,32 @@ body {
   white-space: nowrap;
 }
 
+/* A chat row that hosts agents swaps its bubble glyph for a fold caret ON HOVER —
+   the caret never occupies its own gutter, so it replaces (not shifts) the icon
+   (jedd). Only rendered when the row has children, so childless rows never flip. */
+.pd-chat-icon-swap {
+  position: relative;
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+}
+.pd-chat-icon-bubble,
+.pd-chat-icon-caret {
+  transition: opacity 0.12s var(--pd-easing-standard);
+}
+.pd-chat-icon-caret {
+  position: absolute;
+  opacity: 0;
+}
+.pd-sidebar-row:hover .pd-chat-icon-bubble {
+  opacity: 0;
+}
+.pd-sidebar-row:hover .pd-chat-icon-caret {
+  opacity: 1;
+}
+
 /* The top-of-screen "a chat needs your input" banner (clickable → swap to it). */
 .pd-input-banner {
   animation: pd-input-banner-in 0.22s var(--pd-easing-standard);

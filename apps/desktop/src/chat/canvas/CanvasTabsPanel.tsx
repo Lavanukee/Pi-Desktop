@@ -27,6 +27,7 @@ import type { ArtifactRef, OrgNodeView, ProductPeek } from '@pi-desktop/coordina
 import { IconButton, IconClose } from '@pi-desktop/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useCanvasStore } from '../../state/canvas-store';
+import { useChildAgentStore } from '../../state/child-agent-store';
 import { peekCorpTask } from '../../state/corp-connect';
 import { useCorpStore } from '../../state/corp-store';
 import { usePiStore } from '../../state/pi-slice';
@@ -329,6 +330,16 @@ export function CanvasTabsPanel() {
   const onSubagentSelect = useCallback(
     (tabId: string, subagentId: string) => {
       if (focusSituationTab(controller, useCorpStore.getState().taskId)) return;
+      // Prefer the REAL child instance: a subagent spawned via the app bridge runs
+      // as its own pi and is keyed in the child-agent-store by the SAME id. Show
+      // its live transcript in the chat area, exactly like the sidebar dropdown —
+      // not a markdown snapshot. (jedd: "show it like it does when I click it in
+      // the left sidebar".)
+      if (useChildAgentStore.getState().children[subagentId] !== undefined) {
+        useChildAgentStore.getState().setViewedChild(subagentId);
+        return;
+      }
+      // Fallback (in-process runner / no live child): the markdown work snapshot.
       const tab = controller.getState().tabs.find((t) => t.id === tabId);
       const item = tab?.subagents?.find((s) => s.id === subagentId);
       if (item === undefined) {

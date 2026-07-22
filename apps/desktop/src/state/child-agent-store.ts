@@ -38,9 +38,14 @@ interface ChildAgentState {
   /** The child whose transcript is being VIEWED (the nested dropdown selection),
    * or null when the main chat is shown. Cleared on a main-chat switch. */
   viewedChildId: string | null;
+  /** Child ids that FINISHED while not being viewed — a blue "done" dot sits on
+   * their sidebar row until the user opens them (mirrors the main-chat unread). */
+  unread: Record<string, true>;
   setViewedChild(childId: string | null): void;
-  /** Create the entry if absent (idempotent — never clobbers an existing title). */
-  ensureChild(childId: string, parentId: string, title: string): void;
+  /** Create the entry if absent (idempotent — never clobbers an existing title).
+   * When `goal` is given, seed the child's opening USER bubble with it (the app
+   * drives the goal via bridge.prompt, so it never arrives as a folded event). */
+  ensureChild(childId: string, parentId: string, title: string, goal?: string): void;
   removeChild(childId: string): void;
   updateMessages(childId: string, mutate: (m: ChatMsg[]) => ChatMsg[]): void;
   replaceMessages(childId: string, messages: ChatMsg[]): void;
@@ -50,15 +55,35 @@ interface ChildAgentState {
 export const useChildAgentStore = create<ChildAgentState>()((set) => ({
   children: {},
   viewedChildId: null,
-  setViewedChild: (childId) => set({ viewedChildId: childId }),
-  ensureChild: (childId, parentId, title) =>
+  unread: {},
+  // Selecting a child both views it AND clears its finished dot.
+  setViewedChild: (childId) =>
+    set((s) => {
+      if (childId === null) return { viewedChildId: null };
+      if (s.unread[childId] === undefined) return { viewedChildId: childId };
+      const unread = { ...s.unread };
+      delete unread[childId];
+      return { viewedChildId: childId, unread };
+    }),
+  ensureChild: (childId, parentId, title, goal) =>
     set((s) =>
       s.children[childId] !== undefined
         ? {}
         : {
             children: {
               ...s.children,
-              [childId]: { childId, parentId, title, messages: [], running: true },
+              [childId]: {
+                childId,
+                parentId,
+                title,
+                // Seed the goal as the opening user turn so a viewed child reads
+                // like a real chat (prompt bubble → thinking → tools → answer).
+                messages:
+                  goal !== undefined && goal.trim().length > 0
+                    ? [{ kind: 'user', id: `${childId}:goal`, text: goal, timestamp: Date.now() }]
+                    : [],
+                running: true,
+              },
             },
           },
     ),
@@ -67,7 +92,9 @@ export const useChildAgentStore = create<ChildAgentState>()((set) => ({
       if (s.children[childId] === undefined) return {};
       const next = { ...s.children };
       delete next[childId];
-      return { children: next };
+      const unread = { ...s.unread };
+      delete unread[childId];
+      return { children: next, unread };
     }),
   updateMessages: (childId, mutate) =>
     set((s) => {
@@ -85,7 +112,12 @@ export const useChildAgentStore = create<ChildAgentState>()((set) => ({
     set((s) => {
       const c = s.children[childId];
       if (c === undefined) return {};
-      return { children: { ...s.children, [childId]: { ...c, running } } };
+      const children = { ...s.children, [childId]: { ...c, running } };
+      // Finished while the user was looking elsewhere → leave a blue "done" dot.
+      if (!running && c.running && s.viewedChildId !== childId) {
+        return { children, unread: { ...s.unread, [childId]: true } };
+      }
+      return { children };
     }),
 }));
 
@@ -166,7 +198,17 @@ export function makeChildSink(childId: string): StoreSink {
         })),
       ),
     upsertToolResult: (result) => upd((msgs) => upsertToolResultMsg(msgs, result)),
-    setMessages: (messages) => store.getState().replaceMessages(childId, messages),
+    // A full snapshot replaces the transcript; but a fresh child's snapshot may
+    // omit the app-driven goal prompt, so keep the seeded opening user bubble if
+    // the incoming set has no user turn of its own.
+    setMessages: (messages) => {
+      const seed = store.getState().children[childId]?.messages[0];
+      const next =
+        seed?.kind === 'user' && !messages.some((m) => m.kind === 'user')
+          ? [seed, ...messages]
+          : messages;
+      store.getState().replaceMessages(childId, next);
+    },
     // Not modelled for a viewed child (its thread is what matters):
     toolExecutionStart: noop,
     toolExecutionUpdate: noop,
@@ -196,10 +238,10 @@ export function connectChildAgents(): () => void {
   }
   const unsub = window.piDesktop.onEvent(
     'pi:child-event',
-    ({ childId, parentId, title, event }) => {
+    ({ childId, parentId, title, goal, event }) => {
       let router = routers.get(childId);
       if (router === undefined) {
-        useChildAgentStore.getState().ensureChild(childId, parentId, title);
+        useChildAgentStore.getState().ensureChild(childId, parentId, title, goal);
         router = createEventRouter(makeChildSink(childId));
         routers.set(childId, router);
       }
@@ -221,7 +263,7 @@ export async function spawnChildAgent(req: {
   goal: string;
   cwd?: string;
 }): Promise<{ success: boolean; error?: string }> {
-  useChildAgentStore.getState().ensureChild(req.childId, req.parentId, req.title);
+  useChildAgentStore.getState().ensureChild(req.childId, req.parentId, req.title, req.goal);
   const res = await window.piDesktop.invoke('pi:child-spawn', req);
   if (!res.success) useChildAgentStore.getState().removeChild(req.childId);
   return res;

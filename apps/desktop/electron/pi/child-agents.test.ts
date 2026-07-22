@@ -62,7 +62,13 @@ describe('createChildAgents', () => {
     // An event from the child is forwarded, tagged with childId/parentId.
     bridge.emit({ type: 'agent_start' } as PiBridgeEvent);
     expect(sent).toEqual([
-      { childId: 'c1', parentId: 'p1', title: 'Sub', event: { type: 'agent_start' } },
+      {
+        childId: 'c1',
+        parentId: 'p1',
+        title: 'Sub',
+        goal: 'do it',
+        event: { type: 'agent_start' },
+      },
     ]);
 
     expect(agents.list(7)).toEqual([{ childId: 'c1', parentId: 'p1', title: 'Sub' }]);

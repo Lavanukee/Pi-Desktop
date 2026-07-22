@@ -51,7 +51,7 @@ export interface ChildAgentsDeps<S extends SessionSender> {
   /** Fan one tagged child event out to the renderer (the 'pi:child-event' wire). */
   sendChildEvent: (
     sender: S,
-    msg: { childId: string; parentId: string; title: string; event: PiBridgeEvent },
+    msg: { childId: string; parentId: string; title: string; goal: string; event: PiBridgeEvent },
   ) => void;
   log: SessionLog;
 }
@@ -106,6 +106,7 @@ export function createChildAgents<S extends SessionSender>(
           childId: req.childId,
           parentId: req.parentId,
           title: req.title,
+          goal: req.goal,
           event,
         });
       }
@@ -170,6 +171,7 @@ export function createChildAgents<S extends SessionSender>(
           childId: req.childId,
           parentId: req.parentId,
           title: req.title,
+          goal: req.goal,
           event,
         });
       }

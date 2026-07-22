@@ -299,6 +299,8 @@ export function SessionSidebar({
   const childrenByParent = useChildrenByParent();
   const viewedChildId = useChildAgentStore((s) => s.viewedChildId);
   const setViewedChild = useChildAgentStore((s) => s.setViewedChild);
+  // A child that finished while unviewed leaves a blue dot on its row until opened.
+  const childUnread = useChildAgentStore((s) => s.unread);
   // Running corp/hierarchy roles appear in the SAME nested dropdown under the chat
   // hosting the run; clicking one pins it so corp's own inline view shows it.
   // Default to a STABLE empty array OUTSIDE the selector — a `?? []` inside would
@@ -589,51 +591,54 @@ export function SessionSidebar({
               const corpKids = corpRunning && effectiveCurrentFile === s.file ? corpNodes : [];
               const hasKids = kids.length > 0 || corpKids.length > 0;
               const expanded = hasKids && !collapsedParents.has(s.file);
+              const isFocused = effectiveCurrentFile === s.file && viewedChildId === null;
               return (
                 <div key={s.file}>
-                  <div className="flex items-center">
-                    {/* Left caret reveals/folds the child agents (empty gutter keeps
-                        childless rows aligned). */}
-                    {hasKids ? (
-                      <button
-                        type="button"
-                        className="pd-child-toggle pd-focusable"
-                        aria-expanded={expanded}
-                        aria-label={expanded ? 'Hide agents' : 'Show agents'}
-                        data-testid={`child-toggle-${s.title}`}
-                        onClick={() => toggleParent(s.file)}
-                      >
-                        <IconChevronDown size={12} className={expanded ? '' : '-rotate-90'} />
-                      </button>
-                    ) : (
-                      <span className="pd-child-toggle-spacer" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <SidebarRow
-                        icon={<IconChat size={16} />}
-                        label={s.title}
-                        // Right side, in priority order: waiting-for-input dot (a paused
-                        // turn — beats the spinner), else the running spinner (actively
-                        // generating), else a finished dot, else the time.
-                        meta={
-                          unreadKind === 'needs-input' ? (
-                            <span className="pd-chat-dot pd-chat-dot--needs-input" />
-                          ) : running ? (
-                            <Spinner size={14} />
-                          ) : unreadKind === 'finished' ? (
-                            <span className="pd-chat-dot pd-chat-dot--finished" />
-                          ) : (
-                            relativeTime(s.modifiedAt)
-                          )
-                        }
-                        selected={effectiveCurrentFile === s.file && viewedChildId === null}
-                        onClick={() => {
-                          setViewedChild(null);
-                          void onOpen(s.file);
-                        }}
-                      />
-                    </div>
-                  </div>
+                  <SidebarRow
+                    // No caret by default; a chat with agents swaps its bubble for a
+                    // fold caret ON HOVER (CSS), so nothing pushes the icon around
+                    // (jedd A4). The caret points down when open, right when folded.
+                    icon={
+                      hasKids ? (
+                        <span className="pd-chat-icon-swap">
+                          <IconChat size={16} className="pd-chat-icon-bubble" />
+                          <IconChevronDown
+                            size={14}
+                            className={`pd-chat-icon-caret ${expanded ? '' : '-rotate-90'}`}
+                          />
+                        </span>
+                      ) : (
+                        <IconChat size={16} />
+                      )
+                    }
+                    label={s.title}
+                    // Right side, in priority order: waiting-for-input dot (a paused
+                    // turn — beats the spinner), else the running spinner (actively
+                    // generating), else a finished dot, else the time.
+                    meta={
+                      unreadKind === 'needs-input' ? (
+                        <span className="pd-chat-dot pd-chat-dot--needs-input" />
+                      ) : running ? (
+                        <Spinner size={14} />
+                      ) : unreadKind === 'finished' ? (
+                        <span className="pd-chat-dot pd-chat-dot--finished" />
+                      ) : (
+                        relativeTime(s.modifiedAt)
+                      )
+                    }
+                    selected={isFocused}
+                    data-testid={`chat-row-${s.title}`}
+                    onClick={() => {
+                      // Clicking the ALREADY-focused chat folds/unfolds its agent
+                      // dropdown; any other click opens the chat (jedd A4).
+                      if (isFocused && hasKids) {
+                        toggleParent(s.file);
+                        return;
+                      }
+                      setViewedChild(null);
+                      void onOpen(s.file);
+                    }}
+                  />
                   {expanded ? (
                     <div className="pd-child-rows" data-testid="child-rows">
                       {kids.map((c) => (
@@ -649,7 +654,11 @@ export function SessionSidebar({
                             <IconChat size={13} />
                           </span>
                           <span className="pd-child-row-label">{c.title}</span>
-                          {c.running ? <Spinner size={12} /> : null}
+                          {c.running ? (
+                            <Spinner size={12} />
+                          ) : childUnread[c.childId] !== undefined ? (
+                            <span className="pd-chat-dot pd-chat-dot--finished" />
+                          ) : null}
                         </button>
                       ))}
                       {corpKids.map((node) => (

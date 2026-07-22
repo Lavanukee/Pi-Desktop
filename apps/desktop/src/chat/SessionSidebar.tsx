@@ -21,7 +21,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   IconChat,
-  IconCheck,
   IconChevronDown,
   IconClock,
   IconConnector,
@@ -58,6 +57,14 @@ import { usePiStore } from '../state/pi-slice';
 import { setUserMode, useSettingsStore, useUserMode } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
 import { PROFILE_MENU_ACTIONS, USER_MODE_OPTIONS, userModeBlurb } from './profile-menu';
+import { type ChatNotice, SidebarChatNotice } from './SidebarChatNotice';
+
+/** How long each chat notice lingers before its fill bar runs out. A prompt that
+ * needs the user's input stays up longer than a plain completion. */
+const NOTICE_MS: Record<ChatNotice['kind'], number> = {
+  finished: 4500,
+  'needs-input': 9000,
+};
 
 /** Nav destinations that don't have a real page yet — open a "coming soon" stub. */
 export type SidebarStub = 'projects' | 'scheduled' | 'skills';
@@ -244,18 +251,26 @@ export function SessionSidebar({
 
   // Is the (single, active) chat working? — the same signal the composer reads.
   // The app runs one pi session at a time, so only the active chat's row can show
-  // a live spinner; when it goes idle we flash a "<title> finished" fade (#10).
+  // a live spinner; when it goes idle we pop a per-row notice (see below).
   const isStreaming = usePiStore((s) => s.agent.isStreaming);
   const promptInFlight = usePiStore((s) => s.promptInFlight);
   const corpRunning = useCorpStore((s) => s.corpRunning);
   const busy = isStreaming || promptInFlight || corpRunning;
   // A Pause halts the turn (busy→idle) without finishing it, so the busy→idle
-  // edge below must NOT flash "<title> finished" when the chat is now paused.
+  // edge below must NOT pop a completion notice when the chat is now paused.
   const pausedChat = usePiStore((s) => s.pausedChat);
+  // A turn that ends with a blocking dialog open is "needs your input", not done.
+  const awaitingInput = usePiStore((s) => s.uiRequests.length > 0);
 
-  const [justFinished, setJustFinished] = useState<{ title: string; at: number } | null>(null);
+  // The rectangular popout that replaces the old "<title> finished" pseudo-row:
+  // on the busy→idle edge the row's spinner collapses to a dot and this notice
+  // floats out to the right of that row. `busyFile` remembers which chat was
+  // working so we name + anchor it even if the active file shifts.
+  const [notice, setNotice] = useState<ChatNotice | null>(null);
   const prevBusy = useRef(false);
   const busyFile = useRef<string | null>(null);
+  // Row DOM nodes by session file, so the notice can pin to the right chat's row.
+  const rowRefs = useRef<Map<string, HTMLElement>>(new Map());
 
   const refresh = useCallback(() => {
     void listSessions().then(setSessions);
@@ -267,29 +282,26 @@ export function SessionSidebar({
     refresh();
   }, [refresh, sessionId]);
 
-  // On the busy→idle edge of the active chat, flash a "<title> finished" fade.
-  // `busyFile` remembers which chat was working so we name it even if the store's
-  // active file shifts at the same tick.
+  // On the busy→idle edge of the active chat, pop the notice for that row.
   useEffect(() => {
     if (busy) busyFile.current = currentFile;
     if (prevBusy.current && !busy && busyFile.current !== null) {
+      const file = busyFile.current;
       // Paused ≠ finished — a Pause frees the model but keeps the reply resumable,
-      // so it must not read as a completion in the sidebar.
+      // so it must not read as a completion.
       if (pausedChat === null) {
-        const title = sessions.find((s) => s.file === busyFile.current)?.title ?? 'Chat';
-        setJustFinished({ title, at: Date.now() });
+        const title = sessions.find((s) => s.file === file)?.title ?? 'Chat';
+        setNotice({
+          sessionFile: file,
+          title,
+          kind: awaitingInput ? 'needs-input' : 'finished',
+          at: Date.now(),
+        });
       }
       busyFile.current = null;
     }
     prevBusy.current = busy;
-  }, [busy, currentFile, sessions, pausedChat]);
-
-  // Clear the finished notice once its fade has run.
-  useEffect(() => {
-    if (justFinished === null) return;
-    const timer = setTimeout(() => setJustFinished(null), 3600);
-    return () => clearTimeout(timer);
-  }, [justFinished]);
+  }, [busy, currentFile, sessions, pausedChat, awaitingInput]);
 
   // New chat starts a fresh session in the RUNNING pi (new_session RPC): it
   // resets the thread but does NOT dispose/respawn pi, so no "pi exited" crash
@@ -454,43 +466,59 @@ export function SessionSidebar({
         </SidebarSection>
 
         <SidebarSection label="Chats">
-          {justFinished !== null ? (
-            // A transient "<title> finished" notice that fades out (#10). Keyed on
-            // `at` so a fresh finish restarts the animation; unmounted by the timer.
-            <div
-              key={justFinished.at}
-              className="mx-1 mb-1 flex items-center gap-1.5 rounded-md bg-bg-hover px-2 py-1 text-footnote text-text-secondary"
-              style={{
-                animation:
-                  'pd-fade-in 0.2s ease, pd-fade-out 0.6s var(--pd-easing-standard) 3s forwards',
-              }}
-            >
-              <IconCheck size={13} className="shrink-0 text-text-primary" />
-              <span className="truncate">{justFinished.title}</span>
-              <span className="shrink-0 text-text-muted">finished</span>
-            </div>
-          ) : null}
           {filtered.length === 0 ? (
             <div className="px-2 py-1.5 text-footnote text-text-muted">
               {query.trim().length > 0 ? 'No matching chats.' : 'No sessions yet.'}
             </div>
           ) : (
-            filtered.map((s) => (
-              <SidebarRow
-                key={s.file}
-                // The active chat's row shows a live spinner while it works (#10).
-                icon={
-                  busy && currentFile === s.file ? <Spinner size={16} /> : <IconChat size={16} />
-                }
-                label={s.title}
-                meta={relativeTime(s.modifiedAt)}
-                selected={currentFile === s.file}
-                onClick={() => void onOpen(s.file)}
-              />
-            ))
+            filtered.map((s) => {
+              const running = busy && currentFile === s.file;
+              const notifying = notice !== null && notice.sessionFile === s.file;
+              return (
+                <SidebarRow
+                  key={s.file}
+                  ref={(el) => {
+                    if (el !== null) rowRefs.current.set(s.file, el);
+                    else rowRefs.current.delete(s.file);
+                  }}
+                  icon={<IconChat size={16} />}
+                  label={s.title}
+                  // jedd: the running spinner + the collapsed status dot live on the
+                  // RIGHT — the spinner runs, then collapses to a smaller dot while the
+                  // popout is up, then the resting timestamp returns.
+                  meta={
+                    running ? (
+                      <Spinner size={14} />
+                    ) : notifying && notice !== null ? (
+                      <span className={`pd-chat-dot pd-chat-dot--${notice.kind}`} />
+                    ) : (
+                      relativeTime(s.modifiedAt)
+                    )
+                  }
+                  selected={currentFile === s.file}
+                  onClick={() => void onOpen(s.file)}
+                />
+              );
+            })
           )}
         </SidebarSection>
       </SidebarScroll>
+
+      {/* The rectangular finish / needs-input popout, pinned to the right of its
+          chat's row (replaces the old fake "<title> finished" pseudo-row). */}
+      {notice !== null ? (
+        <SidebarChatNotice
+          notice={notice}
+          anchorEl={rowRefs.current.get(notice.sessionFile) ?? null}
+          durationMs={NOTICE_MS[notice.kind]}
+          onDismiss={() => setNotice(null)}
+          onView={() => {
+            const file = notice.sessionFile;
+            setNotice(null);
+            void onOpen(file);
+          }}
+        />
+      ) : null}
 
       {/* Bottom-left footer: ONE profile button that opens the dropup holding
           Settings, Toggle theme, and the User / Power-user toggle (round-12 #4).

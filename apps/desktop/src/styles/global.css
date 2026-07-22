@@ -1132,3 +1132,82 @@ body {
   font-size: var(--pd-font-size-caption);
   line-height: 1;
 }
+
+/* ── Sidebar chat status: the running spinner collapses to a small status dot,
+   then a rectangular notice pops out to the right of the row (finish / needs
+   input) with a countdown fill bar. Replaces the old fake "<title> finished"
+   pseudo-row. ─────────────────────────────────────────────────────────────── */
+
+/* The collapsed circle the spinner becomes when a turn ends. Scales in so the
+   spinner→dot swap reads as a collapse. */
+.pd-chat-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  animation: pd-chat-dot-pop 0.28s var(--pd-easing-standard);
+}
+.pd-chat-dot--finished {
+  background: var(--pd-status-success-fg);
+}
+.pd-chat-dot--needs-input {
+  background: var(--pd-status-warning-fg);
+}
+@keyframes pd-chat-dot-pop {
+  from {
+    transform: scale(1.9);
+    opacity: 0.2;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* The rectangular popout (a card, not a literal speech bubble) that floats just
+   to the right of the row. Fixed-positioned via a portal so it escapes the
+   sidebar's scroll clip. */
+.pd-chat-notice {
+  width: 218px;
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-raised, var(--pd-bg-surface));
+  border: 1px solid var(--pd-border-subtle);
+  box-shadow: var(--pd-shadow-popover, 0 8px 24px rgb(0 0 0 / 0.28));
+  overflow: hidden;
+  animation: pd-chat-notice-in 0.22s var(--pd-easing-standard);
+}
+@keyframes pd-chat-notice-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+/* The countdown fill bar pinned to the bottom edge: shrinks left→right over the
+   auto-dismiss window, so the notice visibly "fills out" as it fades. */
+.pd-chat-notice-track {
+  height: 3px;
+  background: var(--pd-bg-inset);
+}
+.pd-chat-notice-fill {
+  height: 100%;
+  transform-origin: left center;
+  animation: pd-chat-notice-fill linear forwards;
+}
+.pd-chat-notice-fill--finished {
+  background: var(--pd-status-success-fg);
+}
+.pd-chat-notice-fill--needs-input {
+  background: var(--pd-status-warning-fg);
+}
+@keyframes pd-chat-notice-fill {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}

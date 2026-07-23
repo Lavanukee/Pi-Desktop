@@ -15,7 +15,7 @@ import { ONBOARDING_STEPS, useOnboardingStore } from './useOnboarding';
 
 const STEP_META: Record<(typeof ONBOARDING_STEPS)[number], { title: string; subtitle: string }> = {
   source: {
-    title: 'Welcome to Pi Desktop',
+    title: 'Welcome to Bobble',
     subtitle: "Where are you coming from? We'll carry your setup across.",
   },
   import: { title: 'Bring your setup', subtitle: 'Choose what to import from your old app.' },

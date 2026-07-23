@@ -19,8 +19,11 @@ export function ThemeStep() {
         <SegmentedControl
           aria-label="Theme flavor"
           value={flavor}
-          onValueChange={(v) => setFlavor(v === 'codex' ? 'codex' : 'claude')}
+          onValueChange={(v) =>
+            setFlavor(v === 'codex' ? 'codex' : v === 'claude' ? 'claude' : 'bobble')
+          }
           options={[
+            { value: 'bobble', label: 'Bobble' },
             { value: 'claude', label: 'Claude' },
             { value: 'codex', label: 'Codex' },
           ]}

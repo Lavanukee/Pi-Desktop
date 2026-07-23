@@ -49,7 +49,7 @@ async function handleSpawn(
 ): Promise<{ ok: boolean; summary?: string; error?: string }> {
   const wc = getWindow();
   if (wc === null || wc.isDestroyed() || childAgents === null) {
-    return { ok: false, error: 'no Pi Desktop window is available to run the subagent' };
+    return { ok: false, error: 'no Bobble window is available to run the subagent' };
   }
   const goal = typeof params?.goal === 'string' ? params.goal.trim() : '';
   if (goal.length === 0) return { ok: false, error: 'empty goal' };

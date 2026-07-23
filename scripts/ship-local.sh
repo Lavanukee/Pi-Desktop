@@ -15,8 +15,8 @@ pnpm --filter @pi-desktop/afm build:swift
 pnpm --filter @pi-desktop/pi-mac build:swift
 pnpm --filter @pi-desktop/desktop exec electron-builder --dir --config electron-builder.yml
 
-APP_SRC="apps/desktop/release/mac-arm64/Pi Desktop.app"
-[ -d "$APP_SRC" ] || APP_SRC="apps/desktop/release/mac/Pi Desktop.app"
+APP_SRC="apps/desktop/release/mac-arm64/Bobble.app"
+[ -d "$APP_SRC" ] || APP_SRC="apps/desktop/release/mac/Bobble.app"
 [ -d "$APP_SRC" ] || { echo "ship-local: packaged app not found under apps/desktop/release" >&2; exit 1; }
 
 # Sign the pi-afm mach-o FIRST (codesign requires inner code signed before the
@@ -44,7 +44,7 @@ fi
 # Ad-hoc signature: required for locally-built binaries on Apple Silicon.
 codesign --force --deep --sign - "$APP_SRC"
 
-DEST="/Applications/Pi Desktop.app"
+DEST="/Applications/Bobble.app"
 rm -rf "$DEST"
 ditto "$APP_SRC" "$DEST"
 

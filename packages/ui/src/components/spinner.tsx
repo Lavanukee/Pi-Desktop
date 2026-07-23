@@ -8,23 +8,22 @@ export interface SpinnerProps extends HTMLAttributes<HTMLSpanElement> {
 }
 
 /**
- * The branded "Pi caret" loader (build/loader.svg, in-app). The pi mark DRAWS
- * ITSELF — a currentColor stroke wipes along the pi's path — while its right leg
- * blinks like a text-insertion caret ("cursor" reading of the mark, in motion).
- * A faint full mark is hinted underneath so it reads even mid-draw.
+ * The Bobble loader — the app's standard spinner. A rounded arc orbits a faint
+ * ring track while its sweep gently BREATHES between short and long (the
+ * "bobble": alive, never mechanical). Calm and legible down to 13px.
  *
- * API-compatible with the old border spinner (same props / span ref / role), so
- * every call site (App boot, ModelManager, ChatThread, connectors…) gets it for
- * free. Uses currentColor, so it inherits the surrounding text color; keep a
- * `size` prop. Multiple loaders desync via a per-instance negative delay.
- * Reduced-motion freezes to the fully-drawn static mark (indicators.css).
+ * currentColor throughout, so it inherits the surrounding text color.
+ * API-compatible with every prior spinner (same props / span ref / role), so
+ * all call sites (App boot, ModelManager, ChatThread, connectors…) get it for
+ * free. Multiple loaders desync via a per-instance negative delay.
+ * Reduced-motion freezes to a static three-quarter arc (indicators.css).
  */
 export const Spinner = forwardRef<HTMLSpanElement, SpinnerProps>(function Spinner(
   { size, className, style, ...rest },
   ref,
 ) {
   const sizeStyle = size === undefined ? {} : { width: size, height: size };
-  const delay: Record<string, string> = { '--pd-loader-delay': `-${Date.now() % 2600}ms` };
+  const delay: Record<string, string> = { '--pd-loader-delay': `-${Date.now() % 1600}ms` };
   return (
     <span
       ref={ref}
@@ -34,21 +33,11 @@ export const Spinner = forwardRef<HTMLSpanElement, SpinnerProps>(function Spinne
       style={{ ...sizeStyle, ...delay, ...style }}
       {...rest}
     >
-      <svg className="pd-loader-svg" viewBox="0 0 1024 1024" aria-hidden="true" focusable="false">
-        {/* faint full mark: the "un-drawn" pi hinted underneath */}
-        <g className="pd-loader-ghost">
-          <rect x="300" y="328" width="424" height="86" rx="43" />
-          <rect x="329" y="328" width="86" height="372" rx="43" />
-          <rect x="609" y="328" width="86" height="372" rx="43" />
-        </g>
-        {/* the pi drawing itself: roof, then left leg, then right leg */}
-        <path
-          className="pd-loader-draw"
-          pathLength={1000}
-          d="M300 371 L724 371 M372 371 L372 700 M652 371 L652 700"
-        />
-        {/* right leg = blinking text caret (the "cursor" tell) */}
-        <rect className="pd-loader-caret" x="609" y="328" width="86" height="372" rx="43" />
+      <svg className="pd-loader-svg" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        {/* faint full ring: the track the arc orbits */}
+        <circle className="pd-loader-track" cx="16" cy="16" r="13" pathLength={100} />
+        {/* the breathing arc (pathLength normalizes dasharray to 0-100) */}
+        <circle className="pd-loader-arc" cx="16" cy="16" r="13" pathLength={100} />
       </svg>
     </span>
   );

@@ -10,8 +10,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron as electron } from 'playwright-core';
 
-const appBundle = process.argv[2] ?? '/Applications/Pi Desktop.app';
-const executable = path.join(appBundle, 'Contents/MacOS/Pi Desktop');
+const appBundle = process.argv[2] ?? '/Applications/Bobble.app';
+const executable = path.join(appBundle, 'Contents/MacOS/Bobble');
 
 function assert(condition, message) {
   if (!condition) throw new Error(`packaged-probe failed: ${message}`);
@@ -36,7 +36,10 @@ try {
 
   const flavor = await page.evaluate(() => document.documentElement.dataset.flavor);
   const mode = await page.evaluate(() => document.documentElement.dataset.mode);
-  assert(flavor === 'claude' || flavor === 'codex', `unexpected flavor ${flavor}`);
+  assert(
+    flavor === 'claude' || flavor === 'codex' || flavor === 'bobble',
+    `unexpected flavor ${flavor}`,
+  );
   assert(mode === 'light' || mode === 'dark', `unexpected mode ${mode}`);
 
   await page.waitForFunction(

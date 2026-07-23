@@ -401,7 +401,7 @@ export function ChatApp({
             >
               {empty ? (
                 <div key="lead" className="flex flex-col items-center gap-2">
-                  <h1 className="text-title">Pi Desktop</h1>
+                  <h1 className="text-title">Bobble</h1>
                   <p className="text-body text-text-muted">
                     {flavor === 'claude' ? 'How can I help you today?' : 'What are we building?'}
                   </p>

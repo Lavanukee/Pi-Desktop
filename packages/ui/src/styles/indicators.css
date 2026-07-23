@@ -37,11 +37,11 @@
 }
 
 /*
- * The branded "Pi caret" loader (Spinner component; build/loader.svg in-app).
- * The pi mark draws itself along its stroke path (pd-loader-draw) while the
- * right leg blinks like a text caret (pd-loader-blink); a faint full mark sits
- * underneath. currentColor throughout so it inherits the surrounding text
- * color. Multiple loaders desync via a per-instance --pd-loader-delay.
+ * The Bobble loader (Spinner component) — the app's standard spinner. A rounded
+ * arc orbits a faint ring track (pd-spin on the svg) while its sweep gently
+ * BREATHES between short and long (pd-loader-breathe) — calm, alive, legible at
+ * 13px. currentColor throughout so it inherits the surrounding text color.
+ * Multiple loaders desync via a per-instance --pd-loader-delay.
  */
 .pd-loader {
   display: inline-flex;
@@ -58,42 +58,37 @@
   width: 100%;
   height: 100%;
   overflow: visible;
+  transform-origin: center;
+  animation: pd-spin 1.1s linear infinite;
+  animation-delay: var(--pd-loader-delay, 0ms);
 }
 
-.pd-loader-ghost {
-  fill: currentColor;
-  opacity: 0.14;
-}
-
-.pd-loader-draw {
+.pd-loader-track {
   fill: none;
   stroke: currentColor;
-  stroke-width: 78;
+  stroke-width: 3.25;
+  opacity: 0.16;
+}
+
+.pd-loader-arc {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3.25;
   stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-dasharray: 1000 1000;
-  stroke-dashoffset: 1000;
-  animation: pd-loader-draw 2.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  stroke-dasharray: 18 100;
+  animation: pd-loader-breathe 1.6s ease-in-out infinite;
   animation-delay: var(--pd-loader-delay, 0ms);
 }
 
-.pd-loader-caret {
-  fill: currentColor;
-  transform-origin: center;
-  animation: pd-loader-blink 1.05s ease-in-out infinite;
-  animation-delay: var(--pd-loader-delay, 0ms);
-}
-
-/* Reduced motion: freeze to the fully-drawn static mark. Infinite animations
+/* Reduced motion: freeze to a static three-quarter arc. Infinite animations
  * are disabled by component CSS per the themes emit.ts convention. */
 @media (prefers-reduced-motion: reduce) {
-  .pd-loader-draw {
-    stroke-dashoffset: 0;
+  .pd-loader-svg {
     animation: none;
   }
-  .pd-loader-caret {
-    opacity: 1;
+  .pd-loader-arc {
     animation: none;
+    stroke-dasharray: 75 100;
   }
 }
 

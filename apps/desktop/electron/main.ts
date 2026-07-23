@@ -152,7 +152,7 @@ function loadRenderer(win: BrowserWindow, extraQuery?: Record<string, string>): 
 function createMainWindow(): BrowserWindow {
   const icon = appIconImage();
   const win = new BrowserWindow({
-    title: 'Pi Desktop',
+    title: 'Bobble',
     // Roomier default so the chat + canvas (situation room, live files/terminal)
     // aren't squished side-by-side on first launch.
     width: 1440,
@@ -413,7 +413,7 @@ function registerAppIpc(): void {
   // extension drives ANY Mac app through, publishing PI_MAC_SOCK/_TOKEN for the
   // pi child BEFORE its first spawn. The pi-mac Accessibility/CGEvent helper is
   // spawned from MAIN so the Accessibility + Screen-Recording TCC grants bind to
-  // the signed Pi Desktop.app bundle (never the pi child's exec path).
+  // the signed Bobble.app bundle (never the pi child's exec path).
   registerMacAgentIpc();
 
   // Desktop settings (theme/permissions/effort/search keys/mcp mode/capabilities).

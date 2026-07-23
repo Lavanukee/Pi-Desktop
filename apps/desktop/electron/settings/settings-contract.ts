@@ -9,7 +9,7 @@
  * of an app-created window may reach them.
  */
 
-export type ThemeFlavor = 'claude' | 'codex';
+export type ThemeFlavor = 'claude' | 'codex' | 'bobble';
 /** Settings-level mode adds `system` (resolved to light/dark via the OS pref at
  * apply time; the theme store itself only knows light/dark). */
 export type ThemeModePref = 'light' | 'dark' | 'system';

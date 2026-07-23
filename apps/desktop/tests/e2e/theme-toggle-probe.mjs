@@ -73,7 +73,7 @@ const themeAttrs = (page) =>
 
     let attrs = await themeAttrs(page);
     assert(
-      attrs.flavor === 'claude' && attrs.mode === 'dark',
+      attrs.flavor === 'bobble' && attrs.mode === 'dark',
       `unexpected initial theme ${JSON.stringify(attrs)}`,
     );
 
@@ -107,7 +107,7 @@ const themeAttrs = (page) =>
       { timeout: 5000 },
     );
     attrs = await themeAttrs(page);
-    assert(attrs.flavor === 'claude', `mode toggle changed flavor: ${JSON.stringify(attrs)}`);
+    assert(attrs.flavor === 'bobble', `mode toggle changed flavor: ${JSON.stringify(attrs)}`);
     await waitFor(() => readSettings().theme.mode === 'light', 'mode persisted to settings.json');
 
     // Flavor via the settings menu (the "Settings" row of the same open dropup):

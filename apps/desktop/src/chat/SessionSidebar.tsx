@@ -91,7 +91,7 @@ export type SidebarStub = 'projects' | 'scheduled' | 'skills';
 
 /**
  * Bottom-left profile control (round-12 #4). ONE compact button — the avatar
- * (rail) or the full "Pi Desktop · Local" row (expanded) — that opens a DROPUP
+ * (rail) or the full "Bobble · Local" row (expanded) — that opens a DROPUP
  * (side="top") holding, top→bottom: Settings, Toggle theme, a divider, and — at
  * the bottom — the User / Power-user segmented toggle. Replaces the old separate
  * settings-gear + theme-toggle controls. Rendered in both sidebar shapes so both
@@ -121,7 +121,7 @@ function SidebarProfileMenu({
         {/* Same --pd-icon-size centering box as the rail icons so the avatar
             sits on the identical x through the collapse (round-14 #7). */}
         <span className="pd-rail-btn-icon">
-          <span className="pd-sidebar-avatar">P</span>
+          <span className="pd-sidebar-avatar">B</span>
         </span>
       </button>
     ) : (
@@ -131,9 +131,9 @@ function SidebarProfileMenu({
         aria-label="Account, settings and theme"
         className="pd-sidebar-footer pd-focusable min-w-0 flex-1 cursor-pointer rounded-lg border-0 bg-transparent text-left font-[inherit] text-text-primary hover:bg-bg-hover"
       >
-        <span className="pd-sidebar-avatar">P</span>
+        <span className="pd-sidebar-avatar">B</span>
         <span className="pd-sidebar-footer-name">
-          Pi Desktop<span className="pd-sidebar-footer-plan"> · Local</span>
+          Bobble<span className="pd-sidebar-footer-plan"> · Local</span>
         </span>
         <IconChevronDown size={16} className="shrink-0 text-text-muted" />
       </button>

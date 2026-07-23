@@ -103,15 +103,21 @@ export function InterfacePanel({
       </SettingSection>
 
       <SettingSection title="Advanced" description="Deeper customization and developer tools.">
-        <SettingRow label="Theme flavor" hint="Match the app's look to Claude or Codex.">
+        <SettingRow
+          label="Theme flavor"
+          hint="Bobble is the native look; Claude and Codex match those apps."
+        >
           <SegmentedControl
             aria-label="Theme flavor"
             data-testid="settings-flavor"
             value={flavor}
             onValueChange={(v) =>
-              void update({ theme: { flavor: v === 'codex' ? 'codex' : 'claude' } })
+              void update({
+                theme: { flavor: v === 'codex' ? 'codex' : v === 'claude' ? 'claude' : 'bobble' },
+              })
             }
             options={[
+              { value: 'bobble', label: 'Bobble' },
               { value: 'claude', label: 'Claude' },
               { value: 'codex', label: 'Codex' },
             ]}

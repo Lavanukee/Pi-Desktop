@@ -12,9 +12,12 @@ import type { ThemeFlavor, ThemeMode } from '../store/theme';
 export type SourceChoice = 'claude' | 'codex' | 'neither';
 export type ExperienceLevel = 'new' | 'knows-llamacpp' | 'no-tutorial';
 
-/** Auto-pick the UI flavor from the source app (swappable on the theme step). */
+/** Auto-pick the UI flavor from the source app (swappable on the theme step).
+ * Users coming from neither app get Bobble — the app's own identity. */
 export function flavorForSource(source: SourceChoice): ThemeFlavor {
-  return source === 'codex' ? 'codex' : 'claude';
+  if (source === 'codex') return 'codex';
+  if (source === 'claude') return 'claude';
+  return 'bobble';
 }
 
 /**

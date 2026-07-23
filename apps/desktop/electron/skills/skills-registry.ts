@@ -14,7 +14,7 @@
  * Provenance is explicit and permissive:
  *   - Apache-2.0 skills are vendored verbatim from github.com/anthropics/skills
  *     (each keeps its upstream LICENSE.txt); see resources/skills/ATTRIBUTION.md.
- *   - MIT skills are authored in-house for Pi Desktop (same license as the app).
+ *   - MIT skills are authored in-house for Bobble (same license as the app).
  * No bundled skill carries secrets or makes network calls just to load.
  */
 
@@ -33,7 +33,7 @@ export type SkillCategory =
   | 'documents'
   | 'productivity';
 
-/** One skill Pi Desktop ships and can install into the agent skills dir. */
+/** One skill Bobble ships and can install into the agent skills dir. */
 export interface BundledSkill {
   /** Stable id === the bundled folder name === the installed folder name. */
   id: string;
@@ -97,7 +97,7 @@ export const BUNDLED_SKILLS: readonly BundledSkill[] = [
     homepage: 'https://github.com/anthropics/skills/tree/main/skills/internal-comms',
   },
 
-  // ── MIT, authored in-house for Pi Desktop ───────────────────────────────────
+  // ── MIT, authored in-house for Bobble ───────────────────────────────────
   {
     id: 'code-review',
     name: 'Code review',

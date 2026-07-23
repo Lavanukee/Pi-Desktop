@@ -55,7 +55,7 @@ const app = await electron.launch({
 
 try {
   const page = await app.firstWindow();
-  await page.waitForSelector('text=Pi Desktop');
+  await page.waitForSelector('text=Bobble');
   await page.waitForFunction(() => typeof window.__pi_store === 'function', { timeout: 8000 });
 
   // The chat UI auto-starts pi on mount; grab the live pid.

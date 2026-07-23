@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { flavorForSource, mapExperience, preselectSource, resolveMode } from './onboarding-logic';
 
 describe('flavorForSource', () => {
-  it('maps codex→codex and everything else→claude', () => {
+  it('maps codex→codex, claude→claude, and neither→bobble (the native identity)', () => {
     expect(flavorForSource('codex')).toBe('codex');
     expect(flavorForSource('claude')).toBe('claude');
-    expect(flavorForSource('neither')).toBe('claude');
+    expect(flavorForSource('neither')).toBe('bobble');
   });
 });
 

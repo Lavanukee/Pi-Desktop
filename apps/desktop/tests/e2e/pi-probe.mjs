@@ -48,7 +48,7 @@ const app = await electron.launch({
 
 try {
   const page = await app.firstWindow();
-  await page.waitForSelector('text=Pi Desktop');
+  await page.waitForSelector('text=Bobble');
 
   // The pi-connect module installed the store hook at renderer boot.
   await page.waitForFunction(() => typeof window.__pi_store === 'function', { timeout: 5000 });

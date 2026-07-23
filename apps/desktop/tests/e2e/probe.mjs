@@ -46,7 +46,7 @@ const app = await electron.launch({
 });
 try {
   const page = await app.firstWindow();
-  await page.waitForSelector('text=Pi Desktop');
+  await page.waitForSelector('text=Bobble');
 
   const themeAttrs = () =>
     page.evaluate(() => ({
@@ -61,13 +61,14 @@ try {
     timeout: 5000,
   });
 
+  // Boot default is now the app's own flavor: bobble/dark (index.html + settings).
   let attrs = await themeAttrs();
   assert(
-    attrs.flavor === 'claude' && attrs.mode === 'dark',
+    attrs.flavor === 'bobble' && attrs.mode === 'dark',
     `unexpected initial theme ${JSON.stringify(attrs)}`,
   );
-  const claudeDarkBg = await bodyBg();
-  assert(claudeDarkBg === 'rgb(38, 38, 36)', `claude/dark bg was ${claudeDarkBg}`);
+  const bobbleDarkBg = await bodyBg();
+  assert(bobbleDarkBg === 'rgb(21, 21, 23)', `bobble/dark bg was ${bobbleDarkBg}`);
 
   mkdirSync(path.dirname(screenshotPath), { recursive: true });
   await page.screenshot({ path: screenshotPath });
@@ -101,19 +102,22 @@ try {
   await page.click('[data-testid="profile-button"]');
   await page.waitForSelector('[data-testid="profile-menu"]', { timeout: 8000 });
 
-  // claude/dark → claude/light via the sun quick-toggle.
+  // bobble/dark → bobble/light via the sun quick-toggle.
   await page.click('[data-testid="toggle-mode"]');
-  await assertTheme('claude', 'light', 'rgb(250, 249, 245)', 'mode quick-toggle → claude/light');
-  // …and back to claude/dark.
+  await assertTheme('bobble', 'light', 'rgb(245, 245, 247)', 'mode quick-toggle → bobble/light');
+  // …and back to bobble/dark.
   await page.click('[data-testid="toggle-mode"]');
-  await assertTheme('claude', 'dark', 'rgb(38, 38, 36)', 'mode quick-toggle → claude/dark');
+  await assertTheme('bobble', 'dark', 'rgb(21, 21, 23)', 'mode quick-toggle → bobble/dark');
 
   // Flavor lives in Interface → Advanced now (round-5 #23); mode stays in
   // Appearance. Settings opens from the same dropup (still open from above).
+  // Walk all three flavors: bobble (boot) → claude → codex.
   await page.click('[data-testid="open-settings"]');
   await page.waitForSelector('[data-testid="settings-view"]', { timeout: 8000 });
   await page.click('[data-testid="settings-nav-interface"]');
   await page.waitForSelector('[data-testid="settings-flavor"]', { timeout: 8000 });
+  await page.click('[data-testid="settings-flavor"] >> text=Claude');
+  await assertTheme('claude', 'dark', 'rgb(38, 38, 36)', 'settings flavor → claude/dark');
   await page.click('[data-testid="settings-flavor"] >> text=Codex');
   await assertTheme('codex', 'dark', 'rgb(24, 24, 24)', 'settings flavor → codex/dark');
   await page.click('[data-testid="settings-nav-appearance"]');
@@ -121,7 +125,9 @@ try {
   await page.click('[data-testid="settings-mode"] >> text=Light');
   await assertTheme('codex', 'light', 'rgb(255, 255, 255)', 'settings mode → codex/light');
 
-  console.log(`probe OK — all 4 flavor/mode combos verified; screenshot: ${screenshotPath}`);
+  console.log(
+    `probe OK — bobble/claude/codex flavor+mode combos verified; screenshot: ${screenshotPath}`,
+  );
 } finally {
   await app.close();
 }

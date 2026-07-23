@@ -20,7 +20,7 @@
  * was copied wholesale and no proprietary fonts are referenced or bundled.
  */
 
-export type ThemeFlavor = 'claude' | 'codex';
+export type ThemeFlavor = 'claude' | 'codex' | 'bobble';
 export type ThemeMode = 'light' | 'dark';
 export type ThemeId = `${ThemeFlavor}-${ThemeMode}`;
 
@@ -899,11 +899,320 @@ const codexDark: ThemeTokens = {
   layout: codexLayout,
 };
 
+/* ------------------------------------------------------------------ */
+/* Bobble — the app's OWN identity (neither claude nor codex).          */
+/*                                                                      */
+/* Design brief (jedd): unique but not flashy — the Apple-app aesthetic:*/
+/* liquid-glass frosted surfaces, hairline borders, neutral ink on      */
+/* soft gray, one restrained system-blue accent, sheet-style motion.    */
+/* Deliberately NO gradients and NO violet/purple wash anywhere — the   */
+/* brand gradient lives only in the app icon + agent cursor, never the  */
+/* UI chrome. All values are original (Apple-LIKE, nothing harvested).  */
+/* ------------------------------------------------------------------ */
+
+const bobbleFont: Omit<ThemeTokens['font'], 'response'> = {
+  // Pure system stack — SF Pro on macOS, the native feel with zero bundling.
+  sans: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', system-ui, 'Segoe UI', sans-serif",
+  serif: "'New York', ui-serif, Georgia, 'Times New Roman', serif",
+  mono: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
+  size: {
+    caption: '12px',
+    footnote: '13px',
+    body: '14px',
+    code: '13px',
+    heading: '16px',
+    title: '22px',
+  },
+  leading: {
+    caption: '16px',
+    footnote: '18px',
+    body: '20px',
+    code: '18px',
+    heading: '21px',
+    title: '28px',
+  },
+  weight: { regular: '400', medium: '500', semibold: '600', bold: '700', body: '400' },
+};
+
+/** Bobble response voice: comfortable system sans — 15px like Apple body copy. */
+const bobbleResponse: ThemeTokens['font']['response'] = {
+  family: bobbleFont.sans,
+  size: '15px',
+  leading: '23px',
+  variation: 'normal',
+};
+
+// Apple-like continuous-feel rounding: a touch softer than claude, never pills.
+const bobbleRadius: ThemeTokens['radius'] = {
+  xs: '5px',
+  sm: '7px',
+  md: '10px',
+  lg: '14px',
+  full: '9999px',
+  surface: '18px', // composer/dialog cards
+  popover: '14px', // menus — visibly softer than claude's 8
+  row: '9px',
+  bubble: '16px',
+  button: '10px', // rounded-rect, deliberately NOT a pill
+  menuItem: '7px',
+};
+
+// Sheet-like motion: Apple's decelerating curves, gentle press, no theatrics.
+const bobbleMotion: ThemeTokens['motion'] = {
+  duration: {
+    fast: '120ms',
+    base: '180ms',
+    slow: '300ms',
+    dialogIn: '320ms',
+    dialogOut: '160ms',
+    menu: '180ms',
+    toast: '240ms',
+  },
+  easing: {
+    standard: 'cubic-bezier(0.25, 0.1, 0.25, 1)',
+    enter: 'cubic-bezier(0.32, 0.72, 0, 1)', // the Apple sheet curve
+    exit: 'cubic-bezier(0.4, 0, 1, 1)',
+    press: 'cubic-bezier(0.3, 0.7, 0.4, 1)',
+    // Gentle settle with a whisper of overshoot — felt, not seen.
+    spring: 'linear(0, 0.4038, 0.8093, 0.9834, 1.0243, 1.0176, 1.0055, 1.0004, 1)',
+    toast: 'cubic-bezier(0.32, 0.72, 0, 1)',
+  },
+  pressScale: '0.97',
+  pressScaleSmall: '0.95',
+  shimmerDuration: '2.4s',
+  shimmerEasing: 'ease-in-out',
+  menuEnterDistance: '6px',
+  menuEnterScale: '0.97',
+  menuStagger: '0ms',
+  menuItemRestingOpacity: '1',
+  dialogEnterScale: '0.96',
+  dialogEnterTranslate: '10px', // rises like a sheet
+  dialogOrigin: 'center',
+  toastEnterX: '0px',
+  toastEnterY: '-8px',
+};
+
+const bobbleControl: ThemeTokens['control'] = {
+  sm: '26px',
+  md: '32px',
+  lg: '40px',
+  icon: '18px',
+  iconStroke: '1.25',
+};
+
+const bobbleLayout: ThemeTokens['layout'] = {
+  rowHeight: '32px',
+  sidebarWidth: '272px',
+  topbarHeight: '48px',
+  threadWidth: '800px',
+  proseWidth: '620px',
+  thinkingPreviewHeight: '72px',
+  menuPadding: '5px',
+};
+
+// THE bobble signature: liquid glass. Overlays/menus/dialogs are translucent
+// with a heavy backdrop blur; the scrim itself frosts what's behind it.
+const bobbleSurface: ThemeTokens['surface'] = {
+  translucency: '0.78',
+  blurOverlay: '20px',
+  blurBackdrop: '8px',
+};
+
+// Soft, diffuse, low-contrast elevation — depth from blur, not darkness.
+const bobbleShadowBase = {
+  sm: '0 1px 3px rgba(0, 0, 0, 0.07)',
+  md: '0 4px 14px rgba(0, 0, 0, 0.09)',
+  lg: '0 12px 32px -6px rgba(0, 0, 0, 0.14)',
+  popover: '0 18px 50px -10px rgba(0, 0, 0, 0.22)',
+};
+
+const bobbleLight: ThemeTokens = {
+  bg: {
+    base: '#f5f5f7', // Apple's soft platform gray
+    raised: '#ffffff',
+    overlay: '#fbfbfdd9', // translucent white — frosts via surface.blurOverlay
+    inset: '#ececee',
+    hover: '#0000000a',
+    active: '#00000014',
+    backdrop: '#00000059',
+    sidebar: '#f2f2f7a6', // frosted glass over the window
+    selected: '#7878801f', // Apple quaternary fill
+    track: '#7878801f',
+  },
+  text: {
+    primary: '#1d1d1f', // Apple ink
+    secondary: '#424245',
+    muted: '#86868b',
+    inverse: '#ffffff',
+    onAccent: '#ffffff',
+    link: '#0066cc',
+    placeholder: '#9d9da3',
+    ghost: '#1d1d1f4d',
+  },
+  border: {
+    subtle: '#0000000f', // hairlines everywhere
+    default: '#0000001a',
+    strong: '#00000038',
+    focus: '#0071e3',
+  },
+  accent: {
+    primary: '#0071e3', // restrained system blue — the ONLY accent in the chrome
+    hover: '#0077ed',
+    active: '#0062c4',
+    subtle: '#0071e31a',
+  },
+  status: {
+    info: { bg: '#e8f2fd', fg: '#0058b0', border: '#a7cdf7' },
+    success: { bg: '#e4f7e9', fg: '#1d7a3b', border: '#93dcae' },
+    warning: { bg: '#fdf0dd', fg: '#9a5b00', border: '#f5c26b' },
+    danger: { bg: '#fde8e7', fg: '#c0271f', border: '#f5a49f' },
+  },
+  bubble: {
+    bg: '#7878801f', // neutral fill, no accent tint
+    fg: '#1d1d1f',
+  },
+  tooltip: {
+    bg: '#2c2c2ee6', // dark glass
+    fg: '#ffffff',
+  },
+  codeSurface: {
+    inlineBg: '#7878801f',
+    inlineFg: '#1d1d1f', // neutral — no claude red
+    inlineBorder: '#00000000',
+    blockBg: '#f6f6f8',
+    blockBorder: '#0000000f',
+  },
+  diff: {
+    addedFg: '#248a3d', // Apple system green (light)
+    deletedFg: '#d70015', // system red (light)
+    modifiedFg: '#c04c00', // system orange (light, darkened for contrast)
+  },
+  scrollbar: {
+    thumb: '#00000026',
+    thumbHover: '#00000040',
+  },
+  sidebar: {
+    border: '#0000000d',
+    shadow: 'none', // glass, not a floating card
+    translucency: '0.65',
+    blur: '24px',
+  },
+  shimmer: {
+    base: '#1d1d1f8c',
+    highlight: '#1d1d1fd9',
+  },
+  font: { ...bobbleFont, response: bobbleResponse },
+  radius: bobbleRadius,
+  shadow: {
+    ...bobbleShadowBase,
+    hairline: '0 0 0 0.5px rgba(0, 0, 0, 0.10)',
+  },
+  surface: bobbleSurface,
+  motion: bobbleMotion,
+  spacing,
+  control: bobbleControl,
+  layout: bobbleLayout,
+};
+
+const bobbleDark: ThemeTokens = {
+  bg: {
+    base: '#151517', // graphite, never pure black
+    raised: '#1e1e21',
+    overlay: '#232327d9', // translucent — frosts via surface.blurOverlay
+    inset: '#121214',
+    hover: '#ffffff0f',
+    active: '#ffffff1a',
+    backdrop: '#00000080',
+    sidebar: '#1c1c1f8c', // frosted glass
+    selected: '#ffffff17',
+    track: '#7878805c', // Apple dark segmented track fill
+  },
+  text: {
+    primary: '#f5f5f7',
+    secondary: '#d6d6db',
+    muted: '#98989f',
+    inverse: '#1d1d1f',
+    onAccent: '#ffffff',
+    link: '#2997ff',
+    placeholder: '#7c7c85',
+    ghost: '#f5f5f74d',
+  },
+  border: {
+    subtle: '#ffffff14',
+    default: '#ffffff1f',
+    strong: '#ffffff3d',
+    focus: '#2997ff',
+  },
+  accent: {
+    primary: '#0a84ff', // system blue (dark)
+    hover: '#2997ff',
+    active: '#006edb',
+    subtle: '#0a84ff29',
+  },
+  status: {
+    info: { bg: '#0a84ff24', fg: '#6cb2ff', border: '#0a84ff66' },
+    success: { bg: '#30d15824', fg: '#30d158', border: '#30d15866' },
+    warning: { bg: '#ff9f0a24', fg: '#ffb340', border: '#ff9f0a66' },
+    danger: { bg: '#ff453a24', fg: '#ff6961', border: '#ff453a66' },
+  },
+  bubble: {
+    bg: '#7878802e',
+    fg: '#f5f5f7',
+  },
+  tooltip: {
+    bg: '#38383ce6',
+    fg: '#ffffff',
+  },
+  codeSurface: {
+    inlineBg: '#78788033',
+    inlineFg: '#f5f5f7',
+    inlineBorder: '#00000000',
+    blockBg: '#ffffff0a',
+    blockBorder: '#ffffff0f',
+  },
+  diff: {
+    addedFg: '#30d158',
+    deletedFg: '#ff453a',
+    modifiedFg: '#ff9f0a',
+  },
+  scrollbar: {
+    thumb: '#ffffff21',
+    thumbHover: '#ffffff38',
+  },
+  sidebar: {
+    border: '#ffffff0f',
+    shadow: 'none',
+    translucency: '0.55',
+    blur: '24px',
+  },
+  shimmer: {
+    base: '#f5f5f794',
+    highlight: '#f5f5f7d1',
+  },
+  font: { ...bobbleFont, response: bobbleResponse },
+  radius: bobbleRadius,
+  shadow: {
+    // Dark glass needs slightly stronger separation than light.
+    sm: '0 1px 3px rgba(0, 0, 0, 0.28)',
+    md: '0 4px 14px rgba(0, 0, 0, 0.34)',
+    lg: '0 12px 32px -6px rgba(0, 0, 0, 0.45)',
+    popover: '0 18px 50px -10px rgba(0, 0, 0, 0.55)',
+    hairline: '0 0 0 0.5px rgba(255, 255, 255, 0.14)',
+  },
+  surface: bobbleSurface,
+  motion: bobbleMotion,
+  spacing,
+  control: bobbleControl,
+  layout: bobbleLayout,
+};
+
 export const themes: Record<ThemeId, ThemeTokens> = {
   'claude-light': claudeLight,
   'claude-dark': claudeDark,
   'codex-light': codexLight,
   'codex-dark': codexDark,
+  'bobble-light': bobbleLight,
+  'bobble-dark': bobbleDark,
 };
 
 export const themeIds = Object.keys(themes) as ThemeId[];

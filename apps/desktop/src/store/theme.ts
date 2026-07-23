@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type ThemeFlavor = 'claude' | 'codex';
+export type ThemeFlavor = 'claude' | 'codex' | 'bobble';
 export type ThemeMode = 'dark' | 'light';
 
 export interface ThemeState {
@@ -12,13 +12,19 @@ export interface ThemeState {
   toggleMode(): void;
 }
 
+/** Flavor cycle order for toggleFlavor (bobble is the app's own identity). */
+const FLAVOR_CYCLE: readonly ThemeFlavor[] = ['bobble', 'claude', 'codex'];
+
 // Defaults must match the attributes pre-set on <html> in index.html.
 export const useThemeStore = create<ThemeState>()((set) => ({
-  flavor: 'claude',
+  flavor: 'bobble',
   mode: 'dark',
   setFlavor: (flavor) => set({ flavor }),
   setMode: (mode) => set({ mode }),
-  toggleFlavor: () => set((s) => ({ flavor: s.flavor === 'claude' ? 'codex' : 'claude' })),
+  toggleFlavor: () =>
+    set((s) => ({
+      flavor: FLAVOR_CYCLE[(FLAVOR_CYCLE.indexOf(s.flavor) + 1) % FLAVOR_CYCLE.length],
+    })),
   toggleMode: () => set((s) => ({ mode: s.mode === 'dark' ? 'light' : 'dark' })),
 }));
 

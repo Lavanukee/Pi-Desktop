@@ -2,20 +2,22 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { applyThemeAttributes, useThemeStore } from './theme';
 
 beforeEach(() => {
-  useThemeStore.setState({ flavor: 'claude', mode: 'dark' });
+  useThemeStore.setState({ flavor: 'bobble', mode: 'dark' });
 });
 
 describe('theme store', () => {
-  it('defaults to claude/dark, matching the attributes pre-set in index.html', () => {
-    expect(useThemeStore.getState().flavor).toBe('claude');
+  it('defaults to bobble/dark, matching the attributes pre-set in index.html', () => {
+    expect(useThemeStore.getState().flavor).toBe('bobble');
     expect(useThemeStore.getState().mode).toBe('dark');
   });
 
-  it('toggles flavor between claude and codex', () => {
+  it('cycles flavor bobble → claude → codex → bobble', () => {
+    useThemeStore.getState().toggleFlavor();
+    expect(useThemeStore.getState().flavor).toBe('claude');
     useThemeStore.getState().toggleFlavor();
     expect(useThemeStore.getState().flavor).toBe('codex');
     useThemeStore.getState().toggleFlavor();
-    expect(useThemeStore.getState().flavor).toBe('claude');
+    expect(useThemeStore.getState().flavor).toBe('bobble');
   });
 
   it('toggles mode between dark and light', () => {
@@ -25,16 +27,23 @@ describe('theme store', () => {
     expect(useThemeStore.getState().mode).toBe('dark');
   });
 
-  it('supports all four flavor/mode combinations via setters', () => {
+  it('supports every flavor/mode combination via setters', () => {
     const seen: string[] = [];
-    for (const flavor of ['claude', 'codex'] as const) {
+    for (const flavor of ['bobble', 'claude', 'codex'] as const) {
       for (const mode of ['dark', 'light'] as const) {
         useThemeStore.getState().setFlavor(flavor);
         useThemeStore.getState().setMode(mode);
         seen.push(`${useThemeStore.getState().flavor}/${useThemeStore.getState().mode}`);
       }
     }
-    expect(seen).toEqual(['claude/dark', 'claude/light', 'codex/dark', 'codex/light']);
+    expect(seen).toEqual([
+      'bobble/dark',
+      'bobble/light',
+      'claude/dark',
+      'claude/light',
+      'codex/dark',
+      'codex/light',
+    ]);
   });
 });
 

@@ -11,7 +11,7 @@
  *
  * Grouping is priority-deduped — a connector appears in the FIRST section it
  * qualifies for, in this order:
- *   1. by-us       — c.firstParty (authored by Pi Desktop; e.g. Video editing)
+ *   1. by-us       — c.firstParty (authored by Bobble; e.g. Video editing)
  *   2. recommended — the /Applications scan result, minus anything above
  *   3. official    — c.official (the vendor's own server; HeyGen's HyperFrames,
  *                    GitHub, Notion…), minus anything above

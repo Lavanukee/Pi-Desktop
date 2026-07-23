@@ -125,7 +125,7 @@ async function ensureAgentTab(): Promise<string> {
   if (agentTabId !== null && browserManager.has(agentTabId)) return agentTabId;
   const wc = getAgentWindow();
   if (wc === null || wc.isDestroyed()) {
-    throw new Error('no Pi Desktop window is available to host the browser');
+    throw new Error('no Bobble window is available to host the browser');
   }
   const opened = new Promise<string>((resolve, reject) => {
     pendingOpen = { resolve, reject };

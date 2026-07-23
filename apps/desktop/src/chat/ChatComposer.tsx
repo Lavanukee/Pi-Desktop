@@ -609,7 +609,7 @@ export function ChatComposer({
       ? 'Send — it goes right after this reply…'
       : bashMode
         ? 'Run a shell command…'
-        : 'Ask Pi anything…';
+        : 'Ask anything…';
   // Only the empty home screen (no messages yet) shows the shortcut helper line.
   const isHome = usePiStore((s) => s.messages.length === 0);
 

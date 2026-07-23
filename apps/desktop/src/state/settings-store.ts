@@ -28,7 +28,7 @@ const ICON_STROKE_DEFAULT = 1.25;
 
 const DEFAULTS: DesktopSettings = {
   version: 1,
-  theme: { flavor: 'claude', mode: 'system' },
+  theme: { flavor: 'bobble', mode: 'system' },
   permissionMode: 'reviewer',
   effort: 'medium',
   userMode: 'user',

@@ -110,9 +110,9 @@ export function SettingsView({
             className="mb-2 flex items-center gap-2.5 rounded-lg px-3 py-2"
             data-testid="settings-account"
           >
-            <span className="pd-sidebar-avatar">P</span>
+            <span className="pd-sidebar-avatar">B</span>
             <span className="min-w-0">
-              <span className="block truncate text-body text-text-primary">Pi Desktop</span>
+              <span className="block truncate text-body text-text-primary">Bobble</span>
               <span className="block text-footnote text-text-muted">Local · signed out</span>
             </span>
           </div>

@@ -269,18 +269,12 @@ const KEYFRAMES = `/* Shared animation keyframes. Flavor timing/easing comes fro
 @keyframes pd-pulse {
   50% { opacity: 0.5; }
 }
-/* Branded "Pi caret" loader: the pi stroke wipes on (dashoffset), then off. */
-@keyframes pd-loader-draw {
-  0% { stroke-dashoffset: 1000; }
-  42% { stroke-dashoffset: 0; }
-  62% { stroke-dashoffset: 0; }
-  100% { stroke-dashoffset: -1000; }
-}
-/* ...while the right leg blinks like a text-insertion caret. */
-@keyframes pd-loader-blink {
-  0%, 44% { opacity: 1; }
-  56%, 78% { opacity: 0.12; }
-  90%, 100% { opacity: 1; }
+/* The Bobble loader: a rounded arc orbits (pd-spin on the svg) while its length
+ * gently breathes between a short and a long sweep — calm, legible at 13px,
+ * currentColor throughout. The arc circle uses pathLength=100. */
+@keyframes pd-loader-breathe {
+  0%, 100% { stroke-dasharray: 18 100; }
+  50% { stroke-dasharray: 52 100; }
 }
 /* Indeterminate progress bar sweep. */
 @keyframes pd-slide-bar {

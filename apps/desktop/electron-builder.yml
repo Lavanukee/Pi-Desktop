@@ -1,8 +1,8 @@
 # Local/dev packaging config. Release packaging (dmg, notarization,
 # auto-update) hardens in W11; this exists so `pnpm ship:local` can put a
-# runnable "Pi Desktop.app" in /Applications at any time.
+# runnable "Bobble.app" in /Applications at any time.
 appId: app.pidesktop.desktop
-productName: Pi Desktop
+productName: Bobble
 directories:
   output: release
 # `files` selects the app's OWN sources (the renderer bundle + the CJS electron
@@ -54,7 +54,7 @@ asarUnpack:
   # real disk; mac-agent.ts rewrites the resolved app.asar path →
   # app.asar.unpacked so `spawn` finds it. Spawning from main (not the pi child)
   # is what binds the Accessibility + Screen-Recording TCC grants to the signed
-  # Pi Desktop.app bundle.
+  # Bobble.app bundle.
   - node_modules/@pi-desktop/pi-mac/**
 mac:
   target: dir

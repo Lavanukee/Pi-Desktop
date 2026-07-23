@@ -27,8 +27,8 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron as electron } from 'playwright-core';
 
-const appBundle = process.argv[2] ?? '/Applications/Pi Desktop.app';
-const executable = path.join(appBundle, 'Contents/MacOS/Pi Desktop');
+const appBundle = process.argv[2] ?? '/Applications/Bobble.app';
+const executable = path.join(appBundle, 'Contents/MacOS/Bobble');
 const resources = path.join(appBundle, 'Contents/Resources');
 const asar = path.join(resources, 'app.asar');
 

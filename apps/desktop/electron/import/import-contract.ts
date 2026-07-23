@@ -39,7 +39,7 @@ export interface GenerationCapabilities {
 export interface OnboardingChoices {
   source: 'claude' | 'codex' | 'neither';
   imports: { mcp: boolean; theme: boolean; sessions: boolean; skills: boolean };
-  theme: { flavor: 'claude' | 'codex'; mode: 'dark' | 'light' };
+  theme: { flavor: 'claude' | 'codex' | 'bobble'; mode: 'dark' | 'light' };
   experience: 'new' | 'knows-llamacpp' | 'no-tutorial';
   /** Derived from `experience`; gates the in-app tutorial. */
   tutorial: boolean;

@@ -33,7 +33,7 @@ import {
   USER_MODES,
 } from './settings-contract';
 
-const FLAVORS: readonly ThemeFlavor[] = ['claude', 'codex'];
+const FLAVORS: readonly ThemeFlavor[] = ['claude', 'codex', 'bobble'];
 const MODES: readonly ThemeModePref[] = ['light', 'dark', 'system'];
 const PERMISSION_MODES: readonly PermissionMode[] = ['bypass', 'reviewer', 'review-all'];
 const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'max'];
@@ -59,7 +59,7 @@ function clampModelSelection(value: unknown, fallback: ModelSelection): ModelSel
 
 export const DEFAULT_SETTINGS: DesktopSettings = {
   version: 1,
-  theme: { flavor: 'claude', mode: 'system' },
+  theme: { flavor: 'bobble', mode: 'system' },
   permissionMode: 'reviewer',
   effort: 'medium',
   userMode: 'user',

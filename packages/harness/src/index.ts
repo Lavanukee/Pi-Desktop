@@ -39,6 +39,7 @@ import { effortKnobs, isEffortLevel } from './effort/effort.js';
 import { createLoopDetector, type LoopDetector, loopDetectorConfig } from './loop/loop-detector.js';
 import { parseModelParams, smallModelWarning } from './model/model-size.js';
 import { type CallModel, callModelFromEnv } from './model-call/call-model.js';
+import { warmSystemPrompt } from './model-call/warmup.js';
 import { createBashFlagger } from './permissions/flag-bash.js';
 import {
   isPermissionMode,
@@ -319,6 +320,9 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
   // (no PI_DESKTOP_UTILITY_BASE_URL and no injected callModel) → those features
   // degrade to heuristic/skip; the rest of the harness is unaffected.
   const callModel: CallModel | undefined = options.callModel ?? callModelFromEnv();
+  // Debounce the preemptive warm-up so a model is primed at most once per session
+  // (model_select can re-fire); the key is the model id we last warmed.
+  let warmedModelId: string | null = null;
   const asyncClassifier: AsyncClassifier | undefined =
     callModel !== undefined ? createClassifierEscalation(callModel) : undefined;
 
@@ -985,7 +989,7 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     return changed ? { content } : undefined;
   });
 
-  // Model changes → small-model warning + status refresh.
+  // Model changes → small-model warning + status refresh + preemptive warm-up.
   pi.on('model_select', (event, ctx) => {
     runtime.currentCtx = ctx;
     runtime.model = { id: event.model.id, name: event.model.name };
@@ -994,6 +998,15 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
       if (warning !== null && ctx.hasUI) ctx.ui.notify(warning, 'warning');
     }
     publishStatus(ctx);
+    // Preemptively prime the freshly-selected model BEFORE the user's first message
+    // (jedd): one tiny system-prompt-only completion warms the server's Metal
+    // kernels + KV cache so turn-1 TTFT drops toward a warm follow-up's. Fire-and-
+    // forget (never awaited, never throws); the turn-1 classify piggyback shares
+    // the same prefix and warms it anyway if this is skipped. Once per model id.
+    if (callModel !== undefined && event.model.id !== warmedModelId) {
+      warmedModelId = event.model.id;
+      void warmSystemPrompt(callModel, augmentSystemPrompt(ctx.getSystemPrompt()));
+    }
   });
 
   // /harness command protocol.

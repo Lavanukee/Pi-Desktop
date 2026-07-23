@@ -142,12 +142,20 @@ async function startSidecar(): Promise<Gen3dSidecar | null> {
   return instance;
 }
 
+/** URLs already being consumed — a crashed sidecar restarts on the SAME port,
+ * and its old reconnecting stream loop would otherwise be joined by a second
+ * one (double events) when the supervisor re-wires. */
+const wiredEventUrls = new Set<string>();
+
 function wireEventStream(instance: Gen3dSidecar): void {
+  const url = `${instance.baseUrl}/events`;
+  if (wiredEventUrls.has(url)) return;
+  wiredEventUrls.add(url);
   void consumeNdjsonStream({
-    url: `${instance.baseUrl}/events`,
+    url,
     signal: eventsAbort.signal,
     onValue: (value) => handleSidecarEvent(value),
-  });
+  }).finally(() => wiredEventUrls.delete(url));
 }
 
 function handleSidecarEvent(value: unknown): void {

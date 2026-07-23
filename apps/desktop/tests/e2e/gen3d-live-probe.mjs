@@ -117,8 +117,11 @@ async function main() {
         {
           id: 'cubepart',
           env: 'cubepart',
-          totalBytes: 9903730587,
-          repos: [{ repo: 'Roblox/cubepart', bytes: 9903730587 }],
+          totalBytes: 18791023319,
+          repos: [
+            { repo: 'Roblox/cubepart', bytes: 9903730587 },
+            { repo: 'Qwen/Qwen3-VL-4B-Instruct', bytes: 8887292732 },
+          ],
         },
         { id: 'autoremesher', env: 'binary', totalBytes: 17259387, repos: [] },
       ],

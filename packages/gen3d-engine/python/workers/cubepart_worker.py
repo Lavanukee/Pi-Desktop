@@ -69,7 +69,9 @@ def main() -> None:
     progress(STAGE, "Encoding input mesh…")
     mesh, _, _ = load_mesh(args.mesh)
     surface = sample_surface(mesh, num_samples=128_000)
-    surface = torch.from_numpy(surface).to(pipe.device).unsqueeze(0).float()
+    # float() BEFORE .to(device): sample_surface yields float64 and MPS
+    # cannot receive float64 tensors (verified failure here).
+    surface = torch.from_numpy(surface).float().unsqueeze(0).to(pipe.device)
     latents, _ = pipe.encode_shape(surface)
 
     progress(STAGE, f"Decomposing into {len(parts)} parts ({args.steps} steps)…")

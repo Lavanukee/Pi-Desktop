@@ -146,6 +146,11 @@ def _provision_cubepart(registry: Registry, log) -> None:
         _run([uv, "venv", str(tool / ".venv"), "--python", "3.11"], tool, log)
         py = str(registry.venv_python("cube"))
         _run([uv, "pip", "install", "--python", py, "-e", str(cubepart)], tool, log)
+        # cubepart's loose `diffusers>=0.30` resolves to 0.39+, whose
+        # QwenEmbedRope.forward reordered args and breaks the QwenImage hijack
+        # ("got multiple values for argument 'device'" — reproduced here).
+        # 0.38.0 matches the hijack's calling convention.
+        _run([uv, "pip", "install", "--python", py, "diffusers==0.38.0"], tool, log)
 
 
 def _provision_paint(registry: Registry, log) -> None:
@@ -162,6 +167,16 @@ def _provision_paint(registry: Registry, log) -> None:
         # Not in the fork's macOS requirements but imported by its texture
         # pipeline (verified missing here): mesh processing + UV unwrap.
         _run([uv, "pip", "install", "--python", py, "pymeshlab", "xatlas"], tool, log)
+    # RealESRGAN upsampler checkpoint (the fork's install-macos.sh does the
+    # same curl from the official Real-ESRGAN release).
+    esrgan = tool / "hy3dpaint" / "ckpt" / "RealESRGAN_x4plus.pth"
+    if not esrgan.exists():
+        esrgan.parent.mkdir(parents=True, exist_ok=True)
+        log("Downloading RealESRGAN_x4plus.pth (67 MB)…")
+        urllib.request.urlretrieve(
+            "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
+            esrgan,
+        )
 
 
 def _provision_autoremesher(registry: Registry, model: dict, log) -> None:

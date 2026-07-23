@@ -136,6 +136,13 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
         allowPatterns: ['hunyuan3d-paintpbr-v2-1/*', 'hy3dpaint/*'],
         bytes: 6_887_601_302,
       },
+      // The paint pipeline's view conditioner (textureGenPipeline.py
+      // dino_ckpt_path) — not gated; safetensors + configs only.
+      {
+        repo: 'facebook/dinov2-giant',
+        allowPatterns: ['*.json', 'model.safetensors'],
+        bytes: 4_546_006_416,
+      },
     ],
   },
   {
@@ -144,7 +151,13 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
     role: 'segment',
     note: 'Mesh + part names → per-part meshes (Roblox/cubepart, OpenRAIL)',
     env: 'cubepart',
-    repos: [{ repo: 'Roblox/cubepart', bytes: 9_903_730_587 }],
+    repos: [
+      { repo: 'Roblox/cubepart', bytes: 9_903_730_587 },
+      // Its prompt encoder (configs/shape_denoiser_multimesh.yaml
+      // base_model_type) — fetched at first run if absent, so the catalog
+      // owns it up front. Not gated; loaded fp16 with sdpa.
+      { repo: 'Qwen/Qwen3-VL-4B-Instruct', bytes: 8_887_292_732 },
+    ],
   },
   {
     id: 'autoremesher',

@@ -328,6 +328,38 @@ try {
   }
   console.log('prompt retarget OK: overlay followed the setBounds retarget');
 
+  // ── z-order truth: occluded ⇒ hidden, clear ⇒ shown (even while driving) ──
+  // The fake bounds source now reports the controlled window covered by
+  // another app's window (helper CGWindowList truth in production). The
+  // tracker must hide the overlay — the phantom never paints over the
+  // covering app — and re-show it the moment the window is clear again.
+  const winVisible = () =>
+    app.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows().find((x) =>
+        x.webContents.getURL().includes('overlay.html'),
+      );
+      return w ? w.isVisible() : null;
+    });
+  await dbg('overlay-fake-move', { ...C, occluded: true });
+  let occludedHidden = false;
+  for (let i = 0; i < 40 && !occludedHidden; i++) {
+    await sleep(25);
+    const inf = await dbg('overlay-info');
+    occludedHidden = inf.result?.occluded === true && (await winVisible()) === false;
+  }
+  if (!occludedHidden) fail('overlay still visible while the fake source reports occluded');
+
+  // Clear again — and explicitly NOT frontmost: occlusion truth must win over
+  // the driving/frontmost proxy (cursor lives on the app whenever it is clear).
+  await dbg('overlay-fake-move', { ...C, occluded: false, frontmost: false });
+  let clearShown = false;
+  for (let i = 0; i < 40 && !clearShown; i++) {
+    await sleep(25);
+    clearShown = (await winVisible()) === true;
+  }
+  if (!clearShown) fail('overlay did not re-show after the occluder cleared');
+  console.log('occlusion conceal/reveal OK (z-order truth beats the frontmost proxy)');
+
   // ── hide puts the phantom away ────────────────────────────────────────────
   await dbg('overlay-hide');
   const hidden = await dbg('overlay-info');

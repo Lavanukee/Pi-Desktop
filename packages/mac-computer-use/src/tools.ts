@@ -417,14 +417,40 @@ export function registerMacComputerUseTools(
         // scroll can't swallow. direction/amount ride along for logging + as the
         // helper's legacy fallback.
         const { dx, dy } = scrollDelta(params.direction, params.amount);
-        const ack = await bridge.request<{ ok: boolean; background?: boolean }>(
-          'scroll',
-          withTarget({ direction: params.direction, amount: params.amount, dx, dy }),
-        );
+        const ack = await bridge.request<{
+          ok: boolean;
+          background?: boolean;
+          mode?: string;
+          moved?: boolean;
+          coveredByOtherWindows?: boolean;
+        }>('scroll', withTarget({ direction: params.direction, amount: params.amount, dx, dy }));
+        // The helper VERIFIES movement against the scroll area's AX scroll bar
+        // when one exists (climbing a pixel-burst→gesture→line→AX ladder) —
+        // surface an honest "nothing moved" so the model reacts instead of
+        // assuming (jedd's field report was exactly a silent no-op).
+        if (ack.moved === false) {
+          return textResult(
+            `Scroll ${params.direction} had NO effect (content did not move${
+              ack.coveredByOtherWindows === true
+                ? '; the window is fully covered by other windows'
+                : ''
+            }). The view may already be at its end, or this area is not scrollable — ` +
+              'mac_snapshot to re-check.',
+            {
+              action: 'scroll',
+              ok: true,
+              background: ack.background,
+              mode: ack.mode,
+              moved: false,
+            },
+          );
+        }
         return textResult(`Scrolled ${params.direction}. Re-snapshot to see new elements.`, {
           action: 'scroll',
           ok: true,
           background: ack.background,
+          mode: ack.mode,
+          moved: ack.moved,
         });
       } catch (err) {
         return errResult('mac_scroll', messageOf(err));

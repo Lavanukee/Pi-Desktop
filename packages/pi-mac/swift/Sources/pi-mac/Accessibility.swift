@@ -336,8 +336,81 @@ func windowBoundsInfo(target: SnapshotTarget) -> [String: Any]? {
     "frontmost": NSWorkspace.shared.frontmostApplication?.processIdentifier == resolved.pid,
     "windowTitle": axString(root, kAXTitleAttribute) ?? "",
   ]
-  if let wid = axWindowID(root) { d["windowId"] = Int(wid) }
+  if let wid = axWindowID(root) {
+    d["windowId"] = Int(wid)
+    // Z-order truth for the overlay's app-scoping (one cheap window-server
+    // read): is the window on the CURRENT space, and how much of it is covered
+    // by OTHER apps' windows above it? The overlay hides while occluded — the
+    // phantom must never paint on top of whatever covers the controlled app.
+    let z = zOrderInfo(windowId: wid, pid: resolved.pid, fallbackFrame: frame)
+    d["onScreen"] = z.onScreen
+    d["occluded"] = z.onScreen && z.coveredFraction >= OCCLUSION_FRACTION
+    d["covered"] = (z.coveredFraction * 100).rounded() / 100
+  }
   return d
+}
+
+/// Find the scroll area to target for a scroll at `pt`: the DEEPEST
+/// AXScrollArea whose frame contains the point (DFS visits descendants after
+/// ancestors, so the last hit is the innermost), else the largest scroll area
+/// in the window. Nil when the window exposes none (AX-opaque surface).
+func findScrollArea(in root: AXUIElement, containing pt: CGPoint) -> AXUIElement? {
+  var bestContaining: AXUIElement?
+  var largest: AXUIElement?
+  var largestArea: CGFloat = 0
+  var stack: [AXUIElement] = [root]
+  var visited = 0
+  while let el = stack.popLast() {
+    visited += 1
+    if visited > 1500 { break }
+    if (axString(el, kAXRoleAttribute) ?? "") == "AXScrollArea",
+      let pos = axPoint(el, kAXPositionAttribute), let size = axSize(el, kAXSizeAttribute)
+    {
+      let rect = CGRect(origin: pos, size: size)
+      if rect.contains(pt) { bestContaining = el }
+      let area = rect.width * rect.height
+      if area > largestArea {
+        largestArea = area
+        largest = el
+      }
+    }
+    for kid in axChildren(el) { stack.append(kid) }
+  }
+  return bestContaining ?? largest
+}
+
+/// The scroll area's scroll bar for the given axis, when it exposes one.
+func scrollBarOf(_ scrollArea: AXUIElement, horizontal: Bool) -> AXUIElement? {
+  let attr = horizontal ? kAXHorizontalScrollBarAttribute : kAXVerticalScrollBarAttribute
+  guard let ref = axCopy(scrollArea, attr) else { return nil }
+  return (ref as! AXUIElement)  // swiftlint:disable:this force_cast
+}
+
+/// A scroll bar's normalized 0…1 value — the scroll ladder's VERIFICATION
+/// signal ("did content actually move?") and its last-resort actuator.
+func scrollBarValue(_ bar: AXUIElement) -> Double? {
+  guard let ref = axCopy(bar, kAXValueAttribute) else { return nil }
+  return (ref as? NSNumber)?.doubleValue
+}
+
+/// Set a scroll bar's normalized value directly (background, focus-free) —
+/// the ladder's final rung when no synthetic wheel event moves the content.
+func setScrollBarValue(_ bar: AXUIElement, _ value: Double) -> Bool {
+  let clamped = min(1.0, max(0.0, value))
+  return AXUIElementSetAttributeValue(
+    bar, kAXValueAttribute as CFString, NSNumber(value: clamped) as CFTypeRef) == .success
+}
+
+/// Move the target's window to a new top-left position (AX position write).
+/// Powers the `moveWindow` serve method — the deterministic "drag" the live
+/// probes use to measure overlay tracking latency.
+func moveWindowTo(target: SnapshotTarget, x: Double, y: Double) -> Bool {
+  guard let resolved = resolveTargetPid(target) else { return false }
+  let app = AXUIElementCreateApplication(resolved.pid)
+  let root = rootFor(app: app)
+  var pt = CGPoint(x: x, y: y)
+  guard let value = AXValueCreate(.cgPoint, &pt) else { return false }
+  return AXUIElementSetAttributeValue(root, kAXPositionAttribute as CFString, value) == .success
 }
 
 /// Serialize a snapshot element (minus the live AXUIElement) for the wire.

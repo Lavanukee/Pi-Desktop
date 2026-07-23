@@ -262,6 +262,50 @@ func postScrollToPid(_ pid: pid_t, dx: Int, dy: Int, at pt: CGPoint) {
   emitScrollSteps(src, dx: dx, dy: dy, at: pt) { $0.postToPid(pid) }
 }
 
+/// Trackpad-style scroll GESTURE delivered to `pid`: a began/changed/ended
+/// phase sequence of continuous pixel events. Some scroll views (SwiftUI /
+/// System Settings panes) ignore phase-less wheel events but track a phased
+/// gesture — the second rung of the verified scroll ladder in doScroll.
+func postScrollGestureToPid(_ pid: pid_t, dx: Int, dy: Int, at pt: CGPoint) {
+  let src = eventSource()
+  func phased(_ d1: Int32, _ d2: Int32, phase: Int64) -> CGEvent? {
+    guard
+      let ev = CGEvent(
+        scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2, wheel1: d1, wheel2: d2,
+        wheel3: 0)
+    else { return nil }
+    ev.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+    ev.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase)
+    ev.location = pt
+    return ev
+  }
+  // kCGScrollPhaseBegan = 1, Changed = 2, Ended = 4. Split the delta over a
+  // few changed-events so views that integrate velocity see a real gesture.
+  phased(0, 0, phase: 1)?.postToPid(pid)
+  let steps: Int32 = 3
+  for _ in 0..<steps {
+    phased(Int32(dy) / steps, Int32(dx) / steps, phase: 2)?.postToPid(pid)
+  }
+  phased(0, 0, phase: 4)?.postToPid(pid)
+}
+
+/// Legacy LINE-unit wheel scroll delivered to `pid` — the third rung: some AX
+/// hosts only honor discrete wheel lines.
+func postLineScrollToPid(_ pid: pid_t, dx: Int, dy: Int, at pt: CGPoint) {
+  let src = eventSource()
+  func lines(_ v: Int) -> Int32 {
+    if v == 0 { return 0 }
+    return Int32(max(1, abs(v) / 40)) * (v < 0 ? -1 : 1)
+  }
+  guard
+    let ev = CGEvent(
+      scrollWheelEvent2Source: src, units: .line, wheelCount: 2, wheel1: lines(dy),
+      wheel2: lines(dx), wheel3: 0)
+  else { return }
+  ev.location = pt
+  ev.postToPid(pid)
+}
+
 /// AX-FIRST press. Try the element's own focus-free AX actions in preference
 /// order (AXPress → AXConfirm → AXPick) — these fire the control WITHOUT moving
 /// the cursor or changing which app is frontmost, so the user can keep working

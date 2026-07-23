@@ -14,12 +14,17 @@
  * cleared on navigation and idempotently re-created here, so injection survives
  * page changes. All are defensive: they never throw across executeJavaScript.
  */
+import { AGENT_CURSOR_FILTER, agentCursorSvg } from './agent-cursor';
 
 /** The stamp shared with the perception snapshot. Keep in sync with
  * @pi-desktop/browser-use `DATA_IDX_ATTR`. */
 export const DATA_IDX_ATTR = 'data-pi-idx';
 
 const IDX = DATA_IDX_ATTR;
+
+/** Browser cursor render width (px). The glyph keeps the shared 34×40 aspect. */
+const CURSOR_W = 26;
+const CURSOR_H = Math.round((CURSOR_W * 40) / 34);
 
 /** A cursor overlay command. */
 export type CursorOp =
@@ -45,8 +50,8 @@ export function cursorCommand(op: CursorOp): string {
       cur = document.createElement('div');
       cur.id = CID;
       cur.setAttribute('aria-hidden', 'true');
-      cur.style.cssText = 'position:fixed;left:-100px;top:-100px;width:22px;height:22px;z-index:2147483647;pointer-events:none;margin:0;padding:0;opacity:0;transform-origin:top left;will-change:left,top,transform,opacity;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.45));';
-      cur.innerHTML = '<svg width="22" height="22" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg"><path d="M3 2 L3 17 L7.2 13.1 L10 19.5 L12.6 18.3 L9.8 12 L15.5 12 Z" fill="#fff" stroke="#1a73e8" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+      cur.style.cssText = 'position:fixed;left:-100px;top:-100px;width:${CURSOR_W}px;height:${CURSOR_H}px;z-index:2147483647;pointer-events:none;margin:0;padding:0;opacity:0;transform-origin:24% 13%;will-change:left,top,transform,opacity;filter:${AGENT_CURSOR_FILTER};';
+      cur.innerHTML = ${JSON.stringify(agentCursorSvg(CURSOR_W))};
       (document.body || document.documentElement).appendChild(cur);
     }
     // Ease to the target position (both axes), and lightly spring the press +
@@ -61,7 +66,7 @@ export function cursorCommand(op: CursorOp): string {
         t = document.createElement('div');
         t.id = TID;
         t.setAttribute('aria-hidden', 'true');
-        t.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;font:600 11px -apple-system,system-ui,sans-serif;color:#fff;background:#1a73e8;border-radius:10px;padding:3px 8px;box-shadow:0 2px 8px rgba(0,0,0,0.3);white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;display:none;';
+        t.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;font:600 11px -apple-system,system-ui,sans-serif;color:#fff;background:linear-gradient(135deg,rgba(63,82,172,0.95),rgba(96,58,186,0.95));border:1px solid rgba(255,255,255,0.28);border-radius:999px;padding:4px 10px;box-shadow:0 3px 12px rgba(18,22,76,0.4),0 0 18px rgba(99,88,255,0.3),inset 0 1px 0 rgba(255,255,255,0.2);white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;display:none;';
         (document.body || document.documentElement).appendChild(t);
       }
       return t;
@@ -76,7 +81,7 @@ export function cursorCommand(op: CursorOp): string {
       cur.style.left = op.x + 'px';
       cur.style.top = op.y + 'px';
       var tp = document.getElementById(TID);
-      if (tp && tp.style.display !== 'none') { tp.style.left = (op.x + 16) + 'px'; tp.style.top = (op.y + 18) + 'px'; }
+      if (tp && tp.style.display !== 'none') { tp.style.left = (op.x + 20) + 'px'; tp.style.top = (op.y + 28) + 'px'; }
     }
     if (op.kind === 'click') {
       // Tactile press: dip the cursor toward its tip, then spring back.
@@ -87,7 +92,7 @@ export function cursorCommand(op: CursorOp): string {
       // Expanding pulse ring centred on the click point.
       var ring = document.createElement('div');
       ring.id = RID;
-      ring.style.cssText = 'position:fixed;left:' + op.x + 'px;top:' + op.y + 'px;width:16px;height:16px;margin:-8px 0 0 -8px;border:2px solid #1a73e8;border-radius:50%;z-index:2147483646;pointer-events:none;opacity:0.9;box-shadow:0 0 0 1px rgba(255,255,255,0.35);';
+      ring.style.cssText = 'position:fixed;left:' + op.x + 'px;top:' + op.y + 'px;width:16px;height:16px;margin:-8px 0 0 -8px;border:2.5px solid rgba(122,108,255,0.95);border-radius:50%;z-index:2147483646;pointer-events:none;opacity:0.95;box-shadow:0 0 12px rgba(79,125,255,0.6),inset 0 0 6px rgba(123,63,242,0.35);';
       (document.body || document.documentElement).appendChild(ring);
       if (reduce) { setTimeout(function(){ ring.remove(); }, 220); }
       else {
@@ -102,7 +107,7 @@ export function cursorCommand(op: CursorOp): string {
         var label = op.text ? String(op.text).slice(0, 40) : '';
         p.textContent = label ? ('⌨ ' + label) : '⌨ typing…';
         var cl = parseFloat(cur.style.left) || 0, ct = parseFloat(cur.style.top) || 0;
-        p.style.left = (cl + 16) + 'px'; p.style.top = (ct + 18) + 'px';
+        p.style.left = (cl + 20) + 'px'; p.style.top = (ct + 28) + 'px';
         p.style.display = 'block';
       } else {
         p.style.display = 'none';

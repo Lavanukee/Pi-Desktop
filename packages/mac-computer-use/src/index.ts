@@ -23,6 +23,7 @@ export * from './bridge-client.js';
 export * from './format.js';
 export * from './permissions.js';
 export * from './protocol.js';
+export * from './session-state.js';
 export * from './tools.js';
 
 /** Register the mac tool set with an explicit bridge (test / app seam). */
@@ -30,8 +31,13 @@ export function registerMacComputerUse(pi: ExtensionAPI, options: MacComputerUse
   registerMacComputerUseTools(pi, options);
 }
 
-/** pi extension factory (zero-config; reads the bridge socket from env). */
+/** pi extension factory (zero-config; reads the bridge socket from env).
+ *
+ * PI_MAC_PRECONSENT=1 skips the one-time in-UI consent prompt — an E2E seam
+ * ONLY: the headless probes (tests/e2e/mac-computeruse-probe.mjs) have no
+ * human to click the dialog. The app never sets it for real sessions. */
 export default function activate(pi: ExtensionAPI): void {
   const bridge: MacBridge | null = MacAgentClient.fromEnv();
-  registerMacComputerUseTools(pi, { bridge, consent: createMacConsentGate() });
+  const preConsented = process.env.PI_MAC_PRECONSENT === '1';
+  registerMacComputerUseTools(pi, { bridge, consent: createMacConsentGate({ preConsented }) });
 }

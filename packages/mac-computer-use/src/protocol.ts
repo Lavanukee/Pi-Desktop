@@ -25,6 +25,7 @@ export const MAC_AGENT_TOKEN_ENV = 'PI_MAC_TOKEN';
 /** RPC methods the app's bridge implements. */
 export type MacAgentMethod =
   | 'check'
+  | 'promptGrants'
   | 'snapshot'
   | 'click'
   | 'type'
@@ -32,6 +33,8 @@ export type MacAgentMethod =
   | 'scroll'
   | 'launch'
   | 'screenshot'
+  | 'bounds'
+  | 'frontmost'
   | 'setDriving';
 
 /** One request on the wire. */
@@ -82,20 +85,55 @@ export interface MacSnapshot {
     readonly elementCount: number;
     readonly truncated: boolean;
   };
+  /** The snapshotted window's frame in global screen points (top-left origin),
+   * when the root was a real window — drives the app's cursor overlay. */
+  readonly windowBounds?: { x: number; y: number; w: number; h: number };
   /** Optional screenshot (present when requested). Per-window capture when a
    * windowId is known, else a whole-screen fallback. */
   readonly screenshot?: { path: string; base64?: string; mimeType?: string; windowId?: number };
 }
 
-/** The ack a click/type returns. `background: true` means the act ran via
- * Accessibility (AXPress / AXSetValue / AXConfirm) with NO focus steal; false
- * means it fell back to the foreground CGEvent path (coordinate click / focused
- * keystroke). `mode` names the concrete path taken. */
+/** The ack a click/type returns. `background: true` means the act ran with NO
+ * focus steal — via Accessibility (AXPress / AXSetValue / AXConfirm) or via
+ * pid-targeted event delivery (postToPid); false means it fell back to the
+ * legacy foreground CGEvent path (shared-cursor click / focused keystroke).
+ * `mode` names the concrete path taken. `x`/`y` echo the acted-on point
+ * (screen points) so the app can animate the phantom cursor to it. */
 export interface MacActAck {
   readonly found: boolean;
   readonly mode?: string;
   readonly background?: boolean;
   readonly submitted?: boolean;
+  readonly x?: number;
+  readonly y?: number;
+}
+
+/** Live window geometry returned by the `bounds` method (screen points). The
+ * launch flow polls this until the opened app has a window; the overlay tracks
+ * it; probes assert `frontmost` stays false for a background-controlled app. */
+export interface MacWindowBounds {
+  readonly ok: boolean;
+  readonly app?: string;
+  readonly pid?: number;
+  readonly x?: number;
+  readonly y?: number;
+  readonly w?: number;
+  readonly h?: number;
+  readonly windowId?: number;
+  readonly windowTitle?: string;
+  readonly frontmost?: boolean;
+  readonly error?: string;
+}
+
+/** The ack the bridge's `launch` method returns. A successful background
+ * launch has waited for the app's window to exist, so `pid` (and usually
+ * `bounds`) are resolved — the tool can snapshot immediately. */
+export interface MacLaunchAck {
+  readonly ok: boolean;
+  readonly app: string;
+  readonly pid?: number;
+  readonly bounds?: MacWindowBounds;
+  readonly error?: string;
 }
 
 /** TCC status returned by the `check` method. */

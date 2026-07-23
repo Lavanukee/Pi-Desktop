@@ -69,18 +69,31 @@ private func doSnapshot(_ params: [String: Any]) -> [String: Any]? {
 
 /// Resolve a snapshot element by index within the caller's app namespace: an
 /// explicit `pid`/`app` (concurrency-safe across apps), else the most recent
-/// snapshot's pid.
-private func resolveElement(_ params: [String: Any], _ index: Int) -> SnapEl? {
+/// snapshot's pid. Also returns WHICH pid owned the resolved element, so acts
+/// can deliver their fallback events to exactly that app (postToPid).
+private func resolveElement(_ params: [String: Any], _ index: Int) -> (el: SnapEl, pid: pid_t)? {
   if let pid = intOf(params["pid"]), let map = elementsByPid[pid_t(pid)] {
-    return map[index]
+    return map[index].map { ($0, pid_t(pid)) }
   }
   if let appName = stringOf(params["app"]), !appName.isEmpty,
     let resolved = resolveTargetPid(.app(appName)), let map = elementsByPid[resolved.pid]
   {
-    return map[index]
+    return map[index].map { ($0, resolved.pid) }
   }
   if let pid = lastSnapshotPid, let map = elementsByPid[pid] {
-    return map[index]
+    return map[index].map { ($0, pid) }
+  }
+  return nil
+}
+
+/// The pid an index-less act should be DELIVERED to (postToPid — background):
+/// an explicit `pid`, else a resolvable `app`. Deliberately no lastSnapshotPid
+/// fallback — the tool layer stamps the controlled pid explicitly; an
+/// unstamped act keeps the legacy foreground (frontmost) behavior.
+private func actTargetPid(_ params: [String: Any]) -> pid_t? {
+  if let pid = intOf(params["pid"]) { return pid_t(pid) }
+  if let app = stringOf(params["app"]), !app.isEmpty, let r = resolveTargetPid(.app(app)) {
+    return r.pid
   }
   return nil
 }
@@ -88,17 +101,26 @@ private func resolveElement(_ params: [String: Any], _ index: Int) -> SnapEl? {
 // ── act dispatch (shared) ────────────────────────────────────────────────────
 
 private func doClick(_ params: [String: Any]) -> [String: Any] {
-  // Explicit coordinates are always the foreground fallback (AX-opaque surfaces).
+  // Explicit coordinates (AX-opaque surfaces). With a target pid the click is
+  // DELIVERED to that app only (postToPid — background, no focus steal); with
+  // no pid it falls back to the legacy shared-cursor foreground click.
   if let x = doubleOf(params["x"]), let y = doubleOf(params["y"]) {
+    if let pid = actTargetPid(params) {
+      postClickToPid(pid, x: x, y: y)
+      return ["found": true, "mode": "coordToPid", "background": true, "x": x, "y": y]
+    }
     withCoordinateLock { postClick(x: x, y: y) }
-    return ["found": true, "mode": "coord", "background": false]
+    return ["found": true, "mode": "coord", "background": false, "x": x, "y": y]
   }
   guard let index = intOf(params["index"]) else {
     return ["found": false, "error": "click needs an index or x,y"]
   }
-  guard let el = resolveElement(params, index) else { return ["found": false] }
-  let (mode, background) = performPress(el.element, x: Double(el.x), y: Double(el.y))
-  return ["found": true, "mode": mode, "background": background]
+  guard let (el, pid) = resolveElement(params, index) else { return ["found": false] }
+  let (mode, background) = performPress(
+    el.element, x: Double(el.x), y: Double(el.y), targetPid: pid)
+  // x,y echo the acted-on point (element centre, screen points) so the app can
+  // animate the phantom cursor to where the click actually landed.
+  return ["found": true, "mode": mode, "background": background, "x": el.x, "y": el.y]
 }
 
 private func doType(_ params: [String: Any]) -> [String: Any] {
@@ -113,12 +135,13 @@ private func doType(_ params: [String: Any]) -> [String: Any] {
     }
     return ["found": true, "mode": "keystrokes", "background": false, "submitted": submit]
   }
-  guard let el = resolveElement(params, index) else { return ["found": false] }
+  guard let (el, pid) = resolveElement(params, index) else { return ["found": false] }
 
   // AX-FIRST: set the field's value directly (background, no focus, no
-  // keystrokes). Fall back to focus + synthetic typing only if the element
-  // rejects a value set (foreground). `append` forces the keystroke path so text
-  // is added rather than replacing the field.
+  // keystrokes). If the element rejects a value set (or `append` asks for
+  // keystrokes so text is added rather than replaced), focus the element
+  // app-internally and deliver the keystrokes to ITS pid only — still no focus
+  // steal from the user's app. Only a pid-less legacy call types foreground.
   var mode: String
   var background: Bool
   if !boolOf(params["append"]), setValue(el.element, text) {
@@ -126,24 +149,26 @@ private func doType(_ params: [String: Any]) -> [String: Any] {
     background = true
   } else {
     focusElement(el.element)
-    withCoordinateLock { typeText(text) }
-    mode = "keystrokes"
-    background = false
+    typeTextToPid(pid, text)
+    mode = "keystrokesToPid"
+    background = true
   }
 
   if submit {
     // Prefer a background AX confirm (targets THIS element — safe for a
-    // non-frontmost app); else a focused Return (foreground, hits system focus).
+    // non-frontmost app); else a Return delivered to the app's own pid.
     if confirmElement(el.element) {
       mode += "+confirm"
     } else {
       focusElement(el.element)
-      withCoordinateLock { postKey(flags: [], key: 36) }
-      mode += "+return"
-      background = false
+      postKeyToPid(pid, flags: [], key: 36)
+      mode += "+returnToPid"
     }
   }
-  return ["found": true, "mode": mode, "background": background, "submitted": submit]
+  return [
+    "found": true, "mode": mode, "background": background, "submitted": submit,
+    "x": el.x, "y": el.y,
+  ]
 }
 
 private func doKey(_ params: [String: Any]) -> [String: Any] {
@@ -153,7 +178,14 @@ private func doKey(_ params: [String: Any]) -> [String: Any] {
   guard let parsed = parseCombo(combo) else {
     return ["ok": false, "error": "unrecognized key combo: \(combo)"]
   }
-  // Key chords hit the SYSTEM focus (foreground) — serialize + flag them.
+  // With a target pid the chord is delivered to that app only (background —
+  // the user's focus is untouched). Pid delivery also honors the event's own
+  // modifier flags, so ⌘-chords land correctly.
+  if let pid = actTargetPid(params) {
+    postKeyToPid(pid, flags: parsed.flags, key: parsed.key)
+    return ["ok": true, "background": true]
+  }
+  // Legacy pid-less path: chords hit the SYSTEM focus (foreground).
   withCoordinateLock { postKey(flags: parsed.flags, key: parsed.key) }
   return ["ok": true, "background": false]
 }
@@ -170,7 +202,21 @@ private func doScroll(_ params: [String: Any]) -> [String: Any] {
   case "right": dx = -amount
   default: dy = -amount
   }
-  // Scroll posts at the shared cursor position (foreground) — serialize + flag.
+  // With a target pid: pin the event inside the target window (its centre) and
+  // deliver to that app only — background scrolling of a non-frontmost window.
+  if let pid = actTargetPid(params),
+    let info = windowBoundsInfo(target: .pid(pid)),
+    let x = info["x"] as? Int, let y = info["y"] as? Int,
+    let w = info["w"] as? Int, let h = info["h"] as? Int
+  {
+    let centre = CGPoint(x: Double(x) + Double(w) / 2, y: Double(y) + Double(h) / 2)
+    postScrollToPid(pid, dx: dx, dy: dy, at: centre)
+    return [
+      "ok": true, "background": true,
+      "x": Int(centre.x.rounded()), "y": Int(centre.y.rounded()),
+    ]
+  }
+  // Legacy pid-less path: posts at the shared cursor position (foreground).
   withCoordinateLock { postScroll(dx: dx, dy: dy) }
   return ["ok": true, "background": false]
 }
@@ -199,6 +245,7 @@ private func doFocus(_ params: [String: Any]) -> [String: Any] {
 private func dispatch(method: String, params: [String: Any]) -> [String: Any]? {
   switch method {
   case "check": return tccStatusDict()
+  case "promptGrants": return promptTccGrants()
   case "snapshot": return doSnapshot(params)  // nil → target unresolved
   case "click": return doClick(params)
   case "type": return doType(params)
@@ -206,8 +253,32 @@ private func dispatch(method: String, params: [String: Any]) -> [String: Any]? {
   case "scroll": return doScroll(params)
   case "focus": return doFocus(params)
   case "screenshot": return doScreenshot(params)
+  case "bounds": return doBounds(params)
+  case "frontmost": return doFrontmost()
   default: return nil
   }
+}
+
+/// `bounds` method: the target window's live frame (+ windowId + whether its
+/// app is frontmost). The launch poller spins on this until the window exists;
+/// the cursor overlay polls it to track moves/resizes; the no-focus-steal
+/// probe asserts on `frontmost`.
+private func doBounds(_ params: [String: Any]) -> [String: Any] {
+  if let info = windowBoundsInfo(target: targetFrom(params)) { return info }
+  return ["ok": false, "error": "no resolvable window for target"]
+}
+
+/// `frontmost` method: which app currently owns the user's focus.
+private func doFrontmost() -> [String: Any] {
+  guard let app = NSWorkspace.shared.frontmostApplication else {
+    return ["ok": false, "error": "no frontmost application"]
+  }
+  return [
+    "ok": true,
+    "app": app.localizedName ?? "",
+    "pid": Int(app.processIdentifier),
+    "bundleId": app.bundleIdentifier ?? "",
+  ]
 }
 
 /// `screenshot` method: a focus-free per-window capture when a `windowId` (or a

@@ -641,9 +641,17 @@ function HelpModal(): JSX.Element {
 export function Viewport(): JSX.Element {
   const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
   const modal = useTripoStore((s) => s.modal);
+  const pipelineStage = useTripoStore((s) => s.pipelineStage);
   const gizmoRef = useRef<HTMLDivElement>(null);
   const [flash, setFlash] = useState(0);
   const asset = TRIPO_ASSETS.find((a) => a.id === loadedAssetId);
+  // Stats reflect the current pipeline result: the dense triangulated base
+  // mesh vs. the clean quad remesh the rig/animation stages run on. Counts
+  // match the bundled hero GLBs (see build-hero-glb.mjs).
+  const stats =
+    pipelineStage === 'mesh'
+      ? { topology: 'Triangle', faces: 21600, vertices: 10872 }
+      : { topology: 'Quad', faces: 320, vertices: 336 };
 
   return (
     <div className="tp-viewport" data-testid="tp-viewport">
@@ -660,22 +668,18 @@ export function Viewport(): JSX.Element {
       )}
 
       {asset !== undefined ? (
-        <div className="tp-stats" data-testid="tp-stats">
+        <div className="tp-stats" data-testid="tp-stats" data-stage={pipelineStage}>
           <div className="tp-stat">
             <span>Topology</span>
-            <strong>Triangle</strong>
+            <strong>{stats.topology}</strong>
           </div>
           <div className="tp-stat">
             <span>Faces</span>
-            <strong>
-              {asset.faces.toLocaleString()} / {asset.faces.toLocaleString()}
-            </strong>
+            <strong>{stats.faces.toLocaleString()}</strong>
           </div>
           <div className="tp-stat">
             <span>Vertices</span>
-            <strong>
-              {asset.vertices.toLocaleString()} / {asset.vertices.toLocaleString()}
-            </strong>
+            <strong>{stats.vertices.toLocaleString()}</strong>
           </div>
         </div>
       ) : null}

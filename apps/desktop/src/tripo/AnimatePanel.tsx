@@ -67,6 +67,7 @@ export function AnimatePanel(): JSX.Element {
   const animSearch = useTripoStore((s) => s.animSearch);
   const selectedAnim = useTripoStore((s) => s.selectedAnim);
   const set = useTripoStore((s) => s.set);
+  const runStage = useTripoStore((s) => s.runStage);
 
   const visible = TRIPO_ANIMS.filter(
     (a) =>
@@ -90,6 +91,20 @@ export function AnimatePanel(): JSX.Element {
             <IcBolt size={13} />
             20
           </span>
+        </button>
+
+        {/* Sample-asset-backed: overlays the bundled hero's real three.js
+         * Skeleton (bind pose). NOT a live SkinTokens run. */}
+        <button
+          type="button"
+          className="tp-retry-btn"
+          data-testid="tp-rig-btn"
+          onClick={() => {
+            set('skeleton', true);
+            runStage('rig');
+          }}
+        >
+          Generate Rig &amp; Skeleton
         </button>
 
         <div className="tp-setting-row tp-row-plain">
@@ -132,7 +147,12 @@ export function AnimatePanel(): JSX.Element {
               className="tp-anim-card"
               data-active={selectedAnim === a.id}
               data-testid={`tp-anim-${a.id}`}
-              onClick={() => set('selectedAnim', a.id)}
+              onClick={() => {
+                // Sample-asset-backed: plays a baked skeletal clip on the hero
+                // SkinnedMesh (mapped to idle/wave/coil). NOT a live ARDY run.
+                set('selectedAnim', a.id);
+                runStage('animate');
+              }}
             >
               {selectedAnim === a.id ? (
                 <span className="tp-anim-check">

@@ -11,3 +11,6 @@
 export * as THREE from 'three';
 export { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 export { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+// GLTFLoader lets the Tripo viewer decode the studio's bundled sample GLBs
+// (rigged + animated) entirely offline via GLTFLoader.parse(ArrayBuffer).
+export { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';

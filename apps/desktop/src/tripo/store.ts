@@ -26,6 +26,19 @@ export type TripoRenderMode = 'clay' | 'shaded' | 'normal';
 export type TripoMaterial = 'default' | 'matte' | 'gold' | 'chrome' | 'teal';
 export type TripoModal = null | 'help' | 'export';
 
+/**
+ * The pipeline stage the viewer is currently showing for the loaded asset:
+ *   mesh    → the dense generated base mesh (solid).
+ *   retopo  → the clean quad-topology remesh (quad wireframe revealed).
+ *   rig     → the retopo mesh with its skeleton/bones overlaid (bind pose).
+ *   animate → the rigged mesh playing a skeletal animation clip.
+ * These are backed by bundled sample GLBs, not live ML models — see Viewer3D.
+ */
+export type TripoStage = 'mesh' | 'retopo' | 'rig' | 'animate';
+
+/** The asset the generation flow lands on (the rigged "wyrm" hero). */
+export const HERO_ASSET_ID = 'asset-boy';
+
 interface TripoState {
   // ── layout / navigation
   tool: TripoTool;
@@ -61,6 +74,8 @@ interface TripoState {
 
   // ── viewer
   loadedAssetId: string | null;
+  /** Which pipeline result the viewer renders for the loaded asset. */
+  pipelineStage: TripoStage;
   wireframe: boolean;
   showGrid: boolean;
   autoRotate: boolean;
@@ -90,6 +105,9 @@ interface TripoState {
   toggleMenu: (id: string) => void;
   closeMenus: () => void;
   loadAsset: (id: string) => void;
+  /** Run a pipeline stage (loading the hero asset first if none is loaded).
+   * Sample-asset-backed: it swaps which bundled GLB result the viewer shows. */
+  runStage: (stage: TripoStage) => void;
   toggleList: (
     key: 'favorites' | 'checkedAssets' | 'hierarchyCollapsed' | 'hiddenNodes',
     id: string,
@@ -130,6 +148,7 @@ export const useTripoStore = create<TripoState>((set, get) => ({
   selectedAnim: 'angry_01',
 
   loadedAssetId: null,
+  pipelineStage: 'mesh',
   wireframe: false,
   showGrid: false,
   autoRotate: false,
@@ -173,12 +192,21 @@ export const useTripoStore = create<TripoState>((set, get) => ({
       loadedAssetId: id,
       selectedAssetId: id,
       meshVisible: true,
+      // A freshly loaded asset starts at its generated base mesh.
+      pipelineStage: 'mesh',
       // The "View Your Model" coach dialog appears the first time a model
       // lands in the viewport (as in the reference), then never again.
       modal: first ? 'help' : get().modal,
       helpSeen: true,
     });
   },
+  runStage: (stage) =>
+    set((s) => ({
+      pipelineStage: stage,
+      loadedAssetId: s.loadedAssetId ?? HERO_ASSET_ID,
+      selectedAssetId: s.selectedAssetId ?? HERO_ASSET_ID,
+      meshVisible: true,
+    })),
   toggleList: (key, id) => set((s) => ({ [key]: toggled(s[key], id) }) as Partial<TripoState>),
   removeChecked: () =>
     set((s) => ({

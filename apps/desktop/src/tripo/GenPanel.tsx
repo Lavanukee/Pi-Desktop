@@ -35,7 +35,7 @@ import {
   IcUpscale,
 } from './icons';
 import { Hint, MenuAnchor, MenuItem, Segmented, SliderRow, Toggle } from './primitives';
-import { type TripoInputMode, useTripoStore } from './store';
+import { HERO_ASSET_ID, type TripoInputMode, useTripoStore } from './store';
 import {
   QuadThumb,
   RetopoIllustration,
@@ -67,15 +67,23 @@ function GenerateButton({
   disabled,
   crown,
   testid,
+  onClick,
 }: {
   readonly label: string;
   readonly cost: number;
   readonly disabled?: boolean;
   readonly crown?: boolean;
   readonly testid?: string;
+  readonly onClick?: () => void;
 }): JSX.Element {
   return (
-    <button type="button" className="tp-generate-btn" disabled={disabled} data-testid={testid}>
+    <button
+      type="button"
+      className="tp-generate-btn"
+      disabled={disabled}
+      data-testid={testid}
+      onClick={onClick}
+    >
       {crown === true ? <IcCrown size={16} /> : null}
       {label}
       <span className="tp-cost">
@@ -372,6 +380,8 @@ function AiModelSelect(): JSX.Element {
 function ModelPanel(): JSX.Element {
   const genMode = useTripoStore((s) => s.genMode);
   const set = useTripoStore((s) => s.set);
+  const runStage = useTripoStore((s) => s.runStage);
+  const loadAsset = useTripoStore((s) => s.loadAsset);
   const generateInParts = useTripoStore((s) => s.generateInParts);
   const texture8k = useTripoStore((s) => s.texture8k);
 
@@ -450,7 +460,17 @@ function ModelPanel(): JSX.Element {
         <AiModelSelect />
       </div>
       <div className="tp-panel-foot">
-        <GenerateButton label="Generate Model" cost={65} testid="tp-generate-btn" />
+        {/* Sample-asset-backed: loads the bundled hero GLB and shows its dense
+         * generated base mesh. NOT a live TRELLIS run. */}
+        <GenerateButton
+          label="Generate Model"
+          cost={65}
+          testid="tp-generate-btn"
+          onClick={() => {
+            loadAsset(HERO_ASSET_ID);
+            runStage('mesh');
+          }}
+        />
       </div>
     </>
   );
@@ -607,6 +627,7 @@ function SegmentPanel(): JSX.Element {
 
 export function GenPanel(): JSX.Element {
   const tool = useTripoStore((s) => s.tool);
+  const runStage = useTripoStore((s) => s.runStage);
 
   return (
     <section className="tp-genpanel" data-testid={`tp-panel-${tool}`}>
@@ -628,6 +649,16 @@ export function GenPanel(): JSX.Element {
           title="Retopology"
           action="Retopology"
           illustration={<RetopoIllustration />}
+          footer={
+            /* Sample-asset-backed: reveals the clean quad remesh of the hero
+             * asset. NOT a live autoremesher run. */
+            <GenerateButton
+              label="Start Retopology"
+              cost={30}
+              testid="tp-retopo-btn"
+              onClick={() => runStage('retopo')}
+            />
+          }
         />
       ) : null}
       {tool === 'texture' ? (

@@ -1,5 +1,5 @@
 import { Spinner, ToastProvider, TooltipProvider } from '@pi-desktop/ui';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import type { AppInfo } from '../electron/ipc-contract';
 import { ChatApp } from './chat/ChatApp';
 import { CanvasPopoutView } from './chat/canvas/CanvasPopoutView';
@@ -19,6 +19,14 @@ const IS_CANVAS_POPOUT = new URLSearchParams(window.location.search).has('canvas
 
 /** Dev/demo route: the situation room driven by the scripted mock corp run. */
 const IS_SITUATION_DEMO = new URLSearchParams(window.location.search).has('situationDemo');
+
+/** UI-only preview route: the Tripo-style 3D workspace (`?tripo=1`, dev
+ * override PI_DESKTOP_TRIPO=1). Lazy so the workspace stays out of the main
+ * bundle for every normal launch. */
+const IS_TRIPO = new URLSearchParams(window.location.search).has('tripo');
+const TripoWorkspace = lazy(() =>
+  import('./tripo/TripoWorkspace').then((m) => ({ default: m.TripoWorkspace })),
+);
 
 /**
  * Hidden probe hooks: keep the boot-event / theme / app-info testids the
@@ -84,7 +92,7 @@ export function App() {
   // has since changed via the top-bar toggle / settings panel (which write
   // settings.json, not onboarding.json). The canvas pop-out never onboards.
   useEffect(() => {
-    if (IS_CANVAS_POPOUT || IS_SITUATION_DEMO) return;
+    if (IS_CANVAS_POPOUT || IS_SITUATION_DEMO || IS_TRIPO) return;
     let cancelled = false;
     window.piDesktop
       .invoke('onboarding:get-state', undefined)
@@ -101,6 +109,16 @@ export function App() {
       cancelled = true;
     };
   }, []);
+
+  if (IS_TRIPO) {
+    return (
+      <TooltipProvider delayDuration={200}>
+        <Suspense fallback={null}>
+          <TripoWorkspace />
+        </Suspense>
+      </TooltipProvider>
+    );
+  }
 
   if (IS_CANVAS_POPOUT) {
     return (

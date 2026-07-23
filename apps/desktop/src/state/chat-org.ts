@@ -43,6 +43,24 @@ export async function createProject(name: string): Promise<string> {
   return id;
 }
 
+/** Attach (or clear, with null) a working folder to a project. New chats created
+ * in it root there; cleared → the project's shared sandbox (see SessionSidebar
+ * newChatInProject + project:project-sandbox). */
+export async function setProjectCwd(id: string, cwd: string | null): Promise<void> {
+  const c = current();
+  await write({
+    ...c,
+    projects: c.projects.map((p) => {
+      if (p.id !== id) return p;
+      if (cwd === null || cwd.trim().length === 0) {
+        const { cwd: _drop, ...rest } = p;
+        return rest;
+      }
+      return { ...p, cwd: cwd.trim() };
+    }),
+  });
+}
+
 export async function renameProject(id: string, name: string): Promise<void> {
   const c = current();
   const trimmed = name.trim();

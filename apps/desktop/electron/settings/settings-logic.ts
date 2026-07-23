@@ -127,8 +127,16 @@ function clampChatOrg(value: unknown): ChatOrganization {
   const o = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>;
   const projects: ChatProject[] = Array.isArray(o.projects)
     ? o.projects
-        .filter((p): p is { id: unknown; name: unknown } => typeof p === 'object' && p !== null)
-        .map((p) => ({ id: str(p.id, ''), name: str(p.name, '') }))
+        .filter(
+          (p): p is { id: unknown; name: unknown; cwd?: unknown } =>
+            typeof p === 'object' && p !== null,
+        )
+        .map((p) => {
+          const cwd = str(p.cwd, '');
+          return cwd.length > 0
+            ? { id: str(p.id, ''), name: str(p.name, ''), cwd }
+            : { id: str(p.id, ''), name: str(p.name, '') };
+        })
         .filter((p) => p.id.length > 0 && p.name.length > 0)
     : [];
   return {

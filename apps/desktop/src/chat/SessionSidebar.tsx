@@ -63,7 +63,7 @@ import {
   useState,
 } from 'react';
 import type { SessionSummary } from '../../electron/ipc-contract';
-import type { UserMode } from '../../electron/settings/settings-contract';
+import type { ChatProject, UserMode } from '../../electron/settings/settings-contract';
 import { IconCpu, IconMoon, IconSun } from '../settings/icons';
 import type { SettingsSection } from '../settings/SettingsView';
 import {
@@ -75,13 +75,15 @@ import {
   groupChats,
   renameChat,
   renameProject,
+  setProjectCwd,
   togglePin,
   useChatOrg,
 } from '../state/chat-org';
 import { useChildAgentStore, useChildrenByParent } from '../state/child-agent-store';
 import { useCorpStore } from '../state/corp-store';
 import { useModalityStore } from '../state/modality-store';
-import { listSessions, newSession, switchSession } from '../state/pi-connect';
+import { listSessions, newSession, restartPi, switchSession } from '../state/pi-connect';
+import { useProjectStore } from '../state/project-store';
 import { usePiStore } from '../state/pi-slice';
 import { setUserMode, useSettingsStore, useUserMode } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
@@ -416,14 +418,66 @@ export function SessionSidebar({
     refresh();
   }, [refresh]);
 
-  // Start a fresh chat that belongs to a project. The new session's file is only
-  // written on its first turn, but the assignment persists against that path, so
-  // the chat appears under the project the moment it has content.
+  // Start a fresh chat that belongs to a project, ROOTED at the project's working
+  // folder (or, when it has none, a stable shared sandbox named after the project —
+  // so all its projectless chats share files while the user only sees the project
+  // name). newSession() first (it handles the streaming/capture + pointer sync);
+  // then re-root that fresh session at the target folder (the selectPath pattern:
+  // restartPi with the same sessionPath, an existing cwd wins in resolveSessionCwd).
+  // The new session's file is only written on its first turn, but the assignment
+  // persists against that path, so it appears under the project once it has content.
   const newChatInProject = useCallback(
-    async (projectId: string) => {
+    async (project: ChatProject) => {
       await newSession();
       const file = usePiStore.getState().session?.sessionFile;
-      if (typeof file === 'string' && file.length > 0) await assignChat(file, projectId);
+
+      let cwd = project.cwd;
+      if (cwd === undefined || cwd.length === 0) {
+        const res = await window.piDesktop
+          .invoke('project:project-sandbox', { id: project.id })
+          .catch(() => null);
+        cwd = res?.path ?? undefined;
+      }
+      if (typeof cwd === 'string' && cwd.length > 0) {
+        await restartPi({
+          cwd,
+          ...(typeof file === 'string' && file.length > 0 ? { sessionPath: file } : {}),
+        });
+      }
+
+      if (typeof file === 'string' && file.length > 0) await assignChat(file, project.id);
+      // Keep the electron project (composer chip / canvas file-tree root) in step
+      // for a real folder; a projectless project stays on the sandbox and the chip
+      // shows the project name instead (see ComposerBar).
+      if (project.cwd !== undefined && project.cwd.length > 0) {
+        await window.piDesktop.invoke('project:set', { path: project.cwd }).catch(() => null);
+        await useProjectStore
+          .getState()
+          .load()
+          .catch(() => {});
+      }
+      refresh();
+    },
+    [refresh],
+  );
+
+  // Attach a working folder to a project (native picker → persisted on the
+  // ChatProject). New chats in it then root there instead of the shared sandbox.
+  const setWorkingFolder = useCallback(
+    async (project: ChatProject) => {
+      const res = await window.piDesktop.invoke('project:pick-folder', undefined).catch(() => null);
+      const picked = res?.path ?? null;
+      if (picked === null) return;
+      await setProjectCwd(project.id, picked);
+      refresh();
+    },
+    [refresh],
+  );
+
+  // Drop a project's working folder → its chats fall back to the shared sandbox.
+  const useSharedSandbox = useCallback(
+    async (project: ChatProject) => {
+      await setProjectCwd(project.id, null);
       refresh();
     },
     [refresh],
@@ -973,7 +1027,7 @@ export function SessionSidebar({
                           aria-label="New chat in this project"
                           title="New chat in this project"
                           data-testid={`project-new-chat-${project.id}`}
-                          onClick={() => void newChatInProject(project.id)}
+                          onClick={() => void newChatInProject(project)}
                         >
                           <IconPlus size={16} />
                         </button>
@@ -995,6 +1049,17 @@ export function SessionSidebar({
                             >
                               Rename project
                             </DropdownMenuItem>
+                            <DropdownMenuItem
+                              icon={<IconFolderPlus size={16} />}
+                              onSelect={() => void setWorkingFolder(project)}
+                            >
+                              {project.cwd ? 'Change working folder…' : 'Set working folder…'}
+                            </DropdownMenuItem>
+                            {project.cwd ? (
+                              <DropdownMenuItem onSelect={() => void useSharedSandbox(project)}>
+                                Use shared sandbox
+                              </DropdownMenuItem>
+                            ) : null}
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               danger

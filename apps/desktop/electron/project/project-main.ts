@@ -10,6 +10,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { createLogger, type IpcHandlers, registerIpcHandlers } from '@pi-desktop/shared';
 import { dialog, type IpcMain } from 'electron';
+import { ensureSandboxDir } from '../sandbox';
 import type { ProjectEntry, ProjectInvokeMap } from './project-contract';
 
 const log = createLogger('desktop:project');
@@ -220,6 +221,24 @@ const handlers: IpcHandlers<ProjectInvokeMap> = {
     writeDoc(next);
     // No active project → always the sandbox.
     return { projects: next.projects, usingSandbox: true };
+  },
+
+  'project:pick-folder': async () => {
+    const picked = await dialog.showOpenDialog({
+      title: 'Choose a working folder',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (picked.canceled || picked.filePaths.length === 0) return { path: null };
+    return { path: picked.filePaths[0] ?? null };
+  },
+
+  'project:project-sandbox': (req) => {
+    // A stable per-project sandbox: `~/.pi/desktop/sandbox/project-<id>`. Reusing
+    // the conversation-sandbox machinery keeps it inside the fs write-fence and
+    // sanitizes the id. Created on demand so resolveSessionCwd accepts it as an
+    // explicit (existing) cwd.
+    const id = typeof req?.id === 'string' && req.id.length > 0 ? req.id : 'default';
+    return { path: ensureSandboxDir(`project-${id}`, HOME) };
   },
 };
 

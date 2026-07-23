@@ -142,6 +142,11 @@ export interface SearchKeys {
 export interface ChatProject {
   id: string;
   name: string;
+  /** Optional working folder for the project: new chats created in it are rooted
+   * here (pi cwd → bash/file tools/canvas tree). When absent the project's chats
+   * share a per-project sandbox dir named after the project (see project-main
+   * `project:project-sandbox`), so the user only ever sees the project name. */
+  cwd?: string;
 }
 
 /** Chat organization state: named projects + per-chat assignment/pin/rename.

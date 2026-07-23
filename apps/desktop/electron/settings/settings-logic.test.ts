@@ -58,6 +58,21 @@ describe('clampSettings', () => {
     expect(s.hideDeleteChatConfirm).toBe(true);
   });
 
+  it('preserves a project working folder (cwd) and omits an empty one', () => {
+    const s = clampSettings({
+      chatOrg: {
+        projects: [
+          { id: 'p1', name: 'With folder', cwd: '/Users/jedd/work/app' },
+          { id: 'p2', name: 'No folder', cwd: '' }, // empty cwd → omitted, project kept
+        ],
+      },
+    });
+    expect(s.chatOrg.projects).toEqual([
+      { id: 'p1', name: 'With folder', cwd: '/Users/jedd/work/app' },
+      { id: 'p2', name: 'No folder' },
+    ]);
+  });
+
   it('defaults chat organization to empty', () => {
     expect(clampSettings({}).chatOrg).toEqual({
       projects: [],

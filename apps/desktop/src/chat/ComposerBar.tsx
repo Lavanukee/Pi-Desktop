@@ -29,7 +29,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@pi-desktop/ui';
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
+import { useChatOrg } from '../state/chat-org';
 import { useCorpStore } from '../state/corp-store';
 import { useLlmStore } from '../state/llm-store';
 import { autoEffortForTier } from '../state/model-selection';
@@ -65,12 +66,28 @@ function ProjectRegion() {
     (s) => (s as unknown as { usingSandbox?: boolean }).usingSandbox,
   );
   const sessionCwd = usePiStore((s) => s.session?.cwd);
+  const sessionFile = usePiStore((s) => s.session?.sessionFile);
   const selectProject = useProjectStore((s) => s.selectProject);
   const newProject = useProjectStore((s) => s.newProject);
   const clearProject = useProjectStore((s) => s.clearProject);
 
+  // When the viewed chat belongs to a sidebar chat-org project, the chip shows
+  // that project's NAME (jedd: "just named their project name as far as the user
+  // is concerned") — this is what turns the "Sandbox" placeholder into the project
+  // name for a projectless project's shared-sandbox chats.
+  const chatOrg = useChatOrg();
+  const orgProjectName = useMemo(() => {
+    if (sessionFile === undefined || sessionFile.length === 0) return null;
+    const pid = chatOrg.assignments[sessionFile];
+    if (pid === undefined) return null;
+    return chatOrg.projects.find((p) => p.id === pid)?.name ?? null;
+  }, [chatOrg, sessionFile]);
+
   const sandbox = usesSandbox(activePath, sessionCwd, sandboxFlag ?? projectMissing);
-  const className = ['pd-project-picker--bar', sandbox ? 'pd-project-picker--sandbox' : '']
+  const className = [
+    'pd-project-picker--bar',
+    sandbox && orgProjectName === null ? 'pd-project-picker--sandbox' : '',
+  ]
     .filter(Boolean)
     .join(' ');
   return (
@@ -78,12 +95,13 @@ function ProjectRegion() {
       className={className}
       projects={projects.map((p) => ({ id: p.id, name: p.name }))}
       // In the sandbox we're NOT in the selected project, so don't render its name
-      // as the active working folder — fall through to the "Sandbox" placeholder.
+      // as the active working folder — fall through to the placeholder (the org
+      // project name when this chat is in one, else "Sandbox").
       active={sandbox ? null : activeId}
       onSelect={(id) => void selectProject(id)}
       onNew={() => void newProject()}
       onClear={() => void clearProject()}
-      placeholder={sandbox ? 'Sandbox' : 'No project'}
+      placeholder={orgProjectName ?? (sandbox ? 'Sandbox' : 'No project')}
     />
   );
 }

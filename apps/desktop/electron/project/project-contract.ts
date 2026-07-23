@@ -65,6 +65,21 @@ export type ProjectInvokeMap = {
     request: undefined;
     response: { projects: ProjectEntry[]; usingSandbox: boolean };
   };
+  /** Native directory picker that ONLY returns the chosen path — it does NOT touch
+   * projects.json (unlike `project:new`). Used to attach a working folder to a
+   * sidebar chat-org project. `path` is null when the user cancelled. */
+  'project:pick-folder': {
+    request: undefined;
+    response: { path: string | null };
+  };
+  /** Ensure (mkdir -p) and return a STABLE shared sandbox directory for a sidebar
+   * chat-org project that has no working folder — `~/.pi/desktop/sandbox/project-<id>`.
+   * All of that project's projectless chats root here, so they share files while the
+   * user only ever sees the project name. */
+  'project:project-sandbox': {
+    request: { id: string };
+    response: { path: string };
+  };
 };
 
 export const PROJECT_INVOKE_CHANNELS = [
@@ -72,4 +87,6 @@ export const PROJECT_INVOKE_CHANNELS = [
   'project:set',
   'project:new',
   'project:clear',
+  'project:pick-folder',
+  'project:project-sandbox',
 ] as const satisfies readonly (keyof ProjectInvokeMap)[];

@@ -72,6 +72,23 @@ describe('groupChats — auto folders by working directory', () => {
     const g = groupChats([chat('a', '/home/u/work/foo'), chat('b', '/home/u/work/foo')], org);
     expect(g.projects[0]?.chats.map((s) => s.file)).toEqual(['b', 'a']);
   });
+
+  it('keeps a projectless project`s shared-sandbox chat grouped (assignment beats isSandboxCwd)', () => {
+    // A chat rooted at a project`s shared sandbox is still SANDBOX-like, so without
+    // the manual assignment it would fall to `ungrouped`. The assignment must win
+    // so the projectless project`s chats stay under its folder.
+    const org: ChatOrganization = {
+      projects: [{ id: 'p1', name: 'Scratchpad' }],
+      assignments: { a: 'p1' },
+      pinned: [],
+      titles: {},
+    };
+    const g = groupChats([chat('a', '/home/u/.pi/desktop/sandbox/project-p1')], org);
+    expect(g.projects).toHaveLength(1);
+    expect(g.projects[0]?.project.name).toBe('Scratchpad');
+    expect(g.projects[0]?.chats.map((s) => s.file)).toEqual(['a']);
+    expect(g.ungrouped).toEqual([]);
+  });
 });
 
 describe('displayTitle', () => {

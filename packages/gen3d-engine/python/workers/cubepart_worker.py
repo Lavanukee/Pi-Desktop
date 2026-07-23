@@ -33,8 +33,13 @@ def main() -> None:
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--cube-dir", required=True)
     ap.add_argument("--parts", default="")
-    ap.add_argument("--steps", type=int, default=50)
+    ap.add_argument("--steps", type=int, default=30)
     ap.add_argument("--guidance-scale", type=float, default=7.5)
+    # Upstream default is 8.5; on 24 GB unified memory the shape-VAE
+    # extraction attention OOMs at 8.5 AFTER a full 30-step denoise
+    # (27.9 GiB allocated, +3 GiB request — reproduced). 7.5 keeps the
+    # extraction grid inside the MPS pool.
+    ap.add_argument("--resolution-base", type=float, default=7.5)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -78,6 +83,7 @@ def main() -> None:
     part_meshes = pipe.input_to_part_shape(
         ShapeInput(prompt=[parts], latents=latents),
         guidance_scale=args.guidance_scale,
+        resolution_base=args.resolution_base,
         scheduler_type="dpm_solver",
         num_inference_steps=args.steps,
         seed=args.seed,

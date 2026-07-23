@@ -73,6 +73,9 @@ let helper: MacHelperClient | null = null;
 const elementCenters = new Map<number, Map<number, { x: number; y: number }>>();
 
 let tccCache: { at: number; status: MacTccStatus } | null = null;
+/** The system permission dialogs are surfaced at most once per app session
+ * (first mac_* use without the grants) — never nag. */
+let promptedTcc = false;
 
 /**
  * Resolve the packaged `pi-mac` binary to a REAL on-disk path. Like pi-afm it is
@@ -174,6 +177,18 @@ async function launchApp(name: string, background = true): Promise<MacLaunchAck>
     /* helper unavailable → skip the window poll */
   }
   if (!ax) {
+    // First use without the grants: ask macOS to surface the permission
+    // dialogs / register the app under Privacy & Security, so the user can
+    // toggle instead of hunting for the right binary. Once per session.
+    if (!promptedTcc) {
+      promptedTcc = true;
+      tccCache = null;
+      try {
+        await getHelper().request('promptGrants');
+      } catch {
+        /* helper unavailable — the check already degraded */
+      }
+    }
     await sleep(LAUNCH_SETTLE_MS);
     return { ok: true, app: appName };
   }
@@ -404,6 +419,7 @@ function registerE2eDebugChannel(): void {
       try {
         switch (req.op) {
           case 'check':
+          case 'promptGrants':
           case 'frontmost':
           case 'bounds':
           case 'snapshot':

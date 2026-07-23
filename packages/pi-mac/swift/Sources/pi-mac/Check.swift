@@ -36,3 +36,18 @@ func tccStatusDict() -> [String: Any] {
 func runCheckCommand() {
   emit(tccStatusDict())
 }
+
+/// The PROMPTING probe (serve method `promptGrants`): asks macOS to surface the
+/// system permission dialogs / register this identity in System Settings →
+/// Privacy & Security, so granting becomes a one-click toggle instead of a
+/// hunt for the right binary. Called at most once per session by the app when
+/// a mac_* action runs without the grants. Returns the (post-prompt) status —
+/// macOS may grant Screen Recording without relaunch; Accessibility applies to
+/// the NEXT helper spawn.
+func promptTccGrants() -> [String: Any] {
+  let opts =
+    [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+  let ax = AXIsProcessTrustedWithOptions(opts)
+  let screen = CGRequestScreenCaptureAccess()
+  return ["accessibility": ax, "screenRecording": screen, "prompted": true]
+}

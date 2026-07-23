@@ -245,6 +245,7 @@ private func doFocus(_ params: [String: Any]) -> [String: Any] {
 private func dispatch(method: String, params: [String: Any]) -> [String: Any]? {
   switch method {
   case "check": return tccStatusDict()
+  case "promptGrants": return promptTccGrants()
   case "snapshot": return doSnapshot(params)  // nil → target unresolved
   case "click": return doClick(params)
   case "type": return doType(params)

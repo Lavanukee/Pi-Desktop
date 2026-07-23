@@ -25,6 +25,7 @@ export const MAC_AGENT_TOKEN_ENV = 'PI_MAC_TOKEN';
 /** RPC methods the app's bridge implements. */
 export type MacAgentMethod =
   | 'check'
+  | 'promptGrants'
   | 'snapshot'
   | 'click'
   | 'type'

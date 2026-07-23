@@ -20,6 +20,7 @@ import {
   type CatalogFile,
   type CatalogModel,
   chatTemplatePath,
+  chooseServerPerfArgs,
   createMlxSupervisor,
   detectHardware,
   downloadModel,
@@ -78,6 +79,15 @@ const MODELS_JSON = join(homedir(), '.pi', 'agent', 'models.json');
 const PROVIDER_NAME = 'llamacpp';
 /** models.json provider key for MLX models (bound to provider-mlx's mlx-stream). */
 const MLX_PROVIDER_NAME = 'mlx';
+
+/** Detected hardware, memoized — it never changes for a process lifetime and each
+ * `detectHardware()` spawns a few `sysctl` calls, so we probe once and reuse it for
+ * both the catalog reply and the per-hardware launch-arg chooser. */
+let hardwareCache: Awaited<ReturnType<typeof detectHardware>> | null = null;
+async function getHardware(): Promise<Awaited<ReturnType<typeof detectHardware>>> {
+  if (hardwareCache === null) hardwareCache = await detectHardware();
+  return hardwareCache;
+}
 
 /** Renderer-owned settings file (read-only here) — the source of the HF token
  * used to fetch a model's gated base-repo chat template. */
@@ -302,7 +312,7 @@ function tierPickDto(pick: TierPick): LlmTierPick {
 }
 
 async function listCatalog(): Promise<LlmCatalogReply> {
-  const hw = await detectHardware();
+  const hw = await getHardware();
   const hardware: LlmHardware = {
     totalRamGB: hw.totalRamGB,
     chip: hw.chip ?? null,
@@ -747,6 +757,27 @@ async function startServer(
     // template) → `[]`, leaving the launch unchanged. Applies in both modes.
     const chatTemplateArgs = await resolveChatTemplateArgs(model, persistedHfToken());
 
+    // Per-hardware performance args. On Apple Silicon with RAM headroom this is
+    // intentionally EMPTY — the pinned llama.cpp's auto defaults (-ngl/-fa/-ub/
+    // threads) are measured-optimal there (see packages/inference/src/perf-args.ts).
+    // It only intervenes under memory pressure (q8_0 KV to avoid swap) or on a
+    // discrete GPU (flash-attn on). Merged with the chat-template args via extraArgs.
+    const hw = await getHardware();
+    const perf = chooseServerPerfArgs({
+      isAppleSilicon: hw.isAppleSilicon,
+      totalRamGB: hw.totalRamGB,
+      modelBytes: file.bytes,
+      contextSize: launch.contextSize,
+      cpuCount: hw.cpuCount,
+    });
+    if (perf.rationale.length > 0) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[pi-perf] ${perf.rationale.join(' · ')}${perf.args.length > 0 ? ` → ${perf.args.join(' ')}` : ''}`,
+      );
+    }
+    const launchExtraArgs = [...chatTemplateArgs, ...perf.args];
+
     const supervisor = new LlamaServerSupervisor({
       serverPath: install.serverPath,
       modelPath,
@@ -764,7 +795,7 @@ async function startServer(
       specType: model.spec === 'eagle3' ? 'draft-eagle3' : 'draft-mtp',
       eagle3Supported: features.eagle3,
       draftPath: draftPath !== undefined && existsSync(draftPath) ? draftPath : undefined,
-      extraArgs: chatTemplateArgs.length > 0 ? chatTemplateArgs : undefined,
+      extraArgs: launchExtraArgs.length > 0 ? launchExtraArgs : undefined,
       // The parent-death watchdog (a modtest-only addition; the working repo has
       // none) was SIGKILLing the healthy llama-server a few seconds after it came
       // up — the model would load, `phase` go 'ready', then the server die and

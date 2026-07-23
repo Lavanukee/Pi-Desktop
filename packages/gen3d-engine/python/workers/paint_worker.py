@@ -67,12 +67,19 @@ def main() -> None:
         config.model_path = str(weights)
     pipeline = Hunyuan3DPaintPipeline(config)
 
-    image = args.image if args.image else None
+    if not args.image or not Path(args.image).exists():
+        raise RuntimeError(
+            "Hunyuan Paint needs a reference image of the target look — pass the "
+            "image path in the texture stage's prompt field."
+        )
     progress(STAGE, "Painting textures (multi-view diffusion + PBR bake)…")
+    # use_remesh=False: the fork's remesh path needs Blender (bpy), which is
+    # not provisioned; painting the mesh as-is works without it.
     result_path = pipeline(
         mesh_path=args.mesh,
-        image_path=image,
+        image_path=args.image,
         output_mesh_path=str(out_dir / "painted.glb"),
+        use_remesh=False,
     )
     final = Path(result_path) if result_path else out_dir / "painted.glb"
     if not final.exists():

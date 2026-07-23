@@ -223,11 +223,17 @@ class JobManager:
             else:  # texture (Hunyuan Paint)
                 venv = self.registry.venv_python("Hunyuan3D-2.1-mac")
                 script = WORKERS_DIR / "paint_worker.py"
+                # Paint is image-conditioned. The stage contract carries only a
+                # prompt string, so a prompt that IS a path to an existing image
+                # becomes the reference image (documented for the UI).
+                image_arg: list[str] = []
+                if prompt and Path(prompt).is_file():
+                    image_arg = ["--image", prompt]
                 args = [
                     "--mesh", model_path,
                     "--out-dir", str(job_dir),
                     "--tool-dir", str(self.registry.tool_dir("Hunyuan3D-2.1-mac")),
-                    *(["--prompt", prompt] if prompt else []),
+                    *image_arg,
                 ]
                 cwd = self.registry.tool_dir("Hunyuan3D-2.1-mac")
 

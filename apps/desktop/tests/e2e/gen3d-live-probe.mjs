@@ -105,22 +105,31 @@ async function main() {
         {
           id: 'hunyuan-paint',
           env: 'paint',
-          totalBytes: 6887601302,
+          totalBytes: 11433607718,
           repos: [
             {
               repo: 'tencent/Hunyuan3D-2.1',
               allowPatterns: ['hunyuan3d-paintpbr-v2-1/*', 'hy3dpaint/*'],
               bytes: 6887601302,
             },
+            {
+              repo: 'facebook/dinov2-giant',
+              allowPatterns: ['*.json', 'model.safetensors'],
+              bytes: 4546006416,
+            },
           ],
         },
         {
           id: 'cubepart',
           env: 'cubepart',
-          totalBytes: 18791023319,
+          totalBytes: 18791014667,
           repos: [
             { repo: 'Roblox/cubepart', bytes: 9903730587 },
-            { repo: 'Qwen/Qwen3-VL-4B-Instruct', bytes: 8887292732 },
+            {
+              repo: 'Qwen/Qwen3-VL-4B-Instruct',
+              allowPatterns: ['*.json', '*.safetensors', '*.txt'],
+              bytes: 8887284080,
+            },
           ],
         },
         { id: 'autoremesher', env: 'binary', totalBytes: 17259387, repos: [] },

@@ -155,8 +155,14 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
       { repo: 'Roblox/cubepart', bytes: 9_903_730_587 },
       // Its prompt encoder (configs/shape_denoiser_multimesh.yaml
       // base_model_type) — fetched at first run if absent, so the catalog
-      // owns it up front. Not gated; loaded fp16 with sdpa.
-      { repo: 'Qwen/Qwen3-VL-4B-Instruct', bytes: 8_887_292_732 },
+      // owns it up front. Not gated; loaded fp16 with sdpa. The pattern set
+      // matches exactly what from_pretrained+AutoProcessor cache (verified),
+      // so offline installed-checks pass.
+      {
+        repo: 'Qwen/Qwen3-VL-4B-Instruct',
+        allowPatterns: ['*.json', '*.safetensors', '*.txt'],
+        bytes: 8_887_284_080,
+      },
     ],
   },
   {

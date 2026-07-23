@@ -464,6 +464,27 @@ export const CANVAS_INVOKE_CHANNELS = [
   'canvas:report-state',
 ] as const satisfies readonly (keyof CanvasInvokeMap)[];
 
+// ---------------------------------------------------------------------------
+// Mac computer-use channels (E2E-only debug/introspection)
+// ---------------------------------------------------------------------------
+
+export type MacInvokeMap = {
+  /** PI_E2E-gated probe seam for Mac computer-use: helper passthrough ops
+   * (check/frontmost/bounds/snapshot/screenshot — the TCC reality check + the
+   * no-focus-steal assertions) and overlay-* ops (drive the cursor overlay
+   * deterministically for screenshot probes). The handler is ONLY registered
+   * when PI_E2E=1 (see mac/mac-agent.ts registerE2eDebugChannel); in normal
+   * runs the channel exists in the contract but has no handler. */
+  'mac:debug': {
+    request: { op: string; params?: Record<string, unknown> };
+    response: { ok: boolean; result?: unknown; error?: string };
+  };
+};
+
+export const MAC_INVOKE_CHANNELS = [
+  'mac:debug',
+] as const satisfies readonly (keyof MacInvokeMap)[];
+
 export type AppInvokeMap = CoreInvokeMap &
   FsInvokeMap &
   LlmInvokeMap &
@@ -481,6 +502,7 @@ export type AppInvokeMap = CoreInvokeMap &
   BrowserAgentInvokeMap &
   PtyInvokeMap &
   CorpInvokeMap &
+  MacInvokeMap &
   PiInvokeMap;
 
 /** Runtime allowlist for the preload's invoke passthrough: only channels in
@@ -505,6 +527,7 @@ export const APP_INVOKE_CHANNELS = [
   ...BROWSER_AGENT_INVOKE_CHANNELS,
   ...PTY_INVOKE_CHANNELS,
   ...CORP_INVOKE_CHANNELS,
+  ...MAC_INVOKE_CHANNELS,
   ...PI_INVOKE_CHANNELS,
 ] as const satisfies readonly (keyof AppInvokeMap)[];
 

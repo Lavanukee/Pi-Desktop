@@ -1,0 +1,422 @@
+<!doctype html>
+<!--
+  Mac computer-use cursor overlay — the ONLY thing the user perceives while Pi
+  drives an app in the background: a phantom gradient cursor + a status bubble
+  floating over the controlled window. Hosted by a transparent, click-through,
+  always-on-top BrowserWindow (see overlay-window.ts) positioned exactly over
+  the controlled app's window; the window chrome itself must never be seen.
+
+  Deliberately a STATIC file (plain JS/CSS, loaded via loadFile) so it has zero
+  coupling to the vite build. The main process drives it by calling
+  window.__pdOverlay(msg) via executeJavaScript; every message is defensive —
+  a malformed one is ignored rather than thrown.
+
+  The cursor artwork is the shared Pi agent cursor: keep the SVG in sync with
+  apps/desktop/electron/canvas/agent-cursor.ts (the browser-use cursor uses the
+  same glyph — one visual identity for "Pi is driving").
+-->
+<meta charset="utf-8" />
+<style>
+  html,
+  body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: none;
+  }
+
+  #stage {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+
+  /* ── the phantom cursor ─────────────────────────────────────────────── */
+  /* The wrap carries position (transform) + travel animation; the svg carries
+     the press dip so the two transforms never fight. Spring-ish ease with a
+     slight overshoot — the cursor GLIDES, never teleports. */
+  #cursor-wrap {
+    position: absolute;
+    left: 0;
+    top: 0;
+    will-change: transform;
+    transform: translate3d(-200px, -200px, 0);
+    transition: transform var(--travel, 300ms) cubic-bezier(0.22, 0.9, 0.32, 1.1);
+    opacity: 0;
+  }
+  #cursor-wrap.on {
+    opacity: 1;
+  }
+  #cursor-wrap.appear {
+    transition:
+      transform var(--travel, 300ms) cubic-bezier(0.22, 0.9, 0.32, 1.1),
+      opacity 0.35s ease-out;
+  }
+  #cursor {
+    display: block;
+    /* Tip of the arrow sits at (8,5) in the 34×40 box → offset so the wrap's
+       translate() means "tip at this point". */
+    margin: -5px 0 0 -8px;
+    filter: drop-shadow(0 1.5px 2.5px rgba(8, 10, 30, 0.5))
+      drop-shadow(0 0 12px rgba(79, 125, 255, 0.5));
+    transform-origin: 24% 13%;
+    transition: transform 0.15s ease-out;
+  }
+  #cursor.press {
+    transform: scale(0.82);
+  }
+
+  /* ── the status bubble (rides the cursor) ───────────────────────────── */
+  #bubble {
+    position: absolute;
+    left: 27px;
+    top: 40px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 13px;
+    border-radius: 999px;
+    font:
+      600 12.5px/1.2 -apple-system,
+      system-ui,
+      sans-serif;
+    letter-spacing: 0.01em;
+    color: #fff;
+    background: linear-gradient(135deg, rgba(63, 82, 172, 0.94), rgba(96, 58, 186, 0.94));
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    box-shadow:
+      0 4px 18px rgba(18, 22, 76, 0.42),
+      0 0 26px rgba(99, 88, 255, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    white-space: nowrap;
+    max-width: 340px;
+    opacity: 0;
+    transform: translateY(5px) scale(0.9);
+    transform-origin: top left;
+    transition:
+      opacity 0.22s ease,
+      transform 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+  }
+  #bubble.show {
+    opacity: 1;
+    transform: none;
+  }
+  /* Edge flips: keep the bubble inside the window near the right/bottom edge. */
+  #bubble.flip-x {
+    left: auto;
+    right: 14px;
+    transform-origin: top right;
+  }
+  #bubble.flip-y {
+    top: auto;
+    bottom: 10px;
+    transform-origin: bottom left;
+  }
+  #bubble.flip-x.flip-y {
+    transform-origin: bottom right;
+  }
+  /* Gentle breathing while thinking. */
+  #bubble.pulse {
+    animation: bubble-breathe 2.1s ease-in-out infinite;
+  }
+  @keyframes bubble-breathe {
+    0%,
+    100% {
+      box-shadow:
+        0 4px 18px rgba(18, 22, 76, 0.42),
+        0 0 22px rgba(99, 88, 255, 0.24),
+        inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    }
+    50% {
+      box-shadow:
+        0 4px 20px rgba(18, 22, 76, 0.48),
+        0 0 34px rgba(110, 96, 255, 0.44),
+        inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    }
+  }
+
+  #btext em {
+    font-style: normal;
+    opacity: 0.78;
+    font-weight: 500;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 11.5px;
+  }
+
+  /* Animated thinking/typing dots. */
+  #bdots {
+    display: none;
+    align-items: center;
+    gap: 3px;
+  }
+  #bdots.on {
+    display: inline-flex;
+  }
+  #bdots span {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #fff;
+    opacity: 0.5;
+    animation: dot-wave 1.25s ease-in-out infinite;
+  }
+  #bdots span:nth-child(2) {
+    animation-delay: 0.16s;
+  }
+  #bdots span:nth-child(3) {
+    animation-delay: 0.32s;
+  }
+  @keyframes dot-wave {
+    0%,
+    60%,
+    100% {
+      opacity: 0.45;
+      transform: translateY(0);
+    }
+    30% {
+      opacity: 1;
+      transform: translateY(-2.5px);
+    }
+  }
+
+  /* ── click ripple ───────────────────────────────────────────────────── */
+  .ripple {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    margin: -9px 0 0 -9px;
+    border-radius: 50%;
+    border: 2.5px solid rgba(122, 108, 255, 0.95);
+    box-shadow:
+      0 0 14px rgba(79, 125, 255, 0.65),
+      inset 0 0 8px rgba(123, 63, 242, 0.4);
+    opacity: 0.95;
+    transform: scale(0.55);
+  }
+  .ripple.go {
+    transition:
+      transform 0.5s cubic-bezier(0.16, 0.84, 0.44, 1),
+      opacity 0.5s ease-out;
+    transform: scale(3.1);
+    opacity: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #cursor-wrap,
+    #cursor-wrap.appear,
+    #bubble,
+    #bubble.show,
+    #cursor {
+      transition: none;
+    }
+    #bubble.pulse,
+    #bdots span {
+      animation: none;
+    }
+  }
+</style>
+
+<div id="stage">
+  <div id="cursor-wrap">
+    <!-- SYNC: apps/desktop/electron/canvas/agent-cursor.ts (agentCursorSvg) -->
+    <svg id="cursor" aria-hidden="true" width="34" height="40" viewBox="0 0 34 40" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="pi-cur-g" x1="8" y1="5" x2="26" y2="34" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#4f7dff" />
+          <stop offset="1" stop-color="#7b3ff2" />
+        </linearGradient>
+      </defs>
+      <!-- paint-order:stroke puts the doubled stroke UNDER the fill → a crisp
+           ~2.4px outline that sits fully OUTSIDE the glyph, so the gradient
+           keeps the whole interior (matches jedd's reference cursor). -->
+      <path
+        d="M8 5 L8 31.2 L14.5 25 L19.3 35.7 L24.1 33.5 L19.3 23 L27.5 23 Z"
+        fill="url(#pi-cur-g)"
+        stroke="#fff"
+        stroke-width="4.8"
+        paint-order="stroke"
+        stroke-linejoin="round"
+        stroke-linecap="round"
+      />
+    </svg>
+    <div id="bubble">
+      <span id="bdots"><span></span><span></span><span></span></span>
+      <span id="btext">Thinking</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  (() => {
+    'use strict';
+    var stage = document.getElementById('stage');
+    var wrap = document.getElementById('cursor-wrap');
+    var cursor = document.getElementById('cursor');
+    var bubble = document.getElementById('bubble');
+    var bdots = document.getElementById('bdots');
+    var btext = document.getElementById('btext');
+    var reduce = false;
+    try {
+      reduce = !!window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    } catch {
+      /* media queries unavailable */
+    }
+
+    var cx = -1;
+    var cy = -1; // local cursor position (-1 = never placed)
+    var placed = false;
+
+    function setCursor(x, y, ms) {
+      cx = x;
+      cy = y;
+      var travel = reduce ? 0 : typeof ms === 'number' ? ms : 300;
+      wrap.style.setProperty('--travel', `${travel}ms`);
+      wrap.style.transform = `translate3d(${x}px,${y}px,0)`;
+      placeBubble();
+    }
+
+    /* Flip the bubble to the other side of the cursor near the right/bottom
+       window edge so it never gets clipped. */
+    function placeBubble() {
+      // Guard against a not-yet-laid-out viewport (0×0 would force both flips).
+      if (window.innerWidth < 40 || window.innerHeight < 40) return;
+      var bw = bubble.offsetWidth || 140;
+      var bh = bubble.offsetHeight || 34;
+      bubble.classList.toggle('flip-x', cx + 27 + bw > window.innerWidth - 8);
+      bubble.classList.toggle('flip-y', cy + 40 + bh > window.innerHeight - 6);
+    }
+    window.addEventListener('resize', placeBubble);
+
+    function ensurePlaced() {
+      if (placed) return;
+      placed = true;
+      wrap.classList.add('appear');
+      setCursor(
+        cx >= 0 ? cx : Math.round(window.innerWidth / 2),
+        cy >= 0 ? cy : Math.round(window.innerHeight / 2),
+        0
+      );
+      requestAnimationFrame(() => {
+        wrap.classList.add('on');
+      });
+    }
+
+    function showBubble(text, opts) {
+      opts = opts || {};
+      btext.innerHTML = '';
+      btext.appendChild(document.createTextNode(text));
+      if (opts.sub) {
+        const em = document.createElement('em');
+        em.textContent = ` ${opts.sub}`;
+        btext.appendChild(em);
+      }
+      bdots.classList.toggle('on', !!opts.dots);
+      bubble.classList.toggle('pulse', !!opts.pulse && !reduce);
+      bubble.classList.add('show');
+      placeBubble();
+    }
+
+    function ripple(x, y, delay) {
+      setTimeout(() => {
+        const r = document.createElement('div');
+        r.className = 'ripple';
+        r.style.left = `${x}px`;
+        r.style.top = `${y}px`;
+        stage.appendChild(r);
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            r.classList.add('go');
+          });
+        });
+        setTimeout(() => {
+          r.remove();
+        }, 620);
+      }, delay || 0);
+    }
+
+    function press() {
+      cursor.classList.add('press');
+      setTimeout(() => {
+        cursor.classList.remove('press');
+      }, 150);
+    }
+
+    var STATUS = {
+      opening: (msg) => {
+        showBubble(msg.text || 'Opening', { dots: true });
+      },
+      thinking: () => {
+        showBubble('Thinking', { dots: true, pulse: true });
+      },
+      clicking: () => {
+        showBubble('Clicking', {});
+      },
+      typing: (msg) => {
+        showBubble('Typing', { dots: true, sub: msg.text || '' });
+      },
+      pressing: (msg) => {
+        showBubble(`Pressing ${msg.text || ''}`, {});
+      },
+      scrolling: () => {
+        showBubble('Scrolling', { dots: true });
+      },
+      reading: () => {
+        showBubble('Reading the screen', { dots: true });
+      },
+    };
+
+    function handle(msg) {
+      if (!msg || typeof msg !== 'object') return;
+      if (msg.kind === 'reset') {
+        // Window shown / resized: make sure the cursor is inside the view.
+        ensurePlaced();
+        if (cx > window.innerWidth - 4 || cy > window.innerHeight - 4) {
+          setCursor(
+            Math.min(cx, Math.max(4, window.innerWidth - 8)),
+            Math.min(cy, Math.max(4, window.innerHeight - 8)),
+            0
+          );
+        }
+        return;
+      }
+      if (msg.kind === 'cursor') {
+        ensurePlaced();
+        setCursor(msg.x, msg.y, msg.ms);
+        return;
+      }
+      if (msg.kind === 'click') {
+        ensurePlaced();
+        setCursor(msg.x, msg.y, 0);
+        press();
+        showBubble('Clicking', {});
+        ripple(msg.x, msg.y, 0);
+        if (!reduce) ripple(msg.x, msg.y, 130);
+        return;
+      }
+      if (msg.kind === 'status') {
+        ensurePlaced();
+        const fn = STATUS[msg.status];
+        if (fn) fn(msg);
+        return;
+      }
+      if (msg.kind === 'hide-bubble') {
+        bubble.classList.remove('show', 'pulse');
+        return;
+      }
+    }
+
+    window.__pdOverlay = (msg) => {
+      try {
+        handle(msg);
+      } catch {
+        /* a bad message must never break the overlay */
+      }
+      return true;
+    };
+  })();
+</script>

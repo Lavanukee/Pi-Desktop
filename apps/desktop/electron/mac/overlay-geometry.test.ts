@@ -1,25 +1,44 @@
 import { describe, expect, it } from 'vitest';
 import {
   comboLabel,
+  OVERLAY_BUFFER,
   overlayBoundsFor,
+  overlayShouldShow,
   rectsDiffer,
   toLocalPoint,
   typingPreview,
 } from './overlay-geometry';
 
 describe('overlayBoundsFor', () => {
-  it('rounds to integer Electron bounds and never collapses to zero size', () => {
-    expect(overlayBoundsFor({ x: 10.4, y: 20.6, w: 800.2, h: 599.9 })).toEqual({
+  it('rounds to integer Electron bounds and never collapses to zero size (buffer 0)', () => {
+    expect(overlayBoundsFor({ x: 10.4, y: 20.6, w: 800.2, h: 599.9 }, 0)).toEqual({
       x: 10,
       y: 21,
       width: 800,
       height: 600,
     });
-    expect(overlayBoundsFor({ x: 0, y: 0, w: 0.2, h: 0 })).toEqual({
+    expect(overlayBoundsFor({ x: 0, y: 0, w: 0.2, h: 0 }, 0)).toEqual({
       x: 0,
       y: 0,
       width: 1,
       height: 1,
+    });
+  });
+  it('pads the window by the buffer on every side (larger than the tracked rect)', () => {
+    const b = 40;
+    expect(overlayBoundsFor({ x: 200, y: 150, w: 800, h: 600 }, b)).toEqual({
+      x: 200 - b,
+      y: 150 - b,
+      width: 800 + b * 2,
+      height: 600 + b * 2,
+    });
+    // Default buffer is applied when none is passed.
+    const def = overlayBoundsFor({ x: 200, y: 150, w: 800, h: 600 });
+    expect(def).toEqual({
+      x: 200 - OVERLAY_BUFFER,
+      y: 150 - OVERLAY_BUFFER,
+      width: 800 + OVERLAY_BUFFER * 2,
+      height: 600 + OVERLAY_BUFFER * 2,
     });
   });
 });
@@ -42,16 +61,51 @@ describe('rectsDiffer (tracking-loop thrash guard)', () => {
 
 describe('toLocalPoint (screen → overlay mapping)', () => {
   const win = { x: 200, y: 150, w: 800, h: 600 };
-  it('translates a screen point into window-local coordinates', () => {
-    expect(toLocalPoint(600, 450, win)).toEqual({ x: 400, y: 300 });
+  it('translates a screen point, offset by the buffer (window is padded)', () => {
+    // Interior point: local = (screen - origin) + buffer on each axis.
+    expect(toLocalPoint(600, 450, win, 40)).toEqual({ x: 440, y: 340 });
+    // With buffer 0 it is pure translation (legacy behavior).
+    expect(toLocalPoint(600, 450, win, 0)).toEqual({ x: 400, y: 300 });
   });
-  it('clamps points at/off the window edge inside with an inset (cursor stays visible)', () => {
-    expect(toLocalPoint(200, 150, win)).toEqual({ x: 4, y: 4 });
-    expect(toLocalPoint(1100, 900, win)).toEqual({ x: 796, y: 596 });
-    expect(toLocalPoint(0, 0, win)).toEqual({ x: 4, y: 4 });
+  it('lets the cursor sit ON the app edge inside the buffer zone (no clip)', () => {
+    // A point on the app's own top-left corner maps to (buffer, buffer): the
+    // cursor tip sits `buffer` px in, its glyph free to protrude toward 0.
+    expect(toLocalPoint(200, 150, win, 40)).toEqual({ x: 40, y: 40 });
+    // The app's bottom-right corner → padded window minus the buffer.
+    expect(toLocalPoint(1000, 750, win, 40)).toEqual({ x: 40 + 800, y: 40 + 600 });
+  });
+  it('clamps a point well outside the padded window to a tiny inset', () => {
+    const b = 40;
+    const paddedW = win.w + b * 2;
+    const paddedH = win.h + b * 2;
+    expect(toLocalPoint(5000, 5000, win, b, 2)).toEqual({ x: paddedW - 2, y: paddedH - 2 });
+    expect(toLocalPoint(-5000, -5000, win, b, 2)).toEqual({ x: 2, y: 2 });
   });
   it('survives degenerate window sizes', () => {
-    expect(toLocalPoint(5, 5, { x: 0, y: 0, w: 2, h: 2 })).toEqual({ x: 4, y: 4 });
+    expect(toLocalPoint(5, 5, { x: 0, y: 0, w: 2, h: 2 }, 0, 4)).toEqual({ x: 4, y: 4 });
+  });
+});
+
+describe('overlayShouldShow (app-scoped visibility rule)', () => {
+  it('hides when the controlled window is not present, regardless of the rest', () => {
+    expect(overlayShouldShow({ controlledFrontmost: true, appVisible: false, driving: true })).toBe(
+      false,
+    );
+  });
+  it('shows while the model is actively driving, even in the background', () => {
+    expect(overlayShouldShow({ controlledFrontmost: false, appVisible: true, driving: true })).toBe(
+      true,
+    );
+  });
+  it('shows when the controlled app is frontmost even if the model is idle', () => {
+    expect(overlayShouldShow({ controlledFrontmost: true, appVisible: true, driving: false })).toBe(
+      true,
+    );
+  });
+  it('tucks away when backgrounded AND idle (user is working elsewhere)', () => {
+    expect(
+      overlayShouldShow({ controlledFrontmost: false, appVisible: true, driving: false }),
+    ).toBe(false);
   });
 });
 

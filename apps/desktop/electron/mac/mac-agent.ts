@@ -73,6 +73,10 @@ let helper: MacHelperClient | null = null;
 const elementCenters = new Map<number, Map<number, { x: number; y: number }>>();
 
 let tccCache: { at: number; status: MacTccStatus } | null = null;
+/** PI_E2E-only: a synthetic window frame the overlay's real tracking loop reads
+ * (via an injected bounds reader) so the deterministic probe can move the
+ * "controlled window" with no TCC/real app and assert the overlay follows. */
+let e2eFakeBounds: (OverlayRect & { frontmost?: boolean }) | null = null;
 /** The system permission dialogs are surfaced at most once per app session
  * (first mac_* use without the grants) — never nag. */
 let promptedTcc = false;
@@ -396,7 +400,12 @@ export function registerMacAgentIpc(): void {
   startServer();
   macOverlay.setBoundsReader(async (pid) => {
     const b = await readBounds({ pid });
-    return b === null ? null : rectOf(b);
+    if (b === null) return null;
+    const rect = rectOf(b);
+    // Thread `frontmost` alongside the frame so the overlay's app-scoped
+    // visibility rule (overlayShouldShow) can tell "user is looking at the
+    // controlled app" from "user turned to something else".
+    return rect === null ? null : { ...rect, frontmost: b.frontmost === true };
   });
   if (process.env.PI_E2E === '1') registerE2eDebugChannel();
   log.info('mac-agent helper path', { helperPath: HELPER_PATH, packaged: app.isPackaged });
@@ -459,6 +468,48 @@ function registerE2eDebugChannel(): void {
           }
           case 'overlay-info':
             return { ok: true, result: macOverlay.info() };
+          case 'overlay-retarget': {
+            // Synchronous reposition to a new frame (the tracker's move path) —
+            // proves the overlay follows in the SAME tick, no snap-on-release.
+            await macOverlay.debugRetarget({
+              x: Number(params.x ?? 0),
+              y: Number(params.y ?? 0),
+              w: Number(params.w ?? 600),
+              h: Number(params.h ?? 400),
+            });
+            return { ok: true, result: macOverlay.info() };
+          }
+          case 'overlay-fake-control': {
+            // Drive the REAL tracking loop off a synthetic bounds source.
+            e2eFakeBounds = {
+              x: Number(params.x ?? 0),
+              y: Number(params.y ?? 0),
+              w: Number(params.w ?? 600),
+              h: Number(params.h ?? 400),
+              frontmost: params.frontmost !== false,
+            };
+            macOverlay.setBoundsReader(async () => e2eFakeBounds);
+            await macOverlay.control(Number(params.pid ?? 424242), {
+              x: e2eFakeBounds.x,
+              y: e2eFakeBounds.y,
+              w: e2eFakeBounds.w,
+              h: e2eFakeBounds.h,
+            });
+            return { ok: true, result: macOverlay.info() };
+          }
+          case 'overlay-fake-move': {
+            // Move the synthetic window; the live tracker picks it up on its
+            // next fast tick (probe waits a beat, then asserts the overlay
+            // window moved with it).
+            e2eFakeBounds = {
+              x: Number(params.x ?? 0),
+              y: Number(params.y ?? 0),
+              w: Number(params.w ?? 600),
+              h: Number(params.h ?? 400),
+              frontmost: params.frontmost !== false,
+            };
+            return { ok: true };
+          }
           case 'overlay-hide': {
             macOverlay.hide();
             return { ok: true };

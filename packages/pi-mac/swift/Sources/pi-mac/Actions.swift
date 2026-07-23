@@ -150,14 +150,45 @@ func postKey(flags: CGEventFlags, key: CGKeyCode) {
   }
 }
 
+/// How many continuous pixel events one scroll request is broken into. A short
+/// burst of small CONTINUOUS (trackpad-style) events is honored by momentum
+/// scroll views that swallow a single large discrete wheel notch — which is
+/// exactly the background no-op seen in System Settings. Cumulative rounding
+/// keeps the posted total equal to the requested delta.
+private let SCROLL_STEPS = 10
+
+/// Emit `dx,dy` as `SCROLL_STEPS` continuous pixel scroll events through `sink`
+/// (the caller posts each to the HID tap or to a pid). Each event carries the
+/// incremental delta and the `.scrollWheelEventIsContinuous` flag.
+private func emitScrollSteps(
+  _ src: CGEventSource?, dx: Int, dy: Int, at location: CGPoint?, _ sink: (CGEvent) -> Void
+) {
+  guard dx != 0 || dy != 0 else { return }
+  var postedX = 0
+  var postedY = 0
+  for i in 1...SCROLL_STEPS {
+    let targetX = Int((Double(dx) * Double(i) / Double(SCROLL_STEPS)).rounded())
+    let targetY = Int((Double(dy) * Double(i) / Double(SCROLL_STEPS)).rounded())
+    let stepX = targetX - postedX
+    let stepY = targetY - postedY
+    postedX = targetX
+    postedY = targetY
+    guard
+      let ev = CGEvent(
+        scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2, wheel1: Int32(stepY),
+        wheel2: Int32(stepX), wheel3: 0)
+    else { continue }
+    ev.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+    if let loc = location { ev.location = loc }
+    sink(ev)
+  }
+}
+
 /// Scroll wheel by pixel deltas at the current cursor (positive dy scrolls up on
 /// macOS natural direction; the tool normalizes direction).
 func postScroll(dx: Int, dy: Int) {
   let src = eventSource()
-  CGEvent(
-    scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2, wheel1: Int32(dy),
-    wheel2: Int32(dx), wheel3: 0
-  )?.post(tap: .cghidEventTap)
+  emitScrollSteps(src, dx: dx, dy: dy, at: nil) { $0.post(tap: .cghidEventTap) }
 }
 
 // ── pid-targeted posting (the BACKGROUND input path) ─────────────────────────
@@ -216,18 +247,19 @@ func postKeyToPid(_ pid: pid_t, flags: CGEventFlags, key: CGKeyCode) {
   }
 }
 
-/// Scroll `pid`'s content without focus: the event's location is pinned to a
+/// Scroll `pid`'s content without focus: every event's location is pinned to a
 /// point INSIDE the target window (its centre) so the app's hit-test finds a
-/// scrollable view even though the real cursor is elsewhere.
+/// scrollable view even though the real cursor is elsewhere. Delivered as a
+/// burst of continuous pixel events (see emitScrollSteps) — a single background
+/// wheel notch is easy for a momentum scroll view to ignore.
 func postScrollToPid(_ pid: pid_t, dx: Int, dy: Int, at pt: CGPoint) {
   let src = eventSource()
-  guard
-    let ev = CGEvent(
-      scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2, wheel1: Int32(dy),
-      wheel2: Int32(dx), wheel3: 0)
-  else { return }
-  ev.location = pt
-  ev.postToPid(pid)
+  // Align the target's hit-test to the scroll point first (background move,
+  // delivered only to this pid — the real cursor never moves).
+  CGEvent(
+    mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: pt, mouseButton: .left)?
+    .postToPid(pid)
+  emitScrollSteps(src, dx: dx, dy: dy, at: pt) { $0.postToPid(pid) }
 }
 
 /// AX-FIRST press. Try the element's own focus-free AX actions in preference

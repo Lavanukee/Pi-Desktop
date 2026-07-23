@@ -14,7 +14,14 @@
  * cleared on navigation and idempotently re-created here, so injection survives
  * page changes. All are defensive: they never throw across executeJavaScript.
  */
-import { AGENT_CURSOR_FILTER, agentCursorSvg } from './agent-cursor';
+import {
+  AGENT_CURSOR_FILTER,
+  AGENT_CURSOR_TIP_X_FRACTION,
+  AGENT_CURSOR_TIP_Y_FRACTION,
+  AGENT_CURSOR_VIEWBOX_H,
+  AGENT_CURSOR_VIEWBOX_W,
+  agentCursorSvg,
+} from './agent-cursor';
 
 /** The stamp shared with the perception snapshot. Keep in sync with
  * @pi-desktop/browser-use `DATA_IDX_ATTR`. */
@@ -22,9 +29,15 @@ export const DATA_IDX_ATTR = 'data-pi-idx';
 
 const IDX = DATA_IDX_ATTR;
 
-/** Browser cursor render width (px). The glyph keeps the shared 34×40 aspect. */
-const CURSOR_W = 26;
-const CURSOR_H = Math.round((CURSOR_W * 40) / 34);
+/** Browser cursor render width (px). Height keeps the shared glyph aspect. */
+const CURSOR_W = 28;
+const CURSOR_H = Math.round((CURSOR_W * AGENT_CURSOR_VIEWBOX_H) / AGENT_CURSOR_VIEWBOX_W);
+/** The pointing nose within the rendered glyph (px). A negative margin shifts
+ * the element so its nose sits at the div's (left, top) — then positioning at
+ * (op.x, op.y) lands the nose on the target while pill math stays target-relative. */
+const NOSE_X = +(AGENT_CURSOR_TIP_X_FRACTION * CURSOR_W).toFixed(1);
+const NOSE_Y = +(AGENT_CURSOR_TIP_Y_FRACTION * CURSOR_H).toFixed(1);
+const NOSE_ORIGIN = `${Math.round(AGENT_CURSOR_TIP_X_FRACTION * 100)}% ${Math.round(AGENT_CURSOR_TIP_Y_FRACTION * 100)}%`;
 
 /** A cursor overlay command. */
 export type CursorOp =
@@ -50,7 +63,7 @@ export function cursorCommand(op: CursorOp): string {
       cur = document.createElement('div');
       cur.id = CID;
       cur.setAttribute('aria-hidden', 'true');
-      cur.style.cssText = 'position:fixed;left:-100px;top:-100px;width:${CURSOR_W}px;height:${CURSOR_H}px;z-index:2147483647;pointer-events:none;margin:0;padding:0;opacity:0;transform-origin:24% 13%;will-change:left,top,transform,opacity;filter:${AGENT_CURSOR_FILTER};';
+      cur.style.cssText = 'position:fixed;left:-100px;top:-100px;width:${CURSOR_W}px;height:${CURSOR_H}px;z-index:2147483647;pointer-events:none;margin:${-NOSE_Y}px 0 0 ${-NOSE_X}px;padding:0;opacity:0;transform-origin:${NOSE_ORIGIN};will-change:left,top,transform,opacity;filter:${AGENT_CURSOR_FILTER};';
       cur.innerHTML = ${JSON.stringify(agentCursorSvg(CURSOR_W))};
       (document.body || document.documentElement).appendChild(cur);
     }

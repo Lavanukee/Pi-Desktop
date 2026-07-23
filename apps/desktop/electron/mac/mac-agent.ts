@@ -469,14 +469,18 @@ function registerE2eDebugChannel(): void {
           case 'overlay-info':
             return { ok: true, result: macOverlay.info() };
           case 'overlay-retarget': {
-            // Synchronous reposition to a new frame (the tracker's move path) —
-            // proves the overlay follows in the SAME tick, no snap-on-release.
-            await macOverlay.debugRetarget({
+            // Prompt reposition to a new frame (the tracker's move path) — proves
+            // the overlay follows without snap-on-release. Also update the
+            // synthetic bounds source so the live tracker MAINTAINS the new frame
+            // instead of reverting it on its next tick.
+            const frame = {
               x: Number(params.x ?? 0),
               y: Number(params.y ?? 0),
               w: Number(params.w ?? 600),
               h: Number(params.h ?? 400),
-            });
+            };
+            e2eFakeBounds = { ...frame, frontmost: e2eFakeBounds?.frontmost !== false };
+            await macOverlay.debugRetarget(frame);
             return { ok: true, result: macOverlay.info() };
           }
           case 'overlay-fake-control': {

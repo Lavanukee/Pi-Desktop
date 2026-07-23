@@ -312,15 +312,21 @@ try {
   }
   console.log('live tracking OK: overlay followed the moved window');
 
-  // Synchronous retarget (the tracker's move path) lands in the SAME call — no
-  // 'reset' round-trip lag between the window moving and the overlay following.
+  // Prompt retarget (the tracker's move path) via setBounds — no 'reset'
+  // round-trip. Electron's macOS setBounds applies on the next runloop (not the
+  // same microsecond), so allow a short settle rather than asserting instantly.
   const C = { x: 140, y: 180, w: 900, h: 600 };
   await dbg('overlay-retarget', C);
-  wb = await winBounds();
-  if (!eqBounds(wb, expectPadded(C))) {
-    fail(`retarget not synchronous: ${JSON.stringify(wb)} != ${JSON.stringify(expectPadded(C))}`);
+  let retargeted = false;
+  for (let i = 0; i < 15 && !retargeted; i++) {
+    await sleep(20);
+    wb = await winBounds();
+    retargeted = eqBounds(wb, expectPadded(C));
   }
-  console.log('synchronous retarget OK: overlay followed in the same tick');
+  if (!retargeted) {
+    fail(`retarget did not land: ${JSON.stringify(wb)} != ${JSON.stringify(expectPadded(C))}`);
+  }
+  console.log('prompt retarget OK: overlay followed the setBounds retarget');
 
   // ── hide puts the phantom away ────────────────────────────────────────────
   await dbg('overlay-hide');

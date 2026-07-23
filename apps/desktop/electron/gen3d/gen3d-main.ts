@@ -71,21 +71,16 @@ const jobPlans = new Map<string, readonly StagePlan[]>();
 const downloading = new Set<string>();
 
 /** Where python/server.py lives: packages/gen3d-engine/python (source tree in
- * dev; override with GEN3D_PY_DIR for packaged builds — see report). */
+ * dev; override with GEN3D_PY_DIR for packaged builds — see report).
+ * The bundle runs from apps/desktop/dist-electron (3 hops to the repo root)
+ * while ts-node-ish dev paths sit one deeper — probe both. */
 function sidecarScriptPath(): string {
   const override = process.env.GEN3D_PY_DIR;
   if (override !== undefined && override.length > 0) return path.join(override, 'server.py');
-  return path.join(
-    __dirname,
-    '..',
-    '..',
-    '..',
-    '..',
-    'packages',
-    'gen3d-engine',
-    'python',
-    'server.py',
-  );
+  const tail = ['packages', 'gen3d-engine', 'python', 'server.py'];
+  const bundlePath = path.join(__dirname, '..', '..', '..', ...tail);
+  const devPath = path.join(__dirname, '..', '..', '..', '..', ...tail);
+  return [bundlePath, devPath].find((p) => existsSync(p)) ?? bundlePath;
 }
 
 async function ensureSidecar(): Promise<Gen3dSidecar | null> {

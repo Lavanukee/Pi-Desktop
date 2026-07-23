@@ -85,7 +85,12 @@ async function main() {
             { repo: 'camenduru/dinov3-vitl16-pretrain-lvd1689m', bytes: 1212584680 },
             {
               repo: 'ZhengPeng7/BiRefNet',
-              allowPatterns: ['config.json', 'birefnet.py', 'BiRefNet_config.py', 'model.safetensors'],
+              allowPatterns: [
+                'config.json',
+                'birefnet.py',
+                'BiRefNet_config.py',
+                'model.safetensors',
+              ],
               bytes: 444566195,
             },
           ],

@@ -41,9 +41,7 @@ describe('catalog', () => {
     const paint = GEN3D_MODEL_SPECS.find((s) => s.id === 'hunyuan-paint');
     expect(paint?.repos[0]?.allowPatterns).toEqual(['hunyuan3d-paintpbr-v2-1/*', 'hy3dpaint/*']);
     expect(paint?.repos[1]?.repo).toBe('facebook/dinov2-giant');
-    expect(specTotalBytes(paint as NonNullable<typeof paint>)).toBe(
-      6_887_601_302 + 4_546_006_416,
-    );
+    expect(specTotalBytes(paint as NonNullable<typeof paint>)).toBe(6_887_601_302 + 4_546_006_416);
   });
 
   it('autoremesher has no weights — its size is the release dmg', () => {

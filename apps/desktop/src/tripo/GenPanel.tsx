@@ -1,48 +1,38 @@
 /**
- * The left generation panel — content switches with the rail tool.
- *  - Model: the full Generate Model stack (HD/Smart Mesh, input-mode tabs,
- *    upload dropzone / multiview / gallery / text prompt, Geometry & Texture
- *    accordion, Members Only toggles, Privacy, AI Model dropdown, Generate).
- *  - Image: AI image generator (prompt, ratio, style, count).
- *  - Segment / Fill Parts / Retopo / Texture / Edit / Upscale / PBR: the
- *    select-or-upload panels with their illustrations and footer actions.
- * Every "start" action is a no-op by design (UI-only phase).
+ * The left panel — content switches with the rail tool. Every section is
+ * FUNCTIONAL on the demo pipeline (sample-asset-backed until the live engines
+ * are wired; each stage is labeled with its intended real engine):
+ *  - Model: input modes + geometry settings + AI model (Hunyuan 3D Omni /
+ *    TRELLIS-2) + Generate → the base mesh appears in the viewport.
+ *  - Image: prompt/ratio/style for the image-for-3D input.
+ *  - Segment (CubePart): splits the loaded mesh into colored semantic parts.
+ *  - Retopo (AutoRemesher): reveals the clean quad remesh.
+ *  - Texture (Hunyuan Paint): generates + applies a texture, switches the
+ *    viewport to Textured.
+ *  - Animate (SkinTokens / ARDY): rigging + clip playback (AnimatePanel).
+ * No credits, no members-only upsells, no privacy rows.
  */
 import type { JSX, ReactNode } from 'react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { AnimatePanel } from './AnimatePanel';
-import { GEN_MODELS } from './data';
+import { GEN_MODELS, RETOPO_MODEL, SEGMENT_MODEL, TEXTURE_MODEL } from './data';
 import {
-  IcBolt,
   IcBulb,
   IcCaretSmall,
   IcChevronRight,
-  IcCrown,
   IcCube,
   IcGallery,
-  IcGlobe,
   IcImage,
-  IcLock,
-  IcPbr,
   IcPencil,
-  IcQuestion,
   IcRetopo,
   IcSegment,
   IcSparkles,
   IcTexture,
-  IcThumbsUp,
   IcUpload,
-  IcUpscale,
 } from './icons';
-import { Hint, MenuAnchor, MenuItem, Segmented, SliderRow, Toggle } from './primitives';
+import { Hint, MenuAnchor, MenuItem, Segmented, SliderRow } from './primitives';
 import { HERO_ASSET_ID, type TripoInputMode, useTripoStore } from './store';
-import {
-  QuadThumb,
-  RetopoIllustration,
-  RiggedThumb,
-  SegmentIllustration,
-  TextureIllustration,
-} from './thumbs';
+import { importModelFile } from './viewer-io';
 
 // ── shared bits ───────────────────────────────────────────────────────────
 
@@ -63,16 +53,12 @@ function PanelHeader({
 
 function GenerateButton({
   label,
-  cost,
   disabled,
-  crown,
   testid,
   onClick,
 }: {
   readonly label: string;
-  readonly cost: number;
   readonly disabled?: boolean;
-  readonly crown?: boolean;
   readonly testid?: string;
   readonly onClick?: () => void;
 }): JSX.Element {
@@ -84,13 +70,48 @@ function GenerateButton({
       data-testid={testid}
       onClick={onClick}
     >
-      {crown === true ? <IcCrown size={16} /> : null}
       {label}
-      <span className="tp-cost">
-        <IcBolt size={13} />
-        <s>{cost}</s> 0
-      </span>
     </button>
+  );
+}
+
+/** "Engine · <name>" row — names the real model that backs this stage. */
+function EngineRow({ name }: { readonly name: string }): JSX.Element {
+  return (
+    <div className="tp-engine-row" data-testid="tp-engine-row">
+      <span className="tp-field-label">Model</span>
+      <span className="tp-engine-name">{name}</span>
+    </div>
+  );
+}
+
+/** Hidden-file-input Upload button: imports a 3D model exactly like drag-drop. */
+function UploadModelButton(): JSX.Element {
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <button
+        type="button"
+        className="tp-upload-btn"
+        data-testid="tp-upload-model-btn"
+        onClick={() => inputRef.current?.click()}
+      >
+        <IcUpload size={15} />
+        Upload 3D Model
+      </button>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".glb,.gltf,.obj,.stl"
+        style={{ display: 'none' }}
+        data-testid="tp-upload-model-input"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file !== undefined) void importModelFile(file);
+          e.target.value = '';
+        }}
+      />
+    </>
   );
 }
 
@@ -178,9 +199,6 @@ function UploadZone(): JSX.Element {
           />
           <div className="tp-prompt-foot">
             <span>{prompt.length}/1024</span>
-            <button type="button" className="tp-linklike">
-              Surprise me
-            </button>
           </div>
         </div>
       ) : null}
@@ -188,13 +206,12 @@ function UploadZone(): JSX.Element {
   );
 }
 
-function GeoTexAccordion(): JSX.Element {
+function GeoAccordion(): JSX.Element {
   const open = useTripoStore((s) => s.geoTexOpen);
   const set = useTripoStore((s) => s.set);
   const faceLimit = useTripoStore((s) => s.faceLimit);
   const topology = useTripoStore((s) => s.topology);
   const symmetry = useTripoStore((s) => s.symmetry);
-  const pbrMaps = useTripoStore((s) => s.pbrMaps);
 
   return (
     <div className="tp-accordion" data-open={open}>
@@ -205,11 +222,8 @@ function GeoTexAccordion(): JSX.Element {
         onClick={() => set('geoTexOpen', !open)}
       >
         <div className="tp-accordion-titles">
-          <span className="tp-accordion-title">Geometry &amp; Texture</span>
-          <span className="tp-accordion-sub">
-            <IcSparkles size={12} />
-            Ultra enabled for best results
-          </span>
+          <span className="tp-accordion-title">Geometry</span>
+          <span className="tp-accordion-sub">Face limit · topology · symmetry</span>
         </div>
         <span className="tp-accordion-caret">
           <IcChevronRight size={15} />
@@ -250,74 +264,6 @@ function GeoTexAccordion(): JSX.Element {
               onChange={(v) => set('symmetry', v)}
             />
           </div>
-          <div className="tp-field-row">
-            <span className="tp-field-label">PBR maps</span>
-            <Toggle on={pbrMaps} onChange={(v) => set('pbrMaps', v)} testid="tp-pbr-toggle" />
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function PrivacyRow(): JSX.Element {
-  const open = useTripoStore((s) => s.privacyOpen);
-  const privacy = useTripoStore((s) => s.privacy);
-  const set = useTripoStore((s) => s.set);
-  return (
-    <div className="tp-privacy" data-open={open}>
-      <button
-        type="button"
-        className="tp-setting-row tp-privacy-head"
-        data-testid="tp-privacy-head"
-        onClick={() => set('privacyOpen', !open)}
-      >
-        <span className="tp-setting-label">
-          Privacy
-          <Hint text="Public models appear in the community gallery">
-            <span className="tp-q">
-              <IcQuestion size={13} />
-            </span>
-          </Hint>
-        </span>
-        <span className="tp-privacy-value">
-          {privacy === 'public' ? <IcGlobe size={14} /> : <IcLock size={14} />}
-          {privacy === 'public' ? 'Public' : 'Private'}
-          <span className="tp-privacy-caret" data-open={open}>
-            <IcCaretSmall size={12} />
-          </span>
-        </span>
-      </button>
-      {open ? (
-        <div className="tp-privacy-body">
-          <button
-            type="button"
-            className="tp-radio-row"
-            data-active={privacy === 'public'}
-            onClick={() => set('privacy', 'public')}
-          >
-            <IcGlobe size={15} />
-            <span className="tp-radio-body">
-              <span>Public</span>
-              <em>Anyone can view it in the community</em>
-            </span>
-            <span className="tp-radio-dot" data-active={privacy === 'public'} />
-          </button>
-          <button
-            type="button"
-            className="tp-radio-row"
-            data-active={privacy === 'private'}
-            onClick={() => set('privacy', 'private')}
-          >
-            <IcLock size={15} />
-            <span className="tp-radio-body">
-              <span>
-                Private <IcCrown size={12} />
-              </span>
-              <em>Only you can see this model</em>
-            </span>
-            <span className="tp-radio-dot" data-active={privacy === 'private'} />
-          </button>
         </div>
       ) : null}
     </div>
@@ -347,9 +293,6 @@ function AiModelSelect(): JSX.Element {
             data-testid="tp-genmodel-btn"
             onClick={() => toggleMenu('genmodel')}
           >
-            <span className="tp-model-avatar">
-              <IcThumbsUp size={15} />
-            </span>
             <span className="tp-model-titles">
               <span className="tp-model-name">{current.label}</span>
               <span className="tp-model-hint">{current.hint}</span>
@@ -378,93 +321,23 @@ function AiModelSelect(): JSX.Element {
 }
 
 function ModelPanel(): JSX.Element {
-  const genMode = useTripoStore((s) => s.genMode);
-  const set = useTripoStore((s) => s.set);
   const runStage = useTripoStore((s) => s.runStage);
   const loadAsset = useTripoStore((s) => s.loadAsset);
-  const generateInParts = useTripoStore((s) => s.generateInParts);
-  const texture8k = useTripoStore((s) => s.texture8k);
 
   return (
     <>
       <PanelHeader icon={<IcSparkles size={17} />} title="Generate Model" />
       <div className="tp-panel-scroll">
-        <Segmented
-          testid="tp-genmode"
-          options={[
-            { id: 'hd', label: 'HD Model' },
-            {
-              id: 'smart',
-              label: (
-                <span className="tp-smartmesh">
-                  Smart Mesh
-                  <IcBolt size={12} />
-                </span>
-              ),
-            },
-          ]}
-          value={genMode}
-          onChange={(v) => set('genMode', v)}
-        />
         <UploadZone />
-
-        <div className="tp-section-title">General Settings</div>
-        <GeoTexAccordion />
-
-        <div className="tp-section-title tp-members">
-          <IcCrown size={14} />
-          Members Only
-        </div>
-        <div className="tp-card">
-          <div className="tp-setting-row">
-            <span className="tp-setting-label">
-              Generate in Parts
-              <span className="tp-badge-new">New</span>
-              <Hint text="Splits the mesh into separable parts">
-                <span className="tp-q">
-                  <IcQuestion size={13} />
-                </span>
-              </Hint>
-            </span>
-            <Toggle
-              on={generateInParts}
-              onChange={(v) => set('generateInParts', v)}
-              testid="tp-parts-toggle"
-            />
-          </div>
-          <div className="tp-setting-note">
-            <IcSparkles size={12} />
-            New Function Trial x1
-          </div>
-          <div className="tp-card-sep" />
-          <div className="tp-setting-row">
-            <span className="tp-setting-label">
-              8K Texture
-              <span className="tp-badge-new">New</span>
-              <Hint text="Ultra-resolution texture bake">
-                <span className="tp-q">
-                  <IcQuestion size={13} />
-                </span>
-              </Hint>
-            </span>
-            <Toggle on={texture8k} onChange={(v) => set('texture8k', v)} testid="tp-8k-toggle" />
-          </div>
-          <div className="tp-setting-note">
-            <IcSparkles size={12} />
-            8K Texture (Max Exclusive) – Free Trial
-          </div>
-          <div className="tp-card-sep" />
-          <PrivacyRow />
-        </div>
-
+        <div className="tp-section-title">Settings</div>
+        <GeoAccordion />
         <AiModelSelect />
       </div>
       <div className="tp-panel-foot">
-        {/* Sample-asset-backed: loads the bundled hero GLB and shows its dense
-         * generated base mesh. NOT a live TRELLIS run. */}
+        {/* Sample-asset-backed: loads the bundled sample GLB and shows its dense
+         * generated base mesh. NOT a live Hunyuan/TRELLIS run yet. */}
         <GenerateButton
           label="Generate Model"
-          cost={65}
           testid="tp-generate-btn"
           onClick={() => {
             loadAsset(HERO_ASSET_ID);
@@ -487,7 +360,7 @@ function ImagePanel(): JSX.Element {
 
   return (
     <>
-      <PanelHeader icon={<IcImage size={17} />} title="AI Image Generator" />
+      <PanelHeader icon={<IcImage size={17} />} title="Image for 3D" />
       <div className="tp-panel-scroll">
         <div className="tp-card tp-card-pad">
           <textarea
@@ -499,9 +372,6 @@ function ImagePanel(): JSX.Element {
           />
           <div className="tp-prompt-foot">
             <span>{prompt.length}/800</span>
-            <button type="button" className="tp-linklike">
-              Surprise me
-            </button>
           </div>
         </div>
         <div className="tp-field-row">
@@ -541,85 +411,113 @@ function ImagePanel(): JSX.Element {
             ))}
           />
         </div>
-        <div className="tp-imagegrid-note">Recent generations</div>
-        <div className="tp-mini-gallery tp-mini-gallery-loose">
-          {[0, 1, 2, 3].map((i) => (
-            <button key={i} type="button" className="tp-mini-thumb" data-i={i}>
-              <IcImage size={15} />
-            </button>
-          ))}
-        </div>
       </div>
       <div className="tp-panel-foot">
-        <GenerateButton label="Generate Image" cost={10} />
+        <GenerateButton label="Generate Image" />
       </div>
     </>
   );
 }
 
-// ── select-or-upload panels (Segment / Retopo / Texture family) ───────────
+// ── Segment / Retopo / Texture panels (functional stages) ─────────────────
 
-function SelectUploadPanel({
+function StagePanel({
   icon,
   title,
-  action,
-  illustration,
+  engine,
+  copy,
   footer,
-  extra,
+  children,
 }: {
   readonly icon: ReactNode;
   readonly title: string;
-  readonly action: string;
-  readonly illustration: ReactNode;
-  readonly footer?: ReactNode;
-  readonly extra?: ReactNode;
+  readonly engine: string;
+  readonly copy: string;
+  readonly footer: ReactNode;
+  readonly children?: ReactNode;
 }): JSX.Element {
   return (
     <>
       <PanelHeader icon={icon} title={title} />
-      <div className="tp-panel-scroll tp-panel-center">
-        {illustration}
-        <p className="tp-select-copy">
-          <em>Select</em> a model from Assets on the right or <em>upload</em> your own for{' '}
-          <strong>{action}</strong>
-        </p>
-        <button type="button" className="tp-upload-btn" data-testid="tp-upload-model-btn">
-          <IcUpload size={15} />
-          Upload 3D Model
-        </button>
-        {extra}
+      <div className="tp-panel-scroll">
+        <EngineRow name={engine} />
+        <p className="tp-select-copy">{copy}</p>
+        <UploadModelButton />
+        {children}
       </div>
-      {footer !== undefined ? <div className="tp-panel-foot">{footer}</div> : null}
+      <div className="tp-panel-foot">{footer}</div>
     </>
   );
 }
 
 function SegmentPanel(): JSX.Element {
+  const runStage = useTripoStore((s) => s.runStage);
+  const parts = useTripoStore((s) => s.segmentParts);
+
   return (
-    <SelectUploadPanel
+    <StagePanel
       icon={<IcSegment size={17} />}
       title="Segmentation"
-      action="Part Segmentation"
-      illustration={<SegmentIllustration />}
-      extra={
-        <div className="tp-unavail">
-          <div className="tp-unavail-title">Unavailable for</div>
-          <div className="tp-unavail-cards">
-            <div className="tp-unavail-card">
-              <span className="tp-unavail-x">✕</span>
-              <QuadThumb />
-              <span>Quad models</span>
-            </div>
-            <div className="tp-unavail-card">
-              <span className="tp-unavail-x">✕</span>
-              <RiggedThumb />
-              <span>Rigged models</span>
-            </div>
-          </div>
-        </div>
-      }
+      engine={SEGMENT_MODEL}
+      copy="Split the loaded model into semantic parts. Generate a model, pick one from Assets, or drop a file anywhere."
       footer={
-        <GenerateButton label="Start Segmenting" cost={40} disabled crown testid="tp-segment-btn" />
+        <GenerateButton
+          label="Segment Parts"
+          testid="tp-segment-btn"
+          onClick={() => runStage('segment')}
+        />
+      }
+    >
+      {parts.length > 0 ? (
+        <div className="tp-parts-list" data-testid="tp-parts-list">
+          <div className="tp-section-title">Parts</div>
+          {parts.map((p, i) => (
+            <div key={p} className="tp-part-row" data-part={i}>
+              <span className="tp-part-swatch" data-part={i} />
+              {p}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </StagePanel>
+  );
+}
+
+function RetopoPanel(): JSX.Element {
+  const runStage = useTripoStore((s) => s.runStage);
+  return (
+    <StagePanel
+      icon={<IcRetopo size={17} />}
+      title="Retopology"
+      engine={RETOPO_MODEL}
+      copy="Rebuild the loaded model as clean quad topology and reveal its wireframe."
+      footer={
+        /* Sample-asset-backed for the sample creature (bundled quad remesh);
+         * an imported model shows its real edge wireframe. */
+        <GenerateButton
+          label="Start Retopology"
+          testid="tp-retopo-btn"
+          onClick={() => runStage('retopo')}
+        />
+      }
+    />
+  );
+}
+
+function TexturePanel(): JSX.Element {
+  const runStage = useTripoStore((s) => s.runStage);
+  return (
+    <StagePanel
+      icon={<IcTexture size={17} />}
+      title="Texture"
+      engine={TEXTURE_MODEL}
+      copy="Generate a texture for the loaded model and view it in Textured mode."
+      footer={
+        <GenerateButton
+          label="Generate Texture"
+          testid="tp-texture-btn"
+          onClick={() => runStage('texture')}
+        />
       }
     />
   );
@@ -627,72 +525,14 @@ function SegmentPanel(): JSX.Element {
 
 export function GenPanel(): JSX.Element {
   const tool = useTripoStore((s) => s.tool);
-  const runStage = useTripoStore((s) => s.runStage);
 
   return (
     <section className="tp-genpanel" data-testid={`tp-panel-${tool}`}>
       {tool === 'model' ? <ModelPanel /> : null}
       {tool === 'image' ? <ImagePanel /> : null}
       {tool === 'segment' ? <SegmentPanel /> : null}
-      {tool === 'fillparts' ? (
-        <SelectUploadPanel
-          icon={<IcCube size={17} />}
-          title="Fill Parts"
-          action="Part Filling"
-          illustration={<SegmentIllustration />}
-          footer={<GenerateButton label="Start Filling" cost={20} disabled crown />}
-        />
-      ) : null}
-      {tool === 'retopo' ? (
-        <SelectUploadPanel
-          icon={<IcRetopo size={17} />}
-          title="Retopology"
-          action="Retopology"
-          illustration={<RetopoIllustration />}
-          footer={
-            /* Sample-asset-backed: reveals the clean quad remesh of the hero
-             * asset. NOT a live autoremesher run. */
-            <GenerateButton
-              label="Start Retopology"
-              cost={30}
-              testid="tp-retopo-btn"
-              onClick={() => runStage('retopo')}
-            />
-          }
-        />
-      ) : null}
-      {tool === 'texture' ? (
-        <SelectUploadPanel
-          icon={<IcTexture size={17} />}
-          title="3D Model Texture Generator"
-          action="Texture Generation"
-          illustration={<TextureIllustration />}
-        />
-      ) : null}
-      {tool === 'edit' ? (
-        <SelectUploadPanel
-          icon={<IcPencil size={17} />}
-          title="Texture Edit"
-          action="Texture Editing"
-          illustration={<TextureIllustration />}
-        />
-      ) : null}
-      {tool === 'upscale' ? (
-        <SelectUploadPanel
-          icon={<IcUpscale size={17} />}
-          title="Texture Upscale"
-          action="Texture Upscaling"
-          illustration={<TextureIllustration />}
-        />
-      ) : null}
-      {tool === 'pbr' ? (
-        <SelectUploadPanel
-          icon={<IcPbr size={17} />}
-          title="PBR Maps"
-          action="PBR Map Generation"
-          illustration={<TextureIllustration />}
-        />
-      ) : null}
+      {tool === 'retopo' ? <RetopoPanel /> : null}
+      {tool === 'texture' ? <TexturePanel /> : null}
       {tool === 'animate' ? <AnimatePanel /> : null}
     </section>
   );

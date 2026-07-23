@@ -1,73 +1,29 @@
 /**
- * Animate panel — 3D Rigging & Animation: AI model dropdown, glowing Retry,
- * Skeleton toggle, Model Type row, preset search + All/Basic/Interactive
- * filter pills, and the mannequin preset grid (selected pose gets the check
- * badge, exactly like the reference).
+ * Animate panel — rigging (SkinTokens) + animation (ARDY): the rig button,
+ * Skeleton toggle, preset search + All/Basic/Interactive filter pills, and the
+ * pose preset grid. Sample-asset-backed: rig overlays the bundled hero's real
+ * three.js Skeleton; presets play baked clips on its SkinnedMesh — labeled with
+ * the intended real engines, not live runs yet.
  */
 import type { JSX } from 'react';
-import { ANIM_MODELS, TRIPO_ANIMS } from './data';
-import { IcAnimate, IcBolt, IcCaretSmall, IcCheck, IcDog, IcSearch } from './icons';
-import { MenuAnchor, MenuItem, Segmented, Toggle } from './primitives';
-import { useTripoStore } from './store';
+import { ANIM_MODEL, RIG_MODEL, TRIPO_ANIMS } from './data';
+import { IcAnimate, IcCheck, IcSearch } from './icons';
+import { Segmented, Toggle } from './primitives';
+import { HERO_ASSET_ID, useTripoStore } from './store';
 import { Mannequin } from './thumbs';
-
-function AnimModelSelect(): JSX.Element {
-  const animModel = useTripoStore((s) => s.animModel);
-  const openMenu = useTripoStore((s) => s.openMenu);
-  const toggleMenu = useTripoStore((s) => s.toggleMenu);
-  const closeMenus = useTripoStore((s) => s.closeMenus);
-  const set = useTripoStore((s) => s.set);
-  const current = ANIM_MODELS.find((m) => m.id === animModel) ?? ANIM_MODELS[0];
-  if (current === undefined) return <div />;
-
-  return (
-    <div className="tp-section">
-      <div className="tp-section-title">AI Model</div>
-      <MenuAnchor
-        id="animmodel"
-        className="tp-anchor-block"
-        trigger={
-          <button
-            type="button"
-            className="tp-model-select"
-            data-testid="tp-animmodel-btn"
-            onClick={() => toggleMenu('animmodel')}
-          >
-            <span className="tp-model-avatar tp-model-avatar-anim">
-              <IcDog size={16} />
-            </span>
-            <span className="tp-model-titles">
-              <span className="tp-model-name">{current.label}</span>
-            </span>
-            <span className="tp-model-caret" data-open={openMenu === 'animmodel'}>
-              <IcCaretSmall size={13} />
-            </span>
-          </button>
-        }
-        menu={ANIM_MODELS.map((m) => (
-          <MenuItem
-            key={m.id}
-            label={m.label}
-            hint={m.hint}
-            checked={m.id === animModel}
-            onClick={() => {
-              set('animModel', m.id);
-              closeMenus();
-            }}
-          />
-        ))}
-      />
-    </div>
-  );
-}
 
 export function AnimatePanel(): JSX.Element {
   const skeleton = useTripoStore((s) => s.skeleton);
   const animFilter = useTripoStore((s) => s.animFilter);
   const animSearch = useTripoStore((s) => s.animSearch);
   const selectedAnim = useTripoStore((s) => s.selectedAnim);
+  const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
   const set = useTripoStore((s) => s.set);
   const runStage = useTripoStore((s) => s.runStage);
+  const loadAsset = useTripoStore((s) => s.loadAsset);
+  // Rig/animate run on the generated sample (an arbitrary imported mesh has no
+  // skeleton until a live SkinTokens engine is wired) — flag that honestly.
+  const importedLoaded = loadedAssetId !== null && loadedAssetId !== HERO_ASSET_ID;
 
   const visible = TRIPO_ANIMS.filter(
     (a) =>
@@ -81,17 +37,24 @@ export function AnimatePanel(): JSX.Element {
         <span className="tp-panel-header-icon">
           <IcAnimate size={17} />
         </span>
-        3D Rigging &amp; Animation
+        Rigging &amp; Animation
       </div>
       <div className="tp-panel-scroll">
-        <AnimModelSelect />
-        <button type="button" className="tp-retry-btn" data-testid="tp-retry-btn">
-          Retry
-          <span className="tp-cost tp-cost-dark">
-            <IcBolt size={13} />
-            20
-          </span>
-        </button>
+        <div className="tp-engine-row" data-testid="tp-rig-engine-row">
+          <span className="tp-field-label">Rigging</span>
+          <span className="tp-engine-name">{RIG_MODEL}</span>
+        </div>
+        <div className="tp-engine-row">
+          <span className="tp-field-label">Animation</span>
+          <span className="tp-engine-name">{ANIM_MODEL}</span>
+        </div>
+
+        {importedLoaded ? (
+          <p className="tp-select-copy" data-testid="tp-rig-imported-note">
+            Rigging an imported model needs the live {RIG_MODEL} engine — these controls drive the
+            generated sample.
+          </p>
+        ) : null}
 
         {/* Sample-asset-backed: overlays the bundled hero's real three.js
          * Skeleton (bind pose). NOT a live SkinTokens run. */}
@@ -100,6 +63,9 @@ export function AnimatePanel(): JSX.Element {
           className="tp-retry-btn"
           data-testid="tp-rig-btn"
           onClick={() => {
+            // Rigging drives the generated sample; if an imported model is in
+            // the viewport, swap back to the sample first (see the note above).
+            if (importedLoaded) loadAsset(HERO_ASSET_ID);
             set('skeleton', true);
             runStage('rig');
           }}
@@ -110,10 +76,6 @@ export function AnimatePanel(): JSX.Element {
         <div className="tp-setting-row tp-row-plain">
           <span className="tp-setting-label">Skeleton</span>
           <Toggle on={skeleton} onChange={(v) => set('skeleton', v)} testid="tp-skeleton-toggle" />
-        </div>
-        <div className="tp-setting-row tp-row-plain">
-          <span className="tp-setting-label">Model Type</span>
-          <span className="tp-value-muted">Humanoid</span>
         </div>
 
         <div className="tp-search">
@@ -150,6 +112,7 @@ export function AnimatePanel(): JSX.Element {
               onClick={() => {
                 // Sample-asset-backed: plays a baked skeletal clip on the hero
                 // SkinnedMesh (mapped to idle/wave/coil). NOT a live ARDY run.
+                if (importedLoaded) loadAsset(HERO_ASSET_ID);
                 set('selectedAnim', a.id);
                 runStage('animate');
               }}

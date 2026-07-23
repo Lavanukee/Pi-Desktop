@@ -1,18 +1,19 @@
 /**
  * Right panel — Assets | Property tabs.
- *  - Assets: upgrade banner, view/favorites/filter row + Manage mode, the
- *    asset grid (Upload card, generating/queued progress cards, ⓘ info
- *    popovers, rig badge, selection ring). Clicking a card loads it into the
- *    viewer (local state only).
- *  - Property: the Hierarchy tree (Armature ▸ Root ▸ tripo_node…) with eye
- *    visibility toggles and per-row “…” menus, exactly as the reference.
+ *  - Assets: filter + Manage mode, the Upload card (real file picker), and the
+ *    asset grid. Every thumbnail is a REAL rendered preview captured by the
+ *    viewer (never icon artwork); a just-added asset shows a neutral
+ *    placeholder until its first frame is captured. Clicking a card loads it
+ *    into the viewer. No promos, no favorites.
+ *  - Property: the hierarchy tree with eye visibility toggles.
  */
 import type { JSX } from 'react';
-import { TRIPO_ASSETS, type TripoAsset } from './data';
+import { useRef } from 'react';
 import {
   IcArmature,
   IcBoxNode,
   IcCaretSmall,
+  IcCube,
   IcDots,
   IcEye,
   IcEyeOff,
@@ -23,46 +24,25 @@ import {
   IcManage,
   IcRig,
   IcRootNode,
-  IcStar,
   IcTrash,
   IcUpload,
 } from './icons';
 import { MenuAnchor, MenuItem } from './primitives';
-import { useTripoStore } from './store';
-import { AssetThumb } from './thumbs';
+import { HERO_ASSET_ID, type StudioAsset, useTripoStore } from './store';
+import { importModelFile } from './viewer-io';
 
 // ── assets tab ────────────────────────────────────────────────────────────
 
-function UpgradeBanner(): JSX.Element {
-  return (
-    <div className="tp-upgrade-banner" data-testid="tp-upgrade-banner">
-      <p>
-        Upgrade to unlock <strong>Unlimited Model Downloads, Ultra Mesh Quality</strong> and other
-        premium features! Save up to <strong>50%</strong>
-      </p>
-      <button type="button" className="tp-upgrade-cta">
-        Upgrade
-      </button>
-    </div>
-  );
-}
-
-function AssetCard({ asset }: { readonly asset: TripoAsset }): JSX.Element {
+function AssetCard({ asset }: { readonly asset: StudioAsset }): JSX.Element {
   const selected = useTripoStore((s) => s.selectedAssetId) === asset.id;
   const manageMode = useTripoStore((s) => s.manageMode);
   const checked = useTripoStore((s) => s.checkedAssets).includes(asset.id);
   const loadAsset = useTripoStore((s) => s.loadAsset);
   const toggleList = useTripoStore((s) => s.toggleList);
   const toggleMenu = useTripoStore((s) => s.toggleMenu);
-  const busy = asset.progress !== undefined || asset.queued === true;
 
   return (
-    <div
-      className="tp-asset-card"
-      data-selected={selected}
-      data-busy={busy}
-      data-testid={`tp-asset-${asset.id}`}
-    >
+    <div className="tp-asset-card" data-selected={selected} data-testid={`tp-asset-${asset.id}`}>
       <button
         type="button"
         className="tp-asset-hit"
@@ -70,12 +50,18 @@ function AssetCard({ asset }: { readonly asset: TripoAsset }): JSX.Element {
         onClick={() => {
           if (manageMode) {
             toggleList('checkedAssets', asset.id);
-          } else if (!busy) {
+          } else {
             loadAsset(asset.id);
           }
         }}
       >
-        <AssetThumb art={asset.art} />
+        {asset.thumb !== null ? (
+          <img className="tp-asset-preview" src={asset.thumb} alt={asset.name} />
+        ) : (
+          <span className="tp-asset-placeholder" data-testid={`tp-asset-pending-${asset.id}`}>
+            <IcCube size={22} />
+          </span>
+        )}
       </button>
 
       {asset.rigged === true ? (
@@ -130,69 +116,31 @@ function AssetCard({ asset }: { readonly asset: TripoAsset }): JSX.Element {
           }
         />
       )}
-
-      {asset.progress !== undefined ? (
-        <div className="tp-asset-progress">
-          <div className="tp-progress">
-            <div className="tp-progress-bar" style={{ width: `${asset.progress}%` }} />
-          </div>
-          <span className="tp-asset-progress-label">Generating… {asset.progress}%</span>
-        </div>
-      ) : null}
-      {asset.queued === true ? (
-        <div className="tp-asset-progress">
-          <span className="tp-asset-progress-label">In queue · #2</span>
-        </div>
-      ) : null}
     </div>
   );
 }
 
 function AssetsTab(): JSX.Element {
-  const favOnly = useTripoStore((s) => s.favOnly);
-  const favorites = useTripoStore((s) => s.favorites);
+  const assets = useTripoStore((s) => s.assets);
   const assetFilter = useTripoStore((s) => s.assetFilter);
   const manageMode = useTripoStore((s) => s.manageMode);
   const checkedCount = useTripoStore((s) => s.checkedAssets).length;
-  const removed = useTripoStore((s) => s.removedAssets);
   const set = useTripoStore((s) => s.set);
   const toggleMenu = useTripoStore((s) => s.toggleMenu);
   const closeMenus = useTripoStore((s) => s.closeMenus);
   const removeChecked = useTripoStore((s) => s.removeChecked);
+  const uploadRef = useRef<HTMLInputElement>(null);
 
-  const visible = TRIPO_ASSETS.filter((a) => {
-    if (removed.includes(a.id)) return false;
-    if (favOnly && !favorites.includes(a.id)) return false;
-    if (assetFilter === 'generated' && a.source !== 'generated') return false;
-    if (assetFilter === 'uploaded' && a.source !== 'uploaded') return false;
-    if (assetFilter === 'rigged' && a.rigged !== true) return false;
+  const visible = assets.filter((a) => {
+    if (assetFilter === 'generated') return a.source !== 'imported';
+    if (assetFilter === 'imported') return a.source === 'imported';
     return true;
   });
 
   return (
     <>
-      <UpgradeBanner />
       <div className="tp-assets-toolbar">
         <div className="tp-assets-filters">
-          <button
-            type="button"
-            className="tp-round-btn"
-            data-active={!favOnly}
-            aria-label="All assets"
-            onClick={() => set('favOnly', false)}
-          >
-            <IcGrid4 size={15} />
-          </button>
-          <button
-            type="button"
-            className="tp-round-btn"
-            data-active={favOnly}
-            aria-label="Favorites"
-            data-testid="tp-fav-filter"
-            onClick={() => set('favOnly', !favOnly)}
-          >
-            <IcStar size={15} />
-          </button>
           <MenuAnchor
             id="assetfilter"
             trigger={
@@ -211,8 +159,7 @@ function AssetsTab(): JSX.Element {
               [
                 ['all', 'All types'],
                 ['generated', 'Generated'],
-                ['uploaded', 'Uploaded'],
-                ['rigged', 'Rigged'],
+                ['imported', 'Imported'],
               ] as const
             ).map(([id, label]) => (
               <MenuItem
@@ -244,17 +191,34 @@ function AssetsTab(): JSX.Element {
       </div>
 
       <div className="tp-asset-grid" data-testid="tp-asset-grid">
-        <button type="button" className="tp-upload-card" data-testid="tp-upload-card">
+        <button
+          type="button"
+          className="tp-upload-card"
+          data-testid="tp-upload-card"
+          onClick={() => uploadRef.current?.click()}
+        >
           <span className="tp-upload-orb">
             <IcUpload size={16} />
           </span>
           <span className="tp-upload-card-title">Upload 3D Model</span>
           <span className="tp-upload-card-sub">
-            OBJ, FBX, STL, GLB
+            GLB, GLTF, OBJ, STL
             <br />
-            Size ≤150MB
+            or drop a file anywhere
           </span>
         </button>
+        <input
+          ref={uploadRef}
+          type="file"
+          accept=".glb,.gltf,.obj,.stl"
+          style={{ display: 'none' }}
+          data-testid="tp-upload-card-input"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file !== undefined) void importModelFile(file);
+            e.target.value = '';
+          }}
+        />
         {visible.map((a) => (
           <AssetCard key={a.id} asset={a} />
         ))}
@@ -264,10 +228,6 @@ function AssetsTab(): JSX.Element {
         <div className="tp-manage-bar" data-testid="tp-manage-bar">
           <span>{checkedCount} selected</span>
           <div className="tp-manage-actions">
-            <button type="button" className="tp-manage-action" disabled={checkedCount === 0}>
-              <IcUpload size={14} />
-              Download
-            </button>
             <button
               type="button"
               className="tp-manage-action tp-manage-danger"
@@ -295,31 +255,6 @@ interface HierRow {
   readonly hasChildren: boolean;
   readonly parent?: string;
 }
-const HIERARCHY: readonly HierRow[] = [
-  {
-    id: 'armature',
-    label: 'Armature',
-    depth: 0,
-    icon: <IcArmature size={15} />,
-    hasChildren: true,
-  },
-  {
-    id: 'root',
-    label: 'Root',
-    depth: 1,
-    icon: <IcRootNode size={15} />,
-    hasChildren: true,
-    parent: 'armature',
-  },
-  {
-    id: 'tripo_node_711b6583',
-    label: 'tripo_node_711b6583…',
-    depth: 2,
-    icon: <IcBoxNode size={15} />,
-    hasChildren: false,
-    parent: 'root',
-  },
-];
 
 function HierarchyRow({ row }: { readonly row: HierRow }): JSX.Element {
   const collapsed = useTripoStore((s) => s.hierarchyCollapsed);
@@ -364,7 +299,7 @@ function HierarchyRow({ row }: { readonly row: HierRow }): JSX.Element {
         onClick={() => {
           toggleList('hiddenNodes', row.id);
           // The mesh node's eye drives the actual viewer mesh visibility.
-          if (row.id === 'tripo_node_711b6583') {
+          if (row.id === 'mesh-node') {
             set('meshVisible', hidden);
           }
         }}
@@ -400,6 +335,7 @@ function HierarchyRow({ row }: { readonly row: HierRow }): JSX.Element {
 
 function PropertyTab(): JSX.Element {
   const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
+  const assets = useTripoStore((s) => s.assets);
   const collapsed = useTripoStore((s) => s.hierarchyCollapsed);
 
   if (loadedAssetId === null) {
@@ -411,20 +347,49 @@ function PropertyTab(): JSX.Element {
     );
   }
 
-  const rows = HIERARCHY.filter((r) => {
+  const asset = assets.find((a) => a.id === loadedAssetId);
+  const rigged = loadedAssetId === HERO_ASSET_ID;
+  const meshRow: HierRow = {
+    id: 'mesh-node',
+    label: asset?.name ?? 'model',
+    depth: rigged ? 2 : 0,
+    icon: <IcBoxNode size={15} />,
+    hasChildren: false,
+    parent: rigged ? 'root' : undefined,
+  };
+  const hierarchy: readonly HierRow[] = rigged
+    ? [
+        {
+          id: 'armature',
+          label: 'Armature',
+          depth: 0,
+          icon: <IcArmature size={15} />,
+          hasChildren: true,
+        },
+        {
+          id: 'root',
+          label: 'Root',
+          depth: 1,
+          icon: <IcRootNode size={15} />,
+          hasChildren: true,
+          parent: 'armature',
+        },
+        meshRow,
+      ]
+    : [meshRow];
+
+  const rows = hierarchy.filter((r) => {
     if (r.parent === undefined) return true;
-    // Hide descendants of any collapsed ancestor.
     let p: string | undefined = r.parent;
     while (p !== undefined) {
       if (collapsed.includes(p)) return false;
-      p = HIERARCHY.find((h) => h.id === p)?.parent;
+      p = hierarchy.find((h) => h.id === p)?.parent;
     }
     return true;
   });
 
   return (
     <>
-      <UpgradeBanner />
       <div className="tp-section-title tp-hier-title">Hierarchy</div>
       <div className="tp-hierarchy" data-testid="tp-hierarchy">
         {rows.map((r) => (

@@ -1,47 +1,33 @@
 /**
- * Center viewport — empty state ("Ready For A New 3D Model?"), the lazy
- * three.js viewer once an asset is loaded, and ALL the viewer chrome from the
- * reference: axis gizmo, topology stats, floating right toolbar (lighting
- * popover / screenshot flash / grid toggle / help / history), the material +
- * render-mode strip, the bottom action pill (undo/redo/gift/turntable/3D
- * Print/star/share/Export), the Export dialog with its Send To menu, and the
- * "View Your Model" coach dialog.
+ * Center viewport — empty state, the lazy three.js viewer, and the viewer
+ * chrome: axis gizmo (kept BELOW menus — see tp-gizmo z-index), real topology
+ * stats (written by the viewer), the floating right toolbar (lighting /
+ * snapshot / grid / help / session task history), the four labeled render
+ * modes (Clay · Textured · Normal · Wireframe), a minimal action pill
+ * (turntable + Export), the REAL Export dialog (three.js exporters), and the
+ * "View Your Model" coach dialog. No credits, promos, favorites, or share.
  */
 
 import type { JSX, ReactNode } from 'react';
 import { lazy, Suspense, useRef, useState } from 'react';
+import { EXPORT_FORMATS, type ExportFormat } from './data';
 import {
-  EXPORT_FORMATS,
-  EXPORT_QUALITY,
-  HISTORY_ROWS,
-  SEND_TO_TARGETS,
-  TRIPO_ASSETS,
-} from './data';
-import {
-  IcBolt,
   IcCamera,
   IcCaretSmall,
   IcClose,
   IcDownload,
   IcFrame,
-  IcGift,
-  IcGlobe,
   IcHistory,
   IcMouse,
   IcPlanet,
-  IcPrinter,
   IcQuestion,
-  IcRedo,
-  IcShare,
-  IcSliders,
-  IcStar,
   IcSun,
   IcTrackpad,
-  IcUndo,
 } from './icons';
 import { Hint, MenuAnchor, SliderRow, Toggle } from './primitives';
 import { type TripoRenderMode, useTripoStore } from './store';
-import { AssetThumb, LogoMark } from './thumbs';
+import { LogoMark } from './thumbs';
+import { requestExport } from './viewer-io';
 
 const Viewer3D = lazy(() => import('./Viewer3D'));
 
@@ -104,6 +90,7 @@ function FloatToolbar({ onSnapshot }: { readonly onSnapshot: () => void }): JSX.
   const showGrid = useTripoStore((s) => s.showGrid);
   const envLight = useTripoStore((s) => s.envLight);
   const lightIntensity = useTripoStore((s) => s.lightIntensity);
+  const history = useTripoStore((s) => s.history);
   const set = useTripoStore((s) => s.set);
 
   return (
@@ -201,7 +188,7 @@ function FloatToolbar({ onSnapshot }: { readonly onSnapshot: () => void }): JSX.
         id="history"
         placement="left-end"
         trigger={
-          <Hint text="Task history" side="left">
+          <Hint text="Session tasks" side="left">
             <button
               type="button"
               className="tp-float-btn tp-float-solo"
@@ -209,31 +196,25 @@ function FloatToolbar({ onSnapshot }: { readonly onSnapshot: () => void }): JSX.
               onClick={() => toggleMenu('history')}
             >
               <IcHistory size={17} />
-              <span className="tp-reddot" />
             </button>
           </Hint>
         }
         menu={
           <div className="tp-history-menu" data-testid="tp-history-menu">
-            <div className="tp-menu-heading">Tasks</div>
-            {HISTORY_ROWS.map((h) => (
-              <div key={h.id} className="tp-history-row" data-state={h.state}>
-                <div className="tp-history-main">
-                  <span className="tp-history-label">{h.label}</span>
-                  <span className="tp-history-sub">{h.sub}</span>
-                </div>
-                {h.state === 'running' ? (
-                  <div className="tp-progress">
-                    <div className="tp-progress-bar" style={{ width: `${h.progress ?? 0}%` }} />
-                    <span className="tp-progress-num">{h.progress}%</span>
+            <div className="tp-menu-heading">Tasks this session</div>
+            {history.length === 0 ? (
+              <div className="tp-history-empty">No stages run yet</div>
+            ) : (
+              history.map((h) => (
+                <div key={h.id} className="tp-history-row" data-state="done">
+                  <div className="tp-history-main">
+                    <span className="tp-history-label">{h.label}</span>
+                    <span className="tp-history-sub">{h.sub}</span>
                   </div>
-                ) : (
-                  <span className={`tp-history-state tp-history-${h.state}`}>
-                    {h.state === 'done' ? 'Completed' : 'In queue'}
-                  </span>
-                )}
-              </div>
-            ))}
+                  <span className="tp-history-state tp-history-done">Completed</span>
+                </div>
+              ))
+            )}
           </div>
         }
       />
@@ -241,146 +222,45 @@ function FloatToolbar({ onSnapshot }: { readonly onSnapshot: () => void }): JSX.
   );
 }
 
-// ── material / render-mode strip ──────────────────────────────────────────
-const RENDER_MODES: readonly { id: TripoRenderMode; cls: string; hint: string }[] = [
-  { id: 'clay', cls: 'tp-sphere-clay', hint: 'Clay' },
-  { id: 'shaded', cls: 'tp-sphere-shaded', hint: 'Shaded' },
-  { id: 'normal', cls: 'tp-sphere-normal', hint: 'Normal' },
+// ── render-mode strip: exactly Clay · Textured · Normal · Wireframe ───────
+const RENDER_MODES: readonly { id: TripoRenderMode; label: string }[] = [
+  { id: 'clay', label: 'Clay' },
+  { id: 'textured', label: 'Textured' },
+  { id: 'normal', label: 'Normal' },
+  { id: 'wireframe', label: 'Wireframe' },
 ];
-const MATERIAL_SPHERES = [
-  { id: 'matte', cls: 'tp-sphere-matte', hint: 'Matte' },
-  { id: 'gold', cls: 'tp-sphere-gold', hint: 'Gold' },
-  { id: 'chrome', cls: 'tp-sphere-chrome', hint: 'Chrome' },
-  { id: 'teal', cls: 'tp-sphere-teal', hint: 'Teal' },
-] as const;
 
-function MaterialStrip(): JSX.Element {
+function RenderModeStrip(): JSX.Element {
   const renderMode = useTripoStore((s) => s.renderMode);
-  const material = useTripoStore((s) => s.material);
-  const envLight = useTripoStore((s) => s.envLight);
-  const wireframe = useTripoStore((s) => s.wireframe);
-  const autoRotate = useTripoStore((s) => s.autoRotate);
-  const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
   const set = useTripoStore((s) => s.set);
-  const toggleMenu = useTripoStore((s) => s.toggleMenu);
-  const asset = TRIPO_ASSETS.find((a) => a.id === loadedAssetId);
 
   return (
-    <div className="tp-material-strip" data-testid="tp-material-strip">
-      {asset !== undefined ? (
-        <Hint text="Source preview">
-          <button type="button" className="tp-source-thumb">
-            <AssetThumb art={asset.art} />
-          </button>
-        </Hint>
-      ) : null}
-      <div className="tp-strip-pill">
-        <Hint text="Environment">
-          <button
-            type="button"
-            className="tp-strip-btn"
-            data-active={envLight}
-            onClick={() => set('envLight', !envLight)}
-          >
-            <IcGlobe size={15} />
-          </button>
-        </Hint>
-        <span className="tp-strip-sep" />
+    <div className="tp-material-strip" data-testid="tp-render-modes">
+      <div className="tp-strip-pill tp-mode-pill">
         {RENDER_MODES.map((m) => (
-          <Hint key={m.id} text={m.hint}>
-            <button
-              type="button"
-              className="tp-strip-btn"
-              data-active={renderMode === m.id}
-              data-testid={`tp-rmode-${m.id}`}
-              onClick={() => set('renderMode', m.id)}
-            >
-              <span className={`tp-sphere ${m.cls}`} />
-            </button>
-          </Hint>
-        ))}
-        <MenuAnchor
-          id="display"
-          placement="top-start"
-          trigger={
-            <Hint text="Display settings">
-              <button
-                type="button"
-                className="tp-strip-btn"
-                data-testid="tp-display-btn"
-                onClick={() => toggleMenu('display')}
-              >
-                <IcSliders size={15} />
-              </button>
-            </Hint>
-          }
-          menu={
-            <div className="tp-light-menu">
-              <div className="tp-menu-heading">Display</div>
-              <div className="tp-field-row">
-                <span className="tp-field-label">Wireframe</span>
-                <Toggle
-                  on={wireframe}
-                  onChange={(v) => set('wireframe', v)}
-                  testid="tp-wireframe-toggle"
-                />
-              </div>
-              <div className="tp-field-row">
-                <span className="tp-field-label">Turntable</span>
-                <Toggle on={autoRotate} onChange={(v) => set('autoRotate', v)} />
-              </div>
-            </div>
-          }
-        />
-        <span className="tp-strip-sep" />
-        {MATERIAL_SPHERES.map((m) => (
-          <Hint key={m.id} text={m.hint}>
-            <button
-              type="button"
-              className="tp-strip-btn"
-              data-active={material === m.id && renderMode === 'shaded'}
-              data-testid={`tp-mat-${m.id}`}
-              onClick={() => {
-                set('material', m.id);
-                set('renderMode', 'shaded');
-              }}
-            >
-              <span className={`tp-sphere ${m.cls}`} />
-            </button>
-          </Hint>
+          <button
+            key={m.id}
+            type="button"
+            className="tp-mode-btn"
+            data-active={renderMode === m.id}
+            data-testid={`tp-rmode-${m.id}`}
+            onClick={() => set('renderMode', m.id)}
+          >
+            {m.label}
+          </button>
         ))}
       </div>
     </div>
   );
 }
 
-// ── bottom action pill ────────────────────────────────────────────────────
+// ── bottom action pill: turntable + Export, nothing else ─────────────────
 function ActionBar(): JSX.Element {
   const autoRotate = useTripoStore((s) => s.autoRotate);
   const set = useTripoStore((s) => s.set);
-  const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
-  const favorites = useTripoStore((s) => s.favorites);
-  const toggleList = useTripoStore((s) => s.toggleList);
-  const fav = loadedAssetId !== null && favorites.includes(loadedAssetId);
 
   return (
     <div className="tp-actionbar" data-testid="tp-actionbar">
-      <Hint text="Undo">
-        <button type="button" className="tp-action-btn" disabled>
-          <IcUndo size={16} />
-        </button>
-      </Hint>
-      <Hint text="Redo">
-        <button type="button" className="tp-action-btn" disabled>
-          <IcRedo size={16} />
-        </button>
-      </Hint>
-      <span className="tp-action-sep" />
-      <Hint text="Daily rewards">
-        <button type="button" className="tp-action-btn">
-          <IcGift size={16} />
-        </button>
-      </Hint>
       <Hint text="Turntable">
         <button
           type="button"
@@ -392,33 +272,10 @@ function ActionBar(): JSX.Element {
           <IcPlanet size={16} />
         </button>
       </Hint>
-      <span className="tp-action-sep" />
-      <button type="button" className="tp-action-btn tp-action-labeled">
-        <IcPrinter size={16} />
-        3D Print
-      </button>
-      <Hint text="Favorite">
-        <button
-          type="button"
-          className="tp-action-btn"
-          data-active={fav}
-          onClick={() => {
-            if (loadedAssetId !== null) toggleList('favorites', loadedAssetId);
-          }}
-        >
-          <IcStar size={16} />
-        </button>
-      </Hint>
-      <Hint text="Share & earn credits">
-        <button type="button" className="tp-action-btn tp-share-btn">
-          <span className="tp-share-plus">+300</span>
-          <IcShare size={16} />
-        </button>
-      </Hint>
       <button
         type="button"
         className="tp-export-cta"
-        data-testid="tp-export-btn"
+        data-testid="tp-export-pill-btn"
         onClick={() => set('modal', 'export')}
       >
         <IcDownload size={15} />
@@ -428,66 +285,16 @@ function ActionBar(): JSX.Element {
   );
 }
 
-// ── export dialog + send-to menu ──────────────────────────────────────────
-function SelectRow({
-  label,
-  value,
-  menuId,
-  options,
-  onPick,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly menuId: string;
-  readonly options: readonly string[];
-  readonly onPick: (v: string) => void;
-}): JSX.Element {
-  const toggleMenu = useTripoStore((s) => s.toggleMenu);
-  const closeMenus = useTripoStore((s) => s.closeMenus);
-  return (
-    <div className="tp-field-row tp-field-row-wide">
-      <span className="tp-field-label">{label}</span>
-      <MenuAnchor
-        id={menuId}
-        placement="bottom-end"
-        trigger={
-          <button
-            type="button"
-            className="tp-select"
-            data-testid={`tp-select-${menuId}`}
-            onClick={() => toggleMenu(menuId)}
-          >
-            {value}
-            <IcCaretSmall size={12} />
-          </button>
-        }
-        menu={options.map((o) => (
-          <button
-            key={o}
-            type="button"
-            className="tp-menu-item"
-            onClick={() => {
-              onPick(o);
-              closeMenus();
-            }}
-          >
-            <span className="tp-menu-item-label">{o}</span>
-          </button>
-        ))}
-      />
-    </div>
-  );
-}
-
+// ── export dialog (REAL: three.js exporters via viewer-io) ───────────────
 function ExportDialog(): JSX.Element {
   const set = useTripoStore((s) => s.set);
   const toggleMenu = useTripoStore((s) => s.toggleMenu);
+  const closeMenus = useTripoStore((s) => s.closeMenus);
   const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
-  const asset = TRIPO_ASSETS.find((a) => a.id === loadedAssetId);
-  const [name, setName] = useState(asset?.name ?? 'tripo_model');
-  const [format, setFormat] = useState<string>(EXPORT_FORMATS[0]);
-  const [quality, setQuality] = useState<string>(EXPORT_QUALITY[0]);
-  const [pack, setPack] = useState(true);
+  const assets = useTripoStore((s) => s.assets);
+  const asset = assets.find((a) => a.id === loadedAssetId);
+  const [name, setName] = useState(asset?.name ?? 'model');
+  const [format, setFormat] = useState<ExportFormat>(EXPORT_FORMATS[0]);
 
   return (
     <div className="tp-export-dialog" data-testid="tp-export-dialog">
@@ -513,56 +320,52 @@ function ExportDialog(): JSX.Element {
           onChange={(e) => setName(e.target.value)}
         />
       </label>
-      <SelectRow
-        label="Format"
-        value={format}
-        menuId="exportformat"
-        options={EXPORT_FORMATS}
-        onPick={setFormat}
-      />
-      <SelectRow
-        label="Quality"
-        value={quality}
-        menuId="exportquality"
-        options={EXPORT_QUALITY}
-        onPick={setQuality}
-      />
       <div className="tp-field-row tp-field-row-wide">
-        <span className="tp-field-label">Pack textures</span>
-        <Toggle on={pack} onChange={setPack} />
-      </div>
-      <div className="tp-export-actions">
+        <span className="tp-field-label">Format</span>
         <MenuAnchor
-          id="sendto"
-          placement="top-start"
+          id="exportformat"
+          placement="bottom-end"
           trigger={
             <button
               type="button"
-              className="tp-sendto-btn"
-              data-testid="tp-sendto-btn"
-              onClick={() => toggleMenu('sendto')}
+              className="tp-select"
+              data-testid="tp-select-exportformat"
+              onClick={() => toggleMenu('exportformat')}
             >
-              Send To
-              <IcShare size={14} />
+              {format}
+              <IcCaretSmall size={12} />
             </button>
           }
-          menu={
-            <div className="tp-sendto-menu" data-testid="tp-sendto-menu">
-              {SEND_TO_TARGETS.map((t) => (
-                <button key={t.id} type="button" className="tp-menu-item">
-                  <span className={`tp-dcc-glyph tp-dcc-${t.id}`}>
-                    {t.label.charAt(8).toUpperCase()}
-                  </span>
-                  <span className="tp-menu-item-label">{t.label}</span>
-                  {t.beta === true ? <span className="tp-badge-soft">Beta</span> : null}
-                </button>
-              ))}
-            </div>
-          }
+          menu={EXPORT_FORMATS.map((o) => (
+            <button
+              key={o}
+              type="button"
+              className="tp-menu-item"
+              data-testid={`tp-format-${o}`}
+              onClick={() => {
+                setFormat(o);
+                closeMenus();
+              }}
+            >
+              <span className="tp-menu-item-label">{o}</span>
+            </button>
+          ))}
         />
-        <button type="button" className="tp-export-confirm" data-testid="tp-export-confirm">
-          <IcBolt size={14} />
-          Export
+      </div>
+      <div className="tp-export-actions">
+        <button
+          type="button"
+          className="tp-export-confirm"
+          data-testid="tp-export-confirm"
+          onClick={() => {
+            // Real export: the viewer runs the matching three.js exporter and
+            // saves the file via a download anchor.
+            requestExport(format, name.trim().length > 0 ? name.trim() : 'model');
+            set('modal', null);
+          }}
+        >
+          <IcDownload size={14} />
+          Export {format}
         </button>
       </div>
     </div>
@@ -642,20 +445,13 @@ export function Viewport(): JSX.Element {
   const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
   const modal = useTripoStore((s) => s.modal);
   const pipelineStage = useTripoStore((s) => s.pipelineStage);
+  const stats = useTripoStore((s) => s.stats);
   const gizmoRef = useRef<HTMLDivElement>(null);
   const [flash, setFlash] = useState(0);
-  const asset = TRIPO_ASSETS.find((a) => a.id === loadedAssetId);
-  // Stats reflect the current pipeline result: the dense triangulated base
-  // mesh vs. the clean quad remesh the rig/animation stages run on. Counts
-  // match the bundled hero GLBs (see build-hero-glb.mjs).
-  const stats =
-    pipelineStage === 'mesh'
-      ? { topology: 'Triangle', faces: 21600, vertices: 10872 }
-      : { topology: 'Quad', faces: 320, vertices: 336 };
 
   return (
     <div className="tp-viewport" data-testid="tp-viewport">
-      {asset !== undefined ? (
+      {loadedAssetId !== null ? (
         <Suspense fallback={<div className="tp-canvas-loading">Preparing viewer…</div>}>
           <Viewer3D gizmoRef={gizmoRef} />
         </Suspense>
@@ -663,11 +459,11 @@ export function Viewport(): JSX.Element {
         <div className="tp-empty" data-testid="tp-empty-state">
           <LogoMark size={54} />
           <h1>Ready For A New 3D Model?</h1>
-          <p>Instantly generate 3D from image or text</p>
+          <p>Generate from image or text — or drop a .glb/.obj/.stl anywhere</p>
         </div>
       )}
 
-      {asset !== undefined ? (
+      {loadedAssetId !== null && stats !== null ? (
         <div className="tp-stats" data-testid="tp-stats" data-stage={pipelineStage}>
           <div className="tp-stat">
             <span>Topology</span>
@@ -688,9 +484,9 @@ export function Viewport(): JSX.Element {
       <FloatToolbar onSnapshot={() => setFlash((f) => f + 1)} />
       {flash > 0 ? <div key={flash} className="tp-flash" /> : null}
 
-      {asset !== undefined ? (
+      {loadedAssetId !== null ? (
         <>
-          <MaterialStrip />
+          <RenderModeStrip />
           <ActionBar />
         </>
       ) : null}

@@ -1,25 +1,24 @@
 /**
- * Tripo workspace top bar: logo + workspace switcher, primary nav, and the
- * right-hand cluster (DCC Bridge, credits, Upgrade, notifications, language,
- * account) — each with its working dropdown/popover. All actions are local.
+ * Bobble 3D top bar — deliberately minimal (no promos, credits, accounts, or
+ * nav ballast): back-to-chat, the Bobble 3D mark, a workspace label, and the
+ * two things a local studio actually needs up top — Send To (real DCC app
+ * logos, exports a GLB named for the target) and Export (opens the dialog).
  */
 import type { JSX } from 'react';
-import { useState } from 'react';
 import { exitModality } from '../state/modality-store';
-import { DCC_BRIDGES, LANGUAGES, NOTIFICATIONS, WORKSPACE_MENU } from './data';
-import { IcBell, IcBolt, IcBridge, IcCaretSmall, IcGlobe, IcRocket, IcUser } from './icons';
-import { MenuAnchor, MenuItem } from './primitives';
+import { IcCaretSmall, IcDownload, IcShare } from './icons';
+import { DCC_LOGOS, DccLogoIcon } from './logos';
+import { MenuAnchor } from './primitives';
 import { useTripoStore } from './store';
 import { LogoMark } from './thumbs';
-
-const NAV = ['Home', 'Assets', 'Affiliate Program', 'Creator Program'] as const;
+import { requestSendTo } from './viewer-io';
 
 export function TopBar(): JSX.Element {
   const toggleMenu = useTripoStore((s) => s.toggleMenu);
   const closeMenus = useTripoStore((s) => s.closeMenus);
-  const [nav, setNav] = useState<string>('Home');
-  const [lang, setLang] = useState<string>('English');
-  const [read, setRead] = useState(false);
+  const set = useTripoStore((s) => s.set);
+  const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
+  const hasModel = loadedAssetId !== null;
 
   return (
     <header className="tp-topbar" data-testid="tp-topbar">
@@ -45,206 +44,59 @@ export function TopBar(): JSX.Element {
           <LogoMark size={22} />
           <span className="tp-logo-word">Bobble 3D</span>
         </button>
-        <MenuAnchor
-          id="workspace"
-          trigger={
-            <button
-              type="button"
-              className="tp-workspace-btn"
-              data-testid="tp-workspace-btn"
-              onClick={() => toggleMenu('workspace')}
-            >
-              3D Workspace
-              <IcCaretSmall size={14} />
-            </button>
-          }
-          menu={WORKSPACE_MENU.map((w) => (
-            <MenuItem key={w.id} label={w.label} checked={w.active} onClick={closeMenus} />
-          ))}
-        />
-        <span className="tp-topbar-divider" />
-        <nav className="tp-nav">
-          {NAV.map((n) => (
-            <button
-              key={n}
-              type="button"
-              className="tp-nav-item"
-              data-active={nav === n}
-              onClick={() => setNav(n)}
-            >
-              {n}
-            </button>
-          ))}
-        </nav>
+        <span className="tp-workspace-label" data-testid="tp-workspace-label">
+          3D Workspace
+        </span>
       </div>
 
       <div className="tp-topbar-right">
         <MenuAnchor
-          id="dcc"
+          id="sendto"
           placement="bottom-end"
           trigger={
             <button
               type="button"
               className="tp-pill-btn"
-              data-testid="tp-dcc-btn"
-              onClick={() => toggleMenu('dcc')}
+              data-testid="tp-sendto-btn"
+              disabled={!hasModel}
+              onClick={() => toggleMenu('sendto')}
             >
-              <IcBridge size={15} />
-              DCC Bridge
-              <span className="tp-badge-mt">MT</span>
+              <IcShare size={14} />
+              Send To
+              <IcCaretSmall size={12} />
             </button>
           }
           menu={
-            <div className="tp-dcc-menu">
-              <div className="tp-dcc-status">
-                <span className="tp-dot tp-dot-idle" />
-                Bridge not connected
-              </div>
-              <div className="tp-menu-heading">Install plugin</div>
-              {DCC_BRIDGES.map((b) => (
-                <MenuItem
-                  key={b}
-                  label={`Bobble for ${b}`}
-                  hint="v1.4.2 · free"
-                  onClick={closeMenus}
-                />
-              ))}
-              <div className="tp-menu-sep" />
-              <MenuItem label="Bridge documentation" onClick={closeMenus} />
-            </div>
-          }
-        />
-        <MenuAnchor
-          id="credits"
-          placement="bottom-end"
-          trigger={
-            <button
-              type="button"
-              className="tp-pill-btn tp-credits"
-              data-testid="tp-credits-btn"
-              onClick={() => toggleMenu('credits')}
-            >
-              <span className="tp-bolt">
-                <IcBolt size={14} />
-              </span>
-              200
-            </button>
-          }
-          menu={
-            <div className="tp-credits-menu">
-              <div className="tp-credits-big">
-                <span className="tp-bolt">
-                  <IcBolt size={16} />
-                </span>
-                200 credits
-              </div>
-              <div className="tp-credits-sub">Free daily credits · reset in 07:41:12</div>
-              <div className="tp-menu-sep" />
-              <MenuItem label="Earn +300 by sharing a model" onClick={closeMenus} />
-              <MenuItem label="View usage" onClick={closeMenus} />
-            </div>
-          }
-        />
-        <button type="button" className="tp-upgrade-pill" data-testid="tp-upgrade-btn">
-          <IcRocket size={14} />
-          Upgrade
-        </button>
-        <MenuAnchor
-          id="bell"
-          placement="bottom-end"
-          trigger={
-            <button
-              type="button"
-              className="tp-iconbtn"
-              data-testid="tp-bell-btn"
-              aria-label="Notifications"
-              onClick={() => toggleMenu('bell')}
-            >
-              <IcBell size={17} />
-              {read ? null : <span className="tp-bell-count">3</span>}
-            </button>
-          }
-          menu={
-            <div className="tp-bell-menu">
-              <div className="tp-bell-head">
-                Notifications
-                <button type="button" className="tp-linklike" onClick={() => setRead(true)}>
-                  Mark all as read
+            <div className="tp-sendto-menu" data-testid="tp-sendto-menu">
+              {DCC_LOGOS.map((logo) => (
+                <button
+                  key={logo.id}
+                  type="button"
+                  className="tp-menu-item"
+                  data-testid={`tp-sendto-${logo.id}`}
+                  title={`Exports a GLB for ${logo.label}`}
+                  onClick={() => {
+                    requestSendTo(logo.id);
+                    closeMenus();
+                  }}
+                >
+                  <DccLogoIcon logo={logo} size={16} />
+                  <span className="tp-menu-item-label">{logo.label}</span>
                 </button>
-              </div>
-              {NOTIFICATIONS.map((n) => (
-                <div key={n.id} className="tp-notif" data-unread={n.unread && !read}>
-                  <span className="tp-notif-dot" />
-                  <div className="tp-notif-body">
-                    <div className="tp-notif-title">{n.title}</div>
-                    <div className="tp-notif-time">{n.time}</div>
-                  </div>
-                </div>
               ))}
             </div>
           }
         />
-        <MenuAnchor
-          id="lang"
-          placement="bottom-end"
-          trigger={
-            <button
-              type="button"
-              className="tp-iconbtn"
-              data-testid="tp-lang-btn"
-              aria-label="Language"
-              onClick={() => toggleMenu('lang')}
-            >
-              <IcGlobe size={17} />
-            </button>
-          }
-          menu={LANGUAGES.map((l) => (
-            <MenuItem
-              key={l}
-              label={l}
-              checked={l === lang}
-              onClick={() => {
-                setLang(l);
-                closeMenus();
-              }}
-            />
-          ))}
-        />
-        <MenuAnchor
-          id="account"
-          placement="bottom-end"
-          trigger={
-            <button
-              type="button"
-              className="tp-avatar"
-              data-testid="tp-avatar-btn"
-              aria-label="Account"
-              onClick={() => toggleMenu('account')}
-            >
-              <IcUser size={16} />
-            </button>
-          }
-          menu={
-            <div className="tp-account-menu">
-              <div className="tp-account-head">
-                <span className="tp-avatar tp-avatar-lg">
-                  <IcUser size={18} />
-                </span>
-                <div>
-                  <div className="tp-account-name">Pi Studio</div>
-                  <div className="tp-account-plan">Free plan</div>
-                </div>
-              </div>
-              <div className="tp-menu-sep" />
-              <MenuItem label="Profile" onClick={closeMenus} />
-              <MenuItem label="My subscription" onClick={closeMenus} />
-              <MenuItem label="API keys" onClick={closeMenus} />
-              <MenuItem label="Settings" onClick={closeMenus} />
-              <div className="tp-menu-sep" />
-              <MenuItem label="Sign out" danger onClick={closeMenus} />
-            </div>
-          }
-        />
+        <button
+          type="button"
+          className="tp-export-cta"
+          data-testid="tp-export-btn"
+          disabled={!hasModel}
+          onClick={() => set('modal', 'export')}
+        >
+          <IcDownload size={15} />
+          Export
+        </button>
       </div>
     </header>
   );

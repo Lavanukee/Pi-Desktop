@@ -11,6 +11,14 @@
 export * as THREE from 'three';
 export { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 export { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-// GLTFLoader lets the Tripo viewer decode the studio's bundled sample GLBs
-// (rigged + animated) entirely offline via GLTFLoader.parse(ArrayBuffer).
+// Loaders: GLTFLoader decodes the studio's bundled sample GLBs (offline via
+// .parse) AND drag-and-dropped .glb/.gltf files; OBJ/STL cover the other
+// import formats the 3D studio accepts.
 export { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+export { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+export { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+// Exporters: the studio's Export dialog writes real files with these.
+export { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+export { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
+export { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
+export { USDZExporter } from 'three/examples/jsm/exporters/USDZExporter.js';

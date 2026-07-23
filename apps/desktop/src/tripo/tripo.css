@@ -1557,6 +1557,11 @@
   width: 76px;
   height: 76px;
   pointer-events: none;
+  /* The axis balls carry inline per-depth z-indexes (up to ~150). Isolate them
+   * in the gizmo's own stacking context and keep that context BELOW menus
+   * (.tp-popover is 80) so the gizmo never paints over dropdown options. */
+  isolation: isolate;
+  z-index: 10;
 }
 .tp-gizmo-lines {
   position: absolute;
@@ -2605,4 +2610,163 @@
 }
 .tp-hierarchy .tp-anchor {
   display: inline-flex;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Studio redo (de-Tripo pass): workspace label, engine rows, labeled render
+   modes, segment parts list, real asset previews, drop-to-import overlay,
+   Send To logos. */
+
+.tp-workspace-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--pd-text-muted);
+  padding: 5px 10px;
+  border-left: 1px solid var(--pd-border-subtle);
+  margin-left: 4px;
+}
+
+/* Stage panels: the "Model · <engine>" row naming the real backing model. */
+.tp-engine-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 11px;
+  border: 1px solid var(--pd-border-subtle);
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-inset);
+  margin-bottom: 8px;
+}
+.tp-engine-name {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--pd-text-primary);
+}
+
+/* Render modes: Clay · Textured · Normal · Wireframe (labeled, no mystery). */
+.tp-mode-pill {
+  gap: 2px;
+  padding: 4px;
+}
+.tp-mode-btn {
+  border: 0;
+  background: transparent;
+  color: var(--pd-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.tp-mode-btn:hover {
+  color: var(--pd-text-primary);
+}
+.tp-mode-btn[data-active="true"] {
+  background: var(--pd-accent-primary);
+  color: var(--pd-accent-primary-fg, #fff);
+}
+
+/* Segment parts list (panel) — swatches match Viewer3D's PART_COLORS. */
+.tp-parts-list {
+  margin-top: 10px;
+}
+.tp-part-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: var(--pd-radius-sm);
+  font-size: 12.5px;
+  color: var(--pd-text-primary);
+}
+.tp-part-row:hover {
+  background: var(--pd-bg-inset);
+}
+.tp-part-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  flex: none;
+}
+.tp-part-swatch[data-part="0"] {
+  background: #e8863a;
+}
+.tp-part-swatch[data-part="1"] {
+  background: #4a90d9;
+}
+.tp-part-swatch[data-part="2"] {
+  background: #58b368;
+}
+.tp-part-swatch[data-part="3"] {
+  background: #d9b44a;
+}
+
+/* Assets: real rendered previews (viewer captures), neutral pending state. */
+.tp-asset-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+  display: block;
+}
+.tp-asset-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--pd-text-muted);
+  opacity: 0.7;
+}
+
+/* Send To menu: real DCC logos. */
+.tp-dcc-logo {
+  flex: none;
+  display: block;
+}
+.tp-sendto-menu .tp-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Session task history: empty state. */
+.tp-history-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--pd-text-muted);
+}
+
+/* Drop-to-import overlay (window-level drag-and-drop). */
+.tp-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pd-bg-backdrop);
+  pointer-events: none;
+}
+.tp-drop-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 26px;
+  border-radius: var(--pd-radius-lg);
+  border: 1.5px dashed var(--pd-accent-primary);
+  background: var(--pd-bg-raised);
+  color: var(--pd-text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+.tp {
+  position: relative;
+}
+
+/* Top-bar buttons keep their look when disabled (no model yet). */
+.tp-pill-btn:disabled,
+.tp-export-cta:disabled {
+  opacity: 0.45;
+  cursor: default;
 }

@@ -107,6 +107,18 @@ try {
   await page.waitForTimeout(400);
   await shot('pipe-1-mesh');
 
+  // ── 1b) SEGMENT (CubePart stage: colored parts + parts list) ────────────
+  await page.click('[data-testid="tp-rail-segment"]');
+  const segPanel = await page.textContent('[data-testid="tp-panel-segment"]');
+  assert(segPanel.includes('CubePart'), 'segment panel names the CubePart engine');
+  await page.click('[data-testid="tp-segment-btn"]');
+  await stageIs('segment');
+  await page.waitForSelector('[data-testid="tp-parts-list"]', { timeout: 5000 });
+  const parts = await page.textContent('[data-testid="tp-parts-list"]');
+  assert(parts.includes('Head') && parts.includes('Body'), 'segment lists named parts');
+  await page.waitForTimeout(400);
+  await shot('pipe-1b-segment');
+
   // ── 2) RETOPO ───────────────────────────────────────────────────────────
   await page.click('[data-testid="tp-rail-retopo"]');
   await page.click('[data-testid="tp-retopo-btn"]');
@@ -115,6 +127,20 @@ try {
   const topo2 = await page.textContent('[data-testid="tp-stats"]');
   assert(topo2.includes('Quad'), 'retopo stage reports Quad topology');
   await shot('pipe-2-retopo');
+
+  // ── 2b) TEXTURE (generated texture applied; auto-switch to Textured) ─────
+  await page.click('[data-testid="tp-rail-texture"]');
+  const texPanel = await page.textContent('[data-testid="tp-panel-texture"]');
+  assert(texPanel.includes('Hunyuan Paint'), 'texture panel names the Hunyuan Paint engine');
+  await page.click('[data-testid="tp-texture-btn"]');
+  await stageIs('texture');
+  await page.waitForFunction(
+    () => document.querySelector('.tp-canvas-host')?.dataset.tpRenderMode === 'textured',
+    undefined,
+    { timeout: 5000 },
+  );
+  await page.waitForTimeout(400);
+  await shot('pipe-2b-texture');
 
   // ── 3) RIG ──────────────────────────────────────────────────────────────
   await page.click('[data-testid="tp-rail-animate"]');
@@ -171,12 +197,10 @@ try {
   console.log(`  observed viewer frame rate: ~${fps} fps`);
   assert(fps >= 24, `viewer produces a smooth frame rate (got ${fps})`);
 
-  // ── a couple of extra material / theme looks (still animating) ───────────
-  await page.evaluate(() => {
-    document.querySelector('[data-testid="tp-mat-gold"]')?.click();
-  });
+  // ── extra looks: Textured render mode + light theme (still animating) ────
+  await page.click('[data-testid="tp-rmode-textured"]');
   await page.waitForTimeout(300);
-  await shot('pipe-5-gold-material');
+  await shot('pipe-5-textured-mode');
   await setTheme('claude', 'light');
   await page.waitForTimeout(300);
   await shot('pipe-6-light-theme');

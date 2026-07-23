@@ -34,6 +34,7 @@ import { registerLlmIpc, shutdownInference } from './inference/llm-main';
 import type { AppEventMap, CoreInvokeMap, FsInvokeMap } from './ipc-contract';
 import { disposeMacAgent, registerMacAgentIpc } from './mac/mac-agent';
 import { registerPiIpc } from './pi/pi-main';
+import { registerGen3dIpc } from './gen3d/gen3d-main';
 import { registerProjectIpc } from './project/project-main';
 import {
   applySettingsEnvFromDisk,
@@ -377,6 +378,12 @@ function registerAppIpc(): void {
   // surfacing of the vetted image/audio/video/3d models the model browser lists;
   // always registered (harmless read-only enumeration).
   registerGenCatalogIpc(ipcMain, allowSender);
+
+  // Bobble 3D studio engine (gen3d): catalog/downloads/generation for the
+  // TRELLIS-2 / Mage-Flow / Hunyuan Paint / CubePart / AutoRemesher pipeline.
+  // Currently the honest stub (real sizes, engineReady:false) — the sidecar
+  // wave swaps the internals behind the same contract.
+  registerGen3dIpc(ipcMain, allowSender, () => mainWindow?.webContents ?? null);
 
   // EXPERIMENTAL generation stack (default OFF). The full generation socket
   // bridge (`generate_image` / `generate_video` → JobQueue → mflux/MLX/ComfyUI,

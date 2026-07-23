@@ -29,6 +29,7 @@ import {
   type GenEventMap,
   type GenInvokeMap,
 } from './gen/gen-ipc-contract';
+import { GEN3D_INVOKE_CHANNELS, type Gen3dEventMap, type Gen3dInvokeMap } from './gen3d/gen3d-contract';
 import { IMPORT_INVOKE_CHANNELS, type ImportInvokeMap } from './import/import-contract';
 import { PI_INVOKE_CHANNELS, type PiEventMap, type PiInvokeMap } from './pi/contract';
 import { PROJECT_INVOKE_CHANNELS, type ProjectInvokeMap } from './project/project-contract';
@@ -498,6 +499,7 @@ export type AppInvokeMap = CoreInvokeMap &
   ImportInvokeMap &
   GenCatalogInvokeMap &
   GenInvokeMap &
+  Gen3dInvokeMap &
   BrowserInvokeMap &
   BrowserAgentInvokeMap &
   PtyInvokeMap &
@@ -523,6 +525,7 @@ export const APP_INVOKE_CHANNELS = [
   ...IMPORT_INVOKE_CHANNELS,
   ...GEN_CATALOG_INVOKE_CHANNELS,
   ...GEN_INVOKE_CHANNELS,
+  ...GEN3D_INVOKE_CHANNELS,
   ...BROWSER_INVOKE_CHANNELS,
   ...BROWSER_AGENT_INVOKE_CHANNELS,
   ...PTY_INVOKE_CHANNELS,
@@ -560,6 +563,7 @@ export type AppEventMap = {
   PtyEventMap &
   CorpEventMap &
   GenEventMap &
+  Gen3dEventMap &
   PiEventMap;
 
 /** Shape of `window.piDesktop` as exposed by the preload script. */

@@ -1259,6 +1259,99 @@ body {
   opacity: 1;
 }
 
+/* ── Chat rows: hover 3-dot menu + inline rename + project groups (B1/B2) ────── */
+.pd-chatrow {
+  position: relative;
+}
+/* The 3-dot menu is a SIBLING overlay of the row button (valid HTML), revealed on
+   hover / while its menu is open (:focus-within). It replaces the resting meta. */
+.pd-chatrow-actions {
+  position: absolute;
+  right: 6px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s var(--pd-easing-standard);
+}
+.pd-chatrow:hover .pd-chatrow-actions,
+.pd-chatrow:focus-within .pd-chatrow-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+.pd-chatrow:hover .pd-sidebar-row-meta,
+.pd-chatrow:focus-within .pd-sidebar-row-meta {
+  opacity: 0;
+}
+.pd-chatrow-dots,
+.pd-section-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--pd-radius-sm);
+  background: transparent;
+  color: var(--pd-text-muted);
+  cursor: pointer;
+}
+.pd-chatrow-dots {
+  width: 24px;
+  height: 24px;
+}
+.pd-section-action {
+  width: 20px;
+  height: 20px;
+}
+.pd-chatrow-dots:hover,
+.pd-section-action:hover {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-primary);
+}
+.pd-project-chats {
+  /* A left rail so a project's chats read as belonging to it. */
+  margin-left: 10px;
+  padding-left: 4px;
+  border-left: 1px solid var(--pd-border-subtle);
+}
+.pd-chat-rename-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--pd-border-strong);
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-elevated);
+  color: var(--pd-text-primary);
+  font: inherit;
+  font-size: var(--pd-font-size-body);
+  padding: 4px 8px;
+  outline: none;
+}
+.pd-btn-ghost,
+.pd-btn-danger {
+  border: 0;
+  border-radius: var(--pd-radius-md);
+  font: inherit;
+  font-size: var(--pd-font-size-body);
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.pd-btn-ghost {
+  background: transparent;
+  color: var(--pd-text-secondary);
+}
+.pd-btn-ghost:hover {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-primary);
+}
+.pd-btn-danger {
+  background: var(--pd-status-danger-fg);
+  color: #fff;
+}
+.pd-btn-danger:hover {
+  filter: brightness(1.08);
+}
+
 /* The top-of-screen "a chat needs your input" banner (clickable → swap to it). */
 .pd-input-banner {
   animation: pd-input-banner-in 0.22s var(--pd-easing-standard);

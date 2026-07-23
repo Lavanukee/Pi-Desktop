@@ -138,6 +138,26 @@ export interface SearchKeys {
   tavily: string;
 }
 
+/** A user-created chat project (Codex-style group of chats). */
+export interface ChatProject {
+  id: string;
+  name: string;
+}
+
+/** Chat organization state: named projects + per-chat assignment/pin/rename.
+ * Keyed by session FILE path so it survives without touching the session JSONL
+ * (the fs read path stays read-only). */
+export interface ChatOrganization {
+  /** User-created projects, in display order. */
+  projects: ChatProject[];
+  /** sessionFile → projectId (manual assignment; absent = ungrouped). */
+  assignments: Record<string, string>;
+  /** Pinned session files (pinned chats float to the top of their group). */
+  pinned: string[];
+  /** sessionFile → user rename (overrides the first-message-derived title). */
+  titles: Record<string, string>;
+}
+
 /** The whole live desktop-settings document. Seeded from onboarding.json on the
  * first read, authoritative thereafter. */
 export interface DesktopSettings {
@@ -200,6 +220,10 @@ export interface DesktopSettings {
   /** Power-user advanced inference knobs (sampling + reasoning). Defaults to
    * {@link DEFAULT_ADVANCED} — inert until touched. */
   advanced: AdvancedSettings;
+  /** Chat organization (projects, assignments, pins, renames). Empty by default. */
+  chatOrg: ChatOrganization;
+  /** Skip the delete-chat confirmation dialog (set via its "don't ask again"). */
+  hideDeleteChatConfirm: boolean;
 }
 
 /** A partial patch merged over the current document (one level deep on the
@@ -232,6 +256,10 @@ export interface DesktopSettingsPatch {
   /** Full replacement of the advanced knobs (renderer read-modify-writes the
    * whole object; deep-merged one level over the two nested groups in the store). */
   advanced?: Partial<AdvancedSettings>;
+  /** Full replacement of chat organization (renderer read-modify-writes it whole). */
+  chatOrg?: ChatOrganization;
+  /** Skip the delete-chat confirmation dialog. */
+  hideDeleteChatConfirm?: boolean;
 }
 
 /** Icon-stroke bounds — mirrors the IconStrokeControl slider range. */

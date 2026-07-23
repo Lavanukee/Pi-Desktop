@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  DEFAULT_ADVANCED,
-  type DesktopSettings,
-} from '../../electron/settings/settings-contract';
+import { DEFAULT_ADVANCED, type DesktopSettings } from '../../electron/settings/settings-contract';
 import {
   autoEffortForTier,
   EFFORT_STEPS,
@@ -35,6 +32,8 @@ const base: DesktopSettings = {
   experimentalProductionHarness: false,
   experimentalGeneration: false,
   advanced: DEFAULT_ADVANCED,
+  chatOrg: { projects: [], assignments: {}, pinned: [], titles: {} },
+  hideDeleteChatConfirm: false,
 };
 
 describe('autoEffortForTier', () => {

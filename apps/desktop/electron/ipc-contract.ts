@@ -118,6 +118,12 @@ export type FsInvokeMap = {
     request: { path: string; content: string };
     response: { ok: boolean; bytes?: number; error?: string };
   };
+  /** Delete a session's JSONL file (the sidebar "Delete chat" action). Fenced to
+   * the sessions dir — refuses any path outside it. */
+  'fs:delete-session': {
+    request: { file: string };
+    response: { ok: boolean; error?: string };
+  };
 };
 
 export const FS_INVOKE_CHANNELS = [
@@ -127,6 +133,7 @@ export const FS_INVOKE_CHANNELS = [
   'fs:list-tree',
   'fs:read-file',
   'fs:write-file',
+  'fs:delete-session',
 ] as const satisfies readonly (keyof FsInvokeMap)[];
 
 // ---------------------------------------------------------------------------

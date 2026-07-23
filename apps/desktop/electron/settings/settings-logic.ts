@@ -7,6 +7,8 @@
 import type { OnboardingChoices } from '../import/import-contract';
 import {
   type AdvancedSettings,
+  type ChatOrganization,
+  type ChatProject,
   DEFAULT_ADVANCED,
   type DesktopSettings,
   type DesktopSettingsPatch,
@@ -77,6 +79,8 @@ export const DEFAULT_SETTINGS: DesktopSettings = {
   experimentalProductionHarness: false,
   experimentalGeneration: false,
   advanced: DEFAULT_ADVANCED,
+  chatOrg: { projects: [], assignments: {}, pinned: [], titles: {} },
+  hideDeleteChatConfirm: false,
 };
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
@@ -106,6 +110,33 @@ function strArray(value: unknown): string[] {
     if (typeof v === 'string' && v.length > 0) seen.add(v);
   }
   return [...seen];
+}
+
+/** A record<string,string> keeping only string→string entries. */
+function strMap(value: unknown): Record<string, string> {
+  if (typeof value !== 'object' || value === null) return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === 'string' && v.length > 0) out[k] = v;
+  }
+  return out;
+}
+
+/** Normalize the untrusted chat-organization blob (projects/assignments/pins/renames). */
+function clampChatOrg(value: unknown): ChatOrganization {
+  const o = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>;
+  const projects: ChatProject[] = Array.isArray(o.projects)
+    ? o.projects
+        .filter((p): p is { id: unknown; name: unknown } => typeof p === 'object' && p !== null)
+        .map((p) => ({ id: str(p.id, ''), name: str(p.name, '') }))
+        .filter((p) => p.id.length > 0 && p.name.length > 0)
+    : [];
+  return {
+    projects,
+    assignments: strMap(o.assignments),
+    pinned: strArray(o.pinned),
+    titles: strMap(o.titles),
+  };
 }
 
 /** Normalize the untrusted advanced knobs (sampling + reasoning) with bounds. */
@@ -199,6 +230,8 @@ export function clampSettings(raw: unknown): DesktopSettings {
     ),
     experimentalGeneration: bool(o.experimentalGeneration, d.experimentalGeneration),
     advanced: clampAdvanced(o.advanced),
+    chatOrg: clampChatOrg(o.chatOrg),
+    hideDeleteChatConfirm: bool(o.hideDeleteChatConfirm, d.hideDeleteChatConfirm),
   };
 }
 

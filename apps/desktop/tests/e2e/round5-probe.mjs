@@ -56,7 +56,7 @@ try {
   await page.waitForSelector('[data-testid="composer-input"]', { timeout: 12000 });
 
   // ── 1. Sidebar: Workspace nav is ABOVE the Chats list ─────────────────────────
-  await page.waitForSelector('[data-testid="nav-projects"]', { timeout: 8000 });
+  await page.waitForSelector('[data-testid="nav-model-management"]', { timeout: 8000 });
   const headerOrder = await page.evaluate(() =>
     [...document.querySelectorAll('.pd-sidebar-section-header')].map((el) =>
       (el.textContent ?? '').trim(),

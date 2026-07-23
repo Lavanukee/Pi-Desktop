@@ -218,6 +218,21 @@ function readSession(file: string): string | null {
   return safeRead(resolved);
 }
 
+/** Delete a session JSONL, fenced to the sessions dir (the sidebar "Delete chat"
+ * action). Only `.jsonl` files under SESSIONS_DIR are eligible. */
+function deleteSession(file: string): { ok: boolean; error?: string } {
+  const resolved = path.resolve(file);
+  if (!resolved.startsWith(SESSIONS_DIR + path.sep) || !resolved.endsWith('.jsonl')) {
+    return { ok: false, error: 'refused: not a session file' };
+  }
+  try {
+    fs.rmSync(resolved, { force: true });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /**
  * Bounded directory tree for the canvas file operation bar's file-tree panel.
  * Same hard caps + skip-list as `listFiles` so it never recurses into
@@ -499,4 +514,5 @@ export const fsHandlers: {
   }),
   'fs:read-file': (req) => readFileBounded(req.path, req.maxBytes ?? READ_FILE_DEFAULT_MAX),
   'fs:write-file': (req) => writeFileFenced(req.path, req.content),
+  'fs:delete-session': (req) => deleteSession(req.file),
 };

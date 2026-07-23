@@ -36,6 +36,38 @@ describe('clampSettings', () => {
     expect(clampSettings({ version: 99 }).version).toBe(1);
   });
 
+  it('normalizes chat organization + drops malformed entries', () => {
+    const s = clampSettings({
+      chatOrg: {
+        projects: [
+          { id: 'p1', name: 'Research' },
+          { id: '', name: 'no id' }, // dropped
+          { id: 'p2' }, // no name → dropped
+          'junk', // not an object → dropped
+        ],
+        assignments: { 'a.jsonl': 'p1', 'b.jsonl': 42 }, // non-string value dropped
+        pinned: ['a.jsonl', '', 'a.jsonl'], // empty + dupe removed
+        titles: { 'a.jsonl': 'Renamed' },
+      },
+      hideDeleteChatConfirm: true,
+    });
+    expect(s.chatOrg.projects).toEqual([{ id: 'p1', name: 'Research' }]);
+    expect(s.chatOrg.assignments).toEqual({ 'a.jsonl': 'p1' });
+    expect(s.chatOrg.pinned).toEqual(['a.jsonl']);
+    expect(s.chatOrg.titles).toEqual({ 'a.jsonl': 'Renamed' });
+    expect(s.hideDeleteChatConfirm).toBe(true);
+  });
+
+  it('defaults chat organization to empty', () => {
+    expect(clampSettings({}).chatOrg).toEqual({
+      projects: [],
+      assignments: {},
+      pinned: [],
+      titles: {},
+    });
+    expect(clampSettings({}).hideDeleteChatConfirm).toBe(false);
+  });
+
   it('defaults userMode to user and rejects an invalid one', () => {
     expect(DEFAULT_SETTINGS.userMode).toBe('user');
     expect(clampSettings({}).userMode).toBe('user');

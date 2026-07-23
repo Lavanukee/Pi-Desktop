@@ -39,6 +39,26 @@ export function IconChevronDown(props: IconProps) {
   );
 }
 
+export function IconPin(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M8 13.5v-4" />
+      <path d="M5 9.5h6l-.7-3 1.2-1.2-4-4-1.2 1.2-3.3.7 1.7 1.7z" />
+    </Icon>
+  );
+}
+
+export function IconTrash(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.75 4.25h10.5" />
+      <path d="M6 4.25V2.75h4v1.5" />
+      <path d="M4 4.25l.55 8.2a1 1 0 0 0 1 .93h4.9a1 1 0 0 0 1-.93L12 4.25" />
+      <path d="M6.75 6.75v4M9.25 6.75v4" />
+    </Icon>
+  );
+}
+
 export function IconChevronRight(props: IconProps) {
   return (
     <Icon {...props}>

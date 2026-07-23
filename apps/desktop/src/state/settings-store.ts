@@ -48,6 +48,8 @@ const DEFAULTS: DesktopSettings = {
   experimentalProductionHarness: false,
   experimentalGeneration: false,
   advanced: DEFAULT_ADVANCED,
+  chatOrg: { projects: [], assignments: {}, pinned: [], titles: {} },
+  hideDeleteChatConfirm: false,
 };
 
 function prefersDark(): boolean {

@@ -15,22 +15,36 @@
 
 import type { OrgNodeView } from '@pi-desktop/coordination';
 import {
+  Checkbox,
   CollapsibleSearch,
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
   IconChat,
   IconChevronDown,
   IconClock,
   IconConnector,
   IconFolderPlus,
+  IconMore,
   IconPencil,
+  IconPin,
+  IconPlus,
   IconSearch,
   IconSettings,
   IconSidebar,
   IconSparkles,
+  IconTrash,
   Kbd,
   SegmentedControl,
   Sidebar,
@@ -52,6 +66,18 @@ import type { SessionSummary } from '../../electron/ipc-contract';
 import type { UserMode } from '../../electron/settings/settings-contract';
 import { IconCpu, IconMoon, IconSun } from '../settings/icons';
 import type { SettingsSection } from '../settings/SettingsView';
+import {
+  assignChat,
+  createProject,
+  deleteChat,
+  deleteProject,
+  displayTitle,
+  groupChats,
+  renameChat,
+  renameProject,
+  togglePin,
+  useChatOrg,
+} from '../state/chat-org';
 import { useChildAgentStore, useChildrenByParent } from '../state/child-agent-store';
 import { useCorpStore } from '../state/corp-store';
 import { listSessions, newSession, switchSession } from '../state/pi-connect';
@@ -317,6 +343,25 @@ export function SessionSidebar({
       return next;
     });
 
+  // Chat organization (B1/B2): projects, pins, renames, delete — persisted state.
+  const org = useChatOrg();
+  const hideDeleteConfirm = useSettingsStore((s) => s.settings.hideDeleteChatConfirm);
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
+  const toggleProject = (id: string) =>
+    setCollapsedProjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  // Inline-rename targets (a chat file or a project id) + the live draft text.
+  const [renamingFile, setRenamingFile] = useState<string | null>(null);
+  const [renamingProject, setRenamingProject] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  // The chat pending a delete confirmation (null = dialog closed).
+  const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null);
+  const [dontAskDelete, setDontAskDelete] = useState(false);
+
   const refresh = useCallback(() => {
     void listSessions().then(setSessions);
   }, []);
@@ -424,22 +469,253 @@ export function SessionSidebar({
     const list =
       q.length === 0
         ? displaySessions
-        : displaySessions.filter((s) => s.title.toLowerCase().includes(q));
+        : displaySessions.filter((s) => displayTitle(s, org).toLowerCase().includes(q));
     return list.slice(0, 50);
-  }, [displaySessions, query]);
+  }, [displaySessions, query, org]);
+
+  // Partition the flat list into project groups + ungrouped (pinned float to top).
+  const grouped = useMemo(() => groupChats(filtered, org), [filtered, org]);
+
+  // ── Inline rename + delete helpers (B2) ────────────────────────────────────
+  const beginRenameChat = (s: SessionSummary) => {
+    setRenamingProject(null);
+    setRenamingFile(s.file);
+    setRenameDraft(displayTitle(s, org));
+  };
+  const commitRenameChat = () => {
+    if (renamingFile !== null) void renameChat(renamingFile, renameDraft);
+    setRenamingFile(null);
+  };
+  const beginRenameProject = (id: string, name: string) => {
+    setRenamingFile(null);
+    setRenamingProject(id);
+    setRenameDraft(name);
+  };
+  const commitRenameProject = () => {
+    if (renamingProject !== null) void renameProject(renamingProject, renameDraft);
+    setRenamingProject(null);
+  };
+  // Delete: skip the dialog when the user chose "don't ask again".
+  const requestDeleteChat = (s: SessionSummary) => {
+    if (hideDeleteConfirm) {
+      void deleteChat(s.file).then(refresh);
+      return;
+    }
+    setDontAskDelete(false);
+    setDeleteTarget(s);
+  };
+  const confirmDeleteChat = async () => {
+    if (deleteTarget === null) return;
+    if (dontAskDelete) await useSettingsStore.getState().update({ hideDeleteChatConfirm: true });
+    await deleteChat(deleteTarget.file);
+    setDeleteTarget(null);
+    refresh();
+  };
+  const createProjectAndAssign = async (file?: string) => {
+    const id = await createProject('New project');
+    if (file !== undefined) await assignChat(file, id);
+    beginRenameProject(id, 'New project');
+  };
+
+  /** One chat row: the A4 icon-swap row + its hover 3-dot menu (B2) + the nested
+   * agent dropdown (A3/A4). Shared by the project groups and the ungrouped list. */
+  const renderChat = (s: SessionSummary): ReactNode => {
+    const running =
+      (busy && bgRun === null && effectiveCurrentFile === s.file) ||
+      (bgRun?.streaming === true && bgRun.sessionFile === s.file);
+    const unreadKind = unread[s.file];
+    const kids = childrenByParent.get(s.file) ?? [];
+    const corpKids = corpRunning && effectiveCurrentFile === s.file ? corpNodes : [];
+    const hasKids = kids.length > 0 || corpKids.length > 0;
+    const expanded = hasKids && !collapsedParents.has(s.file);
+    const isFocused = effectiveCurrentFile === s.file && viewedChildId === null;
+    const title = displayTitle(s, org);
+    const pinned = org.pinned.includes(s.file);
+    const assignedTo = org.assignments[s.file];
+
+    // Editing → the row becomes an inline rename input.
+    if (renamingFile === s.file) {
+      return (
+        <div key={s.file} className="px-2 py-0.5">
+          <input
+            className="pd-chat-rename-input pd-focusable"
+            data-testid={`chat-rename-input-${title}`}
+            ref={(el) => el?.focus()}
+            value={renameDraft}
+            onChange={(e) => setRenameDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRenameChat();
+              else if (e.key === 'Escape') setRenamingFile(null);
+            }}
+            onBlur={commitRenameChat}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div key={s.file} className="pd-chatrow">
+        <SidebarRow
+          // No caret by default; a chat with agents swaps its bubble for a fold
+          // caret ON HOVER (CSS) so nothing shifts (jedd A4).
+          icon={
+            hasKids ? (
+              <span className="pd-chat-icon-swap">
+                <IconChat size={16} className="pd-chat-icon-bubble" />
+                <IconChevronDown
+                  size={14}
+                  className={`pd-chat-icon-caret ${expanded ? '' : '-rotate-90'}`}
+                />
+              </span>
+            ) : (
+              <IconChat size={16} />
+            )
+          }
+          label={title}
+          // Priority: needs-input dot > running spinner > finished dot > pin glyph > time.
+          meta={
+            unreadKind === 'needs-input' ? (
+              <span className="pd-chat-dot pd-chat-dot--needs-input" />
+            ) : running ? (
+              <Spinner size={14} />
+            ) : unreadKind === 'finished' ? (
+              <span className="pd-chat-dot pd-chat-dot--finished" />
+            ) : pinned ? (
+              <IconPin size={13} className="text-text-muted" />
+            ) : (
+              relativeTime(s.modifiedAt)
+            )
+          }
+          selected={isFocused}
+          data-testid={`chat-row-${title}`}
+          onClick={() => {
+            if (isFocused && hasKids) {
+              toggleParent(s.file);
+              return;
+            }
+            setViewedChild(null);
+            void onOpen(s.file);
+          }}
+        />
+        {/* Hover-revealed 3-dot menu. A SIBLING of the row button (not nested) so
+            it's valid HTML; :focus-within keeps it up while the menu is open. */}
+        <div className="pd-chatrow-actions">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="pd-chatrow-dots pd-focusable"
+                aria-label="Chat actions"
+                data-testid={`chat-menu-${title}`}
+              >
+                <IconMore size={16} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="bottom" sideOffset={4} className="min-w-[190px]">
+              <DropdownMenuItem icon={<IconPencil size={16} />} onSelect={() => beginRenameChat(s)}>
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                icon={<IconPin size={16} />}
+                onSelect={() => void togglePin(s.file)}
+              >
+                {pinned ? 'Unpin' : 'Pin'}
+              </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger icon={<IconFolderPlus size={16} />}>
+                  Add to project
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="min-w-[180px]">
+                  {org.projects.length === 0 ? (
+                    <DropdownMenuItem disabled>No projects yet</DropdownMenuItem>
+                  ) : (
+                    org.projects.map((p) => (
+                      <DropdownMenuItem
+                        key={p.id}
+                        hint={assignedTo === p.id ? '✓' : undefined}
+                        onSelect={() => void assignChat(s.file, p.id)}
+                      >
+                        {p.name}
+                      </DropdownMenuItem>
+                    ))
+                  )}
+                  {assignedTo !== undefined ? (
+                    <DropdownMenuItem onSelect={() => void assignChat(s.file, null)}>
+                      Remove from project
+                    </DropdownMenuItem>
+                  ) : null}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    icon={<IconPlus size={16} />}
+                    onSelect={() => void createProjectAndAssign(s.file)}
+                  >
+                    New project…
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                danger
+                icon={<IconTrash size={16} />}
+                onSelect={() => requestDeleteChat(s)}
+              >
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        {expanded ? (
+          <div className="pd-child-rows" data-testid="child-rows">
+            {kids.map((c) => (
+              <button
+                type="button"
+                key={c.childId}
+                className="pd-child-row pd-focusable"
+                data-testid={`child-row-${c.childId}`}
+                data-selected={viewedChildId === c.childId || undefined}
+                onClick={() => setViewedChild(c.childId)}
+              >
+                <span className="pd-child-row-icon">
+                  <IconChat size={13} />
+                </span>
+                <span className="pd-child-row-label">{c.title}</span>
+                {c.running ? (
+                  <Spinner size={12} />
+                ) : childUnread[c.childId] !== undefined ? (
+                  <span className="pd-chat-dot pd-chat-dot--finished" />
+                ) : null}
+              </button>
+            ))}
+            {corpKids.map((node) => (
+              <button
+                type="button"
+                key={`corp:${node.id}`}
+                className="pd-child-row pd-focusable"
+                data-testid={`corp-row-${node.id}`}
+                data-selected={pinnedNode?.id === node.id || undefined}
+                onClick={() => {
+                  setViewedChild(null);
+                  selectCorpNode(node);
+                }}
+              >
+                <span className="pd-child-row-icon">
+                  <IconChat size={13} />
+                </span>
+                <span className="pd-child-row-label">{node.name}</span>
+                {node.state === 'working' ? <Spinner size={12} /> : null}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   // Round-5 #22 / round-8 #4/#5: Workspace nav above the Chats list. Artifacts
   // removed; "Model management" routes to the settings model-manager surface
   // (section id `models` is the seam the parallel model-manager rework owns);
   // the redundant Settings entry is gone (it lives in the profile footer).
   const workspaceNav: WorkspaceNavItem[] = [
-    {
-      id: 'projects',
-      label: 'Projects',
-      icon: IconFolderPlus,
-      onClick: () => onOpenStub('projects'),
-      testid: 'nav-projects',
-    },
     {
       id: 'models',
       label: 'Model management',
@@ -493,12 +769,6 @@ export function SessionSidebar({
             icon={<IconPencil size={16} />}
           />
           <RailButton label="Chats" onClick={onExpand} icon={<IconChat size={16} />} />
-          <RailButton
-            label="Projects"
-            testid="nav-projects"
-            onClick={() => onOpenStub('projects')}
-            icon={<IconFolderPlus size={16} />}
-          />
           <RailButton
             label="Model management"
             testid="nav-model-management"
@@ -568,120 +838,105 @@ export function SessionSidebar({
           })}
         </SidebarSection>
 
-        <SidebarSection label="Chats">
-          {filtered.length === 0 ? (
-            <div className="px-2 py-1.5 text-footnote text-text-muted">
-              {query.trim().length > 0 ? 'No matching chats.' : 'No sessions yet.'}
-            </div>
+        {/* Projects (B1) — Codex-style named groups; each folds to reveal its
+            chats. The "+" adds a project (then opens it for inline rename). */}
+        <SidebarSection
+          label="Projects"
+          actions={
+            <button
+              type="button"
+              className="pd-section-action pd-focusable"
+              aria-label="New project"
+              data-testid="new-project"
+              onClick={() => void createProjectAndAssign()}
+            >
+              <IconPlus size={14} />
+            </button>
+          }
+        >
+          {grouped.projects.length === 0 ? (
+            <div className="px-2 py-1.5 text-footnote text-text-muted">No projects yet.</div>
           ) : (
-            filtered.map((s) => {
-              // The viewed chat spins when IT is the one running (no bg run in play);
-              // a chat running in the background spins on its own row while you view
-              // another.
-              const running =
-                (busy && bgRun === null && effectiveCurrentFile === s.file) ||
-                (bgRun?.streaming === true && bgRun.sessionFile === s.file);
-              // "this chat has something you haven't looked at" — a blue (finished)
-              // or orange (needs-input) dot, until you open the chat.
-              const unreadKind = unread[s.file];
-              // Child agents (subagents / roles) running under THIS chat — a nested
-              // dropdown of their own chat views. Expanded by default; a caret folds.
-              const kids = childrenByParent.get(s.file) ?? [];
-              // Corp/hierarchy roles belong to the chat hosting the (inline) run.
-              const corpKids = corpRunning && effectiveCurrentFile === s.file ? corpNodes : [];
-              const hasKids = kids.length > 0 || corpKids.length > 0;
-              const expanded = hasKids && !collapsedParents.has(s.file);
-              const isFocused = effectiveCurrentFile === s.file && viewedChildId === null;
+            grouped.projects.map(({ project, chats }) => {
+              const pExpanded = !collapsedProjects.has(project.id);
+              if (renamingProject === project.id) {
+                return (
+                  <div key={project.id} className="px-2 py-0.5">
+                    <input
+                      className="pd-chat-rename-input pd-focusable"
+                      data-testid={`project-rename-input-${project.id}`}
+                      ref={(el) => el?.focus()}
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitRenameProject();
+                        else if (e.key === 'Escape') setRenamingProject(null);
+                      }}
+                      onBlur={commitRenameProject}
+                    />
+                  </div>
+                );
+              }
               return (
-                <div key={s.file}>
-                  <SidebarRow
-                    // No caret by default; a chat with agents swaps its bubble for a
-                    // fold caret ON HOVER (CSS), so nothing pushes the icon around
-                    // (jedd A4). The caret points down when open, right when folded.
-                    icon={
-                      hasKids ? (
+                <div key={project.id}>
+                  <div className="pd-chatrow">
+                    <SidebarRow
+                      icon={
                         <span className="pd-chat-icon-swap">
-                          <IconChat size={16} className="pd-chat-icon-bubble" />
+                          <IconFolderPlus size={16} className="pd-chat-icon-bubble" />
                           <IconChevronDown
                             size={14}
-                            className={`pd-chat-icon-caret ${expanded ? '' : '-rotate-90'}`}
+                            className={`pd-chat-icon-caret ${pExpanded ? '' : '-rotate-90'}`}
                           />
                         </span>
-                      ) : (
-                        <IconChat size={16} />
-                      )
-                    }
-                    label={s.title}
-                    // Right side, in priority order: waiting-for-input dot (a paused
-                    // turn — beats the spinner), else the running spinner (actively
-                    // generating), else a finished dot, else the time.
-                    meta={
-                      unreadKind === 'needs-input' ? (
-                        <span className="pd-chat-dot pd-chat-dot--needs-input" />
-                      ) : running ? (
-                        <Spinner size={14} />
-                      ) : unreadKind === 'finished' ? (
-                        <span className="pd-chat-dot pd-chat-dot--finished" />
-                      ) : (
-                        relativeTime(s.modifiedAt)
-                      )
-                    }
-                    selected={isFocused}
-                    data-testid={`chat-row-${s.title}`}
-                    onClick={() => {
-                      // Clicking the ALREADY-focused chat folds/unfolds its agent
-                      // dropdown; any other click opens the chat (jedd A4).
-                      if (isFocused && hasKids) {
-                        toggleParent(s.file);
-                        return;
                       }
-                      setViewedChild(null);
-                      void onOpen(s.file);
-                    }}
-                  />
-                  {expanded ? (
-                    <div className="pd-child-rows" data-testid="child-rows">
-                      {kids.map((c) => (
-                        <button
-                          type="button"
-                          key={c.childId}
-                          className="pd-child-row pd-focusable"
-                          data-testid={`child-row-${c.childId}`}
-                          data-selected={viewedChildId === c.childId || undefined}
-                          onClick={() => setViewedChild(c.childId)}
-                        >
-                          <span className="pd-child-row-icon">
-                            <IconChat size={13} />
-                          </span>
-                          <span className="pd-child-row-label">{c.title}</span>
-                          {c.running ? (
-                            <Spinner size={12} />
-                          ) : childUnread[c.childId] !== undefined ? (
-                            <span className="pd-chat-dot pd-chat-dot--finished" />
-                          ) : null}
-                        </button>
-                      ))}
-                      {corpKids.map((node) => (
-                        <button
-                          type="button"
-                          key={`corp:${node.id}`}
-                          className="pd-child-row pd-focusable"
-                          data-testid={`corp-row-${node.id}`}
-                          data-selected={pinnedNode?.id === node.id || undefined}
-                          // Pin the role so corp's inline view shows it; leave any
-                          // child view first so the main (corp-hosting) chat is shown.
-                          onClick={() => {
-                            setViewedChild(null);
-                            selectCorpNode(node);
-                          }}
-                        >
-                          <span className="pd-child-row-icon">
-                            <IconChat size={13} />
-                          </span>
-                          <span className="pd-child-row-label">{node.name}</span>
-                          {node.state === 'working' ? <Spinner size={12} /> : null}
-                        </button>
-                      ))}
+                      label={project.name}
+                      meta={
+                        <span className="text-text-muted">
+                          {chats.length > 0 ? chats.length : ''}
+                        </span>
+                      }
+                      data-testid={`project-row-${project.id}`}
+                      onClick={() => toggleProject(project.id)}
+                    />
+                    <div className="pd-chatrow-actions">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="pd-chatrow-dots pd-focusable"
+                            aria-label="Project actions"
+                            data-testid={`project-menu-${project.id}`}
+                          >
+                            <IconMore size={16} />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
+                          <DropdownMenuItem
+                            icon={<IconPencil size={16} />}
+                            onSelect={() => beginRenameProject(project.id, project.name)}
+                          >
+                            Rename project
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            danger
+                            icon={<IconTrash size={16} />}
+                            onSelect={() => void deleteProject(project.id)}
+                          >
+                            Delete project
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+                  {pExpanded ? (
+                    <div className="pd-project-chats" data-testid={`project-chats-${project.id}`}>
+                      {chats.length === 0 ? (
+                        <div className="px-2 py-1 text-footnote text-text-muted">Empty</div>
+                      ) : (
+                        chats.map(renderChat)
+                      )}
                     </div>
                   ) : null}
                 </div>
@@ -689,7 +944,70 @@ export function SessionSidebar({
             })
           )}
         </SidebarSection>
+
+        <SidebarSection label="Chats">
+          {filtered.length === 0 ? (
+            <div className="px-2 py-1.5 text-footnote text-text-muted">
+              {query.trim().length > 0 ? 'No matching chats.' : 'No sessions yet.'}
+            </div>
+          ) : grouped.ungrouped.length === 0 ? (
+            <div className="px-2 py-1.5 text-footnote text-text-muted">
+              All chats are in projects.
+            </div>
+          ) : (
+            grouped.ungrouped.map(renderChat)
+          )}
+        </SidebarSection>
       </SidebarScroll>
+
+      {/* Delete-chat confirmation (B2), skippable via "Don't ask again". */}
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(o) => {
+          if (!o) setDeleteTarget(null);
+        }}
+      >
+        <DialogContent data-testid="delete-chat-dialog" className="max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>Delete chat?</DialogTitle>
+          </DialogHeader>
+          <DialogBody>
+            <p className="text-body text-text-secondary">
+              “{deleteTarget !== null ? displayTitle(deleteTarget, org) : ''}” will be permanently
+              deleted. This can’t be undone.
+            </p>
+            <label
+              htmlFor="delete-chat-dontask"
+              className="mt-3 flex cursor-pointer items-center gap-2 text-footnote text-text-muted"
+            >
+              <Checkbox
+                id="delete-chat-dontask"
+                checked={dontAskDelete}
+                onCheckedChange={(v) => setDontAskDelete(v === true)}
+                data-testid="delete-chat-dontask"
+              />
+              Don’t ask again
+            </label>
+          </DialogBody>
+          <DialogFooter>
+            <button
+              type="button"
+              className="pd-btn-ghost pd-focusable"
+              onClick={() => setDeleteTarget(null)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="pd-btn-danger pd-focusable"
+              data-testid="delete-chat-confirm"
+              onClick={() => void confirmDeleteChat()}
+            >
+              Delete
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Bottom-left footer: ONE profile button that opens the dropup holding
           Settings, Toggle theme, and the User / Power-user toggle (round-12 #4).

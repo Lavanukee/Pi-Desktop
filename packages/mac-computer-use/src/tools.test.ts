@@ -375,6 +375,29 @@ describe('registerMacComputerUseTools', () => {
     for (const act of acts) expect(act.params).toMatchObject({ pid: 4242 });
   });
 
+  it('mac_scroll surfaces the helper-verified ladder ack (mode + honest no-movement)', async () => {
+    const bridge = new FakeBridge()
+      .on('launch', () => LAUNCH_ACK)
+      .on('snapshot', () => SNAP([], 4242))
+      .on('scroll', (params) =>
+        params?.direction === 'down'
+          ? { ok: true, background: true, mode: 'gestureToPid', moved: true }
+          : { ok: true, background: true, mode: 'exhausted', moved: false },
+      );
+    const tools = collectTools(bridge);
+    await run(tools, 'mac_launch', { app: 'TextEdit' });
+
+    const moved = await run(tools, 'mac_scroll', { direction: 'down' });
+    expect(details(moved)).toMatchObject({ ok: true, mode: 'gestureToPid', moved: true });
+    const movedText = String(moved.content[0]?.type === 'text' ? moved.content[0].text : '');
+    expect(movedText).toContain('Scrolled down');
+
+    const stuck = await run(tools, 'mac_scroll', { direction: 'up' });
+    expect(details(stuck)).toMatchObject({ ok: true, mode: 'exhausted', moved: false });
+    const stuckText = String(stuck.content[0]?.type === 'text' ? stuck.content[0].text : '');
+    expect(stuckText).toContain('NO effect');
+  });
+
   it('a default (app-less) snapshot targets the CONTROLLED app, not frontmost', async () => {
     const bridge = new FakeBridge()
       .on('launch', () => LAUNCH_ACK)

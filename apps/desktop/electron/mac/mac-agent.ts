@@ -76,7 +76,9 @@ let tccCache: { at: number; status: MacTccStatus } | null = null;
 /** PI_E2E-only: a synthetic window frame the overlay's real tracking loop reads
  * (via an injected bounds reader) so the deterministic probe can move the
  * "controlled window" with no TCC/real app and assert the overlay follows. */
-let e2eFakeBounds: (OverlayRect & { frontmost?: boolean }) | null = null;
+let e2eFakeBounds:
+  | (OverlayRect & { frontmost?: boolean; onScreen?: boolean; occluded?: boolean | null })
+  | null = null;
 /** The system permission dialogs are surfaced at most once per app session
  * (first mac_* use without the grants) — never nag. */
 let promptedTcc = false;
@@ -402,10 +404,18 @@ export function registerMacAgentIpc(): void {
     const b = await readBounds({ pid });
     if (b === null) return null;
     const rect = rectOf(b);
-    // Thread `frontmost` alongside the frame so the overlay's app-scoped
-    // visibility rule (overlayShouldShow) can tell "user is looking at the
-    // controlled app" from "user turned to something else".
-    return rect === null ? null : { ...rect, frontmost: b.frontmost === true };
+    // Thread the visibility-rule inputs alongside the frame: `frontmost`
+    // ("user is looking at the controlled app"), `onScreen` (current space),
+    // and `occluded` (CGWindowList z-order truth — another app's window covers
+    // the controlled one, so the phantom must not paint over it).
+    if (rect === null) return null;
+    const extras = b as unknown as { onScreen?: boolean; occluded?: boolean };
+    return {
+      ...rect,
+      frontmost: b.frontmost === true,
+      onScreen: typeof extras.onScreen === 'boolean' ? extras.onScreen : undefined,
+      occluded: typeof extras.occluded === 'boolean' ? extras.occluded : null,
+    };
   });
   if (process.env.PI_E2E === '1') registerE2eDebugChannel();
   log.info('mac-agent helper path', { helperPath: HELPER_PATH, packaged: app.isPackaged });
@@ -433,7 +443,21 @@ function registerE2eDebugChannel(): void {
           case 'bounds':
           case 'snapshot':
           case 'screenshot':
+          // Live-fix probes (mac-live-fixes-probe.mjs): real acts + the
+          // deterministic AX "drag" — still PI_E2E-gated, trusted senders only.
+          case 'click':
+          case 'type':
+          case 'key':
+          case 'scroll':
+          case 'moveWindow':
             return { ok: true, result: await getHelper().request(req.op, params) };
+          case 'launch': {
+            const ack = await launchApp(String(params.app ?? ''), params.background !== false);
+            if (ack.ok && typeof ack.pid === 'number' && ack.bounds !== undefined) {
+              await macOverlay.control(ack.pid, rectOf(ack.bounds));
+            }
+            return { ok: true, result: ack };
+          }
           case 'overlay-show': {
             await macOverlay.debugShow({
               x: Number(params.x ?? 0),
@@ -491,6 +515,8 @@ function registerE2eDebugChannel(): void {
               w: Number(params.w ?? 600),
               h: Number(params.h ?? 400),
               frontmost: params.frontmost !== false,
+              onScreen: params.onScreen !== false,
+              occluded: typeof params.occluded === 'boolean' ? params.occluded : null,
             };
             macOverlay.setBoundsReader(async () => e2eFakeBounds);
             await macOverlay.control(Number(params.pid ?? 424242), {
@@ -511,6 +537,8 @@ function registerE2eDebugChannel(): void {
               w: Number(params.w ?? 600),
               h: Number(params.h ?? 400),
               frontmost: params.frontmost !== false,
+              onScreen: params.onScreen !== false,
+              occluded: typeof params.occluded === 'boolean' ? params.occluded : null,
             };
             return { ok: true };
           }

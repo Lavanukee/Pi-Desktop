@@ -96,6 +96,11 @@ export interface OverlayVisibilityState {
   /** The model is actively driving the app right now (a tool act in flight or
    * within the recent activity window). */
   readonly driving: boolean;
+  /** Z-ORDER TRUTH from the helper (CGWindowList): is the controlled window
+   * meaningfully covered by OTHER apps' windows above it? `null`/undefined =
+   * unknown (old helper / no windowId) → fall back to the driving/frontmost
+   * proxy rule. */
+  readonly occluded?: boolean | null;
 }
 
 /**
@@ -109,16 +114,19 @@ export interface OverlayVisibilityState {
  *
  *   - The window must exist at all (`appVisible`) — nothing to overlay
  *     otherwise.
- *   - Show it while the model is DRIVING (the user should see Pi work, even
- *     though the controlled app sits in the background — that's the whole
- *     point of background control being visible).
- *   - Show it when the controlled app is FRONTMOST (the user is looking right
- *     at it).
- *   - Otherwise tuck it away: the app is backgrounded, the model is idle, and
- *     the user is working in something else — the overlay must not intrude.
+ *   - OCCLUSION IS TRUTH when the helper reports it: a controlled window
+ *     covered by another app's window must never wear the phantom (even while
+ *     the model is driving — the cursor lives ON the app, not on whatever the
+ *     user dragged over it), and a CLEAR window keeps its cursor even when
+ *     the model is idle and the app is backgrounded.
+ *   - Occlusion unknown (old helper): fall back to the proxy rule — show
+ *     while DRIVING or while the controlled app is FRONTMOST, tuck away
+ *     otherwise.
  */
 export function overlayShouldShow(s: OverlayVisibilityState): boolean {
   if (!s.appVisible) return false;
+  if (s.occluded === true) return false;
+  if (s.occluded === false) return true;
   return s.driving || s.controlledFrontmost;
 }
 

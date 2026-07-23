@@ -107,6 +107,64 @@ describe('overlayShouldShow (app-scoped visibility rule)', () => {
       overlayShouldShow({ controlledFrontmost: false, appVisible: true, driving: false }),
     ).toBe(false);
   });
+
+  // Occlusion is TRUTH when the helper reports it (CGWindowList z-order).
+  it('hides while occluded even mid-drive — never paints over the covering app', () => {
+    expect(
+      overlayShouldShow({
+        controlledFrontmost: false,
+        appVisible: true,
+        driving: true,
+        occluded: true,
+      }),
+    ).toBe(false);
+    expect(
+      overlayShouldShow({
+        controlledFrontmost: true,
+        appVisible: true,
+        driving: false,
+        occluded: true,
+      }),
+    ).toBe(false);
+  });
+  it('shows on a CLEAR window even when idle + backgrounded (cursor lives on the app)', () => {
+    expect(
+      overlayShouldShow({
+        controlledFrontmost: false,
+        appVisible: true,
+        driving: false,
+        occluded: false,
+      }),
+    ).toBe(true);
+  });
+  it('unknown occlusion (old helper) falls back to the driving/frontmost proxy', () => {
+    expect(
+      overlayShouldShow({
+        controlledFrontmost: false,
+        appVisible: true,
+        driving: false,
+        occluded: null,
+      }),
+    ).toBe(false);
+    expect(
+      overlayShouldShow({
+        controlledFrontmost: false,
+        appVisible: true,
+        driving: true,
+        occluded: null,
+      }),
+    ).toBe(true);
+  });
+  it('appVisible=false wins over a clear occlusion read', () => {
+    expect(
+      overlayShouldShow({
+        controlledFrontmost: false,
+        appVisible: false,
+        driving: true,
+        occluded: false,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe('comboLabel (status-bubble key labels)', () => {

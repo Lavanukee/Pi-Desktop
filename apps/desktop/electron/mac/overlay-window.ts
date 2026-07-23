@@ -62,9 +62,16 @@ const TRANSIENT_STATUS_MS = 1200;
  * turn actually in flight, not linger forever after the model finished. */
 const BUBBLE_IDLE_MS = 15_000;
 
-/** A live window-frame read, plus whether the controlled app is frontmost
- * (drives the visibility rule — see overlayShouldShow). */
-export type BoundsSample = OverlayRect & { readonly frontmost?: boolean };
+/** A live window-frame read, plus the visibility-rule inputs that ride along
+ * with it (see overlayShouldShow): whether the controlled app is frontmost,
+ * whether its window is on the CURRENT space, and whether it is meaningfully
+ * OCCLUDED by other apps' windows above it in z (helper CGWindowList truth;
+ * absent on older helpers). */
+export type BoundsSample = OverlayRect & {
+  readonly frontmost?: boolean;
+  readonly onScreen?: boolean;
+  readonly occluded?: boolean | null;
+};
 
 /** Injected read of the controlled window's live frame (null = no window). */
 export type BoundsReader = (pid: number) => Promise<BoundsSample | null>;
@@ -92,6 +99,7 @@ class MacOverlayController {
   #missingSince: number | null = null;
   #lastCursor: { x: number; y: number } | null = null;
   #lastActivityAt: number | null = null;
+  #lastOccluded: boolean | null = null;
   #revertTimer: ReturnType<typeof setTimeout> | null = null;
   #idleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -313,10 +321,15 @@ class MacOverlayController {
     } else {
       this.#missingSince = null;
       if (rectsDiffer(target.rect, sample)) await this.#reposition(sample);
+      this.#lastOccluded = typeof sample.occluded === 'boolean' ? sample.occluded : null;
       visible = overlayShouldShow({
         controlledFrontmost: sample.frontmost === true,
-        appVisible: true,
+        // onScreen === false means the helper SAW the window off the current
+        // space (or minimized) even though AX still reports a frame — the
+        // phantom must not haunt the space the user switched to.
+        appVisible: sample.onScreen !== false,
         driving: this.#isDriving(),
+        occluded: this.#lastOccluded,
       });
       this.#applyVisibility(visible);
     }
@@ -417,13 +430,19 @@ class MacOverlayController {
   }
 
   /** Info for probes/assertions. */
-  info(): { visible: boolean; bounds: OverlayRect | null; trackingPid: number | null } {
+  info(): {
+    visible: boolean;
+    bounds: OverlayRect | null;
+    trackingPid: number | null;
+    occluded: boolean | null;
+  } {
     const win = this.#win;
     const visible = win !== null && !win.isDestroyed() && win.isVisible();
     return {
       visible,
       bounds: this.#target?.rect ?? null,
       trackingPid: this.#target?.pid ?? null,
+      occluded: this.#lastOccluded,
     };
   }
 
@@ -435,6 +454,7 @@ class MacOverlayController {
     this.#missingSince = null;
     this.#lastCursor = null;
     this.#lastActivityAt = null;
+    this.#lastOccluded = null;
     const win = this.#win;
     if (win !== null && !win.isDestroyed() && win.isVisible()) win.hide();
   }

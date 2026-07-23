@@ -351,23 +351,19 @@ function AiModelSelect(): JSX.Element {
             </span>
           </button>
         }
-        menu={
-          <>
-            {GEN_MODELS.map((m) => (
-              <MenuItem
-                key={m.id}
-                label={m.label}
-                hint={m.hint}
-                checked={m.id === genModel}
-                testid={`tp-genmodel-${m.id}`}
-                onClick={() => {
-                  set('genModel', m.id);
-                  closeMenus();
-                }}
-              />
-            ))}
-          </>
-        }
+        menu={GEN_MODELS.map((m) => (
+          <MenuItem
+            key={m.id}
+            label={m.label}
+            hint={m.hint}
+            checked={m.id === genModel}
+            testid={`tp-genmodel-${m.id}`}
+            onClick={() => {
+              set('genModel', m.id);
+              closeMenus();
+            }}
+          />
+        ))}
       />
     </div>
   );
@@ -512,21 +508,17 @@ function ImagePanel(): JSX.Element {
                 <IcCaretSmall size={12} />
               </button>
             }
-            menu={
-              <>
-                {['Realistic render', 'Clay sculpt', 'Toon shaded', 'Concept art'].map((s) => (
-                  <MenuItem
-                    key={s}
-                    label={s}
-                    checked={s === style}
-                    onClick={() => {
-                      setStyle(s);
-                      closeMenus();
-                    }}
-                  />
-                ))}
-              </>
-            }
+            menu={['Realistic render', 'Clay sculpt', 'Toon shaded', 'Concept art'].map((s) => (
+              <MenuItem
+                key={s}
+                label={s}
+                checked={s === style}
+                onClick={() => {
+                  setStyle(s);
+                  closeMenus();
+                }}
+              />
+            ))}
           />
         </div>
         <div className="tp-imagegrid-note">Recent generations</div>

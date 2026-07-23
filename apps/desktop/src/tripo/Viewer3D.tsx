@@ -62,7 +62,7 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-    camera.position.set(2.8, 1.9, 3.4);
+    camera.position.set(3.5, 2.4, 4.3);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -80,7 +80,7 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
     rim.position.set(-3.5, 2.5, -3);
     scene.add(hemi, key, rim);
 
-    const geometry = new THREE.TorusKnotGeometry(0.85, 0.3, 260, 40);
+    const geometry = new THREE.TorusKnotGeometry(0.72, 0.25, 260, 40);
     const standard = new THREE.MeshStandardMaterial();
     const normalMat = new THREE.MeshNormalMaterial();
     const mesh = new THREE.Mesh<

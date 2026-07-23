@@ -25,7 +25,9 @@
   overflow: hidden;
 }
 
-.tp button {
+/* Zero-specificity button reset (:where) so single-class rules like
+ * .tp-generate-btn can set backgrounds without fighting the reset. */
+.tp :where(button) {
   font-family: inherit;
   color: inherit;
   background: none;
@@ -33,7 +35,7 @@
   cursor: pointer;
   padding: 0;
 }
-.tp button:disabled {
+.tp :where(button):disabled {
   cursor: default;
 }
 .tp input,
@@ -99,12 +101,12 @@
 .tp-nav {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
   min-width: 0;
   overflow: hidden;
 }
 .tp-nav-item {
-  padding: 7px 11px;
+  padding: 7px 13px;
   border-radius: var(--pd-radius-button);
   color: var(--pd-text-secondary);
   font-size: var(--pd-font-size-caption);
@@ -230,7 +232,11 @@
   z-index: 80;
   min-width: 190px;
   padding: var(--pd-menu-padding, 6px);
-  background: var(--pd-bg-overlay);
+  /* The overlay token carries alpha (it pairs with the app's overlay blur).
+   * Layer it over the solid raised surface so menus are opaque even when
+   * nested inside another blurred surface (e.g. the export dialog). */
+  background: linear-gradient(var(--pd-bg-overlay), var(--pd-bg-overlay)), var(--pd-bg-raised);
+  backdrop-filter: blur(var(--pd-blur-overlay, 14px));
   border: 1px solid var(--pd-border-subtle);
   border-radius: var(--pd-radius-popover);
   box-shadow: var(--pd-shadow-popover);
@@ -585,6 +591,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 2px 14px 14px;
   display: flex;
   flex-direction: column;
@@ -2009,8 +2016,8 @@
   background: var(--pd-accent-hover);
 }
 .tp-sendto-menu {
-  min-width: 216px;
-  max-height: 300px;
+  min-width: 226px;
+  max-height: 420px;
   overflow-y: auto;
 }
 .tp-dcc-glyph {

@@ -44,22 +44,18 @@ function AnimModelSelect(): JSX.Element {
             </span>
           </button>
         }
-        menu={
-          <>
-            {ANIM_MODELS.map((m) => (
-              <MenuItem
-                key={m.id}
-                label={m.label}
-                hint={m.hint}
-                checked={m.id === animModel}
-                onClick={() => {
-                  set('animModel', m.id);
-                  closeMenus();
-                }}
-              />
-            ))}
-          </>
-        }
+        menu={ANIM_MODELS.map((m) => (
+          <MenuItem
+            key={m.id}
+            label={m.label}
+            hint={m.hint}
+            checked={m.id === animModel}
+            onClick={() => {
+              set('animModel', m.id);
+              closeMenus();
+            }}
+          />
+        ))}
       />
     </div>
   );

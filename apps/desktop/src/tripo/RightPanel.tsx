@@ -207,29 +207,25 @@ function AssetsTab(): JSX.Element {
                 <IcFilter size={15} />
               </button>
             }
-            menu={
-              <>
-                {(
-                  [
-                    ['all', 'All types'],
-                    ['generated', 'Generated'],
-                    ['uploaded', 'Uploaded'],
-                    ['rigged', 'Rigged'],
-                  ] as const
-                ).map(([id, label]) => (
-                  <MenuItem
-                    key={id}
-                    label={label}
-                    checked={assetFilter === id}
-                    testid={`tp-filter-${id}`}
-                    onClick={() => {
-                      set('assetFilter', id);
-                      closeMenus();
-                    }}
-                  />
-                ))}
-              </>
-            }
+            menu={(
+              [
+                ['all', 'All types'],
+                ['generated', 'Generated'],
+                ['uploaded', 'Uploaded'],
+                ['rigged', 'Rigged'],
+              ] as const
+            ).map(([id, label]) => (
+              <MenuItem
+                key={id}
+                label={label}
+                checked={assetFilter === id}
+                testid={`tp-filter-${id}`}
+                onClick={() => {
+                  set('assetFilter', id);
+                  closeMenus();
+                }}
+              />
+            ))}
           />
         </div>
         <button

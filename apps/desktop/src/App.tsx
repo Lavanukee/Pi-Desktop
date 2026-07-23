@@ -9,6 +9,7 @@ import { GalleryView } from './gallery/GalleryView';
 import { FirstRunTips, resetFirstRunTips } from './onboarding/FirstRunTips';
 import { OnboardingWizard } from './onboarding/OnboardingWizard';
 import { type SettingsSection, SettingsView } from './settings/SettingsView';
+import { useModalityStore } from './state/modality-store';
 import { applyThemeAttributes, useThemeStore } from './store/theme';
 
 /** First-run gate status: unknown until onboarding:get-state resolves. */
@@ -67,6 +68,7 @@ type MainView = 'chat' | 'gallery' | 'settings' | 'connectors';
 export function App() {
   const flavor = useThemeStore((s) => s.flavor);
   const mode = useThemeStore((s) => s.mode);
+  const modalityView = useModalityStore((s) => s.view);
   const [view, setView] = useState<MainView>('chat');
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('models');
   const [gate, setGate] = useState<GateStatus>('loading');
@@ -110,7 +112,10 @@ export function App() {
     };
   }, []);
 
-  if (IS_TRIPO) {
+  // The 3D Studio modality: reached from the sidebar "Modalities" dropdown (or
+  // the ?tripo=1 dev route). A full-window takeover with its own back-to-chat
+  // button; when active it replaces the chat shell entirely.
+  if (IS_TRIPO || modalityView === '3d') {
     return (
       <TooltipProvider delayDuration={200}>
         <Suspense fallback={null}>

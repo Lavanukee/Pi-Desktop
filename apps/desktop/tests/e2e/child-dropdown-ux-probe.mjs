@@ -34,7 +34,15 @@ const l = (o) => JSON.stringify(o);
 writeFileSync(
   path.join(sessionsDir, 'alpha.jsonl'),
   [
-    l({ type: 'session', version: 3, id: 'sess-alpha', timestamp: 't', cwd: '/tmp' }),
+    // Sandbox cwd → this chat stays UNGROUPED (a real cwd would auto-fold into a
+    // project, whose folder row ALSO carries a .pd-chat-icon-swap → count ≠ 1).
+    l({
+      type: 'session',
+      version: 3,
+      id: 'sess-alpha',
+      timestamp: 't',
+      cwd: path.join(home, '.pi/desktop/sandbox/conv-alpha'),
+    }),
     l({
       type: 'message',
       id: 'u1',

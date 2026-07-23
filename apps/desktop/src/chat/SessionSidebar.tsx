@@ -80,6 +80,7 @@ import {
 } from '../state/chat-org';
 import { useChildAgentStore, useChildrenByParent } from '../state/child-agent-store';
 import { useCorpStore } from '../state/corp-store';
+import { useModalityStore } from '../state/modality-store';
 import { listSessions, newSession, switchSession } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { setUserMode, useSettingsStore, useUserMode } from '../state/settings-store';
@@ -248,6 +249,17 @@ interface WorkspaceNavItem {
   testid: string;
 }
 
+/** Stylized isometric cube — the 3D Studio modality glyph. */
+function ModalityCube({ size = 16 }: { size?: number }): ReactNode {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 3 L20 7.5 L12 12 L4 7.5 Z" fill="currentColor" opacity={0.9} />
+      <path d="M4 7.5 L12 12 L12 21 L4 16.5 Z" fill="currentColor" opacity={0.5} />
+      <path d="M20 7.5 L20 16.5 L12 21 L12 12 Z" fill="currentColor" opacity={0.7} />
+    </svg>
+  );
+}
+
 export function SessionSidebar({
   open,
   onCollapse,
@@ -342,6 +354,10 @@ export function SessionSidebar({
       else next.add(file);
       return next;
     });
+
+  // The "Modalities" dropdown — full-window studios reached from the sidebar.
+  const setModalityView = useModalityStore((s) => s.setView);
+  const [modalitiesOpen, setModalitiesOpen] = useState(true);
 
   // Chat organization (B1/B2): projects, pins, renames, delete — persisted state.
   const org = useChatOrg();
@@ -837,6 +853,41 @@ export function SessionSidebar({
             );
           })}
         </SidebarSection>
+
+        {/* Modalities — full-window studios (3D now; image/video/audio later). A
+            fold-down dropdown so more can be added without crowding the rail. */}
+        <div className="pd-sidebar-section" data-testid="modalities">
+          <button
+            type="button"
+            className="pd-sidebar-row pd-focusable"
+            data-testid="modalities-toggle"
+            aria-expanded={modalitiesOpen}
+            onClick={() => setModalitiesOpen((o) => !o)}
+          >
+            <span className="pd-sidebar-row-icon">
+              <ModalityCube size={16} />
+            </span>
+            <span className="pd-sidebar-row-label">Modalities</span>
+            <span className="pd-sidebar-row-meta">
+              <IconChevronDown size={14} className={modalitiesOpen ? '' : '-rotate-90'} />
+            </span>
+          </button>
+          {modalitiesOpen ? (
+            <div className="pd-child-rows" data-testid="modality-rows">
+              <button
+                type="button"
+                className="pd-child-row pd-focusable"
+                data-testid="modality-3d"
+                onClick={() => setModalityView('3d')}
+              >
+                <span className="pd-child-row-icon">
+                  <ModalityCube size={13} />
+                </span>
+                <span className="pd-child-row-label">3D Studio</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
 
         {/* Projects (B1) — Codex-style named groups; each folds to reveal its
             chats. The "+" adds a project (then opens it for inline rename). */}

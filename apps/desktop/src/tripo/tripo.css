@@ -63,19 +63,49 @@
   gap: 10px;
   min-width: 0;
 }
+/* Back-to-chat button (leaves the 3D Studio modality). */
+.tp-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 10px 0 6px;
+  border: 0;
+  border-radius: var(--pd-radius-full);
+  background: transparent;
+  color: var(--pd-text-secondary);
+  font: inherit;
+  font-size: var(--pd-font-size-footnote);
+  cursor: pointer;
+}
+.tp-back-btn:hover {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-primary);
+}
+.tp-back-caret {
+  transform: rotate(90deg);
+}
 .tp-logo {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 0 4px;
+  padding: 0 6px;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.tp-logo:hover {
+  opacity: 0.82;
 }
 .tp-logomark {
   color: var(--pd-accent-primary);
 }
 .tp-logo-word {
-  font-weight: var(--pd-font-weight-bold);
-  letter-spacing: 0.22em;
+  font-weight: var(--pd-font-weight-semibold);
+  letter-spacing: 0.02em;
   font-size: var(--pd-font-size-body);
+  color: var(--pd-text-primary);
 }
 .tp-workspace-btn {
   display: flex;

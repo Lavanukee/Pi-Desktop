@@ -5,6 +5,7 @@
  */
 import type { JSX } from 'react';
 import { useState } from 'react';
+import { exitModality } from '../state/modality-store';
 import { DCC_BRIDGES, LANGUAGES, NOTIFICATIONS, WORKSPACE_MENU } from './data';
 import { IcBell, IcBolt, IcBridge, IcCaretSmall, IcGlobe, IcRocket, IcUser } from './icons';
 import { MenuAnchor, MenuItem } from './primitives';
@@ -23,10 +24,27 @@ export function TopBar(): JSX.Element {
   return (
     <header className="tp-topbar" data-testid="tp-topbar">
       <div className="tp-topbar-left">
-        <div className="tp-logo">
-          <LogoMark size={24} />
-          <span className="tp-logo-word">TRIPO</span>
-        </div>
+        <button
+          type="button"
+          className="tp-back-btn"
+          data-testid="tp-back"
+          aria-label="Back to chat"
+          title="Back to chat"
+          onClick={() => exitModality()}
+        >
+          <IcCaretSmall size={16} className="tp-back-caret" />
+          Chat
+        </button>
+        <button
+          type="button"
+          className="tp-logo"
+          data-testid="tp-home"
+          onClick={() => exitModality()}
+          title="Bobble 3D"
+        >
+          <LogoMark size={22} />
+          <span className="tp-logo-word">Bobble 3D</span>
+        </button>
         <MenuAnchor
           id="workspace"
           trigger={
@@ -86,7 +104,7 @@ export function TopBar(): JSX.Element {
               {DCC_BRIDGES.map((b) => (
                 <MenuItem
                   key={b}
-                  label={`Tripo for ${b}`}
+                  label={`Bobble for ${b}`}
                   hint="v1.4.2 · free"
                   onClick={closeMenus}
                 />

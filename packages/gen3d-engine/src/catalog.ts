@@ -103,8 +103,10 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
       { repo: 'camenduru/dinov3-vitl16-pretrain-lvd1689m', bytes: 1_212_584_680 },
       {
         repo: 'ZhengPeng7/BiRefNet',
-        allowPatterns: ['*.json', '*.py', 'model.safetensors'],
-        bytes: 444_584_498,
+        // Exactly what AutoModelForImageSegmentation(trust_remote_code) pulls —
+        // a glob like '*.py' would demand handler.py, which is never fetched.
+        allowPatterns: ['config.json', 'birefnet.py', 'BiRefNet_config.py', 'model.safetensors'],
+        bytes: 444_566_195,
       },
     ],
   },

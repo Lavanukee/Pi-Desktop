@@ -33,7 +33,7 @@ describe('catalog', () => {
     if (trellis === undefined) return;
     expect(trellis.repos).toHaveLength(4);
     expect(specTotalBytes(trellis)).toBe(
-      16_237_485_044 + 147_592_217 + 1_212_584_680 + 444_584_498,
+      16_237_485_044 + 147_592_217 + 1_212_584_680 + 444_566_195,
     );
   });
 

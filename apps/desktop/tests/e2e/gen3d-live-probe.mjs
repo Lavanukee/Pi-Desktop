@@ -74,7 +74,7 @@ async function main() {
         {
           id: 'trellis2',
           env: 'trellis',
-          totalBytes: 18042246439,
+          totalBytes: 18042228136,
           repos: [
             { repo: 'microsoft/TRELLIS.2-4B', bytes: 16237485044 },
             {
@@ -85,8 +85,8 @@ async function main() {
             { repo: 'camenduru/dinov3-vitl16-pretrain-lvd1689m', bytes: 1212584680 },
             {
               repo: 'ZhengPeng7/BiRefNet',
-              allowPatterns: ['*.json', '*.py', 'model.safetensors'],
-              bytes: 444584498,
+              allowPatterns: ['config.json', 'birefnet.py', 'BiRefNet_config.py', 'model.safetensors'],
+              bytes: 444566195,
             },
           ],
         },

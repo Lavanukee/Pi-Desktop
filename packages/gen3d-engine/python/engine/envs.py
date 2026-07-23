@@ -159,6 +159,9 @@ def _provision_paint(registry: Registry, log) -> None:
         if not reqs.exists():
             reqs = tool / "requirements.txt"
         _run([uv, "pip", "install", "--python", py, "-r", str(reqs)], tool, log)
+        # Not in the fork's macOS requirements but imported by its texture
+        # pipeline (verified missing here): mesh processing + UV unwrap.
+        _run([uv, "pip", "install", "--python", py, "pymeshlab", "xatlas"], tool, log)
 
 
 def _provision_autoremesher(registry: Registry, model: dict, log) -> None:

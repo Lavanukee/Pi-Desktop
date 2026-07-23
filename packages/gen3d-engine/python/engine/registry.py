@@ -95,9 +95,6 @@ class Registry:
             from huggingface_hub import snapshot_download
         except ImportError:
             return False
-        import os
-
-        os.environ.setdefault("HF_HOME", str(self.hf_home))
         for repo in model["repos"]:
             try:
                 snapshot_download(

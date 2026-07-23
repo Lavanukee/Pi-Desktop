@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -33,10 +34,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from engine.bus import EventBus
-from engine.downloads import DownloadManager
-from engine.jobs import JobManager
-from engine.registry import Registry
+
+def _pin_hf_home(cache_dir: str) -> None:
+    """huggingface_hub freezes HF_HOME into module constants at import time,
+    so it MUST be exported before anything imports the hub (verified: a
+    post-import setdefault made every weights_present() miss the cache)."""
+    os.environ["HF_HOME"] = str(Path(cache_dir) / "hf")
+
+
+# --cache-dir is needed before the engine imports pull in huggingface_hub.
+_pre = argparse.ArgumentParser(add_help=False)
+_pre.add_argument("--cache-dir")
+_pre_args, _ = _pre.parse_known_args()
+if _pre_args.cache_dir:
+    _pin_hf_home(_pre_args.cache_dir)
+
+from engine.bus import EventBus  # noqa: E402
+from engine.downloads import DownloadManager  # noqa: E402
+from engine.jobs import JobManager  # noqa: E402
+from engine.registry import Registry  # noqa: E402
 
 PROTOCOL_VERSION = 1
 

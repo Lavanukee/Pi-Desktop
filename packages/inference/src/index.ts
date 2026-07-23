@@ -18,6 +18,7 @@ export * from './mmproj.js';
 export * from './model-downloader.js';
 export * from './models-json.js';
 export * from './paths.js';
+export * from './perf-args.js';
 export * from './recommender.js';
 export * from './supervisor.js';
 export * from './watchdog.js';

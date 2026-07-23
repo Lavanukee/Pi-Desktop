@@ -45,6 +45,7 @@ import {
   type PermissionController,
   registerPermissions,
 } from './permissions/modes.js';
+import { preloadToolNames } from './presets/preload.js';
 import { resolvePresetTools } from './presets/presets.js';
 import { augmentSystemPrompt } from './prompt/capability-prompt.js';
 import { connectRepairBridge, type LiveRepairDeps } from './repair/bridge.js';
@@ -740,9 +741,12 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     ctx.ui.setStatus(HARNESS_SUBAGENTS_STATUS_KEY, JSON.stringify(payload));
   }
 
-  function applyPreset(cls: TaskClass, ctx: ExtensionContext): void {
+  function applyPreset(cls: TaskClass, ctx: ExtensionContext, extraTools: readonly string[] = []): void {
     const available = pi.getAllTools().map((t) => t.name);
-    const preset = resolvePresetTools(cls, available);
+    // The class preset PLUS any semantically-preloaded tools for this message
+    // (top matches + their peer pipelines — preloadToolNames already filtered to
+    // registered/not-active). Unioned append-only below so the KV prefix holds.
+    const preset = [...resolvePresetTools(cls, available), ...extraTools];
     // The active tool list is rendered at the START of the prompt (chat templates
     // emit tools before the messages), so it is part of the KV-cached prefix. If
     // we blindly re-set it every turn, a NEW user message churns that prefix and
@@ -894,7 +898,14 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     } else {
       cls = runtime.config.preset;
     }
-    applyPreset(cls, ctx);
+    // Preemptively pull in the tools this message semantically needs (jedd): the
+    // top ~2 high-confidence matches + their peer pipelines (mac snapshot ⇒ the
+    // whole mac computer-use set), so the model doesn't have to spend a tool_search
+    // round-trip before acting. Append-only ⇒ the KV-cached prefix is preserved.
+    const preloaded = preloadToolNames(event.prompt ?? '', pi.getAllTools(), {
+      activeToolNames: runtime.activeTools,
+    });
+    applyPreset(cls, ctx, preloaded);
     pi.appendEntry(HARNESS_CLASSIFY_ENTRY, { class: cls, turnIndex: runtime.turnIndex });
     // Replace the turn's system prompt with the capability-affirming version.
     return { systemPrompt: augmentedSystemPrompt };

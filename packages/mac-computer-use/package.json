@@ -7,7 +7,8 @@
   "description": "pi extension: mac_* tools that let the model drive ANY Mac app (indexed Accessibility snapshot + CGEvent click/type/key/scroll) over a token-authed Unix-socket bridge to the pi-mac helper hosted in Electron main. Gated behind a per-session consent + app denylist.",
   "exports": {
     ".": "./src/index.ts",
-    "./protocol": "./src/protocol.ts"
+    "./protocol": "./src/protocol.ts",
+    "./tool-names": "./src/tool-names.ts"
   },
   "scripts": {
     "lint": "biome check .",

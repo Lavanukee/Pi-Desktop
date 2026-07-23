@@ -462,6 +462,9 @@ importers:
       '@pi-desktop/browser-use':
         specifier: workspace:*
         version: link:../browser-use
+      '@pi-desktop/mac-computer-use':
+        specifier: workspace:*
+        version: link:../mac-computer-use
       '@pi-desktop/mac-connectors':
         specifier: workspace:*
         version: link:../mac-connectors

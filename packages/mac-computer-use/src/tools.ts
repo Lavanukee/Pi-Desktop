@@ -27,12 +27,26 @@ import type { MacActAck, MacLaunchAck, MacSnapshot, MacTccStatus } from './proto
 import { scrollDelta } from './scroll.js';
 import { createMacSessionState, type MacSessionState } from './session-state.js';
 
-export const MAC_SNAPSHOT_TOOL = 'mac_snapshot';
-export const MAC_CLICK_TOOL = 'mac_click';
-export const MAC_TYPE_TOOL = 'mac_type';
-export const MAC_KEY_TOOL = 'mac_key';
-export const MAC_SCROLL_TOOL = 'mac_scroll';
-export const MAC_LAUNCH_TOOL = 'mac_launch';
+// Tool-name constants live in the dependency-free ./tool-names.ts (single source
+// of truth, cheaply importable by the harness); re-exported here for existing
+// call sites.
+export {
+  MAC_CLICK_TOOL,
+  MAC_COMPUTER_USE_TOOL_NAMES,
+  MAC_KEY_TOOL,
+  MAC_LAUNCH_TOOL,
+  MAC_SCROLL_TOOL,
+  MAC_SNAPSHOT_TOOL,
+  MAC_TYPE_TOOL,
+} from './tool-names.js';
+import {
+  MAC_CLICK_TOOL,
+  MAC_KEY_TOOL,
+  MAC_LAUNCH_TOOL,
+  MAC_SCROLL_TOOL,
+  MAC_SNAPSHOT_TOOL,
+  MAC_TYPE_TOOL,
+} from './tool-names.js';
 
 const DEFAULT_ELEMENT_CAP = 60;
 /** Let a click/type settle before the model's next snapshot. */

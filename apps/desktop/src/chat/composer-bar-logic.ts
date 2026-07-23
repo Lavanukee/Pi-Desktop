@@ -45,6 +45,14 @@ export function classificationHover(activeClass: string | null | undefined): str
  * is. Used by {@link usesSandbox} to detect the missing-project fallback. */
 const SANDBOX_CWD = /(^|\/)\.pi\/desktop\/sandbox(\/|$)/;
 
+/** True when a working dir is (inside) the per-conversation sandbox — such chats
+ * are NOT auto-grouped into a folder (jedd: sandbox chats stay ungrouped unless
+ * manually assigned). Empty/unknown cwds are treated as sandbox-like (ungrouped). */
+export function isSandboxCwd(cwd: string | null | undefined): boolean {
+  if (cwd === null || cwd === undefined || cwd === '') return true;
+  return SANDBOX_CWD.test(cwd);
+}
+
 /**
  * LEFT (jedd #13) — whether the composer's folder chip should surface the
  * per-conversation SANDBOX state instead of a (possibly stale) project name. It's

@@ -27,11 +27,19 @@ const home = realpathSync(mkdtempSync(path.join(tmpdir(), 'pi-e2e-home-')));
 const sessionsDir = path.join(home, '.pi', 'agent', 'sessions', 'proj');
 mkdirSync(sessionsDir, { recursive: true });
 const l = (o) => JSON.stringify(o);
+// Sandbox cwd → these start UNGROUPED (real cwds now auto-fold; this probe covers
+// the MANUAL flow, so keep the chats out of auto folders).
 const mkSession = (name, text) =>
   writeFileSync(
     path.join(sessionsDir, `${name}.jsonl`),
     [
-      l({ type: 'session', version: 3, id: `sess-${name}`, timestamp: 't', cwd: '/tmp' }),
+      l({
+        type: 'session',
+        version: 3,
+        id: `sess-${name}`,
+        timestamp: 't',
+        cwd: path.join(home, '.pi/desktop/sandbox', `conv-${name}`),
+      }),
       l({
         type: 'message',
         id: 'u1',

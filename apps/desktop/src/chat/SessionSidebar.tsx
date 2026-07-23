@@ -857,7 +857,7 @@ export function SessionSidebar({
           {grouped.projects.length === 0 ? (
             <div className="px-2 py-1.5 text-footnote text-text-muted">No projects yet.</div>
           ) : (
-            grouped.projects.map(({ project, chats }) => {
+            grouped.projects.map(({ project, chats, auto }) => {
               const pExpanded = !collapsedProjects.has(project.id);
               if (renamingProject === project.id) {
                 return (
@@ -879,7 +879,9 @@ export function SessionSidebar({
               }
               return (
                 <div key={project.id}>
-                  <div className="pd-chatrow">
+                  {/* Auto (directory-derived) folders have no menu — they re-derive
+                      from the working dir. Only user-made projects rename/delete. */}
+                  <div className={auto ? '' : 'pd-chatrow'}>
                     <SidebarRow
                       icon={
                         <span className="pd-chat-icon-swap">
@@ -899,36 +901,38 @@ export function SessionSidebar({
                       data-testid={`project-row-${project.id}`}
                       onClick={() => toggleProject(project.id)}
                     />
-                    <div className="pd-chatrow-actions">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button
-                            type="button"
-                            className="pd-chatrow-dots pd-focusable"
-                            aria-label="Project actions"
-                            data-testid={`project-menu-${project.id}`}
-                          >
-                            <IconMore size={16} />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
-                          <DropdownMenuItem
-                            icon={<IconPencil size={16} />}
-                            onSelect={() => beginRenameProject(project.id, project.name)}
-                          >
-                            Rename project
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            danger
-                            icon={<IconTrash size={16} />}
-                            onSelect={() => void deleteProject(project.id)}
-                          >
-                            Delete project
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
+                    {auto ? null : (
+                      <div className="pd-chatrow-actions">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              type="button"
+                              className="pd-chatrow-dots pd-focusable"
+                              aria-label="Project actions"
+                              data-testid={`project-menu-${project.id}`}
+                            >
+                              <IconMore size={16} />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
+                            <DropdownMenuItem
+                              icon={<IconPencil size={16} />}
+                              onSelect={() => beginRenameProject(project.id, project.name)}
+                            >
+                              Rename project
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              danger
+                              icon={<IconTrash size={16} />}
+                              onSelect={() => void deleteProject(project.id)}
+                            >
+                              Delete project
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    )}
                   </div>
                   {pExpanded ? (
                     <div className="pd-project-chats" data-testid={`project-chats-${project.id}`}>

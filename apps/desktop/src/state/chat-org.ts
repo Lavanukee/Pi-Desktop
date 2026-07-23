@@ -8,6 +8,7 @@
  */
 import type { SessionSummary } from '../../electron/ipc-contract';
 import type { ChatOrganization, ChatProject } from '../../electron/settings/settings-contract';
+import { isSandboxCwd } from '../chat/composer-bar-logic';
 import { useSettingsStore } from './settings-store';
 
 const EMPTY: ChatOrganization = { projects: [], assignments: {}, pinned: [], titles: {} };
@@ -113,9 +114,21 @@ export function displayTitle(summary: SessionSummary, org: ChatOrganization): st
   return org.titles[summary.file] ?? summary.title;
 }
 
+/** Prefix marking a DERIVED (per-working-directory) project id, so the UI can tell
+ * an auto folder from a user-made one (auto folders skip the rename/delete menu —
+ * they re-derive from the folder). The remainder of the id is the raw cwd. */
+export const AUTO_PROJECT_PREFIX = 'cwd:';
+
+export interface ProjectGroup {
+  project: ChatProject;
+  chats: SessionSummary[];
+  /** True for a directory-derived folder (not a user-created project). */
+  auto: boolean;
+}
+
 export interface GroupedChats {
-  projects: Array<{ project: ChatProject; chats: SessionSummary[] }>;
-  /** Chats not assigned to any project. */
+  projects: ProjectGroup[];
+  /** Chats in no folder: sandbox / unknown-cwd chats (unless manually assigned). */
   ungrouped: SessionSummary[];
 }
 
@@ -128,31 +141,61 @@ function pinnedFirst(chats: SessionSummary[], pinned: Set<string>): SessionSumma
   return [...pin, ...rest];
 }
 
+/** Folder name for a directory-derived project — the cwd's last path segment. */
+function folderName(s: SessionSummary): string {
+  const label = (s.cwdLabel || s.cwd || '').replace(/\/+$/, '');
+  const base = label.split('/').pop() ?? label;
+  return base.length > 0 ? base : label;
+}
+
 /**
- * Partition the flat session list into project groups + ungrouped, honoring the
- * manual assignments and floating pinned chats to the top of each container. A
- * chat assigned to a project that no longer exists falls back to ungrouped.
+ * Partition the flat session list into folders + ungrouped:
+ *   - a MANUAL assignment wins (chat sits in that user-made project);
+ *   - else a chat in a real working directory is AUTO-grouped into a folder for
+ *     that directory (created on the fly, named by the folder's last segment);
+ *   - else (sandbox / unknown cwd) it stays ungrouped.
+ * Manual projects render first (their saved order); auto folders follow, sorted
+ * by most-recent activity. Pinned chats float to the top of every container.
  */
 export function groupChats(sessions: SessionSummary[], org: ChatOrganization): GroupedChats {
   const pinned = new Set(org.pinned);
-  const byProject = new Map<string, SessionSummary[]>();
-  const ungrouped: SessionSummary[] = [];
   const known = new Set(org.projects.map((p) => p.id));
+  const byManual = new Map<string, SessionSummary[]>();
+  const byCwd = new Map<string, { name: string; chats: SessionSummary[]; recent: string }>();
+  const ungrouped: SessionSummary[] = [];
+
   for (const s of sessions) {
     const pid = org.assignments[s.file];
     if (pid !== undefined && known.has(pid)) {
-      const arr = byProject.get(pid);
-      if (arr === undefined) byProject.set(pid, [s]);
+      const arr = byManual.get(pid);
+      if (arr === undefined) byManual.set(pid, [s]);
       else arr.push(s);
-    } else {
+    } else if (isSandboxCwd(s.cwd)) {
       ungrouped.push(s);
+    } else {
+      const key = s.cwd;
+      const g = byCwd.get(key);
+      if (g === undefined) {
+        byCwd.set(key, { name: folderName(s), chats: [s], recent: s.modifiedAt });
+      } else {
+        g.chats.push(s);
+        if (s.modifiedAt > g.recent) g.recent = s.modifiedAt;
+      }
     }
   }
-  return {
-    projects: org.projects.map((project) => ({
-      project,
-      chats: pinnedFirst(byProject.get(project.id) ?? [], pinned),
-    })),
-    ungrouped: pinnedFirst(ungrouped, pinned),
-  };
+
+  const manual: ProjectGroup[] = org.projects.map((project) => ({
+    project,
+    chats: pinnedFirst(byManual.get(project.id) ?? [], pinned),
+    auto: false,
+  }));
+  const auto: ProjectGroup[] = [...byCwd.entries()]
+    .sort((a, b) => b[1].recent.localeCompare(a[1].recent))
+    .map(([cwd, g]) => ({
+      project: { id: `${AUTO_PROJECT_PREFIX}${cwd}`, name: g.name },
+      chats: pinnedFirst(g.chats, pinned),
+      auto: true,
+    }));
+
+  return { projects: [...manual, ...auto], ungrouped: pinnedFirst(ungrouped, pinned) };
 }

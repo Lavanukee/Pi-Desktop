@@ -416,6 +416,19 @@ export function SessionSidebar({
     refresh();
   }, [refresh]);
 
+  // Start a fresh chat that belongs to a project. The new session's file is only
+  // written on its first turn, but the assignment persists against that path, so
+  // the chat appears under the project the moment it has content.
+  const newChatInProject = useCallback(
+    async (projectId: string) => {
+      await newSession();
+      const file = usePiStore.getState().session?.sessionFile;
+      if (typeof file === 'string' && file.length > 0) await assignChat(file, projectId);
+      refresh();
+    },
+    [refresh],
+  );
+
   const onOpen = async (file: string) => {
     const result = await switchSession(file);
     if (result.truncated) onTruncated();
@@ -954,6 +967,16 @@ export function SessionSidebar({
                     />
                     {auto ? null : (
                       <div className="pd-chatrow-actions">
+                        <button
+                          type="button"
+                          className="pd-chatrow-dots pd-focusable"
+                          aria-label="New chat in this project"
+                          title="New chat in this project"
+                          data-testid={`project-new-chat-${project.id}`}
+                          onClick={() => void newChatInProject(project.id)}
+                        >
+                          <IconPlus size={16} />
+                        </button>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <button

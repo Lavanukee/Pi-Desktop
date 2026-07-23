@@ -232,6 +232,10 @@ def main() -> None:
     )
 
     if args.texture and getattr(mesh_out, "attrs", None) is not None:
+        # Bake-time tqdm loops (simplify/xatlas inside o_voxel) carry no
+        # recognizable desc — route them to the texture stage from here on so
+        # overallPercent never jumps back to the geometry band.
+        ROUTER.default_stage = "texture"
         model_path = out_dir / "model.glb"
         bake_textures(mesh_out, model_path, args.texture_size)
         artifact("texture", "model-glb", str(model_path), "Textured model")

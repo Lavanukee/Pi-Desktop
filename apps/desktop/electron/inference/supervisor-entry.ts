@@ -20,6 +20,7 @@ import {
   type CatalogFile,
   type CatalogModel,
   chatTemplatePath,
+  chooseContextCap,
   chooseServerPerfArgs,
   createMlxSupervisor,
   detectHardware,
@@ -72,9 +73,9 @@ import type {
 
 const parentPort = (process as unknown as { parentPort: UtilityParentPort }).parentPort;
 
-/** Bound the launched context so a large-window model can't blow past RAM; the
- * footer gauge uses the launched size as its denominator. */
-const CONTEXT_CAP = 16_384;
+// The launched context is now chosen per-hardware by chooseContextCap (up to
+// ~64k when RAM allows, KV-/slot-aware) — see the launch sites. The footer gauge
+// still uses the launched size as its denominator.
 const MODELS_JSON = join(homedir(), '.pi', 'agent', 'models.json');
 const PROVIDER_NAME = 'llamacpp';
 /** models.json provider key for MLX models (bound to provider-mlx's mlx-stream). */
@@ -613,7 +614,15 @@ async function startMlxServer(
       current = null;
     }
     const uv = await ensureMlx();
-    const contextWindow = Math.min(model.contextWindow, CONTEXT_CAP);
+    const hw = await getHardware();
+    // Hardware-adaptive context (jedd): mlx_lm.server auto-manages its KV, so this
+    // is primarily the reported/gauge window — kept consistent with the llama.cpp
+    // path (up to ~64k when RAM allows, KV-aware, ≤ the model's own max).
+    const contextWindow = chooseContextCap({
+      modelBytes: file.bytes,
+      modelMaxContext: model.contextWindow,
+      totalRamGB: hw.totalRamGB,
+    });
     const supervisor = createMlxSupervisor({ uvPath: uv.uvPath, repo: model.hfRepo });
     supervisor.on((event) => {
       if (event.type === 'metrics') {
@@ -725,8 +734,19 @@ async function startServer(
     }
     const install = await ensureLlamaCpp();
     const features = await probeServerFeatures(install.serverPath);
+    const hw = await getHardware();
     // Per-slot context (the reported/gauge value): a single request/slot sees this.
-    const contextWindow = Math.min(model.contextWindow, CONTEXT_CAP);
+    // Hardware-adaptive + KV-aware (jedd): up to ~64k when RAM allows, stepped down
+    // for a big model / tight machine, and SLOT-aware — K parallel corp slots each
+    // hold their own KV, so the per-slot window shrinks as K grows (never above the
+    // model's own max). Replaces the old flat 16k CONTEXT_CAP.
+    const slots = launchMode === 'fast-text' ? Math.max(1, Math.floor(parallel ?? 1)) : 1;
+    const contextWindow = chooseContextCap({
+      modelBytes: file.bytes,
+      modelMaxContext: model.contextWindow,
+      totalRamGB: hw.totalRamGB,
+      slots,
+    });
     // OOM-safe fan-out: for a K-slot fast-text launch the server `-c` must be
     // perSlot × K (llama.cpp splits `-c` across `--parallel` slots) so each slot
     // still gets the full `contextWindow`. K defaults to 1 (single slot, `-c` =
@@ -762,7 +782,7 @@ async function startServer(
     // threads) are measured-optimal there (see packages/inference/src/perf-args.ts).
     // It only intervenes under memory pressure (q8_0 KV to avoid swap) or on a
     // discrete GPU (flash-attn on). Merged with the chat-template args via extraArgs.
-    const hw = await getHardware();
+    // (`hw` was resolved above for the context-cap decision.)
     const perf = chooseServerPerfArgs({
       isAppleSilicon: hw.isAppleSilicon,
       totalRamGB: hw.totalRamGB,

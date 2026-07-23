@@ -8,6 +8,7 @@ export const packageName = '@pi-desktop/inference';
 
 export * from './catalog.js';
 export * from './chat-template.js';
+export * from './context-cap.js';
 export * from './download.js';
 export * from './hardware.js';
 export * from './hf-search.js';

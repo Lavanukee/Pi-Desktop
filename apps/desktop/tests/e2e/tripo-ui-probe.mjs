@@ -96,8 +96,20 @@ try {
   );
   await page.keyboard.press('Escape');
 
-  // ── generate → viewer up ─────────────────────────────────────────────────
+  // ── Generate without the engine → the DOWNLOAD PROMPT (real sizes) ───────
   await page.click('[data-testid="tp-generate-btn"]');
+  await page.waitForSelector('[data-testid="tp-gen3d-download-dialog"]', { timeout: 8000 });
+  const dlgText = await page.textContent('[data-testid="tp-gen3d-download-dialog"]');
+  for (const expected of ['TRELLIS-2', 'Mage-Flow', 'Hunyuan Paint', 'CubePart', 'AutoRemesher']) {
+    assert(dlgText.includes(expected), `download dialog lists ${expected}`);
+  }
+  assert(/\d+\.\d GB/.test(dlgText), 'download dialog shows n.n GB sizes');
+  assert(dlgText.includes('Download all'), 'download dialog offers Download all with total');
+  await shot('02b-download-dialog');
+  await page.click('[data-testid="tp-gen3d-download-close"]');
+
+  // ── the bundled sample loads via its explicit link → viewer up ───────────
+  await page.click('[data-testid="tp-load-sample"]');
   await page.waitForSelector('[data-testid="tp-canvas-host"][data-tp-canvas-ready="1"]', {
     timeout: 20000,
   });
@@ -105,8 +117,8 @@ try {
   if (await helpOk.count()) await helpOk.click();
   await shot('02-mesh-clay');
 
-  // ── the four labeled render modes ───────────────────────────────────────
-  for (const mode of ['textured', 'normal', 'wireframe', 'clay']) {
+  // ── render modes (Clay/Textured/Normal) + the wireframe overlay toggle ───
+  for (const mode of ['textured', 'normal', 'clay']) {
     await page.click(`[data-testid="tp-rmode-${mode}"]`);
     await page.waitForFunction(
       (m) => document.querySelector('[data-testid="tp-canvas-host"]')?.dataset.tpRenderMode === m,
@@ -115,6 +127,14 @@ try {
     );
     if (mode !== 'clay') await shot(`03-mode-${mode}`);
   }
+  await page.click('[data-testid="tp-wire-toggle"]');
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="tp-canvas-host"]')?.dataset.tpWireframe === '1',
+    undefined,
+    { timeout: 5000 },
+  );
+  await shot('03b-wireframe-overlay');
+  await page.click('[data-testid="tp-wire-toggle"]');
 
   // ── segment (CubePart) → colored parts + list ────────────────────────────
   await page.click('[data-testid="tp-rail-segment"]');

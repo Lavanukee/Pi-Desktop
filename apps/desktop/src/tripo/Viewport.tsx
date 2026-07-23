@@ -11,6 +11,7 @@
 import type { JSX, ReactNode } from 'react';
 import { lazy, Suspense, useRef, useState } from 'react';
 import { EXPORT_FORMATS, type ExportFormat } from './data';
+import { GenProgressCard } from './gen-ui';
 import {
   IcCamera,
   IcCaretSmall,
@@ -222,16 +223,16 @@ function FloatToolbar({ onSnapshot }: { readonly onSnapshot: () => void }): JSX.
   );
 }
 
-// ── render-mode strip: exactly Clay · Textured · Normal · Wireframe ───────
+// ── render modes (Clay · Textured · Normal) + the Wireframe overlay toggle ─
 const RENDER_MODES: readonly { id: TripoRenderMode; label: string }[] = [
   { id: 'clay', label: 'Clay' },
   { id: 'textured', label: 'Textured' },
   { id: 'normal', label: 'Normal' },
-  { id: 'wireframe', label: 'Wireframe' },
 ];
 
 function RenderModeStrip(): JSX.Element {
   const renderMode = useTripoStore((s) => s.renderMode);
+  const wireframe = useTripoStore((s) => s.wireframe);
   const set = useTripoStore((s) => s.set);
 
   return (
@@ -249,6 +250,17 @@ function RenderModeStrip(): JSX.Element {
             {m.label}
           </button>
         ))}
+        <span className="tp-strip-sep" />
+        {/* Wireframe is an ON/OFF overlay drawn on top of the active mode. */}
+        <button
+          type="button"
+          className="tp-mode-btn"
+          data-active={wireframe}
+          data-testid="tp-wire-toggle"
+          onClick={() => set('wireframe', !wireframe)}
+        >
+          Wireframe
+        </button>
       </div>
     </div>
   );
@@ -490,6 +502,9 @@ export function Viewport(): JSX.Element {
           <ActionBar />
         </>
       ) : null}
+
+      {/* Live engine-generation readout (staged chips + progress + message). */}
+      <GenProgressCard />
 
       {modal === 'export' ? <ExportDialog /> : null}
       {modal === 'help' ? <HelpModal /> : null}

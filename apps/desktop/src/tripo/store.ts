@@ -12,8 +12,9 @@ export type TripoTool = 'image' | 'model' | 'segment' | 'retopo' | 'texture' | '
 
 export type TripoRightTab = 'assets' | 'property';
 export type TripoInputMode = 'image' | 'multiview' | 'gallery' | 'text';
-/** Viewport render modes — exactly the four jedd asked for. */
-export type TripoRenderMode = 'clay' | 'textured' | 'normal' | 'wireframe';
+/** Viewport render modes; wireframe is a separate ON/OFF overlay toggle that
+ * draws edges ON TOP of the active mode (jedd). */
+export type TripoRenderMode = 'clay' | 'textured' | 'normal';
 export type TripoModal = null | 'help' | 'export';
 
 /**
@@ -41,6 +42,9 @@ export interface StudioAsset {
   readonly source: 'sample' | 'generated' | 'imported';
   readonly rigged?: boolean;
   readonly thumb: string | null;
+  /** On-disk path when known (imported files, engine artifacts) — what the
+   * gen3d engine's stage ops take as input. The bundled sample has none. */
+  readonly diskPath?: string;
   readonly faces: number;
   readonly vertices: number;
   readonly created: string;
@@ -79,6 +83,13 @@ interface TripoState {
   topology: 'triangle' | 'quad';
   symmetry: 'auto' | 'on' | 'off';
   genModel: string;
+  /** TRELLIS structure resolution preset for generation. */
+  genResolution: 'low' | 'medium' | 'high';
+  /** Chain Hunyuan Paint texturing after geometry. */
+  genAutoTexture: boolean;
+  /** Picked input image (absolute path + display name) for image→3D. */
+  genImagePath: string | null;
+  genImageName: string | null;
 
   // ── animate panel
   skeleton: boolean;
@@ -91,6 +102,8 @@ interface TripoState {
   /** Which pipeline result the viewer renders for the loaded asset. */
   pipelineStage: TripoStage;
   renderMode: TripoRenderMode;
+  /** Edge overlay drawn on top of the active render mode. */
+  wireframe: boolean;
   showGrid: boolean;
   autoRotate: boolean;
   envLight: boolean;
@@ -159,7 +172,11 @@ export const useTripoStore = create<TripoState>((set, get) => ({
   faceLimit: 30,
   topology: 'triangle',
   symmetry: 'auto',
-  genModel: 'hunyuan-omni',
+  genModel: 'trellis-2',
+  genResolution: 'medium',
+  genAutoTexture: true,
+  genImagePath: null,
+  genImageName: null,
 
   skeleton: false,
   animFilter: 'all',
@@ -169,6 +186,7 @@ export const useTripoStore = create<TripoState>((set, get) => ({
   loadedAssetId: null,
   pipelineStage: 'mesh',
   renderMode: 'clay',
+  wireframe: false,
   showGrid: false,
   autoRotate: false,
   envLight: true,

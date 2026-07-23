@@ -54,23 +54,48 @@ export function isModelFile(file: File): boolean {
 /**
  * Import a model file: register its bytes, add the asset row (thumbnail is
  * captured by the viewer after its first rendered frame), and load it into
- * the viewport. Returns false for unsupported files.
+ * the viewport. Captures the file's real disk path (webUtils) so engine stage
+ * ops can run on it. Returns false for unsupported files.
  */
 export async function importModelFile(file: File): Promise<boolean> {
   const format = importedFormatOf(file.name);
   if (format === null) return false;
   const buffer = await file.arrayBuffer();
-  const id = registerImportedModel(file.name, format, buffer);
+  const diskPath = window.piDesktop.pathForFile(file);
+  importModelBuffer(file.name, format, buffer, {
+    source: 'imported',
+    created: 'Imported',
+    diskPath: diskPath.length > 0 ? diskPath : undefined,
+  });
+  return true;
+}
+
+/**
+ * Import a model from raw bytes (engine artifacts, e.g. freshly generated
+ * geometry): same registry + asset + load flow as a file import.
+ */
+export function importModelBuffer(
+  fileName: string,
+  format: 'glb' | 'gltf' | 'obj' | 'stl',
+  buffer: ArrayBuffer,
+  opts: {
+    readonly source: 'imported' | 'generated';
+    readonly created: string;
+    readonly diskPath?: string;
+  },
+): string {
+  const id = registerImportedModel(fileName, format, buffer);
   const s = useTripoStore.getState();
   s.addAsset({
     id,
-    name: file.name.replace(/\.[^.]+$/, ''),
-    source: 'imported',
+    name: fileName.replace(/\.[^.]+$/, ''),
+    source: opts.source,
     thumb: null,
     faces: 0,
     vertices: 0,
-    created: 'Imported',
+    created: opts.created,
+    ...(opts.diskPath !== undefined ? { diskPath: opts.diskPath } : {}),
   });
   s.loadAsset(id);
-  return true;
+  return id;
 }

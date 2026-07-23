@@ -573,6 +573,10 @@ export interface PiDesktopBridge {
     channel: K,
     listener: (payload: AppEventMap[K]) => void,
   ): () => void;
+  /** The on-disk absolute path of a dropped/picked File (webUtils.getPathForFile;
+   * '' when the File has no backing path). The 3D studio uses it to hand real
+   * file paths to the gen3d engine. */
+  pathForFile(file: File): string;
 }
 
 // Static assertions: keep the maps assignable to the shared constraints.

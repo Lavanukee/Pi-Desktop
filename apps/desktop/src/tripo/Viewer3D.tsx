@@ -13,7 +13,9 @@
  *   rig     → the sample's real three.js Skeleton overlaid (bind pose).
  *   animate → the rigged SkinnedMesh playing a baked AnimationClip.
  *
- * Render modes (viewport strip): Clay · Textured · Normal · Wireframe.
+ * Render modes (viewport strip): Clay · Textured · Normal, plus a WIREFRAME
+ * overlay toggle that draws edges on top of the active mode (skinned-aware —
+ * the overlay tracks animation). Clay is a fixed white/grey, never theme-dark.
  *
  * HONESTY: the sample stages are backed by two bundled GLBs (hero-glb.ts) and
  * real geometry passes (vertex-color segmentation, procedural texture) — NOT
@@ -267,11 +269,22 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
 
     // ── shared materials for the render modes ───────────────────────────────
     const normalMat = new THREE.MeshNormalMaterial();
-    const clayMat = new THREE.MeshStandardMaterial({ metalness: 0.02, roughness: 0.85 });
-    const wireMat = new THREE.MeshStandardMaterial({
+    // Clay is a FIXED warm white/grey (jedd) — never theme-resolved, so it can't
+    // go dark in dark mode.
+    const clayMat = new THREE.MeshStandardMaterial({
+      color: '#d9d9de',
       metalness: 0.02,
       roughness: 0.85,
+    });
+    // The wireframe TOGGLE overlay: edge lines drawn ON TOP of the active mode
+    // (a second skinned/static pass per mesh — see ensureWireOverlay).
+    const wireOverlayMat = new THREE.MeshBasicMaterial({
       wireframe: true,
+      transparent: true,
+      opacity: 0.4,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
     });
     const segMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
     const generatedTexture = buildGeneratedTexture();
@@ -280,6 +293,35 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
     const texturedAssets = new Set<string>();
     // Geometries already painted with segment colors.
     const segPainted = new WeakSet<object>();
+
+    // Wireframe overlay clones: a second mesh sharing geometry (and, for
+    // skinned bodies, the SAME skeleton — so the overlay tracks animation)
+    // rendered with the wire material on top of the base surface.
+    const wireOverlays = new Map<
+      InstanceType<typeof THREE.Mesh>,
+      InstanceType<typeof THREE.Mesh>
+    >();
+    const ensureWireOverlay = (
+      mesh: InstanceType<typeof THREE.Mesh>,
+    ): InstanceType<typeof THREE.Mesh> => {
+      const existing = wireOverlays.get(mesh);
+      if (existing !== undefined) return existing;
+      const skinned = mesh as InstanceType<typeof THREE.SkinnedMesh>;
+      let overlay: InstanceType<typeof THREE.Mesh>;
+      if (skinned.isSkinnedMesh === true) {
+        const so = new THREE.SkinnedMesh(mesh.geometry, wireOverlayMat);
+        so.bind(skinned.skeleton, skinned.bindMatrix);
+        overlay = so;
+      } else {
+        overlay = new THREE.Mesh(mesh.geometry, wireOverlayMat);
+      }
+      overlay.frustumCulled = false;
+      overlay.renderOrder = 5;
+      overlay.visible = false;
+      mesh.add(overlay);
+      wireOverlays.set(mesh, overlay);
+      return overlay;
+    };
 
     // ── pipeline models ─────────────────────────────────────────────────────
     interface BodyRef {
@@ -483,11 +525,10 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
     };
     setViewerExportHandler(onExport);
 
-    /** Re-resolve every themed color (mount, store change, theme flip). */
+    /** Re-resolve every themed color (mount, store change, theme flip). Clay
+     * deliberately stays FIXED white/grey (set at construction). */
     const applyPalette = () => {
-      const clay = resolveColor('var(--tp-clay-2)');
-      clayMat.color.set(clay);
-      wireMat.color.set(resolveColor('var(--pd-accent-primary)'));
+      wireOverlayMat.color.set(resolveColor('var(--pd-accent-primary)'));
       texMat.color.set('#ffffff');
 
       const gm = grid.material as InstanceType<typeof THREE.LineBasicMaterial>;
@@ -528,8 +569,6 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       switch (s.renderMode) {
         case 'normal':
           return normalMat;
-        case 'wireframe':
-          return wireMat;
         case 'textured':
           texMat.map = texturedAssets.has(assetId) ? generatedTexture : null;
           texMat.needsUpdate = true;
@@ -592,6 +631,13 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
         for (const { mesh } of activeBodies) mesh.material = mat;
       }
 
+      // Wireframe TOGGLE: edge overlay on top of whatever mode is active, on
+      // the currently-visible bodies only.
+      for (const [, overlay] of wireOverlays) overlay.visible = false;
+      if (s.wireframe) {
+        for (const { mesh } of activeBodies) ensureWireOverlay(mesh).visible = true;
+      }
+
       // Real topology stats for what is on screen.
       let faces = 0;
       let verts = 0;
@@ -645,6 +691,7 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
 
       host.dataset.tpStage = stage;
       host.dataset.tpRenderMode = s.renderMode;
+      host.dataset.tpWireframe = s.wireframe ? '1' : '0';
       host.dataset.tpSkeleton = skeletonHelper?.visible === true ? '1' : '0';
       host.dataset.tpAnim =
         stage === 'animate' && current !== null ? current.getClip().name : 'none';
@@ -782,7 +829,7 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       });
       normalMat.dispose();
       clayMat.dispose();
-      wireMat.dispose();
+      wireOverlayMat.dispose();
       segMat.dispose();
       texMat.dispose();
       generatedTexture.dispose();

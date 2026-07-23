@@ -11,6 +11,8 @@
 import type { JSX } from 'react';
 import { useEffect, useState } from 'react';
 import { GenPanel } from './GenPanel';
+import { Gen3dDownloadDialog } from './gen-ui';
+import { ensureGen3dWired } from './gen3d-client';
 import { IcUpload } from './icons';
 import { Rail } from './Rail';
 import { RightPanel } from './RightPanel';
@@ -23,6 +25,11 @@ import './tripo.css';
 export function TripoWorkspace(): JSX.Element {
   const closeMenus = useTripoStore((s) => s.closeMenus);
   const [dropActive, setDropActive] = useState(false);
+
+  // Engine catalog + event wiring (idempotent).
+  useEffect(() => {
+    ensureGen3dWired();
+  }, []);
 
   // One global dismiss layer for every popover/dropdown: any pointerdown
   // outside a menu anchor closes the open menu; Escape closes menus first,
@@ -50,35 +57,44 @@ export function TripoWorkspace(): JSX.Element {
     };
   }, [closeMenus]);
 
-  return (
-    // The workspace root is a drag-and-drop DROP TARGET only (no click
-    // semantics) — file drops must land anywhere in the studio, and drop
-    // targets are not focusable interactive elements.
-    // biome-ignore lint/a11y/noStaticElementInteractions: drop target, not a clickable control
-    <div
-      className="tp"
-      data-testid="tp-root"
-      data-drop-active={dropActive}
-      onDragOver={(e) => {
-        // Only light up for file drags (not text/element drags).
-        if (Array.from(e.dataTransfer.types).includes('Files')) {
-          e.preventDefault();
-          setDropActive(true);
-        }
-      }}
-      onDragLeave={(e) => {
-        // Ignore leave events fired by inner elements; only a true exit clears.
-        if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) {
-          setDropActive(false);
-        }
-      }}
-      onDrop={(e) => {
+  // OS file drops, hardened at the DOCUMENT level (capture phase): without the
+  // dragover preventDefault Chromium/Electron NAVIGATES the window to the
+  // dropped file (the "drag and drop doesn't work" failure — the React handler
+  // on the root div can be bypassed when a child swallows the event). The
+  // capture listeners always see the drag, always cancel navigation, and route
+  // any model file through the same import path.
+  useEffect(() => {
+    const onDragOver = (e: DragEvent) => {
+      if (e.dataTransfer !== null && Array.from(e.dataTransfer.types).includes('Files')) {
         e.preventDefault();
-        setDropActive(false);
-        const file = Array.from(e.dataTransfer.files).find(isModelFile);
-        if (file !== undefined) void importModelFile(file);
-      }}
-    >
+        setDropActive(true);
+      }
+    };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      setDropActive(false);
+      const files = e.dataTransfer === null ? [] : Array.from(e.dataTransfer.files);
+      const file = files.find(isModelFile);
+      if (file !== undefined) void importModelFile(file);
+    };
+    const onDragLeave = (e: DragEvent) => {
+      // Leaving the window entirely (relatedTarget null) clears the overlay.
+      if (e.relatedTarget === null) setDropActive(false);
+    };
+    document.addEventListener('dragover', onDragOver, true);
+    document.addEventListener('drop', onDrop, true);
+    document.addEventListener('dragleave', onDragLeave, true);
+    return () => {
+      document.removeEventListener('dragover', onDragOver, true);
+      document.removeEventListener('drop', onDrop, true);
+      document.removeEventListener('dragleave', onDragLeave, true);
+    };
+  }, []);
+
+  return (
+    // Drops are handled by the document-level capture listeners above; the
+    // root only carries the drop-overlay state attribute.
+    <div className="tp" data-testid="tp-root" data-drop-active={dropActive}>
       <TopBar />
       <div className="tp-body">
         <Rail />
@@ -94,6 +110,7 @@ export function TripoWorkspace(): JSX.Element {
           </div>
         </div>
       ) : null}
+      <Gen3dDownloadDialog />
     </div>
   );
 }

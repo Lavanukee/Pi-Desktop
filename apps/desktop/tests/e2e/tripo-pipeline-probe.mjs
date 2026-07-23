@@ -91,7 +91,9 @@ try {
   };
 
   // ── 1) MESH ─────────────────────────────────────────────────────────────
-  await page.click('[data-testid="tp-generate-btn"]');
+  // Generate now runs the REAL engine (or opens the download prompt); the
+  // bundled sample pipeline starts from its explicit link.
+  await page.click('[data-testid="tp-load-sample"]');
   // First model landing shows the coach dialog; dismiss it.
   await page.waitForSelector('[data-testid="tp-help-modal"]', { timeout: 5000 });
   await page.click('[data-testid="tp-help-ok"]');

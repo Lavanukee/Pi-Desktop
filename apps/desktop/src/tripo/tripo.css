@@ -50,11 +50,17 @@
   align-items: center;
   justify-content: space-between;
   height: 52px;
-  padding: 0 14px;
+  /* Left padding clears the macOS traffic lights (hiddenInset window, lights
+   * at x:19 in a ~46px strip) so the Chat button never sits under them. */
+  padding: 0 14px 0 84px;
   background: var(--pd-bg-raised);
   border-bottom: 1px solid var(--pd-border-subtle);
   flex-shrink: 0;
   gap: 12px;
+  -webkit-app-region: drag;
+}
+.tp-topbar :where(button, .tp-anchor) {
+  -webkit-app-region: no-drag;
 }
 .tp-topbar-left,
 .tp-topbar-right {
@@ -475,36 +481,25 @@
   position: relative;
   display: inline-flex;
 }
-.tp-hint::after {
-  content: attr(data-hint);
-  position: absolute;
-  z-index: 100;
-  left: 50%;
-  bottom: calc(100% + 7px);
-  transform: translateX(-50%);
+/* The hint bubble renders through a portal (fixed, viewport-clamped) so it can
+ * never be clipped by scroll containers or card edges. */
+.tp-hint-bubble {
   padding: 5px 9px;
   border-radius: var(--pd-radius-sm);
   background: var(--pd-tooltip-bg);
   color: var(--pd-tooltip-fg);
   font-size: var(--pd-font-size-footnote);
   white-space: nowrap;
-  opacity: 0;
   pointer-events: none;
-  transition: opacity var(--pd-duration-fast) var(--pd-easing-standard) 350ms;
+  animation: tp-hint-in var(--pd-duration-fast) var(--pd-easing-standard) 350ms both;
 }
-.tp-hint[data-hint-side="left"]::after {
-  left: auto;
-  right: calc(100% + 8px);
-  bottom: auto;
-  top: 50%;
-  transform: translateY(-50%);
-}
-.tp-hint[data-hint-side="bottom"]::after {
-  bottom: auto;
-  top: calc(100% + 7px);
-}
-.tp-hint:hover::after {
-  opacity: 1;
+@keyframes tp-hint-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* ═══ body layout ═══════════════════════════════════════════════════════ */
@@ -2769,4 +2764,164 @@
 .tp-export-cta:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+/* Portal popovers: viewport-clamped, above dialogs (backdrop 90), scrollable
+ * when tall — a dropdown can never run off-screen again. */
+.tp-popover-portal {
+  z-index: 150;
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+}
+
+/* ── gen3d: download dialog + live generation progress ─────────────────── */
+.tp-download-card {
+  width: 520px;
+  max-width: calc(100vw - 48px);
+  background: var(--pd-bg-raised);
+  border: 1px solid var(--pd-border-subtle);
+  border-radius: var(--pd-radius-lg);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.tp-download-blurb {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--pd-text-muted);
+}
+.tp-download-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.tp-download-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--pd-border-subtle);
+  border-radius: var(--pd-radius-md);
+  flex-wrap: wrap;
+}
+.tp-download-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+.tp-download-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.tp-download-name {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--pd-text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tp-download-role {
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--pd-text-muted);
+  border: 1px solid var(--pd-border-subtle);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.tp-download-note {
+  font-size: 11.5px;
+  color: var(--pd-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tp-download-size {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--pd-text-primary);
+  flex: none;
+}
+.tp-download-progress {
+  flex-basis: 100%;
+}
+.tp-download-error {
+  font-size: 12px;
+  color: var(--pd-status-danger-fg);
+}
+
+.tp-genprogress {
+  position: absolute;
+  left: 50%;
+  bottom: 118px;
+  transform: translateX(-50%);
+  width: 440px;
+  max-width: calc(100% - 48px);
+  background: var(--pd-bg-raised);
+  border: 1px solid var(--pd-border-subtle);
+  border-radius: var(--pd-radius-lg);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 40;
+  box-shadow: var(--pd-shadow-lg, 0 8px 28px rgba(0, 0, 0, 0.35));
+}
+.tp-genprogress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.tp-genprogress-chips {
+  display: flex;
+  gap: 6px;
+}
+.tp-genprogress-chip {
+  font-size: 11px;
+  font-weight: 650;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--pd-border-subtle);
+  color: var(--pd-text-muted);
+}
+.tp-genprogress-chip[data-state="active"] {
+  background: var(--pd-accent-primary);
+  border-color: var(--pd-accent-primary);
+  color: var(--pd-accent-primary-fg, #fff);
+}
+.tp-genprogress-chip[data-state="done"] {
+  color: var(--pd-status-success-fg);
+  border-color: var(--pd-status-success-fg);
+}
+.tp-genprogress-msg {
+  font-size: 12px;
+  color: var(--pd-text-muted);
+}
+.tp-genprogress-error {
+  font-size: 12px;
+  color: var(--pd-status-danger-fg);
+}
+.tp-genprogress-thumb {
+  width: 84px;
+  height: 84px;
+  object-fit: cover;
+  border-radius: var(--pd-radius-md);
+  border: 1px solid var(--pd-border-subtle);
+}
+.tp-sample-link {
+  align-self: center;
+  margin-top: 6px;
+}
+.tp-engine-install-link {
+  display: block;
+  margin: 8px 0 0;
+  text-align: left;
 }

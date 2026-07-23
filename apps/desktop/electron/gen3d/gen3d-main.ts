@@ -70,8 +70,8 @@ const handlers: IpcHandlers<Gen3dInvokeMap> = {
   'gen3d:catalog': () => ({
     engineReady: false,
     models: MODELS,
-    // Placeholder until the engine verifies the real TRELLIS presets.
-    resolutions: { low: 768, medium: 1024, high: 1536 },
+    // The engine-verified TRELLIS.2 presets (512 / 1024_cascade / 1536_cascade).
+    resolutions: { low: 512, medium: 1024, high: 1536 },
   }),
   'gen3d:download': (req) => {
     log.info('gen3d download requested (stub)', { ids: req.ids });

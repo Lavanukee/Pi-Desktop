@@ -4,7 +4,7 @@ import {
   IPC_EVENT_CHANNEL,
   type IpcEventEnvelope,
 } from '@pi-desktop/shared';
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import {
   APP_INVOKE_CHANNELS,
   type AppEventMap,
@@ -32,6 +32,13 @@ const bridge: PiDesktopBridge = {
       ? client.invoke(channel, request)
       : Promise.reject(new Error(`[preload] blocked invoke to unregistered channel "${channel}"`)),
   onEvent: (channel, listener) => hub.subscribe(channel, listener),
+  pathForFile: (file) => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return '';
+    }
+  },
 };
 
 contextBridge.exposeInMainWorld('piDesktop', bridge);

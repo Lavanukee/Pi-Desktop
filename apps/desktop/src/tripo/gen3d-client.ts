@@ -48,7 +48,7 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
   loaded: false,
   engineReady: false,
   models: [],
-  resolutions: { low: 768, medium: 1024, high: 1536 },
+  resolutions: { low: 512, medium: 1024, high: 1536 },
   downloads: {},
   job: null,
   downloadPromptOpen: false,
@@ -98,6 +98,35 @@ export function formatGb(bytes: number): string {
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
 }
 
+/** pd-file:// URL for an absolute path (the scheme's `f` host + encoded path). */
+function pdFileUrl(absPath: string): string {
+  return `pd-file://f${absPath.split('/').map(encodeURIComponent).join('/')}`;
+}
+
+/** Artifact paths already imported into the viewer (dedup across job updates). */
+const importedArtifacts = new Set<string>();
+
+/** Pull a freshly-produced GLB artifact into the viewport + assets — this is
+ * how generated geometry appears THE MOMENT it exists (before texturing ends). */
+async function ingestModelArtifact(path: string, label: string): Promise<void> {
+  if (importedArtifacts.has(path)) return;
+  importedArtifacts.add(path);
+  try {
+    const res = await fetch(pdFileUrl(path));
+    if (!res.ok) return;
+    const buffer = await res.arrayBuffer();
+    const name = path.split('/').pop() ?? 'generated.glb';
+    const { importModelBuffer } = await import('./viewer-io');
+    importModelBuffer(name, 'glb', buffer, {
+      source: 'generated',
+      created: label,
+      diskPath: path,
+    });
+  } catch {
+    importedArtifacts.delete(path); // retry on the next update
+  }
+}
+
 let wired = false;
 /** Subscribe once to engine events + do the initial catalog load. */
 export function ensureGen3dWired(): void {
@@ -106,6 +135,9 @@ export function ensureGen3dWired(): void {
   void useGen3dStore.getState().refresh();
   window.piDesktop.onEvent('gen3d:job', (update) => {
     useGen3dStore.setState({ job: update });
+    if (update.artifact?.kind === 'model-glb') {
+      void ingestModelArtifact(update.artifact.path, update.artifact.label);
+    }
   });
   window.piDesktop.onEvent('gen3d:download', (update) => {
     useGen3dStore.setState((s) => ({ downloads: { ...s.downloads, [update.id]: update } }));

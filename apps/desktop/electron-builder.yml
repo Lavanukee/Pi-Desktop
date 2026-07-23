@@ -22,6 +22,9 @@ directories:
 files:
   - dist/**/*
   - dist-electron/**/*
+  # Mac computer-use cursor overlay: static page loaded via loadFile from the
+  # app root (electron/mac/overlay-window.ts overlayHtmlPath).
+  - electron/mac/overlay.html
 # Bundled skills (SKILL.md playbooks + their LICENSE/attribution) ship OUTSIDE
 # the asar at <Resources>/skills so the main process can cpSync a chosen folder
 # into ~/.pi/agent/skills/<id> (skills-main.ts resolves process.resourcesPath).

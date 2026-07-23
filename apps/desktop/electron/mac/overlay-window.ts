@@ -25,6 +25,7 @@ import {
   comboLabel,
   type OverlayRect,
   overlayBoundsFor,
+  overlayShouldShow,
   rectsDiffer,
   toLocalPoint,
   typingPreview,
@@ -35,10 +36,24 @@ const log = createLogger('desktop:mac-overlay');
 /** How long the phantom cursor takes to glide to an action point (matches the
  * CSS travel transition in overlay.html). */
 export const CURSOR_TRAVEL_MS = 300;
-/** Window-tracking poll cadence while the overlay is visible. */
-const TRACK_INTERVAL_MS = 500;
-/** Consecutive failed bounds reads before we conclude the app/window is gone. */
-const TRACK_FAILURE_LIMIT = 4;
+/** Window-tracking poll cadence while the overlay is VISIBLE — tight enough
+ * that the overlay rides a window drag live instead of snapping on release.
+ * The tracker self-reschedules AFTER each bounds read resolves, so at most one
+ * read is ever outstanding on the (single-threaded) helper pipe — a real tool
+ * act waits behind at most one cheap bounds read, never a backlog. */
+const FAST_TRACK_MS = 16;
+/** Slower cadence while the overlay is hidden-but-still-tracking (app
+ * backgrounded / model idle): we only need to notice a refocus, not animate. */
+const SLOW_TRACK_MS = 250;
+/** Bounds have read null (window minimized/closed/quit) continuously for this
+ * long → tear the overlay all the way down rather than track a ghost. A brief
+ * miss (space-switch animation, AX hiccup) just hides it visually and recovers. */
+const MISSING_GRACE_MS = 1500;
+/** The model counts as actively DRIVING for this long after its last action —
+ * the overlay stays visible through it even while the app is backgrounded, so
+ * the user can watch Pi work; once it lapses (and the app isn't frontmost) the
+ * overlay tucks away. */
+const DRIVING_WINDOW_MS = 4_000;
 /** How long a transient bubble (key press / scroll) lingers before returning
  * to the resting 'thinking' state. */
 const TRANSIENT_STATUS_MS = 1200;
@@ -47,8 +62,12 @@ const TRANSIENT_STATUS_MS = 1200;
  * turn actually in flight, not linger forever after the model finished. */
 const BUBBLE_IDLE_MS = 15_000;
 
+/** A live window-frame read, plus whether the controlled app is frontmost
+ * (drives the visibility rule — see overlayShouldShow). */
+export type BoundsSample = OverlayRect & { readonly frontmost?: boolean };
+
 /** Injected read of the controlled window's live frame (null = no window). */
-export type BoundsReader = (pid: number) => Promise<OverlayRect | null>;
+export type BoundsReader = (pid: number) => Promise<BoundsSample | null>;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => {
@@ -69,8 +88,10 @@ class MacOverlayController {
   #loaded: Promise<void> | null = null;
   #boundsReader: BoundsReader | null = null;
   #target: { pid: number | null; rect: OverlayRect } | null = null;
-  #tracker: ReturnType<typeof setInterval> | null = null;
-  #trackFailures = 0;
+  #trackTimer: ReturnType<typeof setTimeout> | null = null;
+  #missingSince: number | null = null;
+  #lastCursor: { x: number; y: number } | null = null;
+  #lastActivityAt: number | null = null;
   #revertTimer: ReturnType<typeof setTimeout> | null = null;
   #idleTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -104,9 +125,16 @@ class MacOverlayController {
         backgroundThrottling: false,
       },
     });
-    // Float above EVERYTHING (incl. fullscreen spaces), on every workspace —
-    // the user must see the phantom cursor wherever the controlled window is.
-    win.setAlwaysOnTop(true, 'screen-saver');
+    // Float ABOVE normal app windows, but NOT at screen-saver level — the
+    // overlay must not sit over system UI / the user's other apps as if it
+    // owned the screen. macOS window levels are global bands (not per-app), so
+    // this can't be truly z-sandwiched between the controlled app and the rest;
+    // the app-scoping is done by the show/hide visibility rule in #trackTick
+    // (overlayShouldShow), and 'floating' keeps the level as low as still lets
+    // the phantom read over the controlled window while the model is driving.
+    win.setAlwaysOnTop(true, 'floating');
+    // Ride along to whatever space the controlled window is on (incl. a
+    // fullscreen app); the visibility rule keeps it from intruding elsewhere.
     win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     // Click-through: the overlay must never eat a real mouse event.
     win.setIgnoreMouseEvents(true, { forward: true });
@@ -147,9 +175,10 @@ class MacOverlayController {
     const known = rect ?? (await this.#readBounds(pid));
     if (known === null) return; // no window yet — a later snapshot will retry
     const win = this.#ensureWindow();
-    this.#target = { pid, rect: known };
-    this.#trackFailures = 0;
-    win.setBounds(overlayBoundsFor(known));
+    this.#target = { pid, rect: { x: known.x, y: known.y, w: known.w, h: known.h } };
+    this.#missingSince = null;
+    this.#markActivity(); // control() means the model just acted → show
+    win.setBounds(overlayBoundsFor(this.#target.rect));
     if (!win.isVisible()) win.showInactive();
     await this.#push({ kind: 'reset' });
     this.#startTracking();
@@ -165,7 +194,15 @@ class MacOverlayController {
     await this.#push({ kind: 'reset' });
   }
 
-  async #readBounds(pid: number): Promise<OverlayRect | null> {
+  /** E2E seam: simulate ONE tracker reposition to `rect` synchronously (same
+   * code path a live bounds change takes) so a probe can assert the overlay
+   * follows the controlled window in the SAME tick — no snap-on-release lag. */
+  async debugRetarget(rect: OverlayRect): Promise<void> {
+    if (this.#target === null) return;
+    await this.#reposition(rect);
+  }
+
+  async #readBounds(pid: number): Promise<BoundsSample | null> {
     const reader = this.#boundsReader;
     if (reader === null) return null;
     try {
@@ -175,39 +212,115 @@ class MacOverlayController {
     }
   }
 
+  /** True while the model is actively driving (recent action) — see
+   * DRIVING_WINDOW_MS. */
+  #isDriving(): boolean {
+    return this.#lastActivityAt !== null && Date.now() - this.#lastActivityAt < DRIVING_WINDOW_MS;
+  }
+
+  #markActivity(): void {
+    this.#lastActivityAt = Date.now();
+    // If we're tracking but currently tucked away, re-evaluate visibility right
+    // now so the overlay reappears the instant the model resumes — don't wait
+    // out the slow hidden-cadence poll.
+    const win = this.#win;
+    if (this.#trackTimer !== null && win !== null && !win.isDestroyed() && !win.isVisible()) {
+      this.#scheduleTrack(0);
+    }
+  }
+
+  /** Move/resize the overlay window to follow the target rect. A pure MOVE just
+   * repositions the window — the phantom cursor rides along at its fixed local
+   * coordinate (it stays glued to the on-screen target, no spring re-fires). A
+   * RESIZE that would push the cursor outside the padded window re-clamps it via
+   * a 'reset'; otherwise no executeJavaScript round-trip runs, so tracking stays
+   * lag-free at the fast cadence. */
+  async #reposition(fresh: OverlayRect): Promise<void> {
+    const target = this.#target;
+    const win = this.#win;
+    if (target === null || win === null || win.isDestroyed()) return;
+    const resized =
+      Math.abs(target.rect.w - fresh.w) >= 1 || Math.abs(target.rect.h - fresh.h) >= 1;
+    target.rect = { x: fresh.x, y: fresh.y, w: fresh.w, h: fresh.h };
+    // Instant follow: no animate, no moveTop/focus — just the new frame.
+    win.setBounds(overlayBoundsFor(target.rect));
+    if (resized && this.#cursorOutsidePadded(target.rect)) await this.#push({ kind: 'reset' });
+  }
+
+  /** Would the last-placed cursor now fall outside the padded window (so the
+   * DOM must re-clamp it)? Unknown cursor → assume yes, to be safe. */
+  #cursorOutsidePadded(rect: OverlayRect): boolean {
+    const c = this.#lastCursor;
+    if (c === null) return false;
+    const b = overlayBoundsFor(rect);
+    return c.x < 4 || c.y < 4 || c.x > b.width - 4 || c.y > b.height - 4;
+  }
+
+  #applyVisibility(show: boolean): void {
+    const win = this.#win;
+    if (win === null || win.isDestroyed()) return;
+    if (show) {
+      if (!win.isVisible()) win.showInactive();
+    } else if (win.isVisible()) {
+      win.hide();
+    }
+  }
+
   #startTracking(): void {
-    if (this.#tracker !== null) return;
-    this.#tracker = setInterval(() => {
-      void this.#trackOnce();
-    }, TRACK_INTERVAL_MS);
-    this.#tracker.unref?.();
+    if (this.#trackTimer !== null) return;
+    this.#scheduleTrack(0);
+  }
+
+  #scheduleTrack(delay: number): void {
+    if (this.#trackTimer !== null) clearTimeout(this.#trackTimer);
+    this.#trackTimer = setTimeout(() => {
+      void this.#trackTick();
+    }, delay);
+    this.#trackTimer.unref?.();
   }
 
   #stopTracking(): void {
-    if (this.#tracker !== null) {
-      clearInterval(this.#tracker);
-      this.#tracker = null;
+    if (this.#trackTimer !== null) {
+      clearTimeout(this.#trackTimer);
+      this.#trackTimer = null;
     }
   }
 
-  async #trackOnce(): Promise<void> {
+  /** One self-rescheduling tracking tick: read the live frame, follow moves,
+   * and apply the app-scoped visibility rule. Re-schedules itself AFTER the
+   * async read resolves (never on a fixed interval), so reads can't pile up on
+   * the helper pipe. */
+  async #trackTick(): Promise<void> {
     const target = this.#target;
     const win = this.#win;
-    if (target === null || target.pid === null || win === null || win.isDestroyed()) return;
-    const fresh = await this.#readBounds(target.pid);
-    if (fresh === null) {
-      // App quit / window closed: give it a few beats (spaces animations,
-      // transient AX hiccups), then hide rather than float over nothing.
-      this.#trackFailures += 1;
-      if (this.#trackFailures >= TRACK_FAILURE_LIMIT) this.hide();
+    if (target === null || target.pid === null || win === null || win.isDestroyed()) {
+      this.#trackTimer = null;
       return;
     }
-    this.#trackFailures = 0;
-    if (rectsDiffer(target.rect, fresh)) {
-      target.rect = fresh;
-      win.setBounds(overlayBoundsFor(fresh));
-      await this.#push({ kind: 'reset' });
+    const sample = await this.#readBounds(target.pid);
+    // Bail if control was dropped / re-targeted while the read was in flight.
+    if (this.#target !== target || this.#win !== win || win.isDestroyed()) return;
+
+    let visible = false;
+    if (sample === null) {
+      // Window not currently readable (minimized / space animation / quit).
+      if (this.#missingSince === null) this.#missingSince = Date.now();
+      this.#applyVisibility(false);
+      if (Date.now() - this.#missingSince >= MISSING_GRACE_MS) {
+        this.hide();
+        return;
+      }
+    } else {
+      this.#missingSince = null;
+      if (rectsDiffer(target.rect, sample)) await this.#reposition(sample);
+      visible = overlayShouldShow({
+        controlledFrontmost: sample.frontmost === true,
+        appVisible: true,
+        driving: this.#isDriving(),
+      });
+      this.#applyVisibility(visible);
     }
+    this.#scheduleTrack(visible ? FAST_TRACK_MS : SLOW_TRACK_MS);
   }
 
   // ── action-driven states (called by mac-agent dispatch) ────────────────
@@ -215,7 +328,9 @@ class MacOverlayController {
   #local(screenX: number, screenY: number): { x: number; y: number } | null {
     const target = this.#target;
     if (target === null) return null;
-    return toLocalPoint(screenX, screenY, target.rect);
+    const p = toLocalPoint(screenX, screenY, target.rect);
+    this.#lastCursor = p; // remembered so a resize knows whether to re-clamp
+    return p;
   }
 
   /** Glide the cursor to a screen point and wait out the travel. */
@@ -282,8 +397,11 @@ class MacOverlayController {
   }
 
   /** Every real activity push re-arms the idle fade: after BUBBLE_IDLE_MS of
-   * silence the bubble hides (the cursor rests in place, still visible). */
+   * silence the bubble hides (the cursor rests in place, still visible). Also
+   * marks the model as actively driving, which keeps the overlay visible (see
+   * overlayShouldShow) even while the controlled app is backgrounded. */
   #armIdle(): void {
+    this.#markActivity();
     if (this.#idleTimer !== null) clearTimeout(this.#idleTimer);
     this.#idleTimer = setTimeout(() => {
       void this.#push({ kind: 'hide-bubble' });
@@ -314,6 +432,9 @@ class MacOverlayController {
     this.#clearIdle();
     this.#stopTracking();
     this.#target = null;
+    this.#missingSince = null;
+    this.#lastCursor = null;
+    this.#lastActivityAt = null;
     const win = this.#win;
     if (win !== null && !win.isDestroyed() && win.isVisible()) win.hide();
   }

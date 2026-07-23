@@ -3,12 +3,17 @@
  * (no real app control, no model, no TCC needed) through the PI_E2E-only
  * `mac:debug` channel and verifies, structurally and visually:
  *
- *   - the overlay window exists exactly over the requested rect, is
+ *   - the overlay window is the tracked rect PLUS a symmetric buffer margin
+ *     (so the cursor can protrude past the app edge and the pill renders fully),
  *     always-on-top and non-focusable (a click-through phantom, never a
  *     perceivable window);
- *   - cursor moves land where they were sent (screen→local mapping) and the
- *     DOM reflects each state: Thinking pulse, click ripples, typing bubble
- *     with live text preview, key-combo label;
+ *   - cursor moves land where they were sent (buffer-offset screen→local
+ *     mapping) and the DOM reflects each state: Thinking pulse, click ripples,
+ *     typing bubble with live text preview, key-combo label;
+ *   - the cursor sitting ON the app's own edge is NOT clipped, and the status
+ *     pill flips/clamps near a corner instead of being sheared off;
+ *   - the overlay follows a controlled-window move LIVE (fast tracker + a
+ *     synchronous retarget), not snapping only when the drag is released;
  *   - screenshots of every state are saved for human review (the cursor +
  *     bubble must look premium: gradient fill, white outline, glow).
  *
@@ -93,14 +98,33 @@ try {
   if (winInfo.focusable) fail('overlay must be non-focusable (it stole focusability)');
   if (winInfo.focused) fail('overlay took focus — it must never');
   if (!winInfo.visible) fail('overlay not visible after overlay-show');
+  // The window is the tracked rect PLUS a symmetric buffer margin on every side
+  // (so the cursor can protrude past the app edge and the pill can render fully).
   const b = winInfo.bounds;
-  if (b.x !== RECT.x || b.y !== RECT.y || b.width !== RECT.w || b.height !== RECT.h) {
-    fail(`overlay bounds ${JSON.stringify(b)} != requested ${JSON.stringify(RECT)}`);
+  const bufX = (b.width - RECT.w) / 2;
+  const bufY = (b.height - RECT.h) / 2;
+  if (bufX <= 0 || bufY <= 0) {
+    fail(`overlay window ${JSON.stringify(b)} is not larger than target ${JSON.stringify(RECT)}`);
   }
-  console.log('window checks OK:', JSON.stringify(winInfo));
+  if (bufX !== bufY) fail(`overlay buffer asymmetric: x=${bufX} y=${bufY}`);
+  const BUFFER = bufX;
+  // Centres must align (buffer applied symmetrically), so the padding truly
+  // surrounds the tracked window rather than shifting it.
+  if (b.x + b.width / 2 !== RECT.x + RECT.w / 2 || b.y + b.height / 2 !== RECT.y + RECT.h / 2) {
+    fail(`overlay not centred on target: ${JSON.stringify(b)} vs ${JSON.stringify(RECT)}`);
+  }
+  if (b.x !== RECT.x - BUFFER || b.y !== RECT.y - BUFFER) {
+    fail(`overlay origin ${JSON.stringify(b)} != target-minus-buffer(${BUFFER})`);
+  }
+  console.log(`window checks OK (buffer=${BUFFER}):`, JSON.stringify(winInfo));
 
   const info = await dbg('overlay-info');
   if (info.result?.visible !== true) fail('overlay-info says not visible');
+  // overlay-info reports the RAW tracked rect (not the padded window).
+  const ib = info.result?.bounds;
+  if (!ib || ib.x !== RECT.x || ib.y !== RECT.y || ib.w !== RECT.w || ib.h !== RECT.h) {
+    fail(`overlay-info bounds ${JSON.stringify(ib)} != tracked rect ${JSON.stringify(RECT)}`);
+  }
 
   // Deterministic screenshots: paint a backdrop (the real window is
   // transparent) and pin the caret/dots animations where useful.
@@ -122,8 +146,10 @@ try {
     text: document.getElementById('btext').textContent,
     dots: document.getElementById('bdots').classList.contains('on'),
   }));
-  if (domThinking.transform !== 'translate3d(320px, 200px, 0px)') {
-    fail(`cursor transform wrong: ${domThinking.transform} (screen→local mapping broken)`);
+  // Local mapping is offset by the buffer: screen (RECT.x+320) → local 320+BUFFER.
+  const expectXform = `translate3d(${320 + BUFFER}px, ${200 + BUFFER}px, 0px)`;
+  if (domThinking.transform !== expectXform) {
+    fail(`cursor transform ${domThinking.transform} != ${expectXform} (mapping/buffer broken)`);
   }
   if (domThinking.wrapOpacity !== '1') fail('cursor not fully visible while resting');
   if (!domThinking.bubbleShown || !domThinking.pulse || domThinking.text !== 'Thinking') {
@@ -177,6 +203,124 @@ try {
   await dbg('overlay-cursor', { x: RECT.x + 520, y: RECT.y + 260 });
   await sleep(500);
   await overlay.screenshot({ path: path.join(OUT_DIR, '06-thinking-dark.png') });
+
+  // ── buffer: cursor AT the app edge must not clip ──────────────────────────
+  // Reset the backdrop light and drive the cursor to the tracked window's
+  // bottom-right CORNER (a screen point on the app's own edge). With the buffer
+  // margin its whole glyph must still render inside the padded window.
+  await overlay.evaluate(() => {
+    document.body.style.background = '#eceef2';
+  });
+  await dbg('overlay-status', { status: 'thinking' });
+  await dbg('overlay-cursor', { x: RECT.x + RECT.w, y: RECT.y + RECT.h });
+  await sleep(450);
+  const edge = await overlay.evaluate(() => {
+    const c = document.getElementById('cursor').getBoundingClientRect();
+    return {
+      innerW: window.innerWidth,
+      innerH: window.innerHeight,
+      rect: { left: c.left, top: c.top, right: c.right, bottom: c.bottom },
+    };
+  });
+  await overlay.screenshot({ path: path.join(OUT_DIR, '07-cursor-at-edge.png') });
+  if (
+    edge.rect.left < 0 ||
+    edge.rect.top < 0 ||
+    edge.rect.right > edge.innerW ||
+    edge.rect.bottom > edge.innerH
+  ) {
+    fail(
+      `cursor glyph clipped at edge: ${JSON.stringify(edge.rect)} outside ` +
+        `0..${edge.innerW} x 0..${edge.innerH}`,
+    );
+  }
+
+  // ── pill flips / clamps near the edge (never sheared off) ─────────────────
+  // The cursor near the right+bottom edge would push the pill (default: right &
+  // below the cursor) out of view; it must flip to the other side and stay
+  // fully inside the padded window.
+  await dbg('overlay-typing', { text: 'Reticulating the edge-anchored pill preview text' });
+  await sleep(300);
+  const pill = await overlay.evaluate(() => {
+    const bub = document.getElementById('bubble');
+    const r = bub.getBoundingClientRect();
+    return {
+      flipX: bub.classList.contains('flip-x'),
+      flipY: bub.classList.contains('flip-y'),
+      innerW: window.innerWidth,
+      innerH: window.innerHeight,
+      rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom },
+    };
+  });
+  await overlay.screenshot({ path: path.join(OUT_DIR, '08-pill-flipped-edge.png') });
+  if (!pill.flipX && !pill.flipY) {
+    fail(`pill did not flip near the corner: ${JSON.stringify(pill)}`);
+  }
+  if (
+    pill.rect.left < -1 ||
+    pill.rect.top < -1 ||
+    pill.rect.right > pill.innerW + 1 ||
+    pill.rect.bottom > pill.innerH + 1
+  ) {
+    fail(`pill not clamped inside padded window: ${JSON.stringify(pill)}`);
+  }
+
+  // ── live tracking: the overlay follows a window move with NO snap lag ──────
+  // Drive the REAL tracking loop off a synthetic bounds source (no TCC / real
+  // app). The window must reposition to the target rect + buffer.
+  const A = { x: 300, y: 260, w: 760, h: 520 };
+  const winBounds = () =>
+    app.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows().find((x) =>
+        x.webContents.getURL().includes('overlay.html'),
+      );
+      return w ? w.getBounds() : null;
+    });
+  await dbg('overlay-fake-control', A);
+  await sleep(120);
+  let wb = await winBounds();
+  const expectPadded = (r) => ({
+    x: r.x - BUFFER,
+    y: r.y - BUFFER,
+    width: r.w + BUFFER * 2,
+    height: r.h + BUFFER * 2,
+  });
+  const eqBounds = (got, want) =>
+    got &&
+    got.x === want.x &&
+    got.y === want.y &&
+    got.width === want.width &&
+    got.height === want.height;
+  if (!eqBounds(wb, expectPadded(A))) {
+    fail(`fake-control: window ${JSON.stringify(wb)} != ${JSON.stringify(expectPadded(A))}`);
+  }
+
+  // Move the synthetic window; the fast tracker must catch up within a few
+  // ticks (this is the drag-follow that used to snap only on release).
+  const B = { x: 520, y: 420, w: 760, h: 520 };
+  await dbg('overlay-fake-move', B);
+  let followed = false;
+  for (let i = 0; i < 40 && !followed; i++) {
+    await sleep(20);
+    wb = await winBounds();
+    followed = eqBounds(wb, expectPadded(B));
+  }
+  if (!followed) {
+    fail(
+      `tracker did not follow the moved window: ${JSON.stringify(wb)} != ${JSON.stringify(expectPadded(B))}`,
+    );
+  }
+  console.log('live tracking OK: overlay followed the moved window');
+
+  // Synchronous retarget (the tracker's move path) lands in the SAME call — no
+  // 'reset' round-trip lag between the window moving and the overlay following.
+  const C = { x: 140, y: 180, w: 900, h: 600 };
+  await dbg('overlay-retarget', C);
+  wb = await winBounds();
+  if (!eqBounds(wb, expectPadded(C))) {
+    fail(`retarget not synchronous: ${JSON.stringify(wb)} != ${JSON.stringify(expectPadded(C))}`);
+  }
+  console.log('synchronous retarget OK: overlay followed in the same tick');
 
   // ── hide puts the phantom away ────────────────────────────────────────────
   await dbg('overlay-hide');

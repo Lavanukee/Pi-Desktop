@@ -24,6 +24,7 @@ import { formatMacSnapshot } from './format.js';
 import type { MacConsentGate } from './permissions.js';
 import { createMacConsentGate } from './permissions.js';
 import type { MacActAck, MacLaunchAck, MacSnapshot, MacTccStatus } from './protocol.js';
+import { scrollDelta } from './scroll.js';
 import { createMacSessionState, type MacSessionState } from './session-state.js';
 
 export const MAC_SNAPSHOT_TOOL = 'mac_snapshot';
@@ -411,9 +412,14 @@ export function registerMacComputerUseTools(
       const blocked = await gate('mac_scroll', ctx);
       if (blocked !== null) return blocked;
       try {
+        // Resolve the signed pixel delta here (pure + unit-tested) and hand the
+        // helper explicit dx/dy — a meaningful magnitude the stepped background
+        // scroll can't swallow. direction/amount ride along for logging + as the
+        // helper's legacy fallback.
+        const { dx, dy } = scrollDelta(params.direction, params.amount);
         const ack = await bridge.request<{ ok: boolean; background?: boolean }>(
           'scroll',
-          withTarget({ direction: params.direction, amount: params.amount }),
+          withTarget({ direction: params.direction, amount: params.amount, dx, dy }),
         );
         return textResult(`Scrolled ${params.direction}. Re-snapshot to see new elements.`, {
           action: 'scroll',

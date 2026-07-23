@@ -16,18 +16,35 @@ export interface OverlayRect {
   readonly h: number;
 }
 
-/** Integer Electron bounds for the overlay window covering `rect` exactly. */
-export function overlayBoundsFor(rect: OverlayRect): {
+/**
+ * Extra transparent margin (points) the overlay window carries on EVERY side
+ * beyond the tracked app window. It buys two things the old "exactly the window
+ * bounds" sizing couldn't: the phantom cursor can protrude PAST the app's edge
+ * (an action a hair outside the frame, or the arrow's glow at the very border)
+ * without being clipped, and the status pill has room to render fully / flip
+ * near a corner instead of being sheared off. All screen→local mapping is
+ * offset by this buffer so a point on the app's own edge lands `buffer` px in
+ * from the padded window's edge. 56pt clears the whole 34×40 cursor glyph
+ * (which reaches ~35px below its tip) at any edge. */
+export const OVERLAY_BUFFER = 56;
+
+/** Integer Electron bounds for the overlay window covering `rect` plus the
+ * buffer margin on every side (larger than the tracked window on purpose — see
+ * OVERLAY_BUFFER). Never collapses below 1×1. */
+export function overlayBoundsFor(
+  rect: OverlayRect,
+  buffer = OVERLAY_BUFFER,
+): {
   x: number;
   y: number;
   width: number;
   height: number;
 } {
   return {
-    x: Math.round(rect.x),
-    y: Math.round(rect.y),
-    width: Math.max(1, Math.round(rect.w)),
-    height: Math.max(1, Math.round(rect.h)),
+    x: Math.round(rect.x - buffer),
+    y: Math.round(rect.y - buffer),
+    width: Math.max(1, Math.round(rect.w + buffer * 2)),
+    height: Math.max(1, Math.round(rect.h + buffer * 2)),
   };
 }
 
@@ -44,23 +61,65 @@ export function rectsDiffer(a: OverlayRect | null, b: OverlayRect | null): boole
 }
 
 /**
- * Map a global screen point into overlay-local coordinates, clamped into the
- * window with a small inset so the cursor glyph + its glow stay visible even
- * when an action lands at the very edge (or the helper reports a point a hair
- * outside the tracked rect mid-move).
+ * Map a global screen point into overlay-local coordinates. The overlay window
+ * is padded by `buffer` on every side (see OVERLAY_BUFFER), so a screen point
+ * ON the tracked window's own edge maps to `buffer` px in from the padded
+ * window edge — leaving the buffer zone free for the cursor glyph to protrude
+ * past the app's border without clipping. Clamped into the PADDED window with a
+ * tiny inset (the buffer, not the inset, is what keeps the glyph on-screen), so
+ * a point a hair outside the tracked rect mid-drag still lands cleanly.
  */
 export function toLocalPoint(
   screenX: number,
   screenY: number,
   rect: OverlayRect,
-  inset = 4,
+  buffer = OVERLAY_BUFFER,
+  inset = 2,
 ): { x: number; y: number } {
-  const maxX = Math.max(inset, rect.w - inset);
-  const maxY = Math.max(inset, rect.h - inset);
+  const paddedW = rect.w + buffer * 2;
+  const paddedH = rect.h + buffer * 2;
+  const maxX = Math.max(inset, paddedW - inset);
+  const maxY = Math.max(inset, paddedH - inset);
   return {
-    x: Math.min(maxX, Math.max(inset, Math.round(screenX - rect.x))),
-    y: Math.min(maxY, Math.max(inset, Math.round(screenY - rect.y))),
+    x: Math.min(maxX, Math.max(inset, Math.round(screenX - rect.x) + buffer)),
+    y: Math.min(maxY, Math.max(inset, Math.round(screenY - rect.y) + buffer)),
   };
+}
+
+/** Inputs the overlay-visibility rule reads each tracking tick. */
+export interface OverlayVisibilityState {
+  /** The controlled app currently owns the user's focus (its window is front). */
+  readonly controlledFrontmost: boolean;
+  /** The controlled window is present/on-screen (a bounds read succeeded — not
+   * minimized, closed, or on another space we can't see). */
+  readonly appVisible: boolean;
+  /** The model is actively driving the app right now (a tool act in flight or
+   * within the recent activity window). */
+  readonly driving: boolean;
+}
+
+/**
+ * Should the phantom cursor overlay be VISIBLE?
+ *
+ * macOS window levels are global bands, not per-app, so a click-through child
+ * window can't be truly z-sandwiched between the controlled app and whatever
+ * else is on screen. The honest scope, then, is a show/hide rule: the overlay
+ * is tied to the controlled app, never floating over an app the user has turned
+ * to on their own.
+ *
+ *   - The window must exist at all (`appVisible`) — nothing to overlay
+ *     otherwise.
+ *   - Show it while the model is DRIVING (the user should see Pi work, even
+ *     though the controlled app sits in the background — that's the whole
+ *     point of background control being visible).
+ *   - Show it when the controlled app is FRONTMOST (the user is looking right
+ *     at it).
+ *   - Otherwise tuck it away: the app is backgrounded, the model is idle, and
+ *     the user is working in something else — the overlay must not intrude.
+ */
+export function overlayShouldShow(s: OverlayVisibilityState): boolean {
+  if (!s.appVisible) return false;
+  return s.driving || s.controlledFrontmost;
 }
 
 const MODIFIER_GLYPHS: Record<string, string> = {

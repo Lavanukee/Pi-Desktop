@@ -191,16 +191,24 @@ private func doKey(_ params: [String: Any]) -> [String: Any] {
 }
 
 private func doScroll(_ params: [String: Any]) -> [String: Any] {
-  let amount = intOf(params["amount"]) ?? 300
-  let dir = (stringOf(params["direction"]) ?? "down").lowercased()
   var dx = 0
   var dy = 0
-  switch dir {
-  case "down": dy = -amount
-  case "up": dy = amount
-  case "left": dx = amount
-  case "right": dx = -amount
-  default: dy = -amount
+  // Prefer explicit signed pixel deltas from the tool layer (pure + unit-tested
+  // sign/magnitude — see mac-computer-use/scroll.ts). Fall back to computing
+  // them from direction/amount for legacy/one-shot callers.
+  if let edx = intOf(params["dx"]), let edy = intOf(params["dy"]), edx != 0 || edy != 0 {
+    dx = edx
+    dy = edy
+  } else {
+    let amount = intOf(params["amount"]) ?? 600
+    let dir = (stringOf(params["direction"]) ?? "down").lowercased()
+    switch dir {
+    case "down": dy = -amount
+    case "up": dy = amount
+    case "left": dx = amount
+    case "right": dx = -amount
+    default: dy = -amount
+    }
   }
   // With a target pid: pin the event inside the target window (its centre) and
   // deliver to that app only — background scrolling of a non-frontmost window.

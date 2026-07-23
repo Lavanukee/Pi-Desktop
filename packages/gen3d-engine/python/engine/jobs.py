@@ -38,6 +38,9 @@ def _worker_env(registry: Registry) -> dict:
     env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
     env["ATTN_BACKEND"] = "sdpa"
     env["SPARSE_ATTN_BACKEND"] = "sdpa"
+    # mage_flow's own override: forces the Qwen3-VL text encoder off
+    # flash_attention_2 on machines without flash-attn (i.e. every Mac).
+    env["VF_HF_ATTN_IMPL"] = "sdpa"
     env["PYTHONUNBUFFERED"] = "1"
     return env
 

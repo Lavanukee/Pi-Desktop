@@ -13,8 +13,14 @@ touching upstream code.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
+
+# BEFORE mage_flow imports: the Qwen3-VL text encoder defaults to
+# flash_attention_2; VF_HF_ATTN_IMPL is mage_flow's own env override for
+# machines without flash-attn (models/modules/text_encoder.py).
+os.environ.setdefault("VF_HF_ATTN_IMPL", "sdpa")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -41,23 +47,31 @@ def main() -> None:
     from mage_flow.models.modules._attn_backend import set_attn_backend
 
     set_attn_backend("sdpa")
+
+    # Step progress: wrap the DiT forward at CLASS level (one forward per
+    # denoise step with cfg=1; cond/uncond are fused). Class-level because the
+    # pipeline hands the module around internally.
+    from mage_flow.models.mage_flow import MageFlow
+
+    real_forward = MageFlow.forward
+    state = {"step": 0}
+
+    def counting_forward(self, *fargs, **fkwargs):
+        state["step"] += 1
+        step = min(state["step"], args.steps)
+        progress(STAGE, f"Denoising (step {step}/{args.steps})", step, args.steps)
+        return real_forward(self, *fargs, **fkwargs)
+
+    MageFlow.forward = counting_forward
+
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     pipe = MageFlowPipeline.from_pretrained(args.model, device=device)
+    # MageFlow.__init__ re-selects the backend from its config's attn_type
+    # (default "flash2" — models/mage_flow.py:160), clobbering the call above;
+    # force sdpa again AFTER load. Without this the first denoise step dies
+    # with ModuleNotFoundError: flash_attn (verified here).
+    set_attn_backend("sdpa")
     progress(STAGE, "Model loaded — generating…")
-
-    # Exact step progress: the DiT forward runs once per denoise step (cfg 1).
-    transformer = getattr(pipe, "transformer", None) or getattr(pipe, "model", None)
-    if transformer is not None:
-        real_forward = transformer.forward
-        state = {"step": 0}
-
-        def counting_forward(*fargs, **fkwargs):
-            state["step"] += 1
-            step = min(state["step"], args.steps)
-            progress(STAGE, f"Denoising (step {step}/{args.steps})", step, args.steps)
-            return real_forward(*fargs, **fkwargs)
-
-        transformer.forward = counting_forward
 
     images = pipe.generate(
         [args.prompt],

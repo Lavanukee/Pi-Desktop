@@ -58,9 +58,12 @@ ROUTER = _StageRouter()
 def patch_tqdm() -> None:
     """Replace tqdm.tqdm with a shim that forwards .update() to progress().
     Must run before any `from tqdm import tqdm` in library code."""
+    import time
+
     import tqdm as tqdm_module
 
     real_tqdm = tqdm_module.tqdm
+    last_emit = [0.0]
 
     class EmittingTqdm(real_tqdm):  # type: ignore[misc,valid-type]
         def update(self, n: int = 1):  # noqa: ANN001
@@ -69,7 +72,12 @@ def patch_tqdm() -> None:
                 total = int(self.total) if self.total else None
                 stage, message = ROUTER.resolve(self.desc or "")
                 if total is not None and total > 1:
-                    progress(stage, f"{message} ({int(self.n)}/{total})", int(self.n), total)
+                    # Rate-limit: fast loops (e.g. "Loading weights", 415 items)
+                    # would flood the event stream; always emit the final tick.
+                    now = time.monotonic()
+                    if int(self.n) >= total or now - last_emit[0] >= 0.25:
+                        last_emit[0] = now
+                        progress(stage, f"{message} ({int(self.n)}/{total})", int(self.n), total)
             except Exception:  # noqa: BLE001 — progress must never break the run
                 pass
             return result

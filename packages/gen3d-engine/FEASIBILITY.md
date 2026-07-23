@@ -8,7 +8,7 @@ Date: 2026-07-23. Everything below was tested here unless explicitly marked othe
 
 | Model | Repo (as downloaded) | On-disk size | MPS verdict | Verified end-to-end here |
 |---|---|---|---|---|
-| TRELLIS-2 (4B) | `microsoft/TRELLIS.2-4B` + aux (below) | 18.0 GB total | **YES** via [shivampkumar/trellis-mac](https://github.com/shivampkumar/trellis-mac) (Metal port of flexgemm/o-voxel/nvdiffrast; SDPA attention) | **YES** — real GLB from a real image at `512` (see below) |
+| TRELLIS-2 (4B) | `microsoft/TRELLIS.2-4B` + aux (below) | 18.0 GB total | **YES** via [shivampkumar/trellis-mac](https://github.com/shivampkumar/trellis-mac) (Metal port of flexgemm/o-voxel/nvdiffrast; SDPA attention) | **YES** — real GLB from a real image at `512`: 3 m 15 s wall with Metal backends (99.6 s gen + 11 s bake), 7 m 40 s on the no-Metal fallback; 209 k verts / 200 k tris, PBR basecolor+MR textures, GLB validates |
 | Mage-Flow Turbo | `microsoft/Mage-Flow-Turbo` | 17.5 GB | **YES (expected)** — pure PyTorch, ships a first-class SDPA fallback (`_attn_backend.py`), pipeline uses device-generic autocast; flash-attn is optional | wired; verification status in the engine report |
 | Hunyuan Paint | `tencent/Hunyuan3D-2.1` (paintpbr subset ONLY) | **6.9 GB** (not 14.9) | **RISKY** — [Brainkeys/Hunyuan3D-2.1-mac](https://github.com/Brainkeys/Hunyuan3D-2.1-mac) removes the CUDA rasterizer, but community reports show heavy unified-memory pressure on 24 GB | scaffolded, honest errors on failure |
 | CubePart | `Roblox/cubepart` | 9.9 GB | **LIKELY** — pure PyTorch (adapted Qwen-Image/DINOv2 code, `--device` is a plain string), no custom kernels found | wired; verification status in the engine report |

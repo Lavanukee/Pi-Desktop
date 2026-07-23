@@ -23,7 +23,8 @@ import type { MacBridge } from './bridge-client.js';
 import { formatMacSnapshot } from './format.js';
 import type { MacConsentGate } from './permissions.js';
 import { createMacConsentGate } from './permissions.js';
-import type { MacActAck, MacSnapshot, MacTccStatus } from './protocol.js';
+import type { MacActAck, MacLaunchAck, MacSnapshot, MacTccStatus } from './protocol.js';
+import { createMacSessionState, type MacSessionState } from './session-state.js';
 
 export const MAC_SNAPSHOT_TOOL = 'mac_snapshot';
 export const MAC_CLICK_TOOL = 'mac_click';
@@ -66,6 +67,8 @@ export interface MacComputerUseOptions {
   readonly bridge: MacBridge | null;
   /** The consent/denylist gate; defaults to a fresh session gate. */
   readonly consent?: MacConsentGate;
+  /** The controlled-app state machine; defaults to a fresh one (test seam). */
+  readonly session?: MacSessionState;
   readonly elementCap?: number;
 }
 
@@ -102,15 +105,14 @@ export function registerMacComputerUseTools(
   const consent = options.consent ?? createMacConsentGate();
 
   /**
-   * Per-session state: the pid of the app most recently snapshotted BY THIS
-   * extension instance. Each pi session (main agent or a spawned subagent) has
-   * its own extension instance → its own `lastPid`, which it stamps onto every
-   * click/type. The helper namespaces its index→element map by pid, so two
-   * concurrent sessions driving DIFFERENT apps never resolve each other's
-   * indices. (AX-by-pid ops are focus-free, so they also don't disturb the user
-   * or each other; the only exclusive path is the foreground CGEvent fallback.)
+   * Per-session CONTROLLED-APP state (see ./session-state.ts). Each pi session
+   * (main agent or a spawned subagent) has its own extension instance → its own
+   * controlled app, whose pid it stamps onto EVERY act. The helper namespaces
+   * its index→element map by pid (concurrent sessions driving different apps
+   * never resolve each other's indices) and delivers fallback events to that
+   * pid only (postToPid — background, no focus steal).
    */
-  const session: { lastPid?: number } = {};
+  const session = options.session ?? createMacSessionState();
 
   /** Gate helper: consent + denylist, returns null when allowed. */
   async function gate(
@@ -126,19 +128,23 @@ export function registerMacComputerUseTools(
   async function snapshot(app?: string, screenshot?: boolean): Promise<MacSnapshot> {
     if (bridge === null) throw new Error('bridge unavailable');
     const params: Record<string, unknown> = {};
+    // Explicit app wins; otherwise target the CONTROLLED app (the one the model
+    // launched / last snapshotted), falling back to frontmost only before any
+    // control exists. The resolved snapshot then takes/refreshes control.
     if (app !== undefined && app !== '') params.app = app;
+    else Object.assign(params, session.targetParams());
     if (screenshot === true) params.screenshot = true;
     params.cap = cap;
     const snap = await bridge.request<MacSnapshot>('snapshot', params);
-    if (typeof snap.pid === 'number') session.lastPid = snap.pid;
+    session.noteSnapshot(snap);
     return snap;
   }
 
-  /** Stamp the session's target pid onto an act so the helper resolves the index
-   * in the right app's namespace (concurrency-safe across apps). */
+  /** Stamp the controlled app's pid onto an act so the helper resolves the
+   * index in the right namespace AND delivers fallback events to that app only
+   * (background). */
   function withTarget(params: Record<string, unknown>): Record<string, unknown> {
-    if (session.lastPid !== undefined) params.pid = session.lastPid;
-    return params;
+    return Object.assign(params, session.targetParams());
   }
 
   // --- mac_snapshot --------------------------------------------------------
@@ -148,13 +154,17 @@ export function registerMacComputerUseTools(
     description:
       "Return a COMPACT, indexed list of the target app's actionable Accessibility elements " +
       '(buttons, fields, menus, …) plus a short summary. This is your view of the app — act on ' +
-      'elements by their [index]. Defaults to the frontmost app; pass an app name to target ' +
-      'another running app. Optionally attach a screenshot (needed for AX-opaque apps). Prefer ' +
-      'this over guessing coordinates. The first call asks the user to allow Mac control.',
+      'elements by their [index]. Defaults to the app you are CONTROLLING (the one you launched ' +
+      'or last snapshotted); pass an app name to switch control to another running app. Before ' +
+      'any app is controlled it reads the frontmost app. Optionally attach a screenshot (needed ' +
+      'for AX-opaque apps). Prefer this over guessing coordinates. The first call asks the user ' +
+      'to allow Mac control.',
     promptSnippet: 'See a Mac app as an indexed Accessibility element list',
     parameters: Type.Object({
       app: Type.Optional(
-        Type.String({ description: 'App to snapshot (name or bundle id). Default: frontmost.' }),
+        Type.String({
+          description: 'App to snapshot (name or bundle id). Default: the controlled app.',
+        }),
       ),
       screenshot: Type.Optional(
         Type.Boolean({ description: 'Also attach a screenshot image (heavier). Default false.' }),
@@ -202,9 +212,10 @@ export function registerMacComputerUseTools(
       'Click an element by its [index] from the latest mac_snapshot. This runs in the ' +
       'BACKGROUND via the element’s own Accessibility action (AXPress/AXConfirm/AXPick) — it ' +
       'does NOT move the mouse or bring the app to the front, so the user can keep working and ' +
-      'a non-frontmost app can be driven. Only elements with no usable AX action fall back to a ' +
-      'foreground synthetic click at their center. Or pass explicit x,y (screen points) to click ' +
-      'an AX-opaque surface (always foreground). A stale index triggers an auto re-snapshot + one retry.',
+      'a non-frontmost app can be driven. Elements with no usable AX action get a synthetic ' +
+      'click DELIVERED to the controlled app only (still background). Or pass explicit x,y ' +
+      '(screen points) to click an AX-opaque surface — also delivered in the background while ' +
+      'an app is controlled. A stale index triggers an auto re-snapshot + one retry.',
     promptSnippet: 'Click a Mac element by index (or x,y)',
     parameters: Type.Object({
       index: Type.Optional(Type.Number({ description: 'Element index from mac_snapshot.' })),
@@ -221,7 +232,10 @@ export function registerMacComputerUseTools(
       if (blocked !== null) return blocked;
       try {
         if (typeof params.x === 'number' && typeof params.y === 'number') {
-          const ack = await bridge.request<MacActAck>('click', { x: params.x, y: params.y });
+          const ack = await bridge.request<MacActAck>(
+            'click',
+            withTarget({ x: params.x, y: params.y }),
+          );
           await sleep(SETTLE_MS);
           return textResult(`Clicked at (${params.x}, ${params.y}).${backgroundNote(ack)}`, {
             action: 'click',
@@ -263,12 +277,12 @@ export function registerMacComputerUseTools(
     description:
       'Set text into a field by its [index] from the latest mac_snapshot. This runs in the ' +
       'BACKGROUND: the field’s Accessibility value is set directly (no focus change, no ' +
-      'keystrokes), so a non-frontmost app can be filled without disturbing the user. Set ' +
-      'submit:true to commit a search/URL field — it tries a background AX confirm and only ' +
-      'falls back to a foreground Return if the field has no confirm action. Set append:true to ' +
-      'add to existing content via keystrokes (foreground) instead of replacing it. Omit the ' +
-      'index to type into whatever is focused (foreground keystrokes). A stale index triggers an ' +
-      'auto re-snapshot + one retry.',
+      'keystrokes), so a non-frontmost app can be filled without disturbing the user. Fields ' +
+      'that reject a value set get keystrokes DELIVERED to the controlled app only (still ' +
+      'background). Set submit:true to commit a search/URL field (background AX confirm, or a ' +
+      'Return delivered to the app). Set append:true to add to existing content via keystrokes ' +
+      'instead of replacing it. Omit the index to type into whatever is focused (foreground ' +
+      'keystrokes). A stale index triggers an auto re-snapshot + one retry.',
     promptSnippet: 'Set text into a Mac field (background) + optional submit',
     parameters: Type.Object({
       text: Type.String({ description: 'Text to set/type.' }),
@@ -294,10 +308,10 @@ export function registerMacComputerUseTools(
           // SAFETY: index-less typing is FOREGROUND keystrokes into whatever holds
           // the SYSTEM focus — if we're driving a specific (likely non-frontmost)
           // app, that lands in the USER's active app, not the target. Once an app
-          // has been snapshotted, refuse and steer the model to the background
-          // AX-by-index path. (Focused typing is only allowed before any snapshot,
-          // i.e. genuine "type into the frontmost field" use.)
-          if (session.lastPid !== undefined) {
+          // is controlled, refuse and steer the model to the background
+          // AX-by-index path. (Focused typing is only allowed before any control
+          // exists, i.e. genuine "type into the frontmost field" use.)
+          if (session.controlled() !== null) {
             return errResult(
               'mac_type',
               'refusing to type without an index after snapshotting an app: index-less typing ' +
@@ -345,8 +359,9 @@ export function registerMacComputerUseTools(
     name: MAC_KEY_TOOL,
     label: 'Mac: Key',
     description:
-      'Press a key combo via synthetic keyboard events, e.g. "cmd+s", "cmd+shift+z", "return", ' +
-      '"tab", "escape", "down". Use for menu shortcuts, saving, dialogs, and navigation.',
+      'Press a key combo, e.g. "cmd+s", "cmd+shift+z", "return", "tab", "escape", "down". ' +
+      'While you are controlling an app the chord is DELIVERED to that app in the background ' +
+      '(the user’s focus is untouched). Use for menu shortcuts, saving, dialogs, and navigation.',
     promptSnippet: 'Press a Mac key combo (e.g. cmd+s)',
     parameters: Type.Object({
       combo: Type.String({
@@ -358,9 +373,18 @@ export function registerMacComputerUseTools(
       const blocked = await gate('mac_key', ctx);
       if (blocked !== null) return blocked;
       try {
-        await bridge.request('key', { combo: params.combo });
+        const ack = await bridge.request<{ ok: boolean; background?: boolean }>(
+          'key',
+          withTarget({ combo: params.combo }),
+        );
         await sleep(SETTLE_MS);
-        return textResult(`Pressed ${params.combo}.`, { action: 'key', ok: true });
+        const note =
+          ack.background === true ? ' (delivered to the controlled app, no focus change)' : '';
+        return textResult(`Pressed ${params.combo}.${note}`, {
+          action: 'key',
+          ok: true,
+          background: ack.background,
+        });
       } catch (err) {
         return errResult('mac_key', messageOf(err));
       }
@@ -371,7 +395,9 @@ export function registerMacComputerUseTools(
   pi.registerTool({
     name: MAC_SCROLL_TOOL,
     label: 'Mac: Scroll',
-    description: 'Scroll the frontmost app, then re-snapshot to reveal off-screen elements.',
+    description:
+      'Scroll the controlled app’s window (delivered in the background — the window scrolls ' +
+      'without coming to the front), then re-snapshot to reveal off-screen elements.',
     promptSnippet: 'Scroll a Mac app',
     parameters: Type.Object({
       direction: Type.Union(
@@ -385,10 +411,14 @@ export function registerMacComputerUseTools(
       const blocked = await gate('mac_scroll', ctx);
       if (blocked !== null) return blocked;
       try {
-        await bridge.request('scroll', { direction: params.direction, amount: params.amount });
+        const ack = await bridge.request<{ ok: boolean; background?: boolean }>(
+          'scroll',
+          withTarget({ direction: params.direction, amount: params.amount }),
+        );
         return textResult(`Scrolled ${params.direction}. Re-snapshot to see new elements.`, {
           action: 'scroll',
           ok: true,
+          background: ack.background,
         });
       } catch (err) {
         return errResult('mac_scroll', messageOf(err));
@@ -401,11 +431,14 @@ export function registerMacComputerUseTools(
     name: MAC_LAUNCH_TOOL,
     label: 'Mac: Launch',
     description:
-      'Launch (or focus, if already running) a Mac app by name so you can snapshot and drive it. ' +
-      'By default it opens in the BACKGROUND (no focus steal) — AX perception does not need the ' +
-      'window frontmost, so the user keeps their current app. Set foreground:true to bring it to ' +
-      'the front. Follow with mac_snapshot.',
-    promptSnippet: 'Launch or focus a Mac app (background by default)',
+      'Open a Mac app IN THE BACKGROUND and take control of it. The app never steals focus — ' +
+      'the user keeps whatever they are doing. The result IMMEDIATELY includes a fresh indexed ' +
+      'element snapshot AND a screenshot of the app’s window, so you can see exactly what it ' +
+      'looks like and act in the same turn (no separate mac_snapshot needed). The launched app ' +
+      'becomes your CONTROLLED target: every mac_click/mac_type/mac_key/mac_scroll routes to it ' +
+      'until you launch or snapshot a different app. Set foreground:true only if the user ' +
+      'explicitly asked to bring it to the front.',
+    promptSnippet: 'Open a Mac app in the background + see it immediately',
     parameters: Type.Object({
       app: Type.String({ description: 'App name to launch/focus, e.g. "TextEdit".' }),
       foreground: Type.Optional(
@@ -418,21 +451,73 @@ export function registerMacComputerUseTools(
       if (blocked !== null) return blocked;
       try {
         const background = params.foreground !== true;
-        const res = await bridge.request<{ ok: boolean; app?: string }>('launch', {
+        const ack = await bridge.request<MacLaunchAck>('launch', {
           app: params.app,
           background,
         });
+        if (!ack.ok) {
+          return errResult('mac_launch', ack.error ?? `could not launch "${params.app}"`);
+        }
+        // The bridge has already waited for the app's window to exist and
+        // resolved its pid — record CONTROL so every subsequent act routes to
+        // this app unambiguously.
+        if (typeof ack.pid === 'number') {
+          session.noteLaunched(ack.app ?? params.app, ack.pid, ack.bounds?.windowId);
+        }
         await sleep(SETTLE_MS);
-        const where = background ? 'in the background' : 'to the front';
-        return textResult(
-          `Launched/focused ${res.app ?? params.app} ${where}. Call mac_snapshot.`,
+
+        // SNAPSHOT-AFTER-OPEN CONTRACT: the model must immediately SEE the app
+        // it now controls — indexed elements + a window screenshot in THIS tool
+        // result, not a separate call it may forget to make.
+        let snapText: string;
+        let shot: MacSnapshot['screenshot'];
+        try {
+          const snap =
+            typeof ack.pid === 'number'
+              ? await snapshot(undefined, true) // targets the controlled pid
+              : await snapshot(params.app, true);
+          snapText = formatMacSnapshot(snap);
+          shot = snap.screenshot;
+        } catch (err) {
+          snapText = `(snapshot after launch failed: ${messageOf(err)} — call mac_snapshot)`;
+        }
+
+        const where = background
+          ? 'in the background — it did NOT take focus; the user keeps their current app'
+          : 'to the front';
+        const control = session.describe();
+        const hasImage = shot?.base64 !== undefined && shot.base64 !== '';
+        const shotNote = hasImage
+          ? 'Its window screenshot is attached below.'
+          : '(window screenshot unavailable — Screen Recording may not be granted; act via the element list.)';
+        const content: AgentToolResult<MacDetails>['content'] = [
           {
+            type: 'text',
+            text:
+              `Launched ${ack.app ?? params.app} ${where}. ${control} All mac_* actions now ` +
+              `target it automatically. ${shotNote}\n\n${snapText}`,
+          },
+        ];
+        if (hasImage && shot !== undefined) {
+          content.push({
+            type: 'image',
+            data: shot.base64 ?? '',
+            mimeType: shot.mimeType ?? 'image/png',
+          });
+        }
+        return {
+          content,
+          details: {
             action: 'launch',
             ok: true,
-            app: res.app ?? params.app,
+            app: ack.app ?? params.app,
+            pid: ack.pid,
             background,
+            controlled: session.controlled() !== null,
+            snapshot: true,
+            screenshot: hasImage,
           },
-        );
+        };
       } catch (err) {
         return errResult('mac_launch', messageOf(err));
       }

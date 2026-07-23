@@ -160,16 +160,90 @@ func postScroll(dx: Int, dy: Int) {
   )?.post(tap: .cghidEventTap)
 }
 
+// ── pid-targeted posting (the BACKGROUND input path) ─────────────────────────
+//
+// `CGEvent.postToPid` delivers an event DIRECTLY into one process's event queue,
+// bypassing the window server's frontmost routing entirely: the target app
+// receives the click/keystroke while the USER's app keeps the real focus and the
+// real cursor never moves. This is what lets a controlled app stay in the
+// background for its whole session. These functions deliberately do NOT take the
+// coordinate lock — they touch neither the shared cursor nor the system focus,
+// so they are safe to interleave with the user's own input and with each other.
+// (Same TCC gate as posting to the HID tap: the Accessibility grant.)
+
+/// Synthetic left click delivered to `pid` only. Coordinates stay GLOBAL screen
+/// points — the receiving app hit-tests them against its own windows.
+func postClickToPid(_ pid: pid_t, x: Double, y: Double) {
+  let src = eventSource()
+  let pt = CGPoint(x: x, y: y)
+  CGEvent(mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: pt, mouseButton: .left)?
+    .postToPid(pid)
+  CGEvent(mouseEventSource: src, mouseType: .leftMouseDown, mouseCursorPosition: pt, mouseButton: .left)?
+    .postToPid(pid)
+  CGEvent(mouseEventSource: src, mouseType: .leftMouseUp, mouseCursorPosition: pt, mouseButton: .left)?
+    .postToPid(pid)
+}
+
+/// Type a unicode string into `pid`'s key window without the app being
+/// frontmost (unicode injection per character, like `typeText`).
+func typeTextToPid(_ pid: pid_t, _ text: String) {
+  let src = eventSource()
+  for ch in text {
+    let s = String(ch)
+    var utf16 = Array(s.utf16)
+    if let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true) {
+      down.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+      down.postToPid(pid)
+    }
+    if let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) {
+      up.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+      up.postToPid(pid)
+    }
+  }
+}
+
+/// Post a key chord (modifiers + one key) to `pid` only. Unlike the HID tap,
+/// pid delivery honors the event's own `.flags`, so chords land correctly.
+func postKeyToPid(_ pid: pid_t, flags: CGEventFlags, key: CGKeyCode) {
+  let src = eventSource()
+  if let down = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: true) {
+    down.flags = flags
+    down.postToPid(pid)
+  }
+  if let up = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: false) {
+    up.flags = flags
+    up.postToPid(pid)
+  }
+}
+
+/// Scroll `pid`'s content without focus: the event's location is pinned to a
+/// point INSIDE the target window (its centre) so the app's hit-test finds a
+/// scrollable view even though the real cursor is elsewhere.
+func postScrollToPid(_ pid: pid_t, dx: Int, dy: Int, at pt: CGPoint) {
+  let src = eventSource()
+  guard
+    let ev = CGEvent(
+      scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2, wheel1: Int32(dy),
+      wheel2: Int32(dx), wheel3: 0)
+  else { return }
+  ev.location = pt
+  ev.postToPid(pid)
+}
+
 /// AX-FIRST press. Try the element's own focus-free AX actions in preference
 /// order (AXPress → AXConfirm → AXPick) — these fire the control WITHOUT moving
 /// the cursor or changing which app is frontmost, so the user can keep working
-/// and a background app can be driven. Only if the element exposes no usable AX
-/// action do we fall back to a synthetic coordinate click (foreground: it uses
-/// the shared cursor, so it is serialized under the coordinate lock).
+/// and a background app can be driven. If the element exposes no usable AX
+/// action, fall back to a synthetic coordinate click: delivered to `targetPid`
+/// (still background, via postToPid) when the caller knows which app owns the
+/// element, else posted at the shared cursor (foreground — serialized under the
+/// coordinate lock).
 ///
-/// Returns the mode that ran and whether it stayed in the BACKGROUND (true = AX,
-/// no focus steal; false = coordinate fallback, foreground).
-func performPress(_ el: AXUIElement, x: Double, y: Double) -> (mode: String, background: Bool) {
+/// Returns the mode that ran and whether it stayed in the BACKGROUND (true = no
+/// focus steal; false = the shared-cursor fallback, foreground).
+func performPress(_ el: AXUIElement, x: Double, y: Double, targetPid: pid_t?) -> (
+  mode: String, background: Bool
+) {
   let available = Set(axActions(el))
   // (reported name as axActions lists it, CFString the perform call needs)
   let axChain: [(name: String, action: CFString)] = [
@@ -181,6 +255,10 @@ func performPress(_ el: AXUIElement, x: Double, y: Double) -> (mode: String, bac
     if AXUIElementPerformAction(el, step.action) == .success {
       return (step.name, true)
     }
+  }
+  if let pid = targetPid {
+    postClickToPid(pid, x: x, y: y)
+    return ("coordToPid", true)
   }
   withCoordinateLock { postClick(x: x, y: y) }
   return ("coord", false)

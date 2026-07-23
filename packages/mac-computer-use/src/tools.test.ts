@@ -242,9 +242,11 @@ describe('registerMacComputerUseTools', () => {
     const bridge = new FakeBridge().on('launch', () => ({ ok: true, app: 'Maps' }));
     const tools = collectTools(bridge);
     await run(tools, 'mac_launch', { app: 'Maps' });
-    expect(bridge.calls[0]).toMatchObject({ method: 'launch', params: { background: true } });
     await run(tools, 'mac_launch', { app: 'Maps', foreground: true });
-    expect(bridge.calls[1]).toMatchObject({ method: 'launch', params: { background: false } });
+    // (each launch also attempts its immediate snapshot — filter to launches)
+    const launches = bridge.calls.filter((c) => c.method === 'launch');
+    expect(launches[0]).toMatchObject({ method: 'launch', params: { background: true } });
+    expect(launches[1]).toMatchObject({ method: 'launch', params: { background: false } });
   });
 
   it('key forwards the combo', async () => {
@@ -301,5 +303,110 @@ describe('registerMacComputerUseTools', () => {
     expect(details(r).ok).toBe(false);
     expect(details(r).error).toContain('denylist');
     expect(bridge.countOf('launch')).toBe(0);
+  });
+
+  // --- the controlled-app loop (snapshot-after-open contract) ----------------
+
+  const LAUNCH_ACK = {
+    ok: true,
+    app: 'TextEdit',
+    pid: 4242,
+    bounds: { ok: true, pid: 4242, x: 10, y: 20, w: 800, h: 600, windowId: 99 },
+  };
+
+  it('launch returns a fresh snapshot AND a window screenshot in the SAME tool result', async () => {
+    const bridge = new FakeBridge()
+      .on('launch', () => LAUNCH_ACK)
+      .on('snapshot', () => ({
+        ...SNAP([
+          {
+            index: 1,
+            role: 'AXTextArea',
+            name: 'text entry area',
+            bbox: { x: 1, y: 2, w: 3, h: 4 },
+            editable: true,
+          },
+        ]),
+        screenshot: { path: '/tmp/win.png', base64: 'IMGB64', mimeType: 'image/png' },
+      }));
+    const tools = collectTools(bridge);
+    const r = await run(tools, 'mac_launch', { app: 'TextEdit' });
+
+    // The immediate snapshot targeted the launched pid, with a screenshot.
+    const snapCall = bridge.calls.find((c) => c.method === 'snapshot');
+    expect(snapCall?.params).toMatchObject({ pid: 4242, screenshot: true });
+
+    // The ONE result carries: launch note + controlled-app statement + indexed
+    // elements (text) + the window screenshot (image).
+    const text = String(r.content[0]?.type === 'text' ? r.content[0].text : '');
+    expect(text).toContain('did NOT take focus');
+    expect(text).toContain('controlling "TextEdit"');
+    expect(text).toContain('[1] AXTextArea');
+    const img = r.content.find((c) => c.type === 'image');
+    expect(img).toMatchObject({ type: 'image', data: 'IMGB64', mimeType: 'image/png' });
+
+    expect(details(r)).toMatchObject({
+      action: 'launch',
+      ok: true,
+      app: 'TextEdit',
+      pid: 4242,
+      background: true,
+      controlled: true,
+      snapshot: true,
+      screenshot: true,
+    });
+  });
+
+  it('after launch, EVERY act stamps the controlled pid (unambiguous routing)', async () => {
+    const bridge = new FakeBridge()
+      .on('launch', () => LAUNCH_ACK)
+      .on('snapshot', () => SNAP([], 4242))
+      .on('click', () => ({ found: true, mode: 'AXPress', background: true }))
+      .on('key', () => ({ ok: true, background: true }))
+      .on('scroll', () => ({ ok: true, background: true }));
+    const tools = collectTools(bridge);
+    await run(tools, 'mac_launch', { app: 'TextEdit' });
+    await run(tools, 'mac_click', { index: 2 });
+    await run(tools, 'mac_click', { x: 100, y: 200 }); // coordinate click too
+    await run(tools, 'mac_key', { combo: 'cmd+s' });
+    await run(tools, 'mac_scroll', { direction: 'down' });
+    const acts = bridge.calls.filter((c) => c.method !== 'launch' && c.method !== 'snapshot');
+    expect(acts).toHaveLength(4);
+    for (const act of acts) expect(act.params).toMatchObject({ pid: 4242 });
+  });
+
+  it('a default (app-less) snapshot targets the CONTROLLED app, not frontmost', async () => {
+    const bridge = new FakeBridge()
+      .on('launch', () => LAUNCH_ACK)
+      .on('snapshot', () => SNAP([], 4242));
+    const tools = collectTools(bridge);
+    await run(tools, 'mac_launch', { app: 'TextEdit' });
+    await run(tools, 'mac_snapshot', {});
+    const second = bridge.calls.filter((c) => c.method === 'snapshot')[1];
+    expect(second?.params).toMatchObject({ pid: 4242 });
+    expect(second?.params?.app).toBeUndefined();
+  });
+
+  it('launch degrades to text-only (still ok) when the post-open snapshot fails', async () => {
+    const bridge = new FakeBridge().on('launch', () => LAUNCH_ACK); // no snapshot handler
+    const tools = collectTools(bridge);
+    const r = await run(tools, 'mac_launch', { app: 'TextEdit' });
+    expect(details(r).ok).toBe(true);
+    const text = String(r.content[0]?.type === 'text' ? r.content[0].text : '');
+    expect(text).toContain('snapshot after launch failed');
+    expect(r.content.find((c) => c.type === 'image')).toBeUndefined();
+  });
+
+  it('a failed launch surfaces the bridge error as a structured refusal', async () => {
+    const bridge = new FakeBridge().on('launch', () => ({
+      ok: false,
+      app: 'NopeApp',
+      error: 'no window appeared for "NopeApp"',
+    }));
+    const tools = collectTools(bridge);
+    const r = await run(tools, 'mac_launch', { app: 'NopeApp' });
+    expect(details(r).ok).toBe(false);
+    expect(details(r).error).toContain('no window appeared');
+    expect(bridge.countOf('snapshot')).toBe(0); // no phantom snapshot attempt
   });
 });

@@ -209,6 +209,10 @@ struct SnapshotResult {
   /// CGWindowID of the snapshotted window (when the root is a window), so a
   /// focus-free per-window screenshot can target exactly it.
   let windowId: CGWindowID?
+  /// The snapshotted window's frame in GLOBAL screen points (top-left origin),
+  /// when the root is a real window — the cursor overlay positions itself over
+  /// exactly this rect. Nil when the root fell back to the app element.
+  let windowBounds: CGRect?
 }
 
 /// Walk the AX tree of `target` and return a COMPACT, INDEXED element list
@@ -221,6 +225,7 @@ func collectSnapshot(target: SnapshotTarget, cap: Int) -> SnapshotResult? {
   let root = rootFor(app: app)
   let windowTitle = axString(root, kAXTitleAttribute) ?? ""
   let windowId = axWindowID(root)
+  let windowBounds = windowFrame(root)
   let bounds = mainDisplayBounds()
 
   struct Cand {
@@ -298,7 +303,41 @@ func collectSnapshot(target: SnapshotTarget, cap: Int) -> SnapshotResult? {
   return SnapshotResult(
     elements: elements, appName: resolved.name, windowTitle: windowTitle,
     truncated: ordered.count > elements.count, total: ordered.count,
-    pid: resolved.pid, windowId: windowId)
+    pid: resolved.pid, windowId: windowId, windowBounds: windowBounds)
+}
+
+/// Frame of an AX window element in global screen points, or nil when the
+/// element has no position/size (an app element with no window yet).
+func windowFrame(_ el: AXUIElement) -> CGRect? {
+  guard let pos = axPoint(el, kAXPositionAttribute), let size = axSize(el, kAXSizeAttribute),
+    size.width > 1, size.height > 1
+  else { return nil }
+  return CGRect(origin: pos, size: size)
+}
+
+/// Live window-geometry probe for one target: frame + windowId + whether the
+/// app is frontmost. This is what the app's overlay polls to TRACK the
+/// controlled window (moves/resizes) and what the no-focus-steal probe asserts
+/// on. Returns nil when the target has no resolvable window (not running / no
+/// window yet — the launch poller treats that as "keep waiting").
+func windowBoundsInfo(target: SnapshotTarget) -> [String: Any]? {
+  guard let resolved = resolveTargetPid(target) else { return nil }
+  let app = AXUIElementCreateApplication(resolved.pid)
+  let root = rootFor(app: app)
+  guard let frame = windowFrame(root) else { return nil }
+  var d: [String: Any] = [
+    "ok": true,
+    "app": resolved.name,
+    "pid": Int(resolved.pid),
+    "x": Int(frame.origin.x.rounded()),
+    "y": Int(frame.origin.y.rounded()),
+    "w": Int(frame.width.rounded()),
+    "h": Int(frame.height.rounded()),
+    "frontmost": NSWorkspace.shared.frontmostApplication?.processIdentifier == resolved.pid,
+    "windowTitle": axString(root, kAXTitleAttribute) ?? "",
+  ]
+  if let wid = axWindowID(root) { d["windowId"] = Int(wid) }
+  return d
 }
 
 /// Serialize a snapshot element (minus the live AXUIElement) for the wire.
@@ -331,6 +370,12 @@ func snapshotResultDict(_ snap: SnapshotResult, screenshot: [String: Any]?) -> [
     ],
   ]
   if let wid = snap.windowId { result["windowId"] = Int(wid) }
+  if let wb = snap.windowBounds {
+    result["windowBounds"] = [
+      "x": Int(wb.origin.x.rounded()), "y": Int(wb.origin.y.rounded()),
+      "w": Int(wb.width.rounded()), "h": Int(wb.height.rounded()),
+    ]
+  }
   if let shot = screenshot { result["screenshot"] = shot }
   return result
 }

@@ -91,6 +91,18 @@ with hunyuan paint" — the auto-texturing is real but it is TRELLIS.2's own;
 wiring Paint into generate() would only add an unverified 6.9 GB dependency to
 the happy path.
 
+## Verified full chain (through the real sidecar, 2026-07-23)
+
+`POST /generate {kind:"text", prompt:"a small ceramic teapot, glossy blue
+glaze…", resolution:"low", texture:true}` on this machine produced, in order:
+a photoreal prompt image (Mage, 4 step events) → the UNTEXTURED geometry GLB
+pushed while texturing continued (1,265,748 triangles) → the Metal-baked
+textured GLB (199,150 tris, basecolor+MR). 56 job events, 42 with real step
+counts; both GLBs validate structurally; artifacts under
+`~/.pi/desktop/sandbox/gen3d/<jobId>/`. The retopo stage op (AutoRemesher CLI)
+and the download→provision flow (dmg → hdiutil → stamp → catalog-changed)
+were verified through the sidecar the same way.
+
 ## Progress + previews honesty
 
 - Per-step progress is real: every pipeline loops through tqdm (TRELLIS samplers

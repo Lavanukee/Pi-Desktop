@@ -10,6 +10,7 @@
 
 import type { JSX, ReactNode } from 'react';
 import { lazy, Suspense, useRef, useState } from 'react';
+import { BlendGraph } from './BlendGraph';
 import { EXPORT_FORMATS, type ExportFormat } from './data';
 import { GenProgressCard } from './gen-ui';
 import {
@@ -458,8 +459,13 @@ export function Viewport(): JSX.Element {
   const modal = useTripoStore((s) => s.modal);
   const pipelineStage = useTripoStore((s) => s.pipelineStage);
   const stats = useTripoStore((s) => s.stats);
+  const tool = useTripoStore((s) => s.tool);
+  const graphOpen = useTripoStore((s) => s.graphOpen);
   const gizmoRef = useRef<HTMLDivElement>(null);
   const [flash, setFlash] = useState(0);
+
+  // The animation state machine editor takes over the whole viewport.
+  const showGraph = tool === 'animate' && graphOpen;
 
   return (
     <div className="tp-viewport" data-testid="tp-viewport">
@@ -505,6 +511,9 @@ export function Viewport(): JSX.Element {
 
       {/* Live engine-generation readout (staged chips + progress + message). */}
       <GenProgressCard />
+
+      {/* The animation state machine editor overlays the whole viewport. */}
+      {showGraph ? <BlendGraph /> : null}
 
       {modal === 'export' ? <ExportDialog /> : null}
       {modal === 'help' ? <HelpModal /> : null}

@@ -199,15 +199,41 @@ try {
   await shot('05-stage-download');
   await page.click('[data-testid="tp-download-back"]');
 
-  // ── rig + animate (SkinTokens / ARDY named; preset previews are videos) ──
+  // ── rig + animate (SkinTokens / ARDY named; motion library previews) ────
   await page.click('[data-testid="tp-rail-animate"]');
   const animText = await page.textContent('[data-testid="tp-panel-animate"]');
   assert(animText.includes('SkinTokens') && animText.includes('ARDY'), 'rig/anim engines named');
   assert(
     (await page.locator('[data-testid="tp-anim-grid"] video.tp-anim-video').count()) >= 8,
-    'animation presets preview as real videos',
+    'motion library previews as real videos',
   );
   await shot('06-animate');
+
+  // ── ARDY: author a motion + build the state machine (motion matching) ────
+  await page.fill('[data-testid="tp-motion-prompt"]', 'a slow cautious crouch-walk');
+  await page.click('[data-testid="tp-generate-motion"]');
+  // The new ARDY motion joins the library (kind=generated).
+  await page.waitForSelector('[data-testid="tp-anim-grid"] .tp-anim-card[data-generated="true"]', {
+    timeout: 5000,
+  });
+  // Drop two motions into the machine, then open the full-viewport editor.
+  await page.click('[data-testid="tp-motion-m-walk"]');
+  await page.click('[data-testid="tp-motion-m-run"]');
+  await page.click('[data-testid="tp-open-graph"]');
+  await page.waitForSelector('[data-testid="tp-blend-graph"]', { timeout: 5000 });
+  const nodeCount = await page.locator('.tp-node[data-testid^="tp-node-st-"]').count();
+  assert(nodeCount >= 2, `state machine has nodes (got ${nodeCount})`);
+  assert(await page.isVisible('.tp-node[data-entry="true"]'), 'an entry state is marked');
+  // Wire a transition between the two states → the condition editor appears.
+  const nodeIds = await page.$$eval('.tp-node[data-testid^="tp-node-st-"]', (els) =>
+    els.map((e) => e.getAttribute('data-testid').replace('tp-node-', '')),
+  );
+  await page.click(`[data-testid="tp-node-connect-${nodeIds[0]}"]`);
+  await page.click(`[data-testid="tp-node-${nodeIds[1]}"]`);
+  await page.waitForSelector('[data-testid="tp-transition-editor"]', { timeout: 5000 });
+  assert(await page.isEnabled('[data-testid="tp-graph-export"]'), 'state machine exports JSON');
+  await shot('06b-state-machine');
+  await page.click('[data-testid="tp-graph-close"]');
 
   // ── Send To: real DCC app logos (needs a loaded model) ──────────────────
   await page.click('[data-testid="tp-sendto-btn"]');

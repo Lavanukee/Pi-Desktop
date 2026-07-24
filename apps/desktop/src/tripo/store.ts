@@ -6,6 +6,7 @@
  * components stay primitive (single fields) to avoid selector thrash.
  */
 import { create } from 'zustand';
+import { TRIPO_ANIMS } from './data';
 
 /** Left-rail tools — one per functional pipeline section (flat: no sub-tools). */
 export type TripoTool = 'image' | 'model' | 'segment' | 'retopo' | 'texture' | 'animate';
@@ -65,6 +66,45 @@ export interface StageHistoryRow {
   readonly sub: string;
 }
 
+/* ── ARDY: motions + the animation state machine (for motion matching) ───────
+ * A motion clip is a named animation — a bundled preset (previews on the dummy)
+ * or one authored from a natural-language description via ARDY. The state
+ * machine wires motions into a graph the runtime blends between: states are
+ * motions, transitions carry a parameter condition. Exported, this graph IS a
+ * motion-matching set a game can drive. */
+export interface MotionClip {
+  readonly id: string;
+  readonly name: string;
+  readonly kind: 'preset' | 'generated';
+  /** NL description that authored a generated motion. */
+  readonly prompt?: string;
+  /** Which bundled preview to show for this clip (a TRIPO_ANIMS id). */
+  readonly previewId?: string;
+}
+/** A driving parameter (Speed, MoveX, Grounded…). bool stores 0|1. */
+export interface BlendParam {
+  readonly id: string;
+  readonly name: string;
+  readonly type: 'float' | 'bool';
+  readonly value: number;
+}
+/** A state in the machine = a motion placed on the graph canvas. */
+export interface BlendState {
+  readonly id: string;
+  readonly motionId: string;
+  readonly x: number;
+  readonly y: number;
+}
+/** A transition edge with a single parameter condition. */
+export interface BlendTransition {
+  readonly id: string;
+  readonly from: string;
+  readonly to: string;
+  readonly paramId: string;
+  readonly op: '>' | '<' | '==' | '!=';
+  readonly value: number;
+}
+
 const STAGE_LABEL: Record<TripoStage, string> = {
   mesh: 'Generate Model',
   segment: 'Segment Parts',
@@ -104,6 +144,21 @@ interface TripoState {
   animFilter: 'all' | 'basic' | 'interactive';
   animSearch: string;
   selectedAnim: string;
+  /** NL action prompt for generating a motion with ARDY. */
+  motionPrompt: string;
+  /** Every motion available to place in the state machine. */
+  motionLibrary: readonly MotionClip[];
+  /** The animation state machine (motion matching). */
+  blendParams: readonly BlendParam[];
+  blendStates: readonly BlendState[];
+  blendTransitions: readonly BlendTransition[];
+  entryStateId: string | null;
+  selectedStateId: string | null;
+  selectedTransitionId: string | null;
+  /** State id we're drawing a transition FROM (null = not connecting). */
+  connectFromId: string | null;
+  /** Show the full-viewport state-machine editor. */
+  graphOpen: boolean;
 
   // ── viewer
   loadedAssetId: string | null;
@@ -151,10 +206,47 @@ interface TripoState {
   setAssetCounts: (id: string, faces: number, vertices: number) => void;
   toggleList: (key: 'checkedAssets' | 'hierarchyCollapsed' | 'hiddenNodes', id: string) => void;
   removeChecked: () => void;
+
+  // ── motions + state machine
+  /** Author a motion from the NL prompt (ARDY) and add it to the library. */
+  generateMotion: () => void;
+  /** Place a motion on the graph as a new state (first one = entry). */
+  addBlendState: (motionId: string) => void;
+  moveBlendState: (id: string, x: number, y: number) => void;
+  removeBlendState: (id: string) => void;
+  setEntryState: (id: string) => void;
+  /** Begin/finish drawing a transition between two states. */
+  beginConnect: (id: string) => void;
+  finishConnect: (toId: string) => void;
+  cancelConnect: () => void;
+  updateTransition: (id: string, patch: Partial<Omit<BlendTransition, 'id'>>) => void;
+  removeTransition: (id: string) => void;
+  addBlendParam: () => void;
+  updateBlendParam: (id: string, patch: Partial<Omit<BlendParam, 'id'>>) => void;
+  removeBlendParam: (id: string) => void;
 }
 
 const toggled = (list: readonly string[], id: string): readonly string[] =>
   list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+
+/** Monotonic id source for session-created entities (states, params, motions). */
+let seq = 0;
+const nextId = (prefix: string): string => `${prefix}-${++seq}`;
+
+/** The starter motion library — every bundled preset, previewing on the dummy. */
+const SEED_MOTIONS: readonly MotionClip[] = TRIPO_ANIMS.map((a) => ({
+  id: `m-${a.id}`,
+  name: a.id,
+  kind: 'preset',
+  previewId: a.id,
+}));
+
+/** The parameters most locomotion state machines drive. */
+const SEED_PARAMS: readonly BlendParam[] = [
+  { id: 'p-speed', name: 'Speed', type: 'float', value: 0 },
+  { id: 'p-movex', name: 'MoveX', type: 'float', value: 0 },
+  { id: 'p-grounded', name: 'Grounded', type: 'bool', value: 1 },
+];
 
 export const useTripoStore = create<TripoState>((set, get) => ({
   tool: 'model',
@@ -178,6 +270,16 @@ export const useTripoStore = create<TripoState>((set, get) => ({
   animFilter: 'all',
   animSearch: '',
   selectedAnim: 'angry_01',
+  motionPrompt: '',
+  motionLibrary: SEED_MOTIONS,
+  blendParams: SEED_PARAMS,
+  blendStates: [],
+  blendTransitions: [],
+  entryStateId: null,
+  selectedStateId: null,
+  selectedTransitionId: null,
+  connectFromId: null,
+  graphOpen: false,
 
   loadedAssetId: null,
   pipelineStage: 'mesh',
@@ -263,5 +365,110 @@ export const useTripoStore = create<TripoState>((set, get) => ({
       manageMode: false,
       loadedAssetId: s.checkedAssets.includes(s.loadedAssetId ?? '') ? null : s.loadedAssetId,
       selectedAssetId: s.checkedAssets.includes(s.selectedAssetId ?? '') ? null : s.selectedAssetId,
+    })),
+
+  // ── motions + state machine ─────────────────────────────────────────────
+  generateMotion: () =>
+    set((s) => {
+      const prompt = s.motionPrompt.trim();
+      if (prompt.length === 0) return {};
+      const name = prompt.length <= 26 ? prompt : `${prompt.slice(0, 24).replace(/\s+\S*$/, '')}…`;
+      // Reuse a bundled preview whose name the description mentions, so the new
+      // motion has a plausible thumbnail until a live ARDY clip is rendered.
+      const lower = prompt.toLowerCase();
+      const hit = SEED_MOTIONS.find((m) => {
+        const stem = m.name.split('_')[0] ?? m.name;
+        return stem.length > 2 && lower.includes(stem);
+      });
+      const motion: MotionClip = {
+        id: nextId('m'),
+        name,
+        kind: 'generated',
+        prompt,
+        ...(hit?.previewId !== undefined ? { previewId: hit.previewId } : {}),
+      };
+      return { motionLibrary: [motion, ...s.motionLibrary], motionPrompt: '' };
+    }),
+  addBlendState: (motionId) =>
+    set((s) => {
+      const id = nextId('st');
+      // Spread new nodes across the canvas with room for edges + labels.
+      const n = s.blendStates.length;
+      const x = 48 + (n % 3) * 210;
+      const y = 56 + Math.floor(n / 3) * 150;
+      return {
+        blendStates: [...s.blendStates, { id, motionId, x, y }],
+        entryStateId: s.entryStateId ?? id,
+        selectedStateId: id,
+        selectedTransitionId: null,
+      };
+    }),
+  moveBlendState: (id, x, y) =>
+    set((s) => ({
+      blendStates: s.blendStates.map((st) => (st.id === id ? { ...st, x, y } : st)),
+    })),
+  removeBlendState: (id) =>
+    set((s) => {
+      const states = s.blendStates.filter((st) => st.id !== id);
+      return {
+        blendStates: states,
+        blendTransitions: s.blendTransitions.filter((t) => t.from !== id && t.to !== id),
+        entryStateId: s.entryStateId === id ? (states[0]?.id ?? null) : s.entryStateId,
+        selectedStateId: s.selectedStateId === id ? null : s.selectedStateId,
+        connectFromId: s.connectFromId === id ? null : s.connectFromId,
+      };
+    }),
+  setEntryState: (id) => set({ entryStateId: id }),
+  beginConnect: (id) => set({ connectFromId: id }),
+  cancelConnect: () => set({ connectFromId: null }),
+  finishConnect: (toId) =>
+    set((s) => {
+      const from = s.connectFromId;
+      if (from === null || from === toId) return { connectFromId: null };
+      // No duplicate edge for the same ordered pair.
+      if (s.blendTransitions.some((t) => t.from === from && t.to === toId)) {
+        return { connectFromId: null };
+      }
+      const param = s.blendParams[0];
+      const t: BlendTransition = {
+        id: nextId('tr'),
+        from,
+        to: toId,
+        paramId: param?.id ?? 'p-speed',
+        op: param?.type === 'bool' ? '==' : '>',
+        value: param?.type === 'bool' ? 1 : 0.5,
+      };
+      return {
+        blendTransitions: [...s.blendTransitions, t],
+        connectFromId: null,
+        selectedTransitionId: t.id,
+        selectedStateId: null,
+      };
+    }),
+  updateTransition: (id, patch) =>
+    set((s) => ({
+      blendTransitions: s.blendTransitions.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+    })),
+  removeTransition: (id) =>
+    set((s) => ({
+      blendTransitions: s.blendTransitions.filter((t) => t.id !== id),
+      selectedTransitionId: s.selectedTransitionId === id ? null : s.selectedTransitionId,
+    })),
+  addBlendParam: () =>
+    set((s) => ({
+      blendParams: [
+        ...s.blendParams,
+        { id: nextId('p'), name: `Param${s.blendParams.length + 1}`, type: 'float', value: 0 },
+      ],
+    })),
+  updateBlendParam: (id, patch) =>
+    set((s) => ({
+      blendParams: s.blendParams.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+    })),
+  removeBlendParam: (id) =>
+    set((s) => ({
+      blendParams: s.blendParams.filter((p) => p.id !== id),
+      // Drop transitions that referenced the removed parameter.
+      blendTransitions: s.blendTransitions.filter((t) => t.paramId !== id),
     })),
 }));

@@ -35,7 +35,7 @@ import { createClassifierEscalation } from './classify/escalation.js';
 import { modelTierForClass } from './classify/tier.js';
 import { corpToolEnabled, registerCreateHierarchyTool } from './corp/promote-tool.js';
 import { CREATE_PRODUCTION_HIERARCHY } from './corp/promotion.js';
-import { effortKnobs, isEffortLevel, thinkingEnabledForEffort } from './effort/effort.js';
+import { effortKnobs, isEffortLevel } from './effort/effort.js';
 import { createLoopDetector, type LoopDetector, loopDetectorConfig } from './loop/loop-detector.js';
 import { parseModelParams, smallModelWarning } from './model/model-size.js';
 import { type CallModel, callModelFromEnv } from './model-call/call-model.js';
@@ -913,25 +913,6 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     pi.appendEntry(HARNESS_CLASSIFY_ENTRY, { class: cls, turnIndex: runtime.turnIndex });
     // Replace the turn's system prompt with the capability-affirming version.
     return { systemPrompt: augmentedSystemPrompt };
-  });
-
-  // Reasoning gate by effort (the "instant on the fast tiers" fix): the local
-  // chat model otherwise generates 3-5s of hidden <think> tokens before EVERY
-  // reply (measured ~120-150 even for "hi"). On low/medium effort we stamp
-  // `chat_template_kwargs.enable_thinking:false` so the reply starts immediately;
-  // high/max keep reasoning. Body param only → never disturbs the prefix cache.
-  // Scoped to the INTERACTIVE chat (ctx.hasUI) so headless corp/role instances
-  // keep their own thinking config, and we never override an explicit kwarg.
-  pi.on('before_provider_request', (event, ctx) => {
-    const body = event.payload;
-    if (typeof body !== 'object' || body === null || ctx.hasUI !== true) return body;
-    if (thinkingEnabledForEffort(runtime.config.effort)) return body;
-    const b = body as Record<string, unknown>;
-    const kwargs = (b.chat_template_kwargs as Record<string, unknown> | undefined) ?? {};
-    if (kwargs.enable_thinking === undefined) {
-      b.chat_template_kwargs = { ...kwargs, enable_thinking: false };
-    }
-    return body;
   });
 
   // Running-task timer.

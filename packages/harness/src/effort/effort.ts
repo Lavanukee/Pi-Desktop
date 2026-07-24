@@ -16,19 +16,6 @@ export function isEffortLevel(v: string): v is EffortLevel {
   return (EFFORT_LEVELS as readonly string[]).includes(v);
 }
 
-/**
- * Whether the LOCAL chat model should generate <think> reasoning before its
- * reply, by effort level. Reasoning on a small local model costs 3-5s of hidden
- * thinking tokens per turn (measured: ~120-150 think tokens even for "hi"), so
- * the fast tiers turn it OFF for near-instant replies and only the deliberate
- * tiers (high/max) pay for it. Stamped as `chat_template_kwargs.enable_thinking`
- * on the request body — a body param, so it never disturbs the KV/prefix cache.
- *   low, medium → OFF (instant)   ·   high, max → ON (reasoned)
- */
-export function thinkingEnabledForEffort(level: EffortLevel): boolean {
-  return level === 'high' || level === 'max';
-}
-
 export interface EffortKnobs {
   readonly level: EffortLevel;
   /**

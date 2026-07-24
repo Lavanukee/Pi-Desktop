@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EFFORT_LEVELS, effortKnobs, isEffortLevel } from './effort.js';
+import { EFFORT_LEVELS, effortKnobs, isEffortLevel, thinkingEnabledForEffort } from './effort.js';
 
 describe('effortKnobs', () => {
   it('has knobs for every level', () => {
@@ -71,5 +71,12 @@ describe('effortKnobs', () => {
   it('isEffortLevel guards unknown strings', () => {
     expect(isEffortLevel('high')).toBe(true);
     expect(isEffortLevel('turbo')).toBe(false);
+  });
+
+  it('thinkingEnabledForEffort: fast tiers off, deliberate tiers on', () => {
+    expect(thinkingEnabledForEffort('low')).toBe(false);
+    expect(thinkingEnabledForEffort('medium')).toBe(false);
+    expect(thinkingEnabledForEffort('high')).toBe(true);
+    expect(thinkingEnabledForEffort('max')).toBe(true);
   });
 });

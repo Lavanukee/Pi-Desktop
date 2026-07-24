@@ -60,6 +60,29 @@ describe('resolvePiSpawn resolution order', () => {
     });
   });
 
+  it('3a) packaged macOS: hosts the CLI in the LSUIElement Helper (no dock tile)', () => {
+    // Regression (jedd: "each pi instance spawning a new application in the
+    // dock"). Running the CLI through the app's MAIN executable makes
+    // LaunchServices register the child as an app and give it a dock tile
+    // (verified live: LSDisplayName="pi" with its own ASN). The Helper bundle is
+    // LSUIElement, so the same Node runtime hosted there is never registered.
+    const helper =
+      '/Applications/Pi.app/Contents/Frameworks/Pi Helper.app/Contents/MacOS/Pi Helper';
+    const plan = resolvePiSpawn({
+      env: {},
+      appRoot: '/fake/app',
+      execPath: '/Applications/Pi.app/Contents/MacOS/Pi',
+      isElectron: true,
+      fileExists: (c) => c === CLI || c === helper,
+    });
+    expect(plan).toEqual({
+      command: helper,
+      argsPrefix: [CLI],
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+      source: 'bundled',
+    });
+  });
+
   it('3b) bundled cli.js outside Electron: plain node, no env override', () => {
     const plan = resolvePiSpawn({
       env: {},

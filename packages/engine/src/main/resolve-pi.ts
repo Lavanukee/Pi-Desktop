@@ -47,6 +47,44 @@ export interface ResolvePiOptions {
 
 const BUNDLED_CLI_SEGMENTS = ['@mariozechner', 'pi-coding-agent', 'dist', 'cli.js'];
 
+/**
+ * On macOS, resolve the packaged app's **Helper** executable for `execPath`
+ * (`…/Contents/MacOS/<App>` → `…/Contents/Frameworks/<App> Helper.app/Contents/
+ * MacOS/<App> Helper`), or undefined when there is no such helper (dev runs,
+ * other platforms, an unexpected layout).
+ *
+ * WHY (jedd: "each pi instance spawning a new application in the dock"): running
+ * the CLI through the app's MAIN executable makes LaunchServices register the
+ * child as an APPLICATION — it inherits the bundle's CFBundleIdentifier, gets its
+ * own ASN, and takes a DOCK TILE, one per pi instance. Verified live: the pi
+ * child came back as `LSDisplayName="pi"`, `CFBundleIdentifier=
+ * "app.pidesktop.desktop"`, `LSASN=0x0-0x4146142`, listed alongside the real app.
+ * Electron's Helper bundle sets `LSUIElement=true`, so the identical Node runtime
+ * launched through it is never registered and never takes a tile. This is purely
+ * about which binary hosts the process — the ELECTRON_RUN_AS_NODE runtime, args,
+ * env and stdio are unchanged.
+ */
+export function macHelperExecPath(
+  execPath: string,
+  fileExists: (candidate: string) => boolean = fs.existsSync,
+): string | undefined {
+  // …/Contents/MacOS/<App>
+  const macosDir = path.dirname(execPath);
+  if (path.basename(macosDir) !== 'MacOS') return undefined;
+  const contentsDir = path.dirname(macosDir);
+  if (path.basename(contentsDir) !== 'Contents') return undefined;
+  const appName = path.basename(execPath);
+  const helper = path.join(
+    contentsDir,
+    'Frameworks',
+    `${appName} Helper.app`,
+    'Contents',
+    'MacOS',
+    `${appName} Helper`,
+  );
+  return fileExists(helper) ? helper : undefined;
+}
+
 /** Walk from appRoot upward looking for node_modules/<pi>/dist/cli.js. */
 export function locateBundledPiCli(
   appRoot: string,
@@ -82,8 +120,13 @@ export function resolvePiSpawn(options: ResolvePiOptions = {}): PiSpawnPlan {
     if (cliPath !== undefined) {
       const execPath = options.execPath ?? process.execPath;
       const isElectron = options.isElectron ?? Boolean(process.versions.electron);
+      // Prefer the LSUIElement Helper binary so the child never takes a dock
+      // tile (see macHelperExecPath). Falls back to execPath when absent.
+      const host = isElectron
+        ? (macHelperExecPath(execPath, options.fileExists ?? fs.existsSync) ?? execPath)
+        : (options.execPath ?? 'node');
       return {
-        command: isElectron ? execPath : (options.execPath ?? 'node'),
+        command: host,
         argsPrefix: [cliPath],
         env: isElectron ? { ELECTRON_RUN_AS_NODE: '1' } : {},
         source: 'bundled',

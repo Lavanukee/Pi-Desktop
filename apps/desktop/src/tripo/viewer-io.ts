@@ -51,6 +51,41 @@ export function isModelFile(file: File): boolean {
   return importedFormatOf(file.name) !== null;
 }
 
+/** True when the file is an image usable as an image→3D input. */
+export function isImageFile(file: File): boolean {
+  return file.type.startsWith('image/') || /\.(png|jpe?g|webp)$/i.test(file.name);
+}
+
+/** Max input images for image→3D (TRELLIS pools unlabeled views; beyond a
+ * handful there's no accuracy gain, so we cap the picker). */
+export const MAX_INPUT_IMAGES = 6;
+
+/**
+ * Add images to the geometry input set (from the picker or a drop): captures
+ * each file's disk path (for the engine) + an object URL (for the thumbnail),
+ * dedups by path, caps at MAX_INPUT_IMAGES, and switches to the Generate/Image
+ * input so the drop is visible where it lands.
+ */
+export function addInputImages(files: readonly File[]): void {
+  const s = useTripoStore.getState();
+  const existing = s.genImages;
+  const picked = files.filter(isImageFile).map((f) => ({
+    path: window.piDesktop.pathForFile(f),
+    name: f.name,
+    url: URL.createObjectURL(f),
+  }));
+  const merged = [...existing];
+  for (const p of picked) {
+    if (p.path.length === 0) continue;
+    if (merged.some((m) => m.path === p.path)) continue;
+    if (merged.length >= MAX_INPUT_IMAGES) break;
+    merged.push(p);
+  }
+  s.set('genImages', merged);
+  s.setTool('model');
+  s.set('inputMode', 'image');
+}
+
 /**
  * Import a model file: register its bytes, add the asset row (thumbnail is
  * captured by the viewer after its first rendered frame), and load it into

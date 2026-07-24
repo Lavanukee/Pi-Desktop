@@ -6,11 +6,37 @@
  * the intended real engines, not live runs yet.
  */
 import type { JSX } from 'react';
+import { ANIM_PREVIEWS } from './assets/anim-previews';
 import { ANIM_MODEL, RIG_MODEL, TRIPO_ANIMS } from './data';
 import { IcAnimate, IcCheck, IcSearch } from './icons';
 import { Segmented, Toggle } from './primitives';
-import { HERO_ASSET_ID, useTripoStore } from './store';
-import { Mannequin } from './thumbs';
+import { useTripoStore } from './store';
+
+/** Preset preview: a real skeletal-animation video on the humanoid dummy —
+ * the mid-motion poster by default, playing on hover. */
+function AnimPreviewCard({ preset }: { readonly preset: string }): JSX.Element | null {
+  const preview = ANIM_PREVIEWS[preset];
+  if (preview === undefined) return null;
+  return (
+    // biome-ignore lint/a11y/useMediaCaption: silent motion previews of animation presets — there is no speech to caption
+    <video
+      className="tp-anim-video"
+      src={preview.video}
+      poster={preview.poster}
+      muted
+      loop
+      playsInline
+      preload="none"
+      onMouseEnter={(e) => {
+        void e.currentTarget.play().catch(() => {});
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.pause();
+        e.currentTarget.currentTime = 0;
+      }}
+    />
+  );
+}
 
 export function AnimatePanel(): JSX.Element {
   const skeleton = useTripoStore((s) => s.skeleton);
@@ -20,10 +46,7 @@ export function AnimatePanel(): JSX.Element {
   const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
   const set = useTripoStore((s) => s.set);
   const runStage = useTripoStore((s) => s.runStage);
-  const loadAsset = useTripoStore((s) => s.loadAsset);
-  // Rig/animate run on the generated sample (an arbitrary imported mesh has no
-  // skeleton until a live SkinTokens engine is wired) — flag that honestly.
-  const importedLoaded = loadedAssetId !== null && loadedAssetId !== HERO_ASSET_ID;
+  const hasModel = loadedAssetId !== null;
 
   const visible = TRIPO_ANIMS.filter(
     (a) =>
@@ -49,23 +72,18 @@ export function AnimatePanel(): JSX.Element {
           <span className="tp-engine-name">{ANIM_MODEL}</span>
         </div>
 
-        {importedLoaded ? (
+        {!hasModel ? (
           <p className="tp-select-copy" data-testid="tp-rig-imported-note">
-            Rigging an imported model needs the live {RIG_MODEL} engine — these controls drive the
-            generated sample.
+            Load a model (generate or import one) to rig it with {RIG_MODEL}.
           </p>
         ) : null}
 
-        {/* Sample-asset-backed: overlays the bundled hero's real three.js
-         * Skeleton (bind pose). NOT a live SkinTokens run. */}
         <button
           type="button"
           className="tp-retry-btn"
           data-testid="tp-rig-btn"
+          disabled={!hasModel}
           onClick={() => {
-            // Rigging drives the generated sample; if an imported model is in
-            // the viewport, swap back to the sample first (see the note above).
-            if (importedLoaded) loadAsset(HERO_ASSET_ID);
             set('skeleton', true);
             runStage('rig');
           }}
@@ -110,11 +128,8 @@ export function AnimatePanel(): JSX.Element {
               data-active={selectedAnim === a.id}
               data-testid={`tp-anim-${a.id}`}
               onClick={() => {
-                // Sample-asset-backed: plays a baked skeletal clip on the hero
-                // SkinnedMesh (mapped to idle/wave/coil). NOT a live ARDY run.
-                if (importedLoaded) loadAsset(HERO_ASSET_ID);
                 set('selectedAnim', a.id);
-                runStage('animate');
+                if (hasModel) runStage('animate');
               }}
             >
               {selectedAnim === a.id ? (
@@ -122,7 +137,7 @@ export function AnimatePanel(): JSX.Element {
                   <IcCheck size={11} />
                 </span>
               ) : null}
-              <Mannequin pose={a.id} />
+              <AnimPreviewCard preset={a.id} />
               <span className="tp-anim-name">{a.id}</span>
             </button>
           ))}

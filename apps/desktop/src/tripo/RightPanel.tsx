@@ -28,7 +28,7 @@ import {
   IcUpload,
 } from './icons';
 import { MenuAnchor, MenuItem } from './primitives';
-import { HERO_ASSET_ID, type StudioAsset, useTripoStore } from './store';
+import { type StudioAsset, useTripoStore } from './store';
 import { importModelFile } from './viewer-io';
 
 // ── assets tab ────────────────────────────────────────────────────────────
@@ -348,7 +348,7 @@ function PropertyTab(): JSX.Element {
   }
 
   const asset = assets.find((a) => a.id === loadedAssetId);
-  const rigged = loadedAssetId === HERO_ASSET_ID;
+  const rigged = asset?.rigged === true;
   const meshRow: HierRow = {
     id: 'mesh-node',
     label: asset?.name ?? 'model',

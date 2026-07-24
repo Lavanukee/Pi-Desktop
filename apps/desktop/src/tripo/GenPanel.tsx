@@ -1,30 +1,34 @@
 /**
- * The left panel — content switches with the rail tool. Every section is
- * FUNCTIONAL on the demo pipeline (sample-asset-backed until the live engines
- * are wired; each stage is labeled with its intended real engine):
- *  - Model: input modes + geometry settings + AI model (Hunyuan 3D Omni /
- *    TRELLIS-2) + Generate → the base mesh appears in the viewport.
- *  - Image: prompt/ratio/style for the image-for-3D input.
- *  - Segment (CubePart): splits the loaded mesh into colored semantic parts.
- *  - Retopo (AutoRemesher): reveals the clean quad remesh.
- *  - Texture (Hunyuan Paint): generates + applies a texture, switches the
- *    viewport to Textured.
- *  - Animate (SkinTokens / ARDY): rigging + clip playback (AnimatePanel).
- * No credits, no members-only upsells, no privacy rows.
+ * The left panel — content switches with the rail tool, and is REPLACED by the
+ * engine-download panel while that's open (a full-height left module, jedd).
+ * Every section runs on a REAL model (engine-generated or user-imported) — no
+ * bundled placeholder. Where a stage's engine model isn't installed the panel
+ * offers its download prominently rather than faking a run:
+ *  - Model: image(s)/text input + geometry settings + AI model + Generate.
+ *    Image input takes one-or-more UNLABELED images (TRELLIS-2 pools them —
+ *    more improve accuracy).
+ *  - Image: text → image (Mage-Flow), then Export / Make 3D on the result.
+ *  - Segment (CubePart) / Retopo (AutoRemesher) / Texture (Hunyuan Paint):
+ *    run on the loaded model; each prompts its own model download when missing.
+ *  - Animate (SkinTokens rig / ARDY motion): AnimatePanel.
  */
 import type { JSX, ReactNode } from 'react';
 import { useRef, useState } from 'react';
+import type { Gen3dModelId, Gen3dRole } from '../../electron/gen3d/gen3d-contract';
 import { AnimatePanel } from './AnimatePanel';
 import { GEN_MODELS, RETOPO_MODEL, SEGMENT_MODEL, TEXTURE_MODEL } from './data';
+import { CapabilityLoop, DownloadPanel } from './gen-ui';
 import { formatGb, useGen3dStore } from './gen3d-client';
 import {
   IcBulb,
   IcCaretSmall,
   IcChevronRight,
+  IcClose,
   IcCube,
-  IcGallery,
+  IcDownload,
   IcImage,
   IcPencil,
+  IcPlus,
   IcRetopo,
   IcSegment,
   IcSparkles,
@@ -32,8 +36,8 @@ import {
   IcUpload,
 } from './icons';
 import { Hint, MenuAnchor, MenuItem, Segmented, SliderRow, Toggle } from './primitives';
-import { HERO_ASSET_ID, type TripoInputMode, useTripoStore } from './store';
-import { importModelFile } from './viewer-io';
+import { type TripoInputMode, useTripoStore } from './store';
+import { addInputImages, importModelFile, MAX_INPUT_IMAGES } from './viewer-io';
 
 // ── shared bits ───────────────────────────────────────────────────────────
 
@@ -76,6 +80,35 @@ function GenerateButton({
   );
 }
 
+/** A download call-to-action button styled as the primary action for a stage
+ * whose engine model isn't installed — opens the download panel focused on it.
+ * (A stage never shows a runnable-looking button before it can actually run.) */
+function DownloadCta({
+  modelId,
+  label,
+  sizeBytes,
+  testid,
+}: {
+  readonly modelId: Gen3dModelId;
+  readonly label: string;
+  readonly sizeBytes: number;
+  readonly testid?: string;
+}): JSX.Element {
+  const open = useGen3dStore((s) => s.setDownloadPromptOpen);
+  return (
+    <button
+      type="button"
+      className="tp-generate-btn tp-generate-btn-dl"
+      data-testid={testid}
+      onClick={() => open(true, modelId)}
+    >
+      <IcDownload size={15} />
+      Download {label}
+      {sizeBytes > 0 ? ` · ${formatGb(sizeBytes)}` : ''}
+    </button>
+  );
+}
+
 /** "Engine · <name>" row — names the real model that backs this stage. */
 function EngineRow({ name }: { readonly name: string }): JSX.Element {
   return (
@@ -83,6 +116,40 @@ function EngineRow({ name }: { readonly name: string }): JSX.Element {
       <span className="tp-field-label">Model</span>
       <span className="tp-engine-name">{name}</span>
     </div>
+  );
+}
+
+/** The "this stage needs its model" card: the capability loop + a download
+ * button. Prominent, not a footnote. */
+function StageNeedsModel({
+  capability,
+  modelId,
+}: {
+  readonly capability: Gen3dRole;
+  readonly modelId: Gen3dModelId;
+}): JSX.Element | null {
+  const model = useGen3dStore((s) => s.models.find((m) => m.id === modelId));
+  const open = useGen3dStore((s) => s.setDownloadPromptOpen);
+  if (model === undefined) return null;
+  return (
+    <button
+      type="button"
+      className="tp-needs-model"
+      data-testid={`tp-needs-${modelId}`}
+      onClick={() => open(true, modelId)}
+    >
+      <div className="tp-needs-loop">
+        <CapabilityLoop role={capability} />
+      </div>
+      <div className="tp-needs-body">
+        <span className="tp-needs-title">Runs on {model.label}</span>
+        <span className="tp-needs-sub">
+          Not installed yet — download{model.sizeBytes > 0 ? ` (${formatGb(model.sizeBytes)})` : ''}{' '}
+          to enable this stage.
+        </span>
+      </div>
+      <IcDownload size={16} />
+    </button>
   );
 }
 
@@ -118,57 +185,105 @@ function UploadModelButton(): JSX.Element {
 
 // ── Generate Model panel ──────────────────────────────────────────────────
 
-/** Image→3D input: a real picker capturing the file's disk path (the engine
- * takes paths). Shows the picked file; click again to swap. */
-function ImagePickZone(): JSX.Element {
-  const genImageName = useTripoStore((s) => s.genImageName);
+/** Image→3D input: one-or-more UNLABELED images with live thumbnails. One
+ * image = single image→3D; more = multi-image conditioning (TRELLIS pools
+ * them, more improve accuracy). Files come via the picker or a drop. */
+function ImagesZone(): JSX.Element {
+  const genImages = useTripoStore((s) => s.genImages);
   const set = useTripoStore((s) => s.set);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const openPicker = () => inputRef.current?.click();
+  const remove = (path: string) => {
+    const img = genImages.find((i) => i.path === path);
+    if (img !== undefined) URL.revokeObjectURL(img.url);
+    set(
+      'genImages',
+      genImages.filter((i) => i.path !== path),
+    );
+  };
+
+  const hiddenInput = (
+    <input
+      ref={inputRef}
+      type="file"
+      accept="image/*"
+      multiple
+      style={{ display: 'none' }}
+      data-testid="tp-image-input"
+      onChange={(e) => {
+        if (e.target.files !== null) addInputImages(Array.from(e.target.files));
+        e.target.value = '';
+      }}
+    />
+  );
+
+  if (genImages.length === 0) {
+    return (
+      <>
+        <button
+          type="button"
+          className="tp-dropzone"
+          data-testid="tp-dropzone"
+          data-picked={false}
+          onClick={openPicker}
+        >
+          <Hint text="Tips: clean background, single subject" side="bottom">
+            <span className="tp-dropzone-bulb">
+              <IcBulb size={15} />
+            </span>
+          </Hint>
+          <IcImage size={26} />
+          <div className="tp-dropzone-title">Choose or drop image(s)</div>
+          <div className="tp-dropzone-sub">
+            One image works — add more views of the same subject to improve accuracy
+          </div>
+        </button>
+        {hiddenInput}
+      </>
+    );
+  }
+
   return (
-    <button
-      type="button"
-      className="tp-dropzone"
-      data-testid="tp-dropzone"
-      data-picked={genImageName !== null}
-      onClick={() => inputRef.current?.click()}
-    >
-      <Hint text="Tips: clean background, single subject" side="bottom">
-        <span className="tp-dropzone-bulb">
-          <IcBulb size={15} />
-        </span>
-      </Hint>
-      <IcImage size={26} />
-      <div className="tp-dropzone-title">{genImageName ?? 'Choose an image'}</div>
-      <div className="tp-dropzone-sub">
-        {genImageName === null ? 'JPG, PNG, WEBP' : 'Click to swap'}
+    <div className="tp-images" data-testid="tp-images">
+      <div className="tp-images-grid">
+        {genImages.map((img) => (
+          <div className="tp-image-tile" key={img.path} title={img.name}>
+            <img src={img.url} alt={img.name} />
+            <button
+              type="button"
+              className="tp-image-remove"
+              aria-label={`Remove ${img.name}`}
+              onClick={() => remove(img.path)}
+            >
+              <IcClose size={11} />
+            </button>
+          </div>
+        ))}
+        {genImages.length < MAX_INPUT_IMAGES ? (
+          <button
+            type="button"
+            className="tp-image-add"
+            data-testid="tp-image-add"
+            onClick={openPicker}
+          >
+            <IcPlus size={18} />
+            <span>Add</span>
+          </button>
+        ) : null}
       </div>
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*"
-        style={{ display: 'none' }}
-        data-testid="tp-image-input"
-        onClick={(e) => e.stopPropagation()}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file !== undefined) {
-            const path = window.piDesktop.pathForFile(file);
-            if (path.length > 0) {
-              set('genImagePath', path);
-              set('genImageName', file.name);
-            }
-          }
-          e.target.value = '';
-        }}
-      />
-    </button>
+      <p className="tp-images-hint">
+        {genImages.length === 1
+          ? 'Single image → 3D. Add more views to improve accuracy.'
+          : `${genImages.length} views → multi-image 3D (up to ${MAX_INPUT_IMAGES}; more improve accuracy).`}
+      </p>
+      {hiddenInput}
+    </div>
   );
 }
 
 const INPUT_TABS: readonly { id: TripoInputMode; icon: ReactNode; hint: string }[] = [
-  { id: 'image', icon: <IcImage size={16} />, hint: 'Image to 3D' },
-  { id: 'multiview', icon: <IcCube size={16} />, hint: 'Multi-view to 3D' },
-  { id: 'gallery', icon: <IcGallery size={16} />, hint: 'From my gallery' },
+  { id: 'image', icon: <IcCube size={16} />, hint: 'Image(s) to 3D' },
   { id: 'text', icon: <IcPencil size={16} />, hint: 'Text to 3D' },
 ];
 
@@ -195,30 +310,7 @@ function UploadZone(): JSX.Element {
         ))}
       </div>
 
-      {inputMode === 'image' ? <ImagePickZone /> : null}
-
-      {inputMode === 'multiview' ? (
-        <div className="tp-multiview">
-          {(['Front', 'Back', 'Left', 'Right'] as const).map((v) => (
-            <button key={v} type="button" className="tp-mv-slot" data-required={v === 'Front'}>
-              <IcUpload size={15} />
-              <span>{v}</span>
-              {v === 'Front' ? <em>required</em> : null}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {inputMode === 'gallery' ? (
-        <div className="tp-mini-gallery">
-          {['Mecha scout', 'Clay fox', 'Lantern', 'Ruined tower', 'Bonsai', 'Sword'].map((g, i) => (
-            <button key={g} type="button" className="tp-mini-thumb" data-i={i % 4} title={g}>
-              <IcImage size={15} />
-            </button>
-          ))}
-          <div className="tp-mini-gallery-note">Pick a generated image to lift into 3D</div>
-        </div>
-      ) : null}
+      {inputMode === 'image' ? <ImagesZone /> : null}
 
       {inputMode === 'text' ? (
         <div className="tp-textmode">
@@ -354,11 +446,9 @@ function AiModelSelect(): JSX.Element {
 }
 
 function ModelPanel(): JSX.Element {
-  const runStage = useTripoStore((s) => s.runStage);
-  const loadAsset = useTripoStore((s) => s.loadAsset);
   const inputMode = useTripoStore((s) => s.inputMode);
   const prompt = useTripoStore((s) => s.prompt);
-  const genImagePath = useTripoStore((s) => s.genImagePath);
+  const genImages = useTripoStore((s) => s.genImages);
   const genResolution = useTripoStore((s) => s.genResolution);
   const genAutoTexture = useTripoStore((s) => s.genAutoTexture);
   const set = useTripoStore((s) => s.set);
@@ -368,28 +458,34 @@ function ModelPanel(): JSX.Element {
   const resolutions = useGen3dStore((s) => s.resolutions);
   const job = useGen3dStore((s) => s.job);
   const generate = useGen3dStore((s) => s.generate);
-  const setDownloadPromptOpen = useGen3dStore((s) => s.setDownloadPromptOpen);
+  const openDownload = useGen3dStore((s) => s.setDownloadPromptOpen);
 
-  const installed = (id: string): boolean => models.find((m) => m.id === id)?.installed === true;
+  const installed = (id: Gen3dModelId): boolean =>
+    models.find((m) => m.id === id)?.installed === true;
   // Text→3D needs Mage-Flow for the first hop; image→3D just TRELLIS.
-  const canRunReal =
-    engineReady && installed('trellis2') && (inputMode !== 'text' || installed('mageflow'));
+  const geometryReady = engineReady && installed('trellis2');
+  const canRunReal = geometryReady && (inputMode !== 'text' || installed('mageflow'));
   const busy = job !== null && !job.done;
   const missingInput =
     (inputMode === 'text' && prompt.trim().length === 0) ||
-    (inputMode === 'image' && genImagePath === null);
+    (inputMode === 'image' && genImages.length === 0);
 
   const onGenerate = () => {
-    // Without the engine, Generate is the DOWNLOAD path — never a fake run.
-    if (!canRunReal) {
-      setDownloadPromptOpen(true);
+    // Without the models, Generate is the DOWNLOAD path — never a fake run. Aim
+    // the download panel at the first missing model for this input.
+    if (!geometryReady) {
+      openDownload(true, 'trellis2');
+      return;
+    }
+    if (inputMode === 'text' && !installed('mageflow')) {
+      openDownload(true, 'mageflow');
       return;
     }
     if (missingInput) return;
     void generate({
       kind: inputMode === 'text' ? 'text' : 'image',
       ...(inputMode === 'text' ? { prompt: prompt.trim() } : {}),
-      ...(inputMode !== 'text' && genImagePath !== null ? { imagePath: genImagePath } : {}),
+      ...(inputMode === 'image' ? { imagePaths: genImages.map((i) => i.path) } : {}),
       resolution: genResolution,
       texture: genAutoTexture,
     });
@@ -416,7 +512,7 @@ function ModelPanel(): JSX.Element {
           />
         </div>
         <div className="tp-field-row">
-          <span className="tp-field-label">Auto-texture (Hunyuan Paint)</span>
+          <span className="tp-field-label">Auto-texture</span>
           <Toggle
             on={genAutoTexture}
             onChange={(v) => set('genAutoTexture', v)}
@@ -425,59 +521,61 @@ function ModelPanel(): JSX.Element {
         </div>
         <GeoAccordion />
         <AiModelSelect />
-        {!canRunReal ? (
-          <p className="tp-select-copy" data-testid="tp-engine-missing-note">
-            The generation models aren't downloaded yet — Generate opens the download prompt (sizes
-            shown before anything starts).
-          </p>
-        ) : null}
       </div>
       <div className="tp-panel-foot">
-        <GenerateButton
-          label={busy ? 'Generating…' : 'Generate Model'}
-          disabled={busy || (canRunReal && missingInput)}
-          testid="tp-generate-btn"
-          onClick={onGenerate}
-        />
-        {/* The bundled sample stays one explicit click away (labeled as such —
-         * never presented as a generation result). */}
-        <button
-          type="button"
-          className="tp-linklike tp-sample-link"
-          data-testid="tp-load-sample"
-          onClick={() => {
-            loadAsset(HERO_ASSET_ID);
-            runStage('mesh');
-          }}
-        >
-          Load bundled sample instead
-        </button>
+        {canRunReal ? (
+          <GenerateButton
+            label={busy ? 'Generating…' : 'Generate Model'}
+            disabled={busy || missingInput}
+            testid="tp-generate-btn"
+            onClick={onGenerate}
+          />
+        ) : (
+          <DownloadCta
+            modelId={inputMode === 'text' && geometryReady ? 'mageflow' : 'trellis2'}
+            label={inputMode === 'text' && geometryReady ? 'Mage-Flow' : 'TRELLIS-2'}
+            sizeBytes={
+              models.find(
+                (m) => m.id === (inputMode === 'text' && geometryReady ? 'mageflow' : 'trellis2'),
+              )?.sizeBytes ?? 0
+            }
+            testid="tp-generate-btn"
+          />
+        )}
       </div>
     </>
   );
 }
 
-// ── Image panel ───────────────────────────────────────────────────────────
+// ── Image panel (text → image, then Export / Make 3D) ─────────────────────
 
 function ImagePanel(): JSX.Element {
   const [ratio, setRatio] = useState<'1:1' | '16:9' | '9:16'>('1:1');
-  const [style, setStyle] = useState('Realistic render');
   const [prompt, setPrompt] = useState('');
-  const toggleMenu = useTripoStore((s) => s.toggleMenu);
-  const closeMenus = useTripoStore((s) => s.closeMenus);
   const genResolution = useTripoStore((s) => s.genResolution);
   const genAutoTexture = useTripoStore((s) => s.genAutoTexture);
   const engineReady = useGen3dStore((s) => s.engineReady);
   const models = useGen3dStore((s) => s.models);
   const job = useGen3dStore((s) => s.job);
   const generate = useGen3dStore((s) => s.generate);
-  const setDownloadPromptOpen = useGen3dStore((s) => s.setDownloadPromptOpen);
-  // The image panel feeds the 3D flow (Mage-Flow → TRELLIS).
-  const canRunReal =
-    engineReady &&
-    models.find((m) => m.id === 'mageflow')?.installed === true &&
-    models.find((m) => m.id === 'trellis2')?.installed === true;
+  const openDownload = useGen3dStore((s) => s.setDownloadPromptOpen);
+
+  const mageReady = engineReady && models.find((m) => m.id === 'mageflow')?.installed === true;
+  const trellisInstalled = models.find((m) => m.id === 'trellis2')?.installed === true;
   const busy = job !== null && !job.done;
+  // A finished image sitting in the viewport readout is the one we act on.
+  const resultImage =
+    job?.done === true && job.artifact?.kind === 'image' ? job.artifact.path : null;
+
+  const exportImage = () => {
+    if (resultImage === null) return;
+    const a = document.createElement('a');
+    a.href = `pd-file://f${resultImage.split('/').map(encodeURIComponent).join('/')}`;
+    a.download = resultImage.split('/').pop() ?? 'image.png';
+    a.click();
+  };
+
+  const mageSize = models.find((m) => m.id === 'mageflow')?.sizeBytes ?? 0;
 
   return (
     <>
@@ -486,6 +584,7 @@ function ImagePanel(): JSX.Element {
         <div className="tp-card tp-card-pad">
           <textarea
             className="tp-prompt"
+            data-testid="tp-image-prompt"
             placeholder="Describe the image to generate… it becomes the input for 3D"
             rows={4}
             value={prompt}
@@ -508,96 +607,150 @@ function ImagePanel(): JSX.Element {
             onChange={setRatio}
           />
         </div>
-        <div className="tp-field-row">
-          <span className="tp-field-label">Style</span>
-          <MenuAnchor
-            id="imgstyle"
-            placement="bottom-end"
-            trigger={
-              <button type="button" className="tp-select" onClick={() => toggleMenu('imgstyle')}>
-                {style}
-                <IcCaretSmall size={12} />
+        {resultImage !== null ? (
+          <div className="tp-image-result" data-testid="tp-image-result">
+            <div className="tp-section-title">Generated image</div>
+            <img
+              className="tp-image-result-thumb"
+              src={`pd-file://f${resultImage.split('/').map(encodeURIComponent).join('/')}`}
+              alt="Generated"
+            />
+            <div className="tp-image-result-actions">
+              <button
+                type="button"
+                className="tp-upload-btn"
+                data-testid="tp-image-export"
+                onClick={exportImage}
+              >
+                <IcDownload size={14} />
+                Export image
               </button>
-            }
-            menu={['Realistic render', 'Clay sculpt', 'Toon shaded', 'Concept art'].map((s) => (
-              <MenuItem
-                key={s}
-                label={s}
-                checked={s === style}
+              <button
+                type="button"
+                className="tp-generate-btn tp-generate-btn-inline"
+                data-testid="tp-image-make3d"
+                disabled={!trellisInstalled}
                 onClick={() => {
-                  setStyle(s);
-                  closeMenus();
+                  if (!trellisInstalled) {
+                    openDownload(true, 'trellis2');
+                    return;
+                  }
+                  void generate({
+                    kind: 'image',
+                    imagePaths: [resultImage],
+                    resolution: genResolution,
+                    texture: genAutoTexture,
+                  });
                 }}
-              />
-            ))}
-          />
-        </div>
+              >
+                <IcCube size={14} />
+                Make 3D
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
       <div className="tp-panel-foot">
-        {/* Runs the text→image→3D chain (Mage-Flow first hop); without the
-         * engine it opens the download prompt. */}
-        <GenerateButton
-          label={busy ? 'Generating…' : 'Generate Image for 3D'}
-          disabled={busy || (canRunReal && prompt.trim().length === 0)}
-          testid="tp-image-generate-btn"
-          onClick={() => {
-            if (!canRunReal) {
-              setDownloadPromptOpen(true);
-              return;
+        {mageReady ? (
+          <GenerateButton
+            label={busy ? 'Generating…' : 'Generate Image'}
+            disabled={busy || prompt.trim().length === 0}
+            testid="tp-image-generate-btn"
+            onClick={() =>
+              void generate({
+                kind: 'text',
+                prompt: prompt.trim(),
+                resolution: genResolution,
+                texture: genAutoTexture,
+                imageOnly: true,
+              })
             }
-            void generate({
-              kind: 'text',
-              prompt: prompt.trim(),
-              resolution: genResolution,
-              texture: genAutoTexture,
-            });
-          }}
-        />
+          />
+        ) : (
+          <DownloadCta
+            modelId="mageflow"
+            label="Mage-Flow"
+            sizeBytes={mageSize}
+            testid="tp-image-generate-btn"
+          />
+        )}
       </div>
     </>
   );
 }
 
-// ── Segment / Retopo / Texture panels (functional stages) ─────────────────
+// ── Segment / Retopo / Texture panels (run on the loaded model) ───────────
 
 /**
- * Shared stage panel, aware of what's in the viewport: with a model loaded it
- * shows the TARGET (never "upload a model" again); empty, it invites
- * generate/upload/drop. If the stage's real engine model isn't installed it
- * offers the download (with its size); the button still runs the local
- * geometry pass so the studio works pre-download.
+ * Shared stage panel. It's aware of what's in the viewport AND whether its
+ * engine model is installed:
+ *  - engine missing → a prominent "runs on <Model>" download card + a Download
+ *    button as the footer action (never a runnable-looking button that can't).
+ *  - installed, nothing loaded → invite generate/upload/drop.
+ *  - installed + model loaded → the real Target row + the run button.
  */
 function StagePanel({
   icon,
   title,
   engine,
   engineId,
+  capability,
+  runLabel,
+  runTestid,
   emptyCopy,
-  footer,
   children,
 }: {
   readonly icon: ReactNode;
   readonly title: string;
   readonly engine: string;
-  readonly engineId: 'cubepart' | 'autoremesher' | 'hunyuan-paint';
+  readonly engineId: Gen3dModelId;
+  readonly capability: Gen3dRole;
+  readonly runLabel: string;
+  readonly runTestid: string;
   readonly emptyCopy: string;
-  readonly footer: ReactNode;
   readonly children?: ReactNode;
 }): JSX.Element {
   const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
   const assets = useTripoStore((s) => s.assets);
   const engineReady = useGen3dStore((s) => s.engineReady);
   const models = useGen3dStore((s) => s.models);
-  const setDownloadPromptOpen = useGen3dStore((s) => s.setDownloadPromptOpen);
+  const runStageEngine = useGen3dStore((s) => s.runStage);
   const loaded = assets.find((a) => a.id === loadedAssetId);
   const engineModel = models.find((m) => m.id === engineId);
   const engineInstalled = engineReady && engineModel?.installed === true;
+
+  const op = capability as 'segment' | 'retopo' | 'texture';
+
+  let footer: ReactNode;
+  if (!engineInstalled) {
+    footer = (
+      <DownloadCta
+        modelId={engineId}
+        label={engine}
+        sizeBytes={engineModel?.sizeBytes ?? 0}
+        testid={runTestid}
+      />
+    );
+  } else if (loaded === undefined) {
+    footer = <GenerateButton label={runLabel} disabled testid={runTestid} />;
+  } else {
+    footer = (
+      <GenerateButton
+        label={runLabel}
+        testid={runTestid}
+        onClick={() => {
+          if (loaded.diskPath !== undefined) void runStageEngine(op, loaded.diskPath);
+        }}
+      />
+    );
+  }
 
   return (
     <>
       <PanelHeader icon={icon} title={title} />
       <div className="tp-panel-scroll">
         <EngineRow name={engine} />
+        {!engineInstalled ? <StageNeedsModel capability={capability} modelId={engineId} /> : null}
         {loaded !== undefined ? (
           <div className="tp-engine-row" data-testid="tp-stage-target">
             <span className="tp-field-label">Target</span>
@@ -611,18 +764,6 @@ function StagePanel({
             <UploadModelButton />
           </>
         )}
-        {!engineInstalled && engineModel !== undefined ? (
-          <button
-            type="button"
-            className="tp-linklike tp-engine-install-link"
-            data-testid={`tp-install-${engineId}`}
-            onClick={() => setDownloadPromptOpen(true)}
-          >
-            Install {engineModel.label}
-            {engineModel.sizeBytes > 0 ? ` (${formatGb(engineModel.sizeBytes)})` : ''} for the real
-            engine
-          </button>
-        ) : null}
         {children}
       </div>
       <div className="tp-panel-foot">{footer}</div>
@@ -630,41 +771,21 @@ function StagePanel({
   );
 }
 
-/** Engine-or-local dispatch for a stage button: the real gen3d op when the
- * engine + model are installed AND the target exists on disk; the local
- * geometry pass otherwise. */
-function useStageAction(
-  op: 'segment' | 'retopo' | 'texture',
-  engineId: 'cubepart' | 'autoremesher' | 'hunyuan-paint',
-): () => void {
-  const runStageLocal = useTripoStore((s) => s.runStage);
-  const engineReady = useGen3dStore((s) => s.engineReady);
-  const models = useGen3dStore((s) => s.models);
-  const runStageEngine = useGen3dStore((s) => s.runStage);
-  return () => {
-    const s = useTripoStore.getState();
-    const loaded = s.assets.find((a) => a.id === s.loadedAssetId);
-    const installed = engineReady && models.find((m) => m.id === engineId)?.installed === true;
-    if (installed && loaded?.diskPath !== undefined) {
-      void runStageEngine(op, loaded.diskPath);
-      return;
-    }
-    runStageLocal(op);
-  };
-}
+const STAGE_EMPTY =
+  'Nothing in the viewport yet — generate a model, pick one from Assets, or drop a file anywhere.';
 
 function SegmentPanel(): JSX.Element {
   const parts = useTripoStore((s) => s.segmentParts);
-  const onSegment = useStageAction('segment', 'cubepart');
-
   return (
     <StagePanel
       icon={<IcSegment size={17} />}
       title="Segmentation"
       engine={SEGMENT_MODEL}
       engineId="cubepart"
-      emptyCopy="Nothing in the viewport yet — generate a model, pick one from Assets, or drop a file anywhere."
-      footer={<GenerateButton label="Segment Parts" testid="tp-segment-btn" onClick={onSegment} />}
+      capability="segment"
+      runLabel="Segment Parts"
+      runTestid="tp-segment-btn"
+      emptyCopy={STAGE_EMPTY}
     >
       {parts.length > 0 ? (
         <div className="tp-parts-list" data-testid="tp-parts-list">
@@ -682,37 +803,46 @@ function SegmentPanel(): JSX.Element {
 }
 
 function RetopoPanel(): JSX.Element {
-  const onRetopo = useStageAction('retopo', 'autoremesher');
   return (
     <StagePanel
       icon={<IcRetopo size={17} />}
       title="Retopology"
       engine={RETOPO_MODEL}
       engineId="autoremesher"
-      emptyCopy="Nothing in the viewport yet — generate a model, pick one from Assets, or drop a file anywhere."
-      footer={<GenerateButton label="Start Retopology" testid="tp-retopo-btn" onClick={onRetopo} />}
+      capability="retopo"
+      runLabel="Start Retopology"
+      runTestid="tp-retopo-btn"
+      emptyCopy={STAGE_EMPTY}
     />
   );
 }
 
 function TexturePanel(): JSX.Element {
-  const onTexture = useStageAction('texture', 'hunyuan-paint');
   return (
     <StagePanel
       icon={<IcTexture size={17} />}
       title="Texture"
       engine={TEXTURE_MODEL}
       engineId="hunyuan-paint"
-      emptyCopy="Nothing in the viewport yet — generate a model, pick one from Assets, or drop a file anywhere."
-      footer={
-        <GenerateButton label="Generate Texture" testid="tp-texture-btn" onClick={onTexture} />
-      }
+      capability="texture"
+      runLabel="Generate Texture"
+      runTestid="tp-texture-btn"
+      emptyCopy={STAGE_EMPTY}
     />
   );
 }
 
 export function GenPanel(): JSX.Element {
   const tool = useTripoStore((s) => s.tool);
+  const downloadOpen = useGen3dStore((s) => s.downloadPromptOpen);
+
+  if (downloadOpen) {
+    return (
+      <section className="tp-genpanel" data-testid="tp-panel-download">
+        <DownloadPanel />
+      </section>
+    );
+  }
 
   return (
     <section className="tp-genpanel" data-testid={`tp-panel-${tool}`}>

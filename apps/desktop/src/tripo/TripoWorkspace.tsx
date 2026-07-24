@@ -11,7 +11,6 @@
 import type { JSX } from 'react';
 import { useEffect, useState } from 'react';
 import { GenPanel } from './GenPanel';
-import { Gen3dDownloadDialog } from './gen-ui';
 import { ensureGen3dWired } from './gen3d-client';
 import { IcUpload } from './icons';
 import { Rail } from './Rail';
@@ -19,7 +18,7 @@ import { RightPanel } from './RightPanel';
 import { useTripoStore } from './store';
 import { TopBar } from './TopBar';
 import { Viewport } from './Viewport';
-import { importModelFile, isModelFile } from './viewer-io';
+import { addInputImages, importModelFile, isImageFile, isModelFile } from './viewer-io';
 import './tripo.css';
 
 export function TripoWorkspace(): JSX.Element {
@@ -74,8 +73,15 @@ export function TripoWorkspace(): JSX.Element {
       e.preventDefault();
       setDropActive(false);
       const files = e.dataTransfer === null ? [] : Array.from(e.dataTransfer.files);
-      const file = files.find(isModelFile);
-      if (file !== undefined) void importModelFile(file);
+      // A dropped model goes to the viewport; dropped images become image→3D
+      // inputs (shown in the input card). Model wins if both are present.
+      const model = files.find(isModelFile);
+      if (model !== undefined) {
+        void importModelFile(model);
+        return;
+      }
+      const images = files.filter(isImageFile);
+      if (images.length > 0) addInputImages(images);
     };
     const onDragLeave = (e: DragEvent) => {
       // Leaving the window entirely (relatedTarget null) clears the overlay.
@@ -106,11 +112,10 @@ export function TripoWorkspace(): JSX.Element {
         <div className="tp-drop-overlay" data-testid="tp-drop-overlay">
           <div className="tp-drop-card">
             <IcUpload size={26} />
-            Drop to import — .glb · .gltf · .obj · .stl
+            Drop a model (.glb · .obj · .stl) or an image (.png · .jpg)
           </div>
         </div>
       ) : null}
-      <Gen3dDownloadDialog />
     </div>
   );
 }

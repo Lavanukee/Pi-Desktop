@@ -44,7 +44,7 @@ import type { JSX } from 'react';
 import { useEffect, useRef } from 'react';
 import { importedModel } from './asset-registry';
 import { HERO_MESH_GLB_B64, HERO_RIG_GLB_B64 } from './assets/hero-glb';
-import { HERO_ASSET_ID, useTripoStore } from './store';
+import { useTripoStore } from './store';
 import { setViewerExportHandler, type ViewerExportRequest } from './viewer-io';
 
 /** Resolve an arbitrary CSS color expression (var()/color-mix()) to an sRGB
@@ -99,15 +99,6 @@ function buildQuadWire(): InstanceType<typeof THREE.LineSegments> {
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
   const mat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.9 });
   return new THREE.LineSegments(geo, mat);
-}
-
-/** Map an animation-preset id (angry_01, dance_01, idle, wave, …) to one of the
- * three baked clips in the rig GLB (idle / wave / coil). */
-function clipFor(preset: string): string {
-  const s = preset.toLowerCase();
-  if (s.includes('idle')) return 'idle';
-  if (/dance|coil|jump|kick|angry|run|cheer/.test(s)) return 'coil';
-  return 'wave';
 }
 
 function base64ToArrayBuffer(b64: string): ArrayBuffer {
@@ -333,7 +324,6 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
     let skeletonHelper: InstanceType<typeof THREE.SkeletonHelper> | null = null;
     let mixer: InstanceType<typeof THREE.AnimationMixer> | null = null;
     const actions = new Map<string, InstanceType<typeof THREE.AnimationAction>>();
-    let current: InstanceType<typeof THREE.AnimationAction> | null = null;
     const meshBodies: BodyRef[] = [];
     const rigBodies: BodyRef[] = [];
     const boneJoints: InstanceType<typeof THREE.Mesh>[] = [];
@@ -491,10 +481,8 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
 
     // ── real export (three exporters) ───────────────────────────────────────
     const exportRoot = (): InstanceType<typeof THREE.Object3D> | null => {
-      const s = useTripoStore.getState();
-      if (s.loadedAssetId !== null && s.loadedAssetId !== HERO_ASSET_ID) return importedGroup;
-      const stage = s.pipelineStage;
-      return stage === 'rig' || stage === 'animate' ? rigModel : meshModel;
+      // Every loaded asset is a real imported/generated model now.
+      return importedGroup;
     };
     const onExport = (req: ViewerExportRequest): void => {
       const root = exportRoot();
@@ -578,42 +566,38 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       }
     };
 
-    /** Push the store's viewer + pipeline state into the scene. */
+    /** Push the store's viewer + pipeline state into the scene. There is no
+     * bundled placeholder anymore — the viewer only ever shows the real loaded
+     * asset (imported file or engine artifact); the procedural hero objects are
+     * kept in the scene but never made visible. */
     const applyState = () => {
       const s = useTripoStore.getState();
       const stage = s.pipelineStage;
-      const assetId = s.loadedAssetId ?? HERO_ASSET_ID;
-      const isImported = assetId !== HERO_ASSET_ID;
+      const assetId = s.loadedAssetId;
+      if (assetId === null) return;
 
-      // Imported assets are loaded lazily on first selection.
-      if (isImported && assetId !== importedId) {
+      // The loaded asset is loaded lazily on first selection.
+      if (assetId !== importedId) {
         void loadImported(assetId);
       }
 
       // The texture stage marks this asset as textured (Textured mode maps it).
       if (stage === 'texture') texturedAssets.add(assetId);
 
-      // Which model is on screen.
-      const showImported = isImported && importedId === assetId;
+      // Only the real model is ever on screen; the hero objects stay hidden.
+      const showImported = importedId === assetId;
       if (importedGroup !== null) importedGroup.visible = showImported && s.meshVisible;
       if (importedWire !== null)
         importedWire.visible = showImported && stage === 'retopo' && s.meshVisible;
-      const heroMeshVisible =
-        !showImported && (stage === 'mesh' || stage === 'segment' || stage === 'texture');
-      if (meshModel !== null) meshModel.visible = heroMeshVisible && s.meshVisible;
-      if (rigModel !== null)
-        rigModel.visible =
-          !showImported &&
-          (stage === 'retopo' || stage === 'rig' || stage === 'animate') &&
-          s.meshVisible;
-      quadWire.visible = !showImported && stage === 'retopo' && s.meshVisible;
-      const showSkel = !showImported && (stage === 'rig' || (stage === 'animate' && s.skeleton));
-      if (skeletonHelper !== null) skeletonHelper.visible = showSkel;
-      for (const bead of boneJoints) bead.visible = showSkel;
+      if (meshModel !== null) meshModel.visible = false;
+      if (rigModel !== null) rigModel.visible = false;
+      quadWire.visible = false;
+      if (skeletonHelper !== null) skeletonHelper.visible = false;
+      for (const bead of boneJoints) bead.visible = false;
 
       // Materials: segment stage paints vertex-color parts; other stages follow
-      // the render mode.
-      const activeBodies = showImported ? importedBodies : heroMeshVisible ? meshBodies : rigBodies;
+      // the render mode. All on the real loaded bodies.
+      const activeBodies = importedBodies;
       if (stage === 'segment') {
         for (const { mesh } of activeBodies) {
           if (!segPainted.has(mesh.geometry)) {
@@ -622,7 +606,7 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
           }
           mesh.material = segMat;
         }
-        const parts = showImported ? ['Top', 'Middle', 'Base'] : ['Head', 'Body', 'Base'];
+        const parts = ['Top', 'Middle', 'Base'];
         if (s.segmentParts.length !== parts.length) {
           useTripoStore.getState().set('segmentParts', parts);
         }
@@ -648,31 +632,15 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
         );
         verts += g.getAttribute('position').count;
       }
-      const stats =
-        !showImported && (stage === 'retopo' || stage === 'rig' || stage === 'animate')
-          ? { topology: 'Quad', faces: 320, vertices: 336 } // the bundled quad remesh
-          : { topology: 'Triangle', faces, vertices: verts };
+      const stats = { topology: 'Triangle', faces, vertices: verts };
       const prev = s.stats;
       if (prev === null || prev.faces !== stats.faces || prev.topology !== stats.topology) {
         useTripoStore.getState().set('stats', stats);
       }
 
-      // Animation: play the mapped clip in the animate stage; otherwise reset
-      // the skeleton to its bind pose so rig/retopo/mesh read as a still model.
-      if (!showImported && stage === 'animate' && mixer !== null) {
-        const next = actions.get(clipFor(s.selectedAnim)) ?? actions.get('wave') ?? null;
-        if (next !== null && next !== current) {
-          if (current !== null) current.fadeOut(0.25);
-          next.reset().fadeIn(0.25).play();
-          current = next;
-        } else if (next !== null) {
-          next.paused = false;
-        }
-      } else {
-        if (mixer !== null) mixer.stopAllAction();
-        current = null;
-        if (skinned !== null) skinned.skeleton.pose();
-      }
+      // No hero mixer runs anymore; keep the (hidden) skeleton at its bind pose.
+      if (mixer !== null) mixer.stopAllAction();
+      if (skinned !== null) skinned.skeleton.pose();
 
       grid.visible = s.showGrid;
       controls.autoRotate = s.autoRotate;
@@ -683,18 +651,11 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       hemi.intensity = 0.5 * Math.max(intensity, 0.25);
       scene.environment = s.envLight ? envTexture : null;
 
-      // A visible sample with no captured preview yet → queue a thumb capture.
-      if (!showImported && heroLoaded) {
-        const heroAsset = s.assets.find((a) => a.id === HERO_ASSET_ID);
-        if (heroAsset !== undefined && heroAsset.thumb === null) pendingThumb = HERO_ASSET_ID;
-      }
-
       host.dataset.tpStage = stage;
       host.dataset.tpRenderMode = s.renderMode;
       host.dataset.tpWireframe = s.wireframe ? '1' : '0';
       host.dataset.tpSkeleton = skeletonHelper?.visible === true ? '1' : '0';
-      host.dataset.tpAnim =
-        stage === 'animate' && current !== null ? current.getClip().name : 'none';
+      host.dataset.tpAnim = 'none';
       applyPalette();
     };
     applyState();
@@ -785,11 +746,7 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       // Preview capture rides the frame right after the model became visible.
       if (pendingThumb !== null && frames >= 2) {
         const id = pendingThumb;
-        const visibleNow =
-          id === HERO_ASSET_ID
-            ? (meshModel?.visible ?? false) || (rigModel?.visible ?? false)
-            : importedGroup?.visible === true && importedId === id;
-        if (visibleNow) {
+        if (importedGroup?.visible === true && importedId === id) {
           pendingThumb = null;
           captureThumb(id);
         }

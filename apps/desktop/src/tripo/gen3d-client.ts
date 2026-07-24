@@ -26,18 +26,23 @@ interface Gen3dState {
   downloads: Readonly<Record<string, Gen3dDownloadUpdate>>;
   /** The active generation/stage job (one at a time in the UI). */
   job: Gen3dJobUpdate | null;
-  /** Show the engine-download dialog. */
+  /** Show the engine-download panel (fills the left column). */
   downloadPromptOpen: boolean;
+  /** A model to scroll to + highlight when the panel opens (from a stage CTA). */
+  downloadFocus: Gen3dModelId | null;
 
   refresh: () => Promise<void>;
-  setDownloadPromptOpen: (open: boolean) => void;
+  setDownloadPromptOpen: (open: boolean, focus?: Gen3dModelId | null) => void;
   download: (ids: readonly Gen3dModelId[]) => Promise<string | null>;
   generate: (req: {
     kind: 'text' | 'image';
     prompt?: string;
-    imagePath?: string;
+    /** One-or-more input images (image kind); multi = unlabeled conditioning. */
+    imagePaths?: readonly string[];
     resolution: Gen3dResolution;
     texture: boolean;
+    /** Stop after the text→image hop (for the Image panel's "Generate image"). */
+    imageOnly?: boolean;
   }) => Promise<string | null>;
   runStage: (op: 'segment' | 'retopo' | 'texture', modelPath: string) => Promise<string | null>;
   cancelJob: () => Promise<void>;
@@ -52,6 +57,7 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
   downloads: {},
   job: null,
   downloadPromptOpen: false,
+  downloadFocus: null,
 
   refresh: async () => {
     const res = await window.piDesktop.invoke('gen3d:catalog', undefined).catch(() => null);
@@ -66,14 +72,24 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
       resolutions: res.resolutions,
     });
   },
-  setDownloadPromptOpen: (open) => set({ downloadPromptOpen: open }),
+  setDownloadPromptOpen: (open, focus = null) =>
+    set({ downloadPromptOpen: open, downloadFocus: open ? focus : null }),
   download: async (ids) => {
     const res = await window.piDesktop.invoke('gen3d:download', { ids }).catch(() => null);
     if (res === null || !res.ok) return res?.error ?? 'download failed to start';
     return null;
   },
   generate: async (req) => {
-    const res = await window.piDesktop.invoke('gen3d:generate', req).catch(() => null);
+    const res = await window.piDesktop
+      .invoke('gen3d:generate', {
+        kind: req.kind,
+        ...(req.prompt !== undefined ? { prompt: req.prompt } : {}),
+        ...(req.imagePaths !== undefined ? { imagePaths: req.imagePaths } : {}),
+        resolution: req.resolution,
+        texture: req.texture,
+        ...(req.imageOnly === true ? { imageOnly: true } : {}),
+      })
+      .catch(() => null);
     if (res === null || !res.ok) return res?.error ?? 'generation failed to start';
     return null;
   },

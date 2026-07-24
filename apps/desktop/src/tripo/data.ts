@@ -20,7 +20,11 @@ export interface ModelVersion {
 /** Mesh-generation models (the AI Model dropdown in Generate). */
 export const GEN_MODELS: readonly ModelVersion[] = [
   { id: 'trellis-2', label: 'TRELLIS-2', hint: 'Image or text to 3D — runs on Metal here' },
-  { id: 'hunyuan-omni', label: 'Hunyuan 3D Omni', hint: 'No Metal/MPS port — unavailable on this Mac' },
+  {
+    id: 'hunyuan-omni',
+    label: 'Hunyuan 3D Omni',
+    hint: 'No Metal/MPS port — unavailable on this Mac',
+  },
 ];
 
 /** One engine per downstream stage (shown as the stage's Model row). */

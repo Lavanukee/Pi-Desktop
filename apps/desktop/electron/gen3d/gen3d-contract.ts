@@ -93,14 +93,18 @@ export type Gen3dInvokeMap = {
     response: { readonly ok: boolean };
   };
   /** Generate a model. kind 'text' runs text→image→3D (Mage-Flow → TRELLIS);
-   * kind 'image' starts from an image file. `texture` chains Hunyuan Paint. */
+   * kind 'image' starts from one or more input images (TRELLIS-2 does arbitrary
+   * unlabeled multi-image conditioning — more images improve accuracy).
+   * `texture` chains the native texture bake; `imageOnly` stops after the
+   * text→image hop (Image panel). */
   'gen3d:generate': {
     request: {
       readonly kind: 'text' | 'image';
       readonly prompt?: string;
-      readonly imagePath?: string;
+      readonly imagePaths?: readonly string[];
       readonly resolution: Gen3dResolution;
       readonly texture: boolean;
+      readonly imageOnly?: boolean;
     };
     response: { readonly ok: boolean; readonly jobId?: string; readonly error?: string };
   };

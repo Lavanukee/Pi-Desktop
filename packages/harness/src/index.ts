@@ -106,6 +106,15 @@ interface HarnessRuntime {
   activeClass: TaskClass | null;
   /** Conversation title from the classify+title piggyback (computed once). */
   title: string | null;
+  /**
+   * The STABLE system prompt reused byte-for-byte on every turn (and by the
+   * warm-up), captured once at model-select / turn 1. pi regenerates its
+   * tool-usage guidance non-deterministically per turn (lines reorder / add /
+   * drop), which shifts the ~7k-char prompt and forces a FULL KV re-prefill on
+   * EVERY message — the "slow prefill" jedd hit. Freezing the system prompt keeps
+   * the prefix identical so follow-ups (and the warmed first message) reuse it.
+   */
+  canonicalSystemPrompt: string | null;
   activeTools: string[];
   taskStart: number | null;
   turnIndex: number;
@@ -288,6 +297,7 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     config: DEFAULT_CONFIG,
     activeClass: null,
     title: null,
+    canonicalSystemPrompt: null,
     activeTools: [],
     taskStart: null,
     turnIndex: 0,
@@ -870,7 +880,13 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     // `{ systemPrompt }` returned from this handler for the turn (agent-session's
     // emitBeforeAgentStart), chained across extensions — so we augment whatever
     // base/previously-chained prompt arrives.
-    const augmentedSystemPrompt = augmentSystemPrompt(event.systemPrompt);
+    // FREEZE it after the first build: pi regenerates its tool-usage guidance
+    // non-deterministically per turn (reorders / adds / drops lines), which shifts
+    // the ~7k-char prompt and forces a FULL KV re-prefill on EVERY message. Reusing
+    // the canonical prompt keeps the prefix byte-identical so follow-ups reuse it.
+    const augmentedSystemPrompt =
+      runtime.canonicalSystemPrompt ?? augmentSystemPrompt(event.systemPrompt);
+    runtime.canonicalSystemPrompt = augmentedSystemPrompt;
     // Classification REMOVED from the turn path (jedd: "we seldom use it at all,
     // let's just completely remove"). The turn-1 {title,class} piggyback cost
     // ~2.5s of TTFT — an awaited utility call before the model could even start.
@@ -916,11 +932,15 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
       runtime.lastPrompt !== null
     ) {
       const namePrompt = runtime.lastPrompt;
-      const sys = typeof ctx.getSystemPrompt === 'function' ? ctx.getSystemPrompt() : '';
+      // Use the SAME frozen system prompt the turn ran on so the naming request
+      // shares the conversation's resident KV (cheap) instead of re-prefilling.
+      const sys =
+        runtime.canonicalSystemPrompt ??
+        augmentSystemPrompt(typeof ctx.getSystemPrompt === 'function' ? ctx.getSystemPrompt() : '');
       const input: ClassifyInput = {
         prompt: namePrompt,
         turnIndex: 1,
-        priorMessages: buildConversationPrefix(getEntries(ctx), augmentSystemPrompt(sys), namePrompt),
+        priorMessages: buildConversationPrefix(getEntries(ctx), sys, namePrompt),
       };
       void asyncClassifier(input, classify(input)).then((r) => {
         if (r?.title !== undefined) setTitle(r.title, ctx);
@@ -1017,9 +1037,12 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
       const warmTools = all
         .filter((t) => warmNames.has(t.name))
         .map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
-      void warmSystemPrompt(callModel, augmentSystemPrompt(ctx.getSystemPrompt()), {
-        tools: warmTools,
-      });
+      // Capture the canonical system prompt NOW so the first real turn reuses this
+      // exact string (before_agent_start prefers runtime.canonicalSystemPrompt) —
+      // the warm-up and every turn then share a byte-identical system+tools prefix,
+      // so the KV the warm-up primes is actually reused on the first message.
+      runtime.canonicalSystemPrompt = augmentSystemPrompt(ctx.getSystemPrompt());
+      void warmSystemPrompt(callModel, runtime.canonicalSystemPrompt, { tools: warmTools });
     }
   });
 

@@ -43,21 +43,23 @@
 /* bobble (Apple-frosted, default): a floating pill a touch thinner than
  * claude's — transparent track (no bordered/white gutter), 3px visible pill
  * hovering off the edge via the 2px-transparent-border + background-clip trick.
- * Self-contained thumb color so it renders regardless of flavor tokens. */
-:root[data-flavor="bobble"] .pd-scroll::-webkit-scrollbar {
+ * Applied ACROSS THE BOARD (every scrollbar, not just .pd-scroll — jedd) with a
+ * self-contained thumb color so it renders regardless of flavor tokens. The
+ * more-specific hide rules (.pd-scroll--hidden, .pd-menu) still win. */
+:root[data-flavor="bobble"] ::-webkit-scrollbar {
   width: 7px;
   height: 7px;
 }
-:root[data-flavor="bobble"] .pd-scroll::-webkit-scrollbar-track {
+:root[data-flavor="bobble"] ::-webkit-scrollbar-track {
   background: transparent;
 }
-:root[data-flavor="bobble"] .pd-scroll::-webkit-scrollbar-thumb {
+:root[data-flavor="bobble"] ::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 1em;
   background-clip: padding-box;
   background-color: color-mix(in srgb, var(--pd-text-primary) 20%, transparent);
 }
-:root[data-flavor="bobble"] .pd-scroll::-webkit-scrollbar-thumb:hover {
+:root[data-flavor="bobble"] ::-webkit-scrollbar-thumb:hover {
   background-color: color-mix(in srgb, var(--pd-text-primary) 36%, transparent);
 }
 

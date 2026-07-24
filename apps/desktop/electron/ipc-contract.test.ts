@@ -11,7 +11,8 @@ describe('APP_INVOKE_CHANNELS', () => {
 
   it('uses domain:action kebab-case names only', () => {
     for (const channel of APP_INVOKE_CHANNELS) {
-      expect(channel).toMatch(/^[a-z]+:[a-z]+(-[a-z]+)*$/);
+      // The domain may carry digits (`gen3d:`), the action stays kebab-case.
+      expect(channel).toMatch(/^[a-z][a-z0-9]*:[a-z]+(-[a-z]+)*$/);
     }
   });
 });

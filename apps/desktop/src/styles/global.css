@@ -442,6 +442,67 @@ body {
   color: var(--pd-text-primary);
 }
 
+/* A large paste, shown as a file-style card: clamped preview + "PASTED" badge. */
+.pd-pasted {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 200px;
+  padding: 10px 12px;
+  border-radius: var(--pd-radius-md);
+  border: 1px solid var(--pd-border-subtle);
+  background: var(--pd-bg-surface);
+  box-shadow: var(--pd-shadow-hairline);
+}
+.pd-pasted-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--pd-font-size-caption);
+  line-height: 1.35;
+  color: var(--pd-text-muted);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.pd-pasted-badge {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: var(--pd-radius-sm);
+  border: 1px solid var(--pd-border-subtle);
+  background: var(--pd-bg-inset);
+  color: var(--pd-text-secondary);
+  font-size: 11px;
+  font-weight: var(--pd-font-weight-semibold);
+  letter-spacing: 0.04em;
+}
+.pd-pasted-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-bg-inset);
+  color: var(--pd-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.pd-pasted:hover .pd-pasted-remove {
+  opacity: 1;
+}
+.pd-pasted-remove:hover {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-primary);
+}
+
 /* #A8b: fullscreen drop-anywhere overlay. The dim is deliberately strong and the
  * card is a solid raised surface so the greeting/composer behind it never bleeds
  * through the (translucent, active) dropzone (adversarial drop-overlay finding). */

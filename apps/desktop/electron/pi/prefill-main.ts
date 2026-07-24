@@ -54,7 +54,6 @@ export function registerPrefillIpc(): void {
     try {
       const result = await prefillCompletion({
         baseUrl: utility.baseUrl,
-        model: utility.model,
         messages: req.messages,
         ...(req.tools !== undefined ? { tools: req.tools } : {}),
         signal: controller.signal,

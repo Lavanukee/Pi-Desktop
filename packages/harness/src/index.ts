@@ -245,6 +245,25 @@ function buildConversationPrefix(
   return messages;
 }
 
+/**
+ * True when a prompt carries a folded attachment block (`Attached file
+ * \`name\`:\n```\n…`, the shape the composer's buildAgentMessage produces for a
+ * pasted block or dropped text file).
+ *
+ * Such a turn SKIPS message-scored tool preload and uses the DETERMINISTIC base
+ * preset. Two reasons: (1) scoring a document's prose — or even a short "summarize
+ * this" request — pulls in false-positive tools (a doc about arctic terns loaded
+ * `web_search`; "summarize the key themes" loaded the whole browser pipeline via
+ * `browser_read`); (2) any added tool grows the turn's tool block, which chat
+ * templates render BEFORE the user message, shifting the attachment and breaking
+ * ATTACHMENT PREFILL's KV reuse (the prefill primes the base preset, so a bigger
+ * turn tool set → the whole attachment re-prefills). The model can still
+ * tool_search for a genuinely-needed tool. Pure.
+ */
+export function hasAttachedFileBlock(prompt: string): boolean {
+  return /Attached file `[^`\n]*`:\n```/.test(prompt);
+}
+
 function countRepairFailures(entries: readonly StoredEntryLike[]): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const e of entries) {
@@ -996,9 +1015,14 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     // top ~2 high-confidence matches + their peer pipelines (mac snapshot ⇒ the
     // whole mac computer-use set), so the model doesn't have to spend a tool_search
     // round-trip before acting. Append-only ⇒ the KV-cached prefix is preserved.
-    const preloaded = preloadToolNames(event.prompt ?? '', pi.getAllTools(), {
-      activeToolNames: runtime.activeTools,
-    });
+    // A turn carrying a pasted/attached block uses the deterministic base preset
+    // (no message-scored preload) so its tool prefix matches ATTACHMENT PREFILL's
+    // and the primed KV is reused — see hasAttachedFileBlock.
+    const preloaded = hasAttachedFileBlock(event.prompt ?? '')
+      ? []
+      : preloadToolNames(event.prompt ?? '', pi.getAllTools(), {
+          activeToolNames: runtime.activeTools,
+        });
     applyPreset(cls, ctx, preloaded);
     pi.appendEntry(HARNESS_CLASSIFY_ENTRY, { class: cls, turnIndex: runtime.turnIndex });
     // Replace the turn's system prompt with the capability-affirming version.

@@ -9,10 +9,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CAPABILITY_PROMPT_MARKER,
   HARNESS_CONFIG_ENTRY,
+  hasAttachedFileBlock,
   type StoredEntryLike,
   type ToolSchemaLike,
   wireHarness,
 } from './index.js';
+
+describe('hasAttachedFileBlock', () => {
+  const folded = 'Attached file `pasted content`:\n```\nsome pasted text\n```';
+  it('detects a folded attachment block (buildAgentMessage shape)', () => {
+    expect(hasAttachedFileBlock(folded)).toBe(true);
+    expect(hasAttachedFileBlock(`${folded}\n\nsummarize this`)).toBe(true);
+    expect(hasAttachedFileBlock('Attached file `notes.md`:\n```\n# hi\n```')).toBe(true);
+  });
+  it('is false for a plain message (no attachment)', () => {
+    expect(hasAttachedFileBlock('just a normal question about arctic terns')).toBe(false);
+    expect(hasAttachedFileBlock('```\na fenced code block, but not an attachment\n```')).toBe(
+      false,
+    );
+    expect(hasAttachedFileBlock('')).toBe(false);
+  });
+});
 
 // biome-ignore lint/suspicious/noExplicitAny: event handler shape varies per event in the fake bus.
 type AnyHandler = (event: any, ctx: any) => any;

@@ -39,13 +39,13 @@ import { ComposerBar } from './ComposerBar';
 import { ComposerFooter } from './ComposerFooter';
 import { type AcItem, Autocomplete } from './composer/Autocomplete';
 import { buildAgentMessage } from './composer/agent-message';
+import { useAttachmentPrefill } from './composer/attachment-prefill';
 import {
   ComposerEditor,
   type ComposerEditorApi,
   type ComposerKeymap,
 } from './composer/ComposerEditor';
 import { useDropStore } from './composer/drop-store';
-import { usePredictivePrefill } from './composer/predictive-prefill';
 import { type AcToken, EMPTY_TOKEN } from './composer/tokens';
 import { GEN_ACTION_PLANS, type TaskClass } from './composer-gen-actions';
 
@@ -64,6 +64,9 @@ interface Attachment {
   kind: 'image' | 'text';
   dataUri?: string;
   text?: string;
+  /** True for a large paste captured as an attachment — rendered as a text
+   * preview card with a "PASTED" badge rather than a filename chip. */
+  pasted?: boolean;
 }
 
 /** Text files we accept + read into the prompt (by MIME or extension). */
@@ -127,7 +130,7 @@ const TEXT_MAX_BYTES = 256 * 1024;
 /**
  * A pasted plain-text block at/above this many characters becomes a "pasted
  * content" attachment instead of flooding the editor (jedd) — and, being an
- * attachment, it feeds predictive prefill. Below it, paste behaves normally so a
+ * attachment, it feeds attachment prefill. Below it, paste behaves normally so a
  * sentence or short snippet still lands inline where you'd expect.
  */
 const PASTE_AS_FILE_MIN_CHARS = 1000;
@@ -162,6 +165,30 @@ function extLabel(name: string): string {
   const dot = name.lastIndexOf('.');
   const ext = dot > 0 ? name.slice(dot + 1) : '';
   return (ext || 'file').toUpperCase().slice(0, 4);
+}
+
+/** A large paste, shown as a file-style CARD: a few clamped lines of the pasted
+ * text as a preview, with a "PASTED" badge (jedd) — so it reads as an uploaded
+ * snippet, not the literal words "pasted content". */
+function PastedContentCard({ text, onRemove }: { text?: string; onRemove: () => void }) {
+  // A short prefix is enough for the preview; CSS line-clamps it to a few rows.
+  const preview = (text ?? '').slice(0, 400);
+  return (
+    <div className="pd-pasted" title="Pasted content">
+      <button
+        type="button"
+        className="pd-pasted-remove pd-focusable"
+        aria-label="Remove pasted content"
+        onClick={onRemove}
+      >
+        <IconClose size={12} />
+      </button>
+      <div className="pd-pasted-preview" aria-hidden="true">
+        {preview}
+      </div>
+      <span className="pd-pasted-badge">PASTED</span>
+    </div>
+  );
 }
 
 /** A slight attachment preview (#A8c): image thumbnail, else a filename+ext chip. */
@@ -280,15 +307,16 @@ export function ChatComposer({
   const canSend = text.trim().length > 0 || attachments.length > 0;
   const bashMode = text.trim().startsWith('!');
 
-  // PREDICTIVE PREFILL: prime the model's KV with the message being composed —
-  // the exact `agentMessage` submit() will send (typed text + folded text files)
-  // — so the real turn reuses it. `abortPrefill` is called in submit() so the
-  // dispatched turn never queues behind an in-flight prefill on the single slot.
-  const draftContent = buildAgentMessage(
-    text.trim(),
+  // ATTACHMENT PREFILL: the fixed START of the next message is its text
+  // attachments (folded exactly as submit() will fold them — no typed text). Prime
+  // that as soon as it's attached so the real turn reuses it and only prefills the
+  // short typed tail. `abortPrefill` is called in submit() so the dispatched turn
+  // never queues behind an in-flight prefill on the single slot.
+  const attachmentPrefix = buildAgentMessage(
+    '',
     attachments.filter((a) => a.kind === 'text'),
   );
-  const { abortPrefill } = usePredictivePrefill(draftContent);
+  const { abortPrefill } = useAttachmentPrefill(attachmentPrefix);
 
   // Accept images (sent to pi as ImageContent) AND text files (read + folded
   // into the prompt text on send). Anything else — binary the prompt can't carry
@@ -327,7 +355,7 @@ export function ChatComposer({
     if (pasted.length < PASTE_AS_FILE_MIN_CHARS) return false;
     setAttachments((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), name: 'pasted content', kind: 'text', text: pasted },
+      { id: crypto.randomUUID(), name: 'pasted content', kind: 'text', text: pasted, pasted: true },
     ]);
     return true;
   };
@@ -713,14 +741,22 @@ export function ChatComposer({
         >
           {attachments.length > 0 ? (
             <div className="pd-composer-attachments" data-testid="composer-attachments">
-              {attachments.map((a) => (
-                <AttachmentPreview
-                  key={a.id}
-                  name={a.name}
-                  dataUri={a.dataUri}
-                  onRemove={() => setAttachments((prev) => prev.filter((p) => p.id !== a.id))}
-                />
-              ))}
+              {attachments.map((a) =>
+                a.pasted === true ? (
+                  <PastedContentCard
+                    key={a.id}
+                    text={a.text}
+                    onRemove={() => setAttachments((prev) => prev.filter((p) => p.id !== a.id))}
+                  />
+                ) : (
+                  <AttachmentPreview
+                    key={a.id}
+                    name={a.name}
+                    dataUri={a.dataUri}
+                    onRemove={() => setAttachments((prev) => prev.filter((p) => p.id !== a.id))}
+                  />
+                ),
+              )}
             </div>
           ) : null}
 

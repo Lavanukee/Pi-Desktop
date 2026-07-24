@@ -213,8 +213,17 @@ export function createEventRouter(sink: StoreSink, options: EventRouterOptions =
   function handleEvent(e: PiBridgeEvent): void {
     switch (e.type) {
       case 'agent_start':
-        sink.agentStart();
+        // ORDER MATTERS: raise `isStreaming` BEFORE clearing `promptInFlight`.
+        // These are two separate store writes and subscribers run after EACH one,
+        // so the old order left a window where promptInFlight was already false
+        // and isStreaming not yet true — i.e. the store briefly looked IDLE while
+        // pi was very much processing. The queued-send drain subscribes to exactly
+        // that predicate, so it fired mid-window and dispatched into a busy pi,
+        // which rejects with "Agent is already processing" — a red toast plus a
+        // user bubble with no reply (jedd's blank-gap repro). Raising the busy
+        // flag first means the intermediate state reads BUSY, never idle.
         sink.setAgentStatus({ isStreaming: true, agentStartedAt: now() });
+        sink.agentStart();
         break;
 
       case 'agent_end':

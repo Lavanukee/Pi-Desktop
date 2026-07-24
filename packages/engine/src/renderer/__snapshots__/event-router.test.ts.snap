@@ -3,14 +3,14 @@
 exports[`event router — full fixture replays (mutation sequence snapshots) > abort-during-tool: abort mid-tool-phase, orphan result after agent_end 1`] = `
 [
   [
-    "agentStart",
-  ],
-  [
     "setAgentStatus",
     {
       "agentStartedAt": 1770000000000,
       "isStreaming": true,
     },
+  ],
+  [
+    "agentStart",
   ],
   [
     "beginAssistantTurn",
@@ -115,14 +115,14 @@ exports[`event router — full fixture replays (mutation sequence snapshots) > a
 exports[`event router — full fixture replays (mutation sequence snapshots) > edge-cases/abort: aborted turn still finalizes cleanly 1`] = `
 [
   [
-    "agentStart",
-  ],
-  [
     "setAgentStatus",
     {
       "agentStartedAt": 1770000000000,
       "isStreaming": true,
     },
+  ],
+  [
+    "agentStart",
   ],
   [
     "beginAssistantTurn",
@@ -183,14 +183,14 @@ exports[`event router — full fixture replays (mutation sequence snapshots) > e
 exports[`event router — full fixture replays (mutation sequence snapshots) > edge-cases/confirm: dialog, notify policy, ghost + legacy tool calls 1`] = `
 [
   [
-    "agentStart",
-  ],
-  [
     "setAgentStatus",
     {
       "agentStartedAt": 1770000000000,
       "isStreaming": true,
     },
+  ],
+  [
+    "agentStart",
   ],
   [
     "beginAssistantTurn",
@@ -486,14 +486,14 @@ exports[`event router — full fixture replays (mutation sequence snapshots) > e
 exports[`event router — full fixture replays (mutation sequence snapshots) > edge-cases/think: thinking deltas + huge unicode text block 1`] = `
 [
   [
-    "agentStart",
-  ],
-  [
     "setAgentStatus",
     {
       "agentStartedAt": 1770000000000,
       "isStreaming": true,
     },
+  ],
+  [
+    "agentStart",
   ],
   [
     "beginAssistantTurn",
@@ -573,14 +573,14 @@ exports[`event router — full fixture replays (mutation sequence snapshots) > e
 exports[`event router — full fixture replays (mutation sequence snapshots) > id-reuse: same toolCallId across turns renders every call and result 1`] = `
 [
   [
-    "agentStart",
-  ],
-  [
     "setAgentStatus",
     {
       "agentStartedAt": 1770000000000,
       "isStreaming": true,
     },
+  ],
+  [
+    "agentStart",
   ],
   [
     "beginAssistantTurn",
@@ -828,14 +828,14 @@ exports[`event router — full fixture replays (mutation sequence snapshots) > i
 exports[`event router — full fixture replays (mutation sequence snapshots) > parallel-tools: two interleaved streams (0.68.1 id-less deltas + >512-char args) 1`] = `
 [
   [
-    "agentStart",
-  ],
-  [
     "setAgentStatus",
     {
       "agentStartedAt": 1770000000000,
       "isStreaming": true,
     },
+  ],
+  [
+    "agentStart",
   ],
   [
     "beginAssistantTurn",
@@ -1092,14 +1092,14 @@ exports[`event router — full fixture replays (mutation sequence snapshots) > p
 exports[`event router — full fixture replays (mutation sequence snapshots) > simple-chat: streamed text turn 1`] = `
 [
   [
-    "agentStart",
-  ],
-  [
     "setAgentStatus",
     {
       "agentStartedAt": 1770000000000,
       "isStreaming": true,
     },
+  ],
+  [
+    "agentStart",
   ],
   [
     "beginAssistantTurn",
@@ -1169,14 +1169,14 @@ exports[`event router — full fixture replays (mutation sequence snapshots) > s
 exports[`event router — full fixture replays (mutation sequence snapshots) > status-stream: queue/compaction/retry/model/session/widget/select coverage 1`] = `
 [
   [
-    "agentStart",
-  ],
-  [
     "setAgentStatus",
     {
       "agentStartedAt": 1770000000000,
       "isStreaming": true,
     },
+  ],
+  [
+    "agentStart",
   ],
   [
     "setAgentStatus",
@@ -1334,14 +1334,14 @@ exports[`event router — full fixture replays (mutation sequence snapshots) > s
 exports[`event router — full fixture replays (mutation sequence snapshots) > tool-use: bash + edit with streaming args, executions, results 1`] = `
 [
   [
-    "agentStart",
-  ],
-  [
     "setAgentStatus",
     {
       "agentStartedAt": 1770000000000,
       "isStreaming": true,
     },
+  ],
+  [
+    "agentStart",
   ],
   [
     "beginAssistantTurn",

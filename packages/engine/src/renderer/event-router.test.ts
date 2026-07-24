@@ -89,6 +89,26 @@ describe('event router — full fixture replays (mutation sequence snapshots)', 
   });
 });
 
+describe('event router — agent_start busy-flag ordering', () => {
+  it('raises isStreaming BEFORE clearing promptInFlight (no idle window)', () => {
+    // Regression (jedd): `agentStart()` clears promptInFlight and
+    // `setAgentStatus({isStreaming:true})` raises the busy flag — two SEPARATE
+    // store writes, and subscribers run after each. In the old order the store
+    // briefly read promptInFlight=false AND isStreaming=false, i.e. IDLE, while
+    // pi was processing. The queued-send drain subscribes to exactly that
+    // predicate, so it dispatched into a busy pi → "Agent is already processing"
+    // rejection → a user bubble with no reply plus a red toast.
+    const { sink, route } = makeRouter();
+    route({ type: 'agent_start' });
+    const names = sink.calls.map(([name]) => name);
+    const streamingAt = names.indexOf('setAgentStatus');
+    const startAt = names.indexOf('agentStart');
+    expect(streamingAt).toBeGreaterThanOrEqual(0);
+    expect(startAt).toBeGreaterThanOrEqual(0);
+    expect(streamingAt).toBeLessThan(startAt);
+  });
+});
+
 describe('event router — null-valued wire sub-fields (JSON null treated as absent) [round-9]', () => {
   it('does not throw when streaming wire fields arrive as JSON null', () => {
     const { sink, route } = makeRouter();

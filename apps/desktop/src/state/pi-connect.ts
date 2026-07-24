@@ -425,10 +425,28 @@ export async function sendPrompt(
   const images = imageDataUris
     .map(dataUriToImage)
     .filter((img): img is ImageContent => img !== null);
-  return window.piDesktop.invoke('pi:prompt', {
+  const body = {
     message: withPendingInstructions(agentMessage ?? message),
     ...(images.length > 0 ? { images } : {}),
+  };
+  // Re-check RIGHT HERE, not just at the composer's gate: everything above can
+  // await for seconds (a vision relaunch, an Auto tier switch, waiting for the
+  // server), so a turn may have started since this send was accepted. Dispatching
+  // a bare prompt into a busy pi is REJECTED ("Agent is already processing…"),
+  // which stranded the echo as a user bubble with no reply and raised a red toast
+  // (jedd's blank-gap repro). `followUp` is pi's own supported way to queue it,
+  // and it preserves the ordering we want: [msg1, reply1, msg2, reply2].
+  const ack = await window.piDesktop.invoke('pi:prompt', {
+    ...body,
+    ...(agentInFlight() ? { streamingBehavior: 'followUp' as const } : {}),
   });
+  // Belt and braces for any race the check above still loses (pi's view of busy
+  // is authoritative, ours is a mirror): retry once as a follow-up instead of
+  // surfacing the rejection.
+  if (ack?.success === false && /already processing/i.test(ack.error ?? '')) {
+    return window.piDesktop.invoke('pi:prompt', { ...body, streamingBehavior: 'followUp' });
+  }
+  return ack;
 }
 
 export async function steerPrompt(message: string, agentMessage?: string) {

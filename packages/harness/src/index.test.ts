@@ -147,13 +147,13 @@ describe('wireHarness', () => {
     expect(result?.systemPrompt).toContain('tool_search');
   });
 
-  it('emits the classify+title piggyback title over the status channel (turn 1)', async () => {
+  it('does NOT classify on the turn path — no utility call blocks the reply (jedd)', async () => {
     const f = makeFakePi(['read', 'write', 'edit', 'ls', 'find', 'grep', 'bash', 'python_run']);
-    // A mock CallModel standing in for the utility llama-server: returns the
-    // grammar-shaped {title, class} object the piggyback expects.
+    // A mock CallModel standing in for the utility llama-server. Classification is
+    // removed from the turn path, so it must NOT be invoked before generation.
     const callModel = vi.fn(async () => '{"title":"Auth refactor","class":"coding"}');
     wireHarness(f.pi, { callModel });
-    const { ctx, setStatus } = makeCtx(f.entries);
+    const { ctx } = makeCtx(f.entries);
     await f.fire('session_start', { type: 'session_start', reason: 'startup' }, ctx);
     await f.fire(
       'before_agent_start',
@@ -165,15 +165,11 @@ describe('wireHarness', () => {
       },
       ctx,
     );
-    expect(callModel).toHaveBeenCalled();
-    // Dedicated title status key…
-    expect(
-      setStatus.mock.calls.some((c) => c[0] === 'harness-title' && c[1] === 'Auth refactor'),
-    ).toBe(true);
-    // …and carried in the structured harness status JSON.
-    const last = setStatus.mock.calls.filter((c) => c[0] === 'harness').at(-1)?.[1] as string;
-    expect(JSON.parse(last).title).toBe('Auth refactor');
-    // The fast heuristic still owns the (unambiguous) class → coding preset.
+    // The key latency fix: no classify/title piggyback awaited before the model
+    // starts — the ~2.5s TTFT tax is gone. (Auto-naming now runs post-turn on
+    // agent_end; verified live.)
+    expect(callModel).not.toHaveBeenCalled();
+    // The fixed default 'coding' preset still gives the coding tools.
     const tools = f.setActiveTools.mock.calls.at(-1)?.[0] as string[];
     expect(tools).toContain('python_run');
   });

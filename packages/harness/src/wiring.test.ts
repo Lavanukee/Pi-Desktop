@@ -549,14 +549,13 @@ describe('effort-gated REAL verify (bounded fix loop)', () => {
 // --- Fix #5: HarnessStatus.stage transitions -------------------------------
 
 describe('HarnessStatus.stage transitions publish at the seams', () => {
-  it('idle → classifying → working → done across a plain turn', async () => {
+  it('idle → working → done across a plain turn (no classifying stage)', async () => {
     const rig = makeRig({ effort: 'medium' });
     await startSession(rig);
     expect(rig.handle.getStatus(rig.ctx).stage).toBe('idle');
 
-    await startTurn(rig);
-    expect(rig.handle.getStatus(rig.ctx).stage).toBe('classifying');
-
+    // Classification removed → the turn goes straight to working (no classify
+    // stage/latency before the model starts).
     await rig.fire('agent_start', { type: 'agent_start' });
     expect(rig.handle.getStatus(rig.ctx).stage).toBe('working');
 
@@ -566,9 +565,7 @@ describe('HarnessStatus.stage transitions publish at the seams', () => {
     });
     expect(rig.handle.getStatus(rig.ctx).stage).toBe('done');
 
-    expect(rig.publishedStages()).toEqual(
-      expect.arrayContaining(['idle', 'classifying', 'working', 'done']),
-    );
+    expect(rig.publishedStages()).toEqual(expect.arrayContaining(['idle', 'working', 'done']));
   });
 
   it('reviewer flag → reviewing then revising are both published', async () => {

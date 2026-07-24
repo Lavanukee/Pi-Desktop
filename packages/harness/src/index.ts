@@ -27,7 +27,6 @@ import {
   type ClassifyInput,
   type ClassifyMessage,
   classify,
-  classifyWithEscalation,
   TASK_CLASSES,
   type TaskClass,
 } from './classify/classify.js';
@@ -866,42 +865,21 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
       loopDetectorConfig(effortKnobs(runtime.config.effort)),
     );
     runtime.touchedFiles = [];
-    setStage('classifying', ctx);
     // Capability-affirming system prompt (fix: the model must KNOW it can act on
     // the machine and must not disclaim abilities it has). pi 0.68.1 applies a
     // `{ systemPrompt }` returned from this handler for the turn (agent-session's
     // emitBeforeAgentStart), chained across extensions — so we augment whatever
-    // base/previously-chained prompt arrives. Built BEFORE the classify prefix so
-    // the tier-2 piggyback shares the EXACT prompt the real turn will run on.
+    // base/previously-chained prompt arrives.
     const augmentedSystemPrompt = augmentSystemPrompt(event.systemPrompt);
-    let cls: TaskClass;
-    if (runtime.config.preset === 'auto') {
-      const input: ClassifyInput = {
-        prompt: event.prompt,
-        hasImages: (event.images?.length ?? 0) > 0,
-        priorClass: runtime.activeClass ?? undefined,
-        turnIndex: runtime.turnIndex,
-        // Live conversation prefix for the cache-reusing tier-2 piggyback (only
-        // read when it escalates; tier-1 heuristics ignore it).
-        priorMessages: buildConversationPrefix(
-          getEntries(ctx),
-          augmentedSystemPrompt,
-          event.prompt,
-        ),
-      };
-      if (asyncClassifier !== undefined) {
-        // Force the {title, class} piggyback on the first turn (until we have a
-        // title) so the title is produced even when the class is unambiguous.
-        const forceEscalate = runtime.turnIndex === 1 && runtime.title === null;
-        const result = await classifyWithEscalation(input, { asyncClassifier, forceEscalate });
-        cls = result.class;
-        if (result.title !== undefined) setTitle(result.title, ctx);
-      } else {
-        cls = classify(input).class;
-      }
-    } else {
-      cls = runtime.config.preset;
-    }
+    // Classification REMOVED from the turn path (jedd: "we seldom use it at all,
+    // let's just completely remove"). The turn-1 {title,class} piggyback cost
+    // ~2.5s of TTFT — an awaited utility call before the model could even start.
+    // Instead use a fixed default preset: deterministic, and it matches the
+    // model-load warm-up ('coding') so the KV prefix is reused; semantic preload
+    // still adds message-relevant tools append-only. Conversation naming is now a
+    // post-turn background pass (agent_end) that never blocks the reply. Re-add
+    // per-task classify later if the routing proves worth the latency.
+    const cls: TaskClass = runtime.config.preset === 'auto' ? 'coding' : runtime.config.preset;
     // Preemptively pull in the tools this message semantically needs (jedd): the
     // top ~2 high-confidence matches + their peer pipelines (mac snapshot ⇒ the
     // whole mac computer-use set), so the model doesn't have to spend a tool_search
@@ -926,6 +904,28 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     runtime.currentCtx = ctx;
     runtime.taskStart = null;
     publishStatus(ctx);
+    // Auto-name the conversation AFTER the first turn concludes (jedd) — now that
+    // classification is gone from the turn path, naming is a post-turn background
+    // pass so it NEVER blocks the reply. Reuses the cache-sharing {title,class}
+    // piggyback (the just-run turn's KV is resident, so only the tiny title
+    // instruction + answer are new); we keep only the title. Fire-and-forget.
+    if (
+      runtime.turnIndex === 1 &&
+      runtime.title === null &&
+      asyncClassifier !== undefined &&
+      runtime.lastPrompt !== null
+    ) {
+      const namePrompt = runtime.lastPrompt;
+      const sys = typeof ctx.getSystemPrompt === 'function' ? ctx.getSystemPrompt() : '';
+      const input: ClassifyInput = {
+        prompt: namePrompt,
+        turnIndex: 1,
+        priorMessages: buildConversationPrefix(getEntries(ctx), augmentSystemPrompt(sys), namePrompt),
+      };
+      void asyncClassifier(input, classify(input)).then((r) => {
+        if (r?.title !== undefined) setTitle(r.title, ctx);
+      });
+    }
     const output = extractAssistantText(event.messages);
     // 1) Effort high/max → run the project's REAL checks on coding/file-ops turns.
     //    If it steers a fix, skip the LLM reviewer this cycle (don't double-steer
@@ -1141,7 +1141,6 @@ export {
   type ClassifyOptions,
   type ClassifyResult,
   classify,
-  classifyWithEscalation,
   TASK_CATEGORIES,
   TASK_CLASSES,
   TASK_TIERS,

@@ -77,6 +77,38 @@ def polygon_edges(polys: list[list[int]]) -> list[int]:
     return flat
 
 
+# AutoRemesher narrates every solver step on stderr. Dumping that at the user
+# as an "error" is noise, not a reason — keep only lines that aren't progress.
+PROGRESS_NOISE = (
+    "searching boundaries",
+    "check_that multiplicity",
+    "new ls iteration",
+    "extract connections",
+    "extract edges",
+    "extract mesh",
+    "in opennl",
+    "iter",
+)
+
+
+def failure_reason(result: subprocess.CompletedProcess | None) -> str:
+    """A short, human reason for a failed remesh — never a wall of solver logs."""
+    if result is None:
+        return "the remesher did not run"
+    lines = [
+        ln.strip()
+        for ln in ((result.stderr or "") + "\n" + (result.stdout or "")).splitlines()
+        if ln.strip() and not any(n in ln.lower() for n in PROGRESS_NOISE)
+    ]
+    if lines:
+        return f"exit {result.returncode}: {lines[-1][:200]}"
+    return (
+        f"it exited {result.returncode} partway through solving, twice. This usually means the "
+        "surface is too tangled to parametrise — try segmenting it first, or lower the target "
+        "quad count."
+    )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--mesh", required=True)
@@ -122,25 +154,30 @@ def main() -> None:
 
     out_obj = out_dir / "retopo-quads.obj"
     report = out_dir / "retopo-report.txt"
+    cmd = [
+        args.cli,
+        "--input", str(in_obj),
+        "--output", str(out_obj),
+        "--target-quads", str(args.target_quads),
+        "--adaptivity", str(args.adaptivity),
+        "--edge-scaling", str(args.edge_scaling),
+        "--sharp-edge", str(args.sharp_edge),
+        "--report", str(report),
+    ]
+    # AutoRemesher's parametrisation is TBB-parallel and OBSERVED to fail
+    # nondeterministically: two runs over a byte-identical input, one exited 1
+    # partway through the LS iterations, the next succeeded. A single retry
+    # turns that flake into a non-event instead of a dead-end error.
     progress(STAGE, f"Remeshing to ~{args.target_quads:,} quads…", 3, TOTAL_STEPS)
-    result = subprocess.run(
-        [
-            args.cli,
-            "--input", str(in_obj),
-            "--output", str(out_obj),
-            "--target-quads", str(args.target_quads),
-            "--adaptivity", str(args.adaptivity),
-            "--edge-scaling", str(args.edge_scaling),
-            "--sharp-edge", str(args.sharp_edge),
-            "--report", str(report),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=3600,
-    )
-    if result.returncode != 0 or not out_obj.exists():
-        detail = (result.stderr or result.stdout or "").strip()[-500:]
-        error(f"autoremesher failed ({result.returncode}): {detail}")
+    result = None
+    for attempt in (1, 2):
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        if result.returncode == 0 and out_obj.exists():
+            break
+        if attempt == 1:
+            progress(STAGE, "Remesher stopped early — retrying…", 3, TOTAL_STEPS)
+    if result is None or result.returncode != 0 or not out_obj.exists():
+        error(f"AutoRemesher could not remesh this mesh — {failure_reason(result)}")
         sys.exit(1)
 
     progress(STAGE, "Measuring topology…", 4, TOTAL_STEPS)

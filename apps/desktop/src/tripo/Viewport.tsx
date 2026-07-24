@@ -93,6 +93,7 @@ function FloatToolbar({ onSnapshot }: { readonly onSnapshot: () => void }): JSX.
   const envLight = useTripoStore((s) => s.envLight);
   const lightIntensity = useTripoStore((s) => s.lightIntensity);
   const history = useTripoStore((s) => s.history);
+  const modal = useTripoStore((s) => s.modal);
   const set = useTripoStore((s) => s.set);
 
   return (
@@ -180,7 +181,9 @@ function FloatToolbar({ onSnapshot }: { readonly onSnapshot: () => void }): JSX.
           type="button"
           className="tp-float-btn tp-float-solo"
           data-testid="tp-help-btn"
-          onClick={() => set('modal', 'help')}
+          aria-pressed={modal === 'help'}
+          // Strictly a toggle, and the ONLY way this dialog opens.
+          onClick={() => set('modal', modal === 'help' ? null : 'help')}
         >
           <IcQuestion size={17} />
         </button>
@@ -401,10 +404,20 @@ function HelpTile({
   );
 }
 
+/** Viewport navigation help. Opened ONLY by the "?" button in the viewport
+ * rail — never automatically. Rendered conditionally, so when closed it is not
+ * in the tree at all and cannot intercept clicks aimed at the model. */
 function HelpModal(): JSX.Element {
   const set = useTripoStore((s) => s.set);
   return (
-    <div className="tp-modal-backdrop" data-testid="tp-help-modal">
+    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismissal; Escape and the close/OK buttons are the keyboard paths
+    <div
+      className="tp-modal-backdrop"
+      data-testid="tp-help-modal"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) set('modal', null);
+      }}
+    >
       <div className="tp-help-card">
         <div className="tp-help-head">
           View Your Model

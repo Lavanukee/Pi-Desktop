@@ -1,25 +1,44 @@
 /**
- * Animate panel — the ARDY control deck. Not just "generate rig": it authors
- * MOTIONS (bundled presets + natural-language ARDY clips) and composes them
- * into an animation state machine for MOTION MATCHING (the graph opens over the
- * viewport — see BlendGraph). Sections: rig the character (SkinTokens), describe
- * a motion (ARDY), the motion library (click a motion to drop it into the
- * machine, hover to preview it on the humanoid dummy), the driving parameters,
- * and the state-machine launcher + JSON export.
+ * Animate panel — rig first, then motion.
  *
- * Design-backed until the live rig/ARDY engines are wired: rigging overlays the
- * loaded model's skeleton, motion previews play on the bundled dummy, and the
- * authored graph is fully real and exportable.
+ * The gate is deliberate and jedd asked for it explicitly: nothing about motion
+ * is visible until the loaded model is ACTUALLY RIGGED, and the animation
+ * presets stay hidden unless the rig is humanoid. A state machine over a model
+ * with no skeleton is theatre.
+ *
+ * Flow: Analyse shape → the engine measures whether the mesh reads as humanoid
+ * and reports it → we ASK ("humanoid?") instead of guessing → the rig runs and
+ * produces a real skinned GLB on the asset's history tree.
+ *
+ * HONEST STATUS of the two named engines:
+ *  - Rigging is a GEOMETRIC fit to NVIDIA ARDY's 27-joint skeleton, not
+ *    SkinTokens. SkinTokens needs a >=14 GB NVIDIA GPU and hardcodes CUDA — it
+ *    cannot run on this machine at all.
+ *  - ARDY motion generation is NOT wired. ARDY is Linux + NVIDIA only. The rig
+ *    it produces is ARDY-COMPATIBLE (same joint hierarchy), so clips generated
+ *    elsewhere retarget onto it, but nothing here generates motion locally.
+ * The panel says so on screen rather than implying otherwise.
  */
 import type { JSX } from 'react';
 import { ANIM_PREVIEWS } from './assets/anim-previews';
 import { ANIM_MODEL, RIG_MODEL } from './data';
-import { IcAnimate, IcBolt, IcPlus, IcRig, IcSearch, IcSparkles, IcTrash } from './icons';
-import { Segmented, Toggle } from './primitives';
-import { useTripoStore } from './store';
+import { useGen3dStore } from './gen3d-client';
+import {
+  IcAnimate,
+  IcBolt,
+  IcInfo,
+  IcPlus,
+  IcRig,
+  IcSearch,
+  IcSparkles,
+  IcTrash,
+} from './icons';
+import { Segmented } from './primitives';
+import { currentVersion, useTripoStore } from './store';
 
-/** Preset preview: a real skeletal-animation video on the humanoid dummy —
- * the mid-motion poster by default, playing on hover. */
+/** Preset preview: a real skeletal-animation video on a humanoid dummy — the
+ * mid-motion poster by default, playing on hover. These are BUNDLED sample
+ * clips, not model output. */
 function AnimPreviewCard({ preset }: { readonly preset: string | undefined }): JSX.Element | null {
   const preview = preset !== undefined ? ANIM_PREVIEWS[preset] : undefined;
   if (preview === undefined)
@@ -95,29 +114,103 @@ function ParametersSection(): JSX.Element {
   );
 }
 
+/** The "humanoid?" question — raised by the engine's shape probe, answered by
+ * the user. This is the ONLY path to a humanoid rig. */
+function HumanoidPrompt({
+  diskPath,
+  assetId,
+  versionId,
+}: {
+  readonly diskPath: string;
+  readonly assetId: string;
+  readonly versionId: string;
+}): JSX.Element | null {
+  const prompt = useTripoStore((s) => s.humanoidPrompt);
+  const runStage = useGen3dStore((s) => s.runStage);
+  if (prompt === null || prompt.assetId !== assetId) return null;
+
+  const pct = Math.round(prompt.confidence * 100);
+  const dismiss = () => useTripoStore.setState({ humanoidPrompt: null });
+  const rig = () => {
+    dismiss();
+    void runStage('rig', diskPath, { assetId, versionId, op: 'rig' });
+  };
+
+  return (
+    <div className="tp-humanoid-ask" data-testid="tp-humanoid-ask" data-humanoid={prompt.isHumanoid}>
+      <div className="tp-humanoid-ask-title">
+        {prompt.isHumanoid ? 'This looks humanoid.' : "This doesn't look humanoid."}
+      </div>
+      <p className="tp-humanoid-ask-body">
+        {prompt.isHumanoid ? (
+          <>
+            Two leg columns and arm span detected ({pct}% confidence). Rig it with the 27-joint
+            humanoid skeleton {ANIM_MODEL} expects?
+          </>
+        ) : (
+          <>
+            {prompt.reasons.length > 0 ? prompt.reasons.join('; ') : 'no humanoid structure found'}.
+            A humanoid rig fitted to a non-humanoid mesh puts bones where there is no body — and
+            the animation presets will stay hidden either way.
+          </>
+        )}
+      </p>
+      <div className="tp-humanoid-ask-actions">
+        <button
+          type="button"
+          className="tp-generate-btn"
+          data-testid="tp-humanoid-confirm"
+          onClick={rig}
+        >
+          <IcRig size={15} />
+          {prompt.isHumanoid ? 'Rig as humanoid' : 'Rig anyway'}
+        </button>
+        <button
+          type="button"
+          className="tp-ghost-btn"
+          data-testid="tp-humanoid-cancel"
+          onClick={dismiss}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function AnimatePanel(): JSX.Element {
-  const skeleton = useTripoStore((s) => s.skeleton);
   const animSearch = useTripoStore((s) => s.animSearch);
-  const motionPrompt = useTripoStore((s) => s.motionPrompt);
   const motions = useTripoStore((s) => s.motionLibrary);
   const states = useTripoStore((s) => s.blendStates);
   const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
+  const assets = useTripoStore((s) => s.assets);
   const set = useTripoStore((s) => s.set);
-  const runStage = useTripoStore((s) => s.runStage);
-  const generateMotion = useTripoStore((s) => s.generateMotion);
   const addBlendState = useTripoStore((s) => s.addBlendState);
-  const hasModel = loadedAssetId !== null;
+
+  const engineReady = useGen3dStore((s) => s.engineReady);
+  const models = useGen3dStore((s) => s.models);
+  const job = useGen3dStore((s) => s.job);
+  const runStage = useGen3dStore((s) => s.runStage);
+
+  const asset = assets.find((a) => a.id === loadedAssetId);
+  const version = asset === undefined ? undefined : currentVersion(asset);
+  const hasModel = asset !== undefined && version?.diskPath !== undefined;
+  const rigged = version?.rigged === true;
+  const humanoid = version?.humanoid === true;
+  const rigInstalled =
+    engineReady && models.find((m) => m.id === 'humanoid-rig')?.installed === true;
+  const busy = job !== null && !job.done && job.stage === 'rig';
 
   const visible = motions.filter((m) => m.name.toLowerCase().includes(animSearch.toLowerCase()));
 
-  const rig = () => {
-    if (!hasModel) return;
-    set('skeleton', true);
-    runStage('rig');
-    // The rigged model gains an armature in the hierarchy.
-    useTripoStore.setState((s) => ({
-      assets: s.assets.map((a) => (a.id === s.loadedAssetId ? { ...a, rigged: true } : a)),
-    }));
+  const analyse = () => {
+    if (asset === undefined || version?.diskPath === undefined) return;
+    void runStage(
+      'rig',
+      version.diskPath,
+      { assetId: asset.id, versionId: version.id, op: 'rig' },
+      { probeOnly: true },
+    );
   };
 
   return (
@@ -133,109 +226,138 @@ export function AnimatePanel(): JSX.Element {
           <span className="tp-field-label">Rigging</span>
           <span className="tp-engine-name">{RIG_MODEL}</span>
         </div>
-        <div className="tp-engine-row">
-          <span className="tp-field-label">Animation</span>
-          <span className="tp-engine-name">{ANIM_MODEL}</span>
-        </div>
 
         {/* ── rig ─────────────────────────────────────────────────────── */}
         {!hasModel ? (
           <p className="tp-select-copy" data-testid="tp-rig-imported-note">
-            Load a model (generate or import one) to rig it with {RIG_MODEL}.
+            Load a model (generate, import, or pick one from Assets) to rig it.
           </p>
         ) : null}
-        <button
-          type="button"
-          className="tp-retry-btn"
-          data-testid="tp-rig-btn"
-          disabled={!hasModel}
-          onClick={rig}
-        >
-          <IcRig size={15} />
-          Auto-Rig with {RIG_MODEL}
-        </button>
-        <div className="tp-setting-row tp-row-plain">
-          <span className="tp-setting-label">Skeleton</span>
-          <Toggle on={skeleton} onChange={(v) => set('skeleton', v)} testid="tp-skeleton-toggle" />
-        </div>
 
-        {/* ── generate a motion (ARDY, natural language) ──────────────── */}
-        <div className="tp-section-title">Describe a motion ({ANIM_MODEL})</div>
-        <div className="tp-card tp-card-pad">
-          <textarea
-            className="tp-prompt"
-            data-testid="tp-motion-prompt"
-            placeholder="Describe an action… e.g. a cautious crouch-walk that breaks into a sprint, then a dodge-roll left"
-            rows={3}
-            value={motionPrompt}
-            onChange={(e) => set('motionPrompt', e.target.value)}
-          />
-        </div>
-        <button
-          type="button"
-          className="tp-generate-btn"
-          data-testid="tp-generate-motion"
-          disabled={motionPrompt.trim().length === 0}
-          onClick={generateMotion}
-        >
-          <IcSparkles size={15} />
-          Generate Motion
-        </button>
-
-        {/* ── motion library (click a motion → drop it into the machine) ─ */}
-        <div className="tp-section-title">Motion library</div>
-        <p className="tp-select-copy">
-          Click a motion to add it to the state machine · hover to preview.
-        </p>
-        <div className="tp-search">
-          <IcSearch size={15} />
-          <input
-            type="text"
-            placeholder="Search motions"
-            value={animSearch}
-            data-testid="tp-anim-search"
-            onChange={(e) => set('animSearch', e.target.value)}
-          />
-        </div>
-        <div className="tp-anim-grid" data-testid="tp-anim-grid">
-          {visible.map((m) => (
+        {hasModel && !rigged ? (
+          <>
+            {!rigInstalled ? (
+              <p className="tp-stage-warn" data-testid="tp-rig-unavailable">
+                The 3D engine runtime isn't ready yet, so rigging can't run. Open the download
+                panel to finish engine setup.
+              </p>
+            ) : null}
             <button
-              key={m.id}
               type="button"
-              className="tp-anim-card"
-              data-generated={m.kind === 'generated'}
-              data-testid={`tp-motion-${m.id}`}
-              title={m.prompt ?? m.name}
-              onClick={() => addBlendState(m.id)}
+              className="tp-retry-btn"
+              data-testid="tp-rig-btn"
+              disabled={!rigInstalled || busy}
+              onClick={analyse}
             >
-              <span className="tp-anim-add">
-                <IcPlus size={11} />
-              </span>
-              <AnimPreviewCard preset={m.previewId} />
-              <span className="tp-anim-name">{m.name}</span>
+              <IcRig size={15} />
+              {busy ? 'Analysing shape…' : 'Analyse shape & rig'}
             </button>
-          ))}
-          {visible.length === 0 ? <div className="tp-anim-empty">No motions match</div> : null}
+            {asset !== undefined && version?.diskPath !== undefined ? (
+              <HumanoidPrompt
+                diskPath={version.diskPath}
+                assetId={asset.id}
+                versionId={version.id}
+              />
+            ) : null}
+          </>
+        ) : null}
+
+        {rigged ? (
+          <div className="tp-rig-status" data-testid="tp-rig-status" data-humanoid={humanoid}>
+            <IcRig size={15} />
+            <span>
+              Rigged · 27-joint {ANIM_MODEL} humanoid skeleton
+              {humanoid ? '' : ' (shape did not measure as humanoid)'}
+            </span>
+          </div>
+        ) : null}
+
+        {/* Everything below is gated on a REAL rig. */}
+        {rigged && humanoid ? (
+          <>
+            <div className="tp-section-title">Describe a motion ({ANIM_MODEL})</div>
+            <div className="tp-notice" data-testid="tp-ardy-unavailable">
+              <IcInfo size={14} />
+              <span>
+                {ANIM_MODEL} motion generation runs on Linux + NVIDIA only, so it can't generate
+                clips on this Mac. The rig above uses {ANIM_MODEL}'s exact 27-joint hierarchy, so
+                clips generated elsewhere retarget onto it directly.
+              </span>
+            </div>
+            <button
+              type="button"
+              className="tp-generate-btn"
+              data-testid="tp-generate-motion"
+              disabled
+            >
+              <IcSparkles size={15} />
+              Generate Motion — {ANIM_MODEL} unavailable locally
+            </button>
+
+            {/* ── motion library (click a motion → drop it into the machine) ─ */}
+            <div className="tp-section-title">Motion library</div>
+            <p className="tp-select-copy">
+              Bundled sample clips. Click one to add it to the state machine · hover to preview.
+            </p>
+            <div className="tp-search">
+              <IcSearch size={15} />
+              <input
+                type="text"
+                placeholder="Search motions"
+                value={animSearch}
+                data-testid="tp-anim-search"
+                onChange={(e) => set('animSearch', e.target.value)}
+              />
+            </div>
+            <div className="tp-anim-grid" data-testid="tp-anim-grid">
+              {visible.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className="tp-anim-card"
+                  data-generated={m.kind === 'generated'}
+                  data-testid={`tp-motion-${m.id}`}
+                  title={m.prompt ?? m.name}
+                  onClick={() => addBlendState(m.id)}
+                >
+                  <span className="tp-anim-add">
+                    <IcPlus size={11} />
+                  </span>
+                  <AnimPreviewCard preset={m.previewId} />
+                  <span className="tp-anim-name">{m.name}</span>
+                </button>
+              ))}
+              {visible.length === 0 ? <div className="tp-anim-empty">No motions match</div> : null}
+            </div>
+
+            <ParametersSection />
+          </>
+        ) : null}
+
+        {rigged && !humanoid ? (
+          <p className="tp-select-copy" data-testid="tp-nonhumanoid-note">
+            Animation presets are humanoid clips, so they're hidden for this model — retargeting
+            them onto a non-humanoid skeleton would only produce nonsense.
+          </p>
+        ) : null}
+      </div>
+
+      {/* ── state machine launcher: only once there is a humanoid rig ─── */}
+      {rigged && humanoid ? (
+        <div className="tp-panel-foot">
+          <button
+            type="button"
+            className="tp-generate-btn"
+            data-testid="tp-open-graph"
+            onClick={() => set('graphOpen', true)}
+          >
+            <IcBolt size={15} />
+            {states.length === 0
+              ? 'Open State Machine'
+              : `Open State Machine · ${states.length} states`}
+          </button>
         </div>
-
-        {/* ── driving parameters ──────────────────────────────────────── */}
-        <ParametersSection />
-      </div>
-
-      {/* ── state machine launcher ───────────────────────────────────── */}
-      <div className="tp-panel-foot">
-        <button
-          type="button"
-          className="tp-generate-btn"
-          data-testid="tp-open-graph"
-          onClick={() => set('graphOpen', true)}
-        >
-          <IcBolt size={15} />
-          {states.length === 0
-            ? 'Open State Machine'
-            : `Open State Machine · ${states.length} states`}
-        </button>
-      </div>
+      ) : null}
     </>
   );
 }

@@ -4,11 +4,19 @@
  * live store state (see store.ts) and every list here backs a functional
  * control.
  *
- * Model names are the REAL open models this studio is built around (roadmap):
- * generation = Hunyuan 3D Omni / TRELLIS-2, segmentation = CubePart
- * (Roblox/cubepart), retopology = AutoRemesher, rigging = SkinTokens,
- * animation = ARDY. The demo pipeline is sample-asset-backed until the live
- * engines are wired; the names label the intended engine per stage.
+ * Model names are the REAL engines behind each stage — they must name what
+ * ACTUALLY runs, never an aspiration:
+ *   generation   TRELLIS-2 (Hunyuan 3D Omni has no Metal port, and says so)
+ *   segmentation CubePart (Roblox/cubepart)
+ *   retopology   AutoRemesher
+ *   rigging      a local geometric fit to ARDY's 27-joint skeleton. NOT
+ *                SkinTokens: SkinTokens needs a >=14 GB NVIDIA GPU, builds
+ *                flash-attn and hardcodes .to("cuda"), so it cannot run on
+ *                Apple Silicon at all — labelling this stage "SkinTokens"
+ *                claimed something untrue.
+ *   animation    ARDY is the skeleton TARGET. ARDY itself is Linux + NVIDIA
+ *                only, so no motion is generated locally; the Animate panel
+ *                says so rather than faking clips.
  */
 
 export interface ModelVersion {
@@ -31,7 +39,7 @@ export const GEN_MODELS: readonly ModelVersion[] = [
 export const SEGMENT_MODEL = 'CubePart';
 export const RETOPO_MODEL = 'AutoRemesher';
 export const TEXTURE_MODEL = 'Hunyuan Paint';
-export const RIG_MODEL = 'SkinTokens';
+export const RIG_MODEL = 'Humanoid Auto-Rig (local)';
 export const ANIM_MODEL = 'ARDY';
 
 /** Animation presets for the Animate panel grid (pose id → mannequin pose). */

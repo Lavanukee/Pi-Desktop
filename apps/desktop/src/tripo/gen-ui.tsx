@@ -15,7 +15,7 @@
  *    thumbnail, and Cancel. Geometry lands in the viewer the moment it exists.
  */
 import type { CSSProperties, JSX } from 'react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Gen3dModelId, Gen3dRole } from '../../electron/gen3d/gen3d-contract';
 import { formatGb, useGen3dStore } from './gen3d-client';
 import { IcCaretSmall, IcCheck, IcClose, IcDownload } from './icons';
@@ -295,15 +295,37 @@ function chipsFor(stage: Gen3dRole): readonly Gen3dRole[] {
   return ['image', 'geometry', 'texture'];
 }
 
+/** mm:ss for a running stage — long stages must not look hung. */
+function useElapsed(jobId: string | null, done: boolean): string | null {
+  const [now, setNow] = useState(() => Date.now());
+  const startRef = useRef<{ id: string; at: number } | null>(null);
+  if (jobId !== null && startRef.current?.id !== jobId) {
+    startRef.current = { id: jobId, at: Date.now() };
+  }
+  useEffect(() => {
+    if (jobId === null || done) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [jobId, done]);
+  const start = startRef.current;
+  if (start === null || jobId === null) return null;
+  const secs = Math.max(0, Math.floor((now - start.at) / 1000));
+  if (secs < 3) return null;
+  return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, '0')}s`;
+}
+
 export function GenProgressCard(): JSX.Element | null {
   const job = useGen3dStore((s) => s.job);
   const cancelJob = useGen3dStore((s) => s.cancelJob);
   const clearJob = useGen3dStore((s) => s.clearJob);
+  const elapsed = useElapsed(job?.jobId ?? null, job?.done ?? true);
   if (job === null) return null;
 
   const chips = chipsFor(job.stage);
   const activeIdx = chips.indexOf(job.stage);
   const failed = job.error !== undefined;
+  const cancelled = job.error === 'cancelled';
+  const indeterminate = !job.done && job.stagePercent === 0 && job.overallPercent === 0;
 
   return (
     <div className="tp-genprogress" data-testid="tp-genprogress" data-done={job.done}>
@@ -342,16 +364,34 @@ export function GenProgressCard(): JSX.Element | null {
       </div>
       {failed ? (
         <div className="tp-genprogress-error" data-testid="tp-genprogress-error">
-          {job.error}
+          <div className="tp-genprogress-error-title">
+            {cancelled ? 'Cancelled' : `${STAGE_CHIP[job.stage]} failed`}
+          </div>
+          {!cancelled ? <div className="tp-genprogress-error-body">{job.error}</div> : null}
         </div>
       ) : (
         <>
-          <div className="tp-progress tp-genprogress-bar">
-            <div className="tp-progress-bar" style={{ width: `${job.overallPercent}%` }} />
-            <span className="tp-progress-num">{Math.round(job.overallPercent)}%</span>
+          {/* Honest progress: a real bar only where the worker reports steps.
+              Before the first step lands there is genuinely nothing to measure,
+              so show an indeterminate sweep rather than a fake 0%. */}
+          <div
+            className="tp-progress tp-genprogress-bar"
+            data-indeterminate={indeterminate}
+            data-testid="tp-genprogress-bar"
+          >
+            <div
+              className="tp-progress-bar"
+              style={indeterminate ? undefined : { width: `${job.overallPercent}%` }}
+            />
+            {!indeterminate ? (
+              <span className="tp-progress-num">{Math.round(job.overallPercent)}%</span>
+            ) : null}
           </div>
           <div className="tp-genprogress-msg" data-testid="tp-genprogress-msg">
             {job.message}
+            {elapsed !== null && !job.done ? (
+              <span className="tp-genprogress-elapsed"> · {elapsed}</span>
+            ) : null}
           </div>
         </>
       )}

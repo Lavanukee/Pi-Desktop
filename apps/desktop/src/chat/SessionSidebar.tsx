@@ -431,6 +431,11 @@ export function SessionSidebar({
       await newSession();
       const file = usePiStore.getState().session?.sessionFile;
 
+      // Group the new chat under the project IMMEDIATELY (assignChat writes the
+      // org store optimistically) so its row appears INSIDE the project the
+      // instant it's created — before the slower re-root round-trip.
+      if (typeof file === 'string' && file.length > 0) await assignChat(file, project.id);
+
       let cwd = project.cwd;
       if (cwd === undefined || cwd.length === 0) {
         const res = await window.piDesktop
@@ -445,7 +450,6 @@ export function SessionSidebar({
         });
       }
 
-      if (typeof file === 'string' && file.length > 0) await assignChat(file, project.id);
       // Keep the electron project (composer chip / canvas file-tree root) in step
       // for a real folder; a projectless project stays on the sandbox and the chip
       // shows the project name instead (see ComposerBar).
@@ -522,13 +526,11 @@ export function SessionSidebar({
     ) {
       list = [optimisticRow(bgRun.sessionFile, bgRun.title ?? 'New chat'), ...list];
     }
-    // Optimistic row for the VIEWED brand-new chat (has content, no disk row yet) —
-    // shows the moment its first message is sent (jedd: "that snappy").
-    if (
-      effectiveCurrentFile !== null &&
-      messageCount > 0 &&
-      !list.some((s) => s.file === effectiveCurrentFile)
-    ) {
+    // Optimistic row for the VIEWED brand-new chat — shows the INSTANT it's the
+    // current session, even before its first message (jedd: "instantly in the
+    // sidebar the second we click new chat regardless"). The real disk row
+    // replaces it (same file key) once the chat has content.
+    if (effectiveCurrentFile !== null && !list.some((s) => s.file === effectiveCurrentFile)) {
       list = [
         optimisticRow(effectiveCurrentFile, windowTitle ?? firstUserText ?? 'New chat'),
         ...list,

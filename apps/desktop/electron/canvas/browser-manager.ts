@@ -40,11 +40,15 @@ interface Entry {
   view: WebContentsView;
   owner: WebContents;
   visible: boolean;
+  /** Epoch ms of the last auto-reload after a renderer crash — breaks a
+   * crash-reload storm for a page that reliably dies on load. */
+  lastCrashReload?: number;
 }
 
 /** tabId → view. Ids are the CanvasController tab ids (renderer-owned). */
 const entries = new Map<string, Entry>();
-/** Owner windows we've wired a teardown listener on (avoid double-binding). */
+/** Owner windows we've wired teardown + blank-frame-repaint listeners on
+ * (avoid double-binding). */
 const wiredOwners = new Set<number>();
 
 function emitState(owner: WebContents, patch: BrowserStateEvent): void {
@@ -83,10 +87,64 @@ function attachListeners(tabId: string, view: WebContentsView, owner: WebContent
     void wc.loadURL(url);
     return { action: 'deny' };
   });
+  // ── Blank-pane recovery (root cause: dead renderer) ───────────────────────
+  // These views host arbitrary, untrusted web content, so their renderer/GPU
+  // process can die on its own — OOM, a GPU reset, a memory-eviction, or a
+  // hostile page. When it does, the WebContentsView keeps painting a flat
+  // background and STAYS blank until a manual reload — exactly the reported
+  // "browser tab sometimes goes blank, reloading fixes it every time" symptom.
+  // Nothing recreates the renderer for us, so catch the crash and reload once to
+  // restore the page transparently. The 10s guard breaks a reload storm for a
+  // page that reliably dies on load. (The app renderer has the same recovery in
+  // pi/pi-sessions.ts.) A deliberate teardown removes the entry before closing
+  // the WebContents, so this never fires on normal close.
+  wc.on('render-process-gone', (_event, details) => {
+    const entry = entries.get(tabId);
+    if (entry === undefined || wc.isDestroyed()) return; // torn down, not a crash
+    if (details.reason === 'clean-exit') return; // orderly shutdown, not a blank
+    const now = Date.now();
+    if (entry.lastCrashReload !== undefined && now - entry.lastCrashReload < 10_000) {
+      log.warn('browser view crashed again right after recovery; leaving it', {
+        tabId,
+        reason: details.reason,
+      });
+      return;
+    }
+    entry.lastCrashReload = now;
+    log.warn('browser view render process gone; auto-reloading to recover', {
+      tabId,
+      reason: details.reason,
+    });
+    wc.reload();
+  });
 }
 
-/** Tear down every view a closing window owned. */
-function wireOwnerTeardown(owner: WebContents): void {
+/** Force a repaint of every VISIBLE view owned by `owner`. */
+function invalidateOwned(owner: WebContents): void {
+  for (const entry of entries.values()) {
+    if (entry.owner === owner && entry.visible && !entry.view.webContents.isDestroyed()) {
+      entry.view.webContents.invalidate();
+    }
+  }
+}
+
+/**
+ * Wire a view's owning window ONCE: tear down its views when it closes, and
+ * force a repaint of its visible browser view(s) when the window is re-shown /
+ * restored / refocused.
+ *
+ * ── Blank-pane recovery (root cause: occlusion) ──────────────────────────────
+ * A native WebContentsView overlay can come back as a BLANK/flat-colour frame
+ * after its host window was occluded — another window covered it, the app was
+ * hidden (Cmd+H), the display slept — because the compositor surface was dropped
+ * and no paint is scheduled on restore. These window edges are precisely when
+ * that happens and are low-frequency + user-driven, so a cheap invalidate() here
+ * keeps the user from ever seeing the stale frame. This is the unpredictable
+ * "can't tell when it goes blank" path that a tab-switch/panel toggle can't
+ * explain. Pairs with `backgroundThrottling:false` on the view (which keeps most
+ * frames alive while backgrounded) and the show-edge invalidate in `setBounds`.
+ */
+function wireOwner(owner: WebContents, win: BrowserWindow): void {
   if (wiredOwners.has(owner.id)) return;
   wiredOwners.add(owner.id);
   owner.once('destroyed', () => {
@@ -95,6 +153,10 @@ function wireOwnerTeardown(owner: WebContents): void {
       if (entry.owner === owner) destroyView(tabId);
     }
   });
+  const repaint = (): void => invalidateOwned(owner);
+  win.on('show', repaint);
+  win.on('restore', repaint);
+  win.on('focus', repaint);
 }
 
 /** Create the tab's view (idempotent), attached to the owner window's contentView. */
@@ -113,6 +175,13 @@ function ensureView(tabId: string, owner: WebContents): Entry | undefined {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      // Blank-pane recovery (root cause: background throttling). By default a
+      // backgrounded/occluded webContents throttles and can release its frame,
+      // then present a BLANK/flat-colour frame when it becomes visible again
+      // (tab-switch, canvas reopen, alt-tabbing back). Keep this view's
+      // compositor producing frames so there is a live frame to show — Electron
+      // draws/swaps for the whole window when any of its webContents opts out.
+      backgroundThrottling: false,
     },
   });
   view.setVisible(false);
@@ -120,7 +189,7 @@ function ensureView(tabId: string, owner: WebContents): Entry | undefined {
   const entry: Entry = { view, owner, visible: false };
   entries.set(tabId, entry);
   attachListeners(tabId, view, owner);
-  wireOwnerTeardown(owner);
+  wireOwner(owner, win);
   log.info('browser view created', { tabId, wcId: view.webContents.id });
   return entry;
 }
@@ -137,6 +206,11 @@ function setBounds(tabId: string, bounds: BrowserBounds, visible: boolean): void
   if (entry.visible !== visible) {
     entry.view.setVisible(visible);
     entry.visible = visible;
+    // Blank-pane recovery (show edge). Even with backgroundThrottling off, the
+    // hidden→visible transition itself can present one stale frame before the
+    // next paint lands. Force a full repaint the moment we reveal the view so a
+    // tab-switch or canvas reopen shows the live page, never a flat colour.
+    if (visible) entry.view.webContents.invalidate();
   }
 }
 

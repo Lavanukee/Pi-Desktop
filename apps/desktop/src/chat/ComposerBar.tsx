@@ -30,10 +30,11 @@ import {
   PopoverTrigger,
 } from '@pi-desktop/ui';
 import { useMemo, useRef } from 'react';
-import { useChatOrg } from '../state/chat-org';
+import { assignChat, useChatOrg } from '../state/chat-org';
 import { useCorpStore } from '../state/corp-store';
 import { useLlmStore } from '../state/llm-store';
 import { autoEffortForTier } from '../state/model-selection';
+import { restartPi } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { useProjectStore } from '../state/project-store';
 import { useEffortMode, useSettingsStore } from '../state/settings-store';
@@ -76,12 +77,63 @@ function ProjectRegion() {
   // is concerned") — this is what turns the "Sandbox" placeholder into the project
   // name for a projectless project's shared-sandbox chats.
   const chatOrg = useChatOrg();
-  const orgProjectName = useMemo(() => {
+  // The sidebar's user-made projects (e.g. "mac") are ALSO selectable here, so
+  // the picker lists everything the user thinks of as a project — not just the
+  // electron working folders (jedd: "mac project doesn't show as selectable").
+  const orgProjectId = useMemo(() => {
     if (sessionFile === undefined || sessionFile.length === 0) return null;
     const pid = chatOrg.assignments[sessionFile];
-    if (pid === undefined) return null;
-    return chatOrg.projects.find((p) => p.id === pid)?.name ?? null;
+    return pid !== undefined && chatOrg.projects.some((p) => p.id === pid) ? pid : null;
   }, [chatOrg, sessionFile]);
+  const orgProjectName =
+    orgProjectId === null
+      ? null
+      : (chatOrg.projects.find((p) => p.id === orgProjectId)?.name ?? null);
+
+  // Combined list: electron working folders + the sidebar's manual projects,
+  // deduped by name (auto cwd-folders aren't in chatOrg.projects, so no dupes).
+  const items = useMemo(() => {
+    const storeNames = new Set(projects.map((p) => p.name));
+    const storeItems = projects.map((p) => ({ id: p.id, name: p.name }));
+    const orgItems = chatOrg.projects
+      .filter((p) => !storeNames.has(p.name))
+      .map((p) => ({ id: p.id, name: p.name }));
+    return [...storeItems, ...orgItems];
+  }, [projects, chatOrg.projects]);
+  const orgIds = useMemo(() => new Set(chatOrg.projects.map((p) => p.id)), [chatOrg.projects]);
+
+  // Selecting a sidebar project = put THIS chat in it (assign + root at its
+  // folder / shared sandbox) — the same "this chat's project" meaning the chip
+  // already has for working folders.
+  const selectOrgProject = async (id: string) => {
+    const project = chatOrg.projects.find((p) => p.id === id);
+    if (project === undefined) return;
+    if (sessionFile !== undefined && sessionFile.length > 0) {
+      await assignChat(sessionFile, project.id);
+    }
+    let cwd = project.cwd;
+    if (cwd === undefined || cwd.length === 0) {
+      const res = await window.piDesktop
+        .invoke('project:project-sandbox', { id: project.id })
+        .catch(() => null);
+      cwd = res?.path ?? undefined;
+    }
+    if (typeof cwd === 'string' && cwd.length > 0) {
+      await restartPi({
+        cwd,
+        ...(sessionFile !== undefined && sessionFile.length > 0
+          ? { sessionPath: sessionFile }
+          : {}),
+      });
+    }
+    if (project.cwd !== undefined && project.cwd.length > 0) {
+      await window.piDesktop.invoke('project:set', { path: project.cwd }).catch(() => null);
+      await useProjectStore
+        .getState()
+        .load()
+        .catch(() => {});
+    }
+  };
 
   const sandbox = usesSandbox(activePath, sessionCwd, sandboxFlag ?? projectMissing);
   const className = [
@@ -93,12 +145,14 @@ function ProjectRegion() {
   return (
     <ProjectPicker
       className={className}
-      projects={projects.map((p) => ({ id: p.id, name: p.name }))}
-      // In the sandbox we're NOT in the selected project, so don't render its name
-      // as the active working folder — fall through to the placeholder (the org
-      // project name when this chat is in one, else "Sandbox").
-      active={sandbox ? null : activeId}
-      onSelect={(id) => void selectProject(id)}
+      projects={items}
+      // The active entry is the chat's org project (if it's in one), else the
+      // selected working folder (unless pi fell back to the sandbox).
+      active={orgProjectId ?? (sandbox ? null : activeId)}
+      onSelect={(id) => {
+        if (orgIds.has(id)) void selectOrgProject(id);
+        else void selectProject(id);
+      }}
       onNew={() => void newProject()}
       onClear={() => void clearProject()}
       placeholder={orgProjectName ?? (sandbox ? 'Sandbox' : 'No project')}

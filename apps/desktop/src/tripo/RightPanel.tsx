@@ -12,6 +12,7 @@ import { useRef } from 'react';
 import {
   IcArmature,
   IcBoxNode,
+  IcCheck,
   IcCaretSmall,
   IcCube,
   IcDots,
@@ -19,6 +20,7 @@ import {
   IcEyeOff,
   IcFilter,
   IcGrid4,
+  IcHistory,
   IcInfo,
   IcLayers,
   IcManage,
@@ -28,8 +30,16 @@ import {
   IcUpload,
 } from './icons';
 import { MenuAnchor, MenuItem } from './primitives';
-import { type StudioAsset, useTripoStore } from './store';
-import { importModelFile } from './viewer-io';
+import {
+  type AssetVersion,
+  currentVersion,
+  hasSiblings,
+  type StudioAsset,
+  type TripoOp,
+  useTripoStore,
+  versionDepth,
+} from './store';
+import { importModelFile, saveAssetTree } from './viewer-io';
 
 // ── assets tab ────────────────────────────────────────────────────────────
 
@@ -40,6 +50,10 @@ function AssetCard({ asset }: { readonly asset: StudioAsset }): JSX.Element {
   const loadAsset = useTripoStore((s) => s.loadAsset);
   const toggleList = useTripoStore((s) => s.toggleList);
   const toggleMenu = useTripoStore((s) => s.toggleMenu);
+  // The card IS the working version — pipeline ops move this forward instead of
+  // spawning another card.
+  const version = currentVersion(asset);
+  const steps = asset.versions.length;
 
   return (
     <div className="tp-asset-card" data-selected={selected} data-testid={`tp-asset-${asset.id}`}>
@@ -55,8 +69,8 @@ function AssetCard({ asset }: { readonly asset: StudioAsset }): JSX.Element {
           }
         }}
       >
-        {asset.thumb !== null ? (
-          <img className="tp-asset-preview" src={asset.thumb} alt={asset.name} />
+        {version?.thumb != null ? (
+          <img className="tp-asset-preview" src={version.thumb} alt={asset.name} />
         ) : (
           <span className="tp-asset-placeholder" data-testid={`tp-asset-pending-${asset.id}`}>
             <IcCube size={22} />
@@ -64,9 +78,18 @@ function AssetCard({ asset }: { readonly asset: StudioAsset }): JSX.Element {
         )}
       </button>
 
-      {asset.rigged === true ? (
+      {version?.rigged === true ? (
         <span className="tp-asset-rig" title="Rigged">
           <IcRig size={15} />
+        </span>
+      ) : null}
+      {steps > 1 ? (
+        <span
+          className="tp-asset-steps"
+          title={`${steps} versions in this asset's history`}
+          data-testid={`tp-asset-steps-${asset.id}`}
+        >
+          {steps}
         </span>
       ) : null}
 
@@ -101,12 +124,28 @@ function AssetCard({ asset }: { readonly asset: StudioAsset }): JSX.Element {
                 <span>{asset.created}</span>
               </div>
               <div className="tp-asset-info-row">
+                <span>Version</span>
+                <span>{version?.label ?? '—'}</span>
+              </div>
+              <div className="tp-asset-info-row">
                 <span>Faces</span>
-                <span>{asset.faces > 0 ? asset.faces.toLocaleString() : '—'}</span>
+                <span>
+                  {version !== undefined && version.faces > 0
+                    ? version.faces.toLocaleString()
+                    : '—'}
+                </span>
               </div>
               <div className="tp-asset-info-row">
                 <span>Vertices</span>
-                <span>{asset.vertices > 0 ? asset.vertices.toLocaleString() : '—'}</span>
+                <span>
+                  {version !== undefined && version.vertices > 0
+                    ? version.vertices.toLocaleString()
+                    : '—'}
+                </span>
+              </div>
+              <div className="tp-asset-info-row">
+                <span>Topology</span>
+                <span>{version?.topology ?? '—'}</span>
               </div>
               <div className="tp-asset-info-row">
                 <span>Source</span>
@@ -245,6 +284,149 @@ function AssetsTab(): JSX.Element {
   );
 }
 
+// ── history tab: the asset's version tree ─────────────────────────────────
+
+const OP_LABEL: Record<TripoOp, string> = {
+  source: 'Source',
+  segment: 'Segment',
+  retopo: 'Retopology',
+  texture: 'Texture',
+  rig: 'Rig',
+};
+
+function VersionRow({
+  asset,
+  version,
+}: {
+  readonly asset: StudioAsset;
+  readonly version: AssetVersion;
+}): JSX.Element {
+  const previewVersionId = useTripoStore((s) => s.previewVersionId);
+  const previewVersion = useTripoStore((s) => s.previewVersion);
+  const setCurrentVersion = useTripoStore((s) => s.setCurrentVersion);
+  const isCurrent = asset.currentVersionId === version.id;
+  const isViewing = previewVersionId === null ? isCurrent : previewVersionId === version.id;
+  const depth = versionDepth(asset, version);
+  const branch = hasSiblings(asset, version);
+
+  return (
+    <div
+      className="tp-ver-row"
+      data-current={isCurrent}
+      data-viewing={isViewing}
+      data-branch={branch}
+      style={{ paddingLeft: `${8 + depth * 16}px` }}
+      data-testid={`tp-ver-${version.id}`}
+    >
+      <button
+        type="button"
+        className="tp-ver-main"
+        // Inspecting an earlier state must not silently change what the asset
+        // IS — that is what "Make current" is for.
+        onClick={() => previewVersion(isCurrent ? null : version.id)}
+      >
+        <span className="tp-ver-dot" data-op={version.op} />
+        <span className="tp-ver-body">
+          <span className="tp-ver-label">
+            {OP_LABEL[version.op]}
+            {branch ? <span className="tp-ver-branch-tag">branch</span> : null}
+          </span>
+          <span className="tp-ver-sub">
+            {version.faces > 0 ? `${version.faces.toLocaleString()} faces` : version.label}
+            {version.topology !== null ? ` · ${version.topology}` : ''}
+          </span>
+        </span>
+      </button>
+      {version.thumb !== null ? (
+        <img className="tp-ver-thumb" src={version.thumb} alt="" />
+      ) : (
+        <span className="tp-ver-thumb tp-ver-thumb-empty">
+          <IcCube size={13} />
+        </span>
+      )}
+      {isCurrent ? (
+        <span className="tp-ver-current" title="Current working version">
+          <IcCheck size={13} />
+        </span>
+      ) : (
+        <button
+          type="button"
+          className="tp-ver-make"
+          data-testid={`tp-ver-make-${version.id}`}
+          title="Make this the working version"
+          onClick={() => {
+            setCurrentVersion(asset.id, version.id);
+            saveAssetTree();
+          }}
+        >
+          Use
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Depth-first order so children sit directly under their parent — that is what
+ * makes a branch legible as a branch. */
+function orderedVersions(asset: StudioAsset): AssetVersion[] {
+  const out: AssetVersion[] = [];
+  const walk = (parentId: string | null): void => {
+    for (const v of asset.versions.filter((x) => x.parentId === parentId)) {
+      out.push(v);
+      walk(v.id);
+    }
+  };
+  walk(null);
+  // Defensive: never drop a node whose parent went missing.
+  for (const v of asset.versions) if (!out.includes(v)) out.push(v);
+  return out;
+}
+
+function HistoryTab(): JSX.Element {
+  const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
+  const assets = useTripoStore((s) => s.assets);
+  const previewVersionId = useTripoStore((s) => s.previewVersionId);
+  const previewVersion = useTripoStore((s) => s.previewVersion);
+  const asset = assets.find((a) => a.id === loadedAssetId);
+
+  if (asset === undefined) {
+    return (
+      <div className="tp-property-empty" data-testid="tp-history-empty">
+        <IcHistory size={26} />
+        <p>Load a model to see its version history</p>
+      </div>
+    );
+  }
+
+  const rows = orderedVersions(asset);
+  return (
+    <>
+      <div className="tp-section-title tp-hier-title">
+        {asset.name} · {rows.length} version{rows.length === 1 ? '' : 's'}
+      </div>
+      <p className="tp-select-copy">
+        Every operation adds a node here instead of a new asset. Click a node to inspect it; “Use”
+        makes it the working version, and running an op from an older node creates a branch.
+      </p>
+      {previewVersionId !== null ? (
+        <button
+          type="button"
+          className="tp-upload-btn"
+          data-testid="tp-ver-back-to-current"
+          onClick={() => previewVersion(null)}
+        >
+          Back to the working version
+        </button>
+      ) : null}
+      <div className="tp-ver-tree" data-testid="tp-ver-tree">
+        {rows.map((v) => (
+          <VersionRow key={v.id} asset={asset} version={v} />
+        ))}
+      </div>
+    </>
+  );
+}
+
 // ── property tab ──────────────────────────────────────────────────────────
 
 interface HierRow {
@@ -348,7 +530,7 @@ function PropertyTab(): JSX.Element {
   }
 
   const asset = assets.find((a) => a.id === loadedAssetId);
-  const rigged = asset?.rigged === true;
+  const rigged = asset !== undefined && currentVersion(asset)?.rigged === true;
   const meshRow: HierRow = {
     id: 'mesh-node',
     label: asset?.name ?? 'model',
@@ -422,6 +604,16 @@ export function RightPanel(): JSX.Element {
         <button
           type="button"
           className="tp-right-tab"
+          data-active={rightTab === 'history'}
+          data-testid="tp-tab-history"
+          onClick={() => set('rightTab', 'history')}
+        >
+          <IcHistory size={15} />
+          History
+        </button>
+        <button
+          type="button"
+          className="tp-right-tab"
           data-active={rightTab === 'property'}
           data-testid="tp-tab-property"
           onClick={() => set('rightTab', 'property')}
@@ -430,7 +622,11 @@ export function RightPanel(): JSX.Element {
           Property
         </button>
       </div>
-      <div className="tp-right-body">{rightTab === 'assets' ? <AssetsTab /> : <PropertyTab />}</div>
+      <div className="tp-right-body">
+        {rightTab === 'assets' ? <AssetsTab /> : null}
+        {rightTab === 'history' ? <HistoryTab /> : null}
+        {rightTab === 'property' ? <PropertyTab /> : null}
+      </div>
     </aside>
   );
 }

@@ -9,6 +9,7 @@
  * prompt instead of dead buttons.
  */
 import { create } from 'zustand';
+import { type TripoOp, useTripoStore } from './store';
 import type {
   Gen3dDownloadUpdate,
   Gen3dJobUpdate,
@@ -44,7 +45,19 @@ interface Gen3dState {
     /** Stop after the text→image hop (for the Image panel's "Generate image"). */
     imageOnly?: boolean;
   }) => Promise<string | null>;
-  runStage: (op: 'segment' | 'retopo' | 'texture', modelPath: string) => Promise<string | null>;
+  runStage: (
+    op: 'segment' | 'retopo' | 'texture' | 'rig',
+    modelPath: string,
+    /** Which asset/version this op ran on — the result becomes a node on that
+     * asset's history tree instead of a new top-level asset. */
+    origin?: StageOrigin,
+    extra?: {
+      readonly targetQuads?: number;
+      readonly adaptivity?: number;
+      readonly probeOnly?: boolean;
+      readonly requireHumanoid?: boolean;
+    },
+  ) => Promise<string | null>;
   cancelJob: () => Promise<void>;
   clearJob: () => void;
 }
@@ -93,9 +106,17 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
     if (res === null || !res.ok) return res?.error ?? 'generation failed to start';
     return null;
   },
-  runStage: async (op, modelPath) => {
-    const res = await window.piDesktop.invoke('gen3d:stage', { op, modelPath }).catch(() => null);
+  runStage: async (op, modelPath, origin, extra) => {
+    const res = await window.piDesktop
+      .invoke('gen3d:stage', { op, modelPath, ...(extra ?? {}) })
+      .catch(() => null);
     if (res === null || !res.ok) return res?.error ?? `${op} failed to start`;
+    if (res.jobId !== undefined) {
+      if (origin !== undefined) stageOrigins.set(res.jobId, origin);
+      // Only a probe run should raise the "humanoid?" question — the rig run
+      // that follows emits the same measurement and must not re-ask.
+      if (extra?.probeOnly === true) probeJobs.add(res.jobId);
+    }
     return null;
   },
   cancelJob: async () => {
@@ -122,18 +143,53 @@ function pdFileUrl(absPath: string): string {
 /** Artifact paths already imported into the viewer (dedup across job updates). */
 const importedArtifacts = new Set<string>();
 
-/** Pull a freshly-produced GLB artifact into the viewport + assets — this is
- * how generated geometry appears THE MOMENT it exists (before texturing ends). */
-async function ingestModelArtifact(path: string, label: string): Promise<void> {
+/** Where a stage job came from, so its result lands on the right history tree. */
+export interface StageOrigin {
+  readonly assetId: string;
+  readonly versionId: string;
+  readonly op: TripoOp;
+}
+
+/** jobId → origin, recorded when a stage op is dispatched. */
+const stageOrigins = new Map<string, StageOrigin>();
+
+/** jobId → the rig stage's humanoid verdict, so the produced version records it. */
+const jobHumanoid = new Map<string, boolean>();
+
+/** Jobs dispatched as shape probes — the only ones that ASK the user. */
+const probeJobs = new Set<string>();
+
+/** Pull a freshly-produced GLB artifact into the viewport — as a NODE on the
+ * originating asset's history tree when the job was a stage op, or as a brand
+ * new asset when it was a fresh generation. This is how generated geometry
+ * appears THE MOMENT it exists (before texturing ends). */
+async function ingestModelArtifact(
+  path: string,
+  label: string,
+  origin: StageOrigin | undefined,
+  humanoidVerdict: boolean,
+): Promise<void> {
   if (importedArtifacts.has(path)) return;
   importedArtifacts.add(path);
   try {
     const res = await fetch(pdFileUrl(path));
-    if (!res.ok) return;
+    if (!res.ok) {
+      importedArtifacts.delete(path);
+      return;
+    }
     const buffer = await res.arrayBuffer();
     const name = path.split('/').pop() ?? 'generated.glb';
-    const { importModelBuffer } = await import('./viewer-io');
-    importModelBuffer(name, 'glb', buffer, {
+    const io = await import('./viewer-io');
+    if (origin !== undefined) {
+      io.addStageVersion(origin.assetId, origin.versionId, name, 'glb', buffer, {
+        op: origin.op,
+        label,
+        diskPath: path,
+        humanoid: humanoidVerdict,
+      });
+      return;
+    }
+    io.importModelBuffer(name, 'glb', buffer, {
       source: 'generated',
       created: label,
       diskPath: path,
@@ -149,10 +205,39 @@ export function ensureGen3dWired(): void {
   if (wired) return;
   wired = true;
   void useGen3dStore.getState().refresh();
+  void import('./viewer-io').then((io) => {
+    io.loadAssetTree();
+  });
   window.piDesktop.onEvent('gen3d:job', (update) => {
     useGen3dStore.setState({ job: update });
+    const origin = stageOrigins.get(update.jobId);
+    // The rig stage measures the shape first — raise the "humanoid?" question
+    // rather than deciding silently.
+    if (update.humanoid !== undefined && origin !== undefined) {
+      jobHumanoid.set(update.jobId, update.humanoid.isHumanoid);
+    }
+    if (update.humanoid !== undefined && origin !== undefined && probeJobs.has(update.jobId)) {
+      useTripoStore.setState({
+        humanoidPrompt: {
+          assetId: origin.assetId,
+          isHumanoid: update.humanoid.isHumanoid,
+          confidence: update.humanoid.confidence,
+          reasons: update.humanoid.reasons,
+        },
+      });
+    }
     if (update.artifact?.kind === 'model-glb') {
-      void ingestModelArtifact(update.artifact.path, update.artifact.label);
+      void ingestModelArtifact(
+        update.artifact.path,
+        update.artifact.label,
+        origin,
+        jobHumanoid.get(update.jobId) === true,
+      );
+    }
+    if (update.done) {
+      stageOrigins.delete(update.jobId);
+      jobHumanoid.delete(update.jobId);
+      probeJobs.delete(update.jobId);
     }
   });
   window.piDesktop.onEvent('gen3d:download', (update) => {

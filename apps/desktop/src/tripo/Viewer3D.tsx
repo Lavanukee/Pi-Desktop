@@ -528,7 +528,18 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
         );
         verts += g.getAttribute('position').count;
       }
-      useTripoStore.getState().setAssetCounts(id, faces, verts);
+      useTripoStore
+        .getState()
+        .setAssetCounts(
+          id,
+          importedTopology !== null ? importedTopology.polygons : faces,
+          importedTopology !== null ? importedTopology.vertices : verts,
+          importedTopology !== null
+            ? importedTopology.kind === 'quad'
+              ? 'Quad'
+              : 'Quad + tri'
+            : 'Triangle',
+        );
       pendingThumb = id;
       applyState();
     };
@@ -627,7 +638,9 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
     const applyState = () => {
       const s = useTripoStore.getState();
       const stage = s.pipelineStage;
-      const assetId = s.loadedAssetId;
+      // The viewer renders the ACTIVE VERSION: the asset's working version, or
+      // an older node the user is inspecting from the history tree.
+      const assetId = s.activeVersionId();
       if (assetId === null) return;
 
       // The loaded asset is loaded lazily on first selection.

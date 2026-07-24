@@ -11,7 +11,7 @@ import { TRIPO_ANIMS } from './data';
 /** Left-rail tools — one per functional pipeline section (flat: no sub-tools). */
 export type TripoTool = 'image' | 'model' | 'segment' | 'retopo' | 'texture' | 'animate';
 
-export type TripoRightTab = 'assets' | 'property';
+export type TripoRightTab = 'assets' | 'history' | 'property';
 /** Input for geometry generation: one-or-more unlabeled images (TRELLIS-2 does
  * arbitrary multi-image conditioning — more images improve accuracy), or text. */
 export type TripoInputMode = 'image' | 'text';
@@ -43,20 +43,88 @@ export type TripoModal = null | 'help' | 'export';
  */
 export type TripoStage = 'mesh' | 'segment' | 'retopo' | 'texture' | 'rig' | 'animate';
 
-/** One asset in the right-panel grid. `thumb` is a REAL rendered preview (a
- * viewer-captured dataURL) — never icon artwork. */
+/** Which operation produced a version. 'source' is the imported/generated root. */
+export type TripoOp = 'source' | 'segment' | 'retopo' | 'texture' | 'rig';
+
+/**
+ * One node on an asset's history tree.
+ *
+ * Every pipeline op used to mint a whole new top-level asset, so a single model
+ * put through segment → retopo → texture → rig littered the grid with five
+ * unrelated cards. A version is a NODE instead: it records which version it was
+ * derived from, so the history is a tree and re-running an op on an earlier
+ * state creates a BRANCH rather than overwriting anything.
+ *
+ * `id` is also the asset-registry key for this version's bytes, and `thumb` is
+ * a REAL viewer-captured preview — never icon artwork.
+ */
+export interface AssetVersion {
+  readonly id: string;
+  /** The version this one was derived from; null for the root. */
+  readonly parentId: string | null;
+  readonly op: TripoOp;
+  /** Short human label, e.g. "Retopology · 3,086 quads". */
+  readonly label: string;
+  readonly created: number;
+  readonly thumb: string | null;
+  readonly faces: number;
+  readonly vertices: number;
+  /** Real topology of this version, e.g. "Quad" — written by the viewer. */
+  readonly topology: string | null;
+  /** True once this version carries a skeleton + skin weights. */
+  readonly rigged?: boolean;
+  /** Whether the rigged shape actually measured as humanoid — the animation
+   * presets are humanoid clips and stay hidden when it did not. */
+  readonly humanoid?: boolean;
+  /** On-disk path — what the gen3d engine's stage ops take as input. */
+  readonly diskPath?: string;
+}
+
+/** One asset in the right-panel grid: a name plus its whole history tree. The
+ * card always shows `currentVersionId` — the working version. */
 export interface StudioAsset {
   readonly id: string;
   readonly name: string;
   readonly source: 'generated' | 'imported';
-  readonly rigged?: boolean;
-  readonly thumb: string | null;
-  /** On-disk path — what the gen3d engine's stage ops take as input. Every
-   * asset has one (imported file path or engine artifact path). */
-  readonly diskPath?: string;
-  readonly faces: number;
-  readonly vertices: number;
   readonly created: string;
+  /** Which version IS the asset right now (what the grid + viewer show). */
+  readonly currentVersionId: string;
+  readonly versions: readonly AssetVersion[];
+}
+
+/** The version an asset currently resolves to (never undefined in practice —
+ * an asset always has at least its root). */
+export function currentVersion(asset: StudioAsset): AssetVersion | undefined {
+  return asset.versions.find((v) => v.id === asset.currentVersionId) ?? asset.versions[0];
+}
+
+export function findVersion(
+  assets: readonly StudioAsset[],
+  versionId: string,
+): { asset: StudioAsset; version: AssetVersion } | null {
+  for (const asset of assets) {
+    const version = asset.versions.find((v) => v.id === versionId);
+    if (version !== undefined) return { asset, version };
+  }
+  return null;
+}
+
+/** Root-to-leaf depth of a version, for drawing the tree. */
+export function versionDepth(asset: StudioAsset, version: AssetVersion): number {
+  let depth = 0;
+  let parent = version.parentId;
+  while (parent !== null) {
+    const next = asset.versions.find((v) => v.id === parent);
+    if (next === undefined) break;
+    depth += 1;
+    parent = next.parentId;
+  }
+  return depth;
+}
+
+/** True when this version has more than one child — i.e. the tree branches. */
+export function hasSiblings(asset: StudioAsset, version: AssetVersion): boolean {
+  return asset.versions.filter((v) => v.parentId === version.parentId).length > 1;
 }
 
 /** A row in the (real) task-history popover: stages run this session. */
@@ -121,7 +189,6 @@ interface TripoState {
   /** The single open popover/dropdown (all menus are mutually exclusive). */
   openMenu: string | null;
   modal: TripoModal;
-  helpSeen: boolean;
 
   // ── generate-model panel
   inputMode: TripoInputMode;
@@ -183,6 +250,18 @@ interface TripoState {
   assetFilter: 'all' | 'generated' | 'imported';
   manageMode: boolean;
   checkedAssets: readonly string[];
+  /** A history node the user is INSPECTING without making it current; null =
+   * show the asset's working version. */
+  previewVersionId: string | null;
+  /** The history tree panel is open. */
+  historyOpen: boolean;
+  /** Rig gating: the "is this humanoid?" question, raised by the shape probe. */
+  humanoidPrompt: {
+    readonly assetId: string;
+    readonly isHumanoid: boolean;
+    readonly confidence: number;
+    readonly reasons: readonly string[];
+  } | null;
 
   // ── history (real: stages run this session)
   history: readonly StageHistoryRow[];
@@ -200,10 +279,25 @@ interface TripoState {
   loadAsset: (id: string) => void;
   /** Advance the loaded asset to a pipeline stage (no-op if nothing loaded). */
   runStage: (stage: TripoStage) => void;
+  /** A brand-new asset (import or fresh generation) with its root version. */
   addAsset: (asset: StudioAsset) => void;
-  /** The viewer captured a real rendered preview for an asset. */
-  setAssetThumb: (id: string, thumb: string) => void;
-  setAssetCounts: (id: string, faces: number, vertices: number) => void;
+  /** An op produced a new state OF AN EXISTING asset: append a tree node under
+   * `parentVersionId` and make it the working version. */
+  addVersion: (assetId: string, parentVersionId: string, version: AssetVersion) => void;
+  /** Make an existing version the asset's working version (switch branch). */
+  setCurrentVersion: (assetId: string, versionId: string) => void;
+  /** Inspect a version without making it current (null = back to current). */
+  previewVersion: (versionId: string | null) => void;
+  /** The viewer captured a real rendered preview for a version. */
+  setAssetThumb: (versionId: string, thumb: string) => void;
+  setAssetCounts: (
+    versionId: string,
+    faces: number,
+    vertices: number,
+    topology?: string,
+  ) => void;
+  /** The version the viewer should render right now. */
+  activeVersionId: () => string | null;
   toggleList: (key: 'checkedAssets' | 'hierarchyCollapsed' | 'hiddenNodes', id: string) => void;
   removeChecked: () => void;
 
@@ -253,7 +347,6 @@ export const useTripoStore = create<TripoState>((set, get) => ({
   rightTab: 'assets',
   openMenu: null,
   modal: null,
-  helpSeen: false,
 
   inputMode: 'image',
   prompt: '',
@@ -298,6 +391,9 @@ export const useTripoStore = create<TripoState>((set, get) => ({
   assetFilter: 'all',
   manageMode: false,
   checkedAssets: [],
+  previewVersionId: null,
+  historyOpen: false,
+  humanoidPrompt: null,
 
   history: [],
 
@@ -310,20 +406,21 @@ export const useTripoStore = create<TripoState>((set, get) => ({
   toggleMenu: (id) => set((s) => ({ openMenu: s.openMenu === id ? null : id })),
   closeMenus: () => set({ openMenu: null }),
   loadAsset: (id) => {
-    const first = !get().helpSeen;
     if (!get().assets.some((a) => a.id === id)) return;
     set({
       loadedAssetId: id,
       selectedAssetId: id,
+      previewVersionId: null,
       meshVisible: true,
       // A freshly loaded asset starts at its base mesh in Clay.
       pipelineStage: 'mesh',
       renderMode: 'clay',
       segmentParts: [],
-      // The "View Your Model" coach dialog appears the first time a model
-      // lands in the viewport, then never again.
-      modal: first ? 'help' : get().modal,
-      helpSeen: true,
+      // NO auto-help. The "View Your Model" navigation dialog is strictly
+      // user-initiated — it used to open itself the first time a model landed
+      // in the viewport, which meant it fired on ordinary clicks and had to be
+      // dismissed before you could touch the model. It now opens ONLY from the
+      // "?" button in the viewport rail (jedd).
     });
   },
   runStage: (stage) =>
@@ -349,14 +446,64 @@ export const useTripoStore = create<TripoState>((set, get) => ({
     set((s) => ({
       assets: [asset, ...s.assets],
     })),
-  setAssetThumb: (id, thumb) =>
+  addVersion: (assetId, parentVersionId, version) =>
     set((s) => ({
-      assets: s.assets.map((a) => (a.id === id ? { ...a, thumb } : a)),
+      assets: s.assets.map((a) =>
+        a.id === assetId
+          ? {
+              ...a,
+              versions: [...a.versions, { ...version, parentId: parentVersionId }],
+              // A freshly produced state IS the new working version; the old one
+              // stays on the tree and stays switchable.
+              currentVersionId: version.id,
+            }
+          : a,
+      ),
+      // Inspecting an older node then running an op should land you on the
+      // result, not leave you stranded in the past.
+      previewVersionId: null,
+      selectedAssetId: assetId,
+      loadedAssetId: assetId,
     })),
-  setAssetCounts: (id, faces, vertices) =>
+  setCurrentVersion: (assetId, versionId) =>
     set((s) => ({
-      assets: s.assets.map((a) => (a.id === id ? { ...a, faces, vertices } : a)),
+      assets: s.assets.map((a) =>
+        a.id === assetId && a.versions.some((v) => v.id === versionId)
+          ? { ...a, currentVersionId: versionId }
+          : a,
+      ),
+      previewVersionId: null,
     })),
+  previewVersion: (versionId) => set({ previewVersionId: versionId }),
+  setAssetThumb: (versionId, thumb) =>
+    set((s) => ({
+      assets: s.assets.map((a) =>
+        a.versions.some((v) => v.id === versionId)
+          ? { ...a, versions: a.versions.map((v) => (v.id === versionId ? { ...v, thumb } : v)) }
+          : a,
+      ),
+    })),
+  setAssetCounts: (versionId, faces, vertices, topology) =>
+    set((s) => ({
+      assets: s.assets.map((a) =>
+        a.versions.some((v) => v.id === versionId)
+          ? {
+              ...a,
+              versions: a.versions.map((v) =>
+                v.id === versionId
+                  ? { ...v, faces, vertices, topology: topology ?? v.topology }
+                  : v,
+              ),
+            }
+          : a,
+      ),
+    })),
+  activeVersionId: () => {
+    const s = get();
+    if (s.previewVersionId !== null) return s.previewVersionId;
+    const asset = s.assets.find((a) => a.id === s.loadedAssetId);
+    return asset === undefined ? null : asset.currentVersionId;
+  },
   toggleList: (key, id) => set((s) => ({ [key]: toggled(s[key], id) }) as Partial<TripoState>),
   removeChecked: () =>
     set((s) => ({

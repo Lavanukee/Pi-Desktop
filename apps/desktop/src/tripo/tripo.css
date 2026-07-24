@@ -3779,3 +3779,276 @@
   color: var(--pd-text-secondary);
   background: var(--pd-bg-inset);
 }
+
+/* ── version history tree ────────────────────────────────────────────────
+   One asset, many versions. Ops append NODES here instead of new assets, so
+   the tree is what makes branching legible: depth = derivation, and the row
+   marked current is what the asset actually IS right now. */
+.tp-asset-steps {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--pd-bg-elevated);
+  border: 1px solid var(--pd-border-subtle);
+  color: var(--pd-text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
+  pointer-events: none;
+}
+.tp-ver-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 6px 10px;
+}
+.tp-ver-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 42px;
+  padding-right: 6px;
+  border-radius: var(--pd-radius-row);
+}
+.tp-ver-row:hover {
+  background: var(--pd-bg-hover);
+}
+.tp-ver-row[data-viewing="true"] {
+  background: var(--pd-bg-selected);
+}
+.tp-ver-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+  text-align: left;
+}
+.tp-ver-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--pd-text-muted);
+}
+.tp-ver-dot[data-op="source"] {
+  background: var(--pd-text-secondary);
+}
+.tp-ver-dot[data-op="retopo"],
+.tp-ver-dot[data-op="segment"],
+.tp-ver-dot[data-op="texture"],
+.tp-ver-dot[data-op="rig"] {
+  background: var(--pd-accent-primary);
+}
+.tp-ver-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.tp-ver-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--pd-text-primary);
+  font-size: 12px;
+  font-weight: 550;
+}
+.tp-ver-branch-tag {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--pd-bg-elevated);
+  border: 1px solid var(--pd-border-subtle);
+  color: var(--pd-text-muted);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.tp-ver-sub {
+  overflow: hidden;
+  color: var(--pd-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tp-ver-thumb {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  border: 1px solid var(--pd-border-subtle);
+  object-fit: cover;
+}
+.tp-ver-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pd-bg-elevated);
+  color: var(--pd-text-muted);
+}
+.tp-ver-current {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  color: var(--pd-accent-primary);
+}
+.tp-ver-make {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--pd-border-subtle);
+  background: var(--pd-bg-elevated);
+  color: var(--pd-text-secondary);
+  font-size: 11px;
+  font-weight: 550;
+}
+.tp-ver-make:hover {
+  color: var(--pd-text-primary);
+  border-color: var(--pd-border-strong);
+}
+
+/* ── stage feedback ─────────────────────────────────────────────────────── */
+.tp-stage-warn {
+  margin: 8px 12px;
+  padding: 8px 10px;
+  border-radius: var(--pd-radius-card);
+  border: 1px solid var(--pd-border-subtle);
+  background: var(--pd-bg-elevated);
+  color: var(--pd-text-secondary);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.tp-stage-target-version {
+  color: var(--pd-text-muted);
+}
+.tp-notice {
+  display: flex;
+  gap: 8px;
+  margin: 8px 12px;
+  padding: 9px 10px;
+  border-radius: var(--pd-radius-card);
+  border: 1px solid var(--pd-border-subtle);
+  background: var(--pd-bg-elevated);
+  color: var(--pd-text-secondary);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.tp-notice svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--pd-text-muted);
+}
+
+/* ── the "humanoid?" question + rig status ──────────────────────────────── */
+.tp-humanoid-ask {
+  margin: 8px 12px;
+  padding: 11px 12px;
+  border-radius: var(--pd-radius-card);
+  border: 1px solid var(--pd-border-strong);
+  background: var(--pd-bg-elevated);
+}
+.tp-humanoid-ask-title {
+  color: var(--pd-text-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.tp-humanoid-ask-body {
+  margin: 5px 0 10px;
+  color: var(--pd-text-secondary);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.tp-humanoid-ask-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tp-humanoid-ask-actions > * {
+  margin: 0;
+}
+.tp-rig-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 12px;
+  padding: 9px 10px;
+  border-radius: var(--pd-radius-card);
+  border: 1px solid var(--pd-border-subtle);
+  background: var(--pd-bg-elevated);
+  color: var(--pd-text-secondary);
+  font-size: 11.5px;
+}
+.tp-rig-status[data-humanoid="true"] {
+  color: var(--pd-text-primary);
+}
+.tp-rig-status svg {
+  flex: none;
+  color: var(--pd-accent-primary);
+}
+
+/* A quiet secondary action — used where a primary button would over-claim
+   (e.g. "Cancel" beside "Rig as humanoid"). */
+.tp-ghost-btn {
+  width: 100%;
+  height: 34px;
+  border-radius: var(--pd-radius-btn, 9px);
+  border: 1px solid var(--pd-border-subtle);
+  background: transparent;
+  color: var(--pd-text-secondary);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+.tp-ghost-btn:hover {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-primary);
+}
+
+/* Progress: indeterminate sweep while a stage has genuinely nothing to
+   measure yet, so 0% never masquerades as real progress. */
+.tp-progress[data-indeterminate="true"] {
+  overflow: hidden;
+}
+.tp-progress[data-indeterminate="true"] .tp-progress-bar {
+  width: 38%;
+  animation: tp-indeterminate 1.25s var(--pd-easing-standard) infinite;
+}
+@keyframes tp-indeterminate {
+  0% {
+    transform: translateX(-105%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tp-progress[data-indeterminate="true"] .tp-progress-bar {
+    animation: none;
+    width: 100%;
+    opacity: 0.35;
+  }
+}
+.tp-genprogress-elapsed {
+  color: var(--pd-text-muted);
+}
+.tp-genprogress-error-title {
+  color: var(--pd-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.tp-genprogress-error-body {
+  margin-top: 3px;
+  max-height: 88px;
+  overflow-y: auto;
+  color: var(--pd-text-secondary);
+  font-size: 11.5px;
+  line-height: 1.45;
+}

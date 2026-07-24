@@ -16,7 +16,7 @@
  */
 import { importedFormatOf, registerImportedModel } from './asset-registry';
 import type { ExportFormat } from './data';
-import { useTripoStore } from './store';
+import { type StudioAsset, type TripoOp, useTripoStore } from './store';
 
 export interface ViewerExportRequest {
   readonly format: ExportFormat;
@@ -40,9 +40,8 @@ export function requestExport(format: ExportFormat, fileName: string): void {
 /** Send To <app>: exports a GLB named for the target app (the interop format
  * every listed DCC imports). The button is disabled until a model is loaded. */
 export function requestSendTo(targetId: string): void {
-  const name = useTripoStore
-    .getState()
-    .assets.find((a) => a.id === useTripoStore.getState().loadedAssetId)?.name;
+  const s = useTripoStore.getState();
+  const name = s.assets.find((a) => a.id === s.loadedAssetId)?.name;
   exportHandler?.({ format: 'GLB', fileName: `${name ?? 'model'}-for-${targetId}` });
 }
 
@@ -107,7 +106,8 @@ export async function importModelFile(file: File): Promise<boolean> {
 
 /**
  * Import a model from raw bytes (engine artifacts, e.g. freshly generated
- * geometry): same registry + asset + load flow as a file import.
+ * geometry): registers the bytes and creates a NEW asset whose history tree
+ * starts at this root version.
  */
 export function importModelBuffer(
   fileName: string,
@@ -125,12 +125,98 @@ export function importModelBuffer(
     id,
     name: fileName.replace(/\.[^.]+$/, ''),
     source: opts.source,
+    created: opts.created,
+    currentVersionId: id,
+    versions: [
+      {
+        id,
+        parentId: null,
+        op: 'source',
+        label: opts.source === 'imported' ? 'Imported' : 'Generated',
+        created: Date.now(),
+        thumb: null,
+        faces: 0,
+        vertices: 0,
+        topology: null,
+        ...(opts.diskPath !== undefined ? { diskPath: opts.diskPath } : {}),
+      },
+    ],
+  });
+  s.loadAsset(id);
+  saveAssetTree();
+  return id;
+}
+
+/**
+ * A pipeline op produced a new state of an EXISTING asset: register the bytes
+ * and append a node to that asset's history tree instead of spawning another
+ * top-level card.
+ */
+export function addStageVersion(
+  assetId: string,
+  parentVersionId: string,
+  fileName: string,
+  format: 'glb' | 'gltf' | 'obj' | 'stl',
+  buffer: ArrayBuffer,
+  opts: {
+    readonly op: TripoOp;
+    readonly label: string;
+    readonly diskPath?: string;
+    readonly humanoid?: boolean;
+  },
+): string {
+  const id = registerImportedModel(fileName, format, buffer);
+  useTripoStore.getState().addVersion(assetId, parentVersionId, {
+    id,
+    parentId: parentVersionId,
+    op: opts.op,
+    label: opts.label,
+    created: Date.now(),
     thumb: null,
     faces: 0,
     vertices: 0,
-    created: opts.created,
+    topology: null,
+    ...(opts.op === 'rig' ? { rigged: true, humanoid: opts.humanoid === true } : {}),
     ...(opts.diskPath !== undefined ? { diskPath: opts.diskPath } : {}),
   });
-  s.loadAsset(id);
+  saveAssetTree();
   return id;
+}
+
+// ── persistence ────────────────────────────────────────────────────────────
+// Model BYTES stay in the session-scoped registry, but the history tree is
+// cheap metadata and losing it on every reload would make branches pointless.
+// Versions that came from the engine carry a sandbox diskPath, so a restored
+// tree can re-read its bytes; versions without one are listed but not loadable.
+
+const STORE_KEY = 'bobble3d.assetTree.v1';
+
+export function saveAssetTree(): void {
+  try {
+    const { assets } = useTripoStore.getState();
+    localStorage.setItem(STORE_KEY, JSON.stringify(assets));
+  } catch {
+    // Quota or a disabled store — persistence is a convenience, never a gate.
+  }
+}
+
+/** Restore the tree written by a previous session (metadata only). */
+export function loadAssetTree(): void {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw === null) return;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return;
+    const assets = parsed.filter(
+      (a): a is StudioAsset =>
+        typeof a === 'object' &&
+        a !== null &&
+        typeof (a as StudioAsset).id === 'string' &&
+        Array.isArray((a as StudioAsset).versions) &&
+        (a as StudioAsset).versions.length > 0,
+    );
+    if (assets.length > 0) useTripoStore.setState({ assets });
+  } catch {
+    // Corrupt payload — start clean rather than crash the studio.
+  }
 }

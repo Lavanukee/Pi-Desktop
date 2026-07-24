@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  autoremesherCli,
   detectInstalled,
   GEN3D_MODEL_SPECS,
   installStampPath,
@@ -51,17 +52,24 @@ describe('catalog', () => {
     expect(specTotalBytes(remesher as NonNullable<typeof remesher>)).toBe(17_259_387);
   });
 
-  it('detectInstalled reduces stamp-file existence per model', () => {
+  it('detectInstalled reduces stamp-file existence per weight-backed model', () => {
     const cache = '/cache';
     const present = new Set([
       installStampPath(cache, 'trellis2'),
-      installStampPath(cache, 'autoremesher'),
+      autoremesherCli(cache),
     ]);
     const installed = detectInstalled((p) => present.has(p), cache);
     expect(installed.trellis2).toBe(true);
-    expect(installed.autoremesher).toBe(true);
     expect(installed.mageflow).toBe(false);
     expect(installed.cubepart).toBe(false);
+    // Tools with nothing to download earn no stamp — probe what they need.
+    expect(installed.autoremesher).toBe(true);
+    expect(installed['humanoid-rig']).toBe(true);
+  });
+
+  it('a missing AutoRemesher binary reads as not installed, stamp or not', () => {
+    const installed = detectInstalled(() => false, '/cache');
+    expect(installed.autoremesher).toBe(false);
   });
 
   it('sidecar registry carries repos, mirrors and pipeline types', () => {

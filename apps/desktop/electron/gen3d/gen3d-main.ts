@@ -14,6 +14,7 @@
  * pd-file fence — while model weights live in ~/.cache/pi-desktop/gen3d/.
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import * as path from 'node:path';
 import {
   consumeNdjsonStream,
@@ -130,7 +131,12 @@ async function startSidecar(): Promise<Gen3dSidecar | null> {
     return null;
   }
   const cacheDir = cacheRoot();
-  const sandboxDir = gen3dSandboxDir(app.getPath('home'));
+  // MUST agree with the pd-file fence, which is defined against os.homedir().
+  // Electron's app.getPath('home') ignores $HOME, so the two disagreed whenever
+  // HOME was overridden — artifacts landed outside the fence and every
+  // `pd-file://` fetch of a finished result came back 403, silently dropping
+  // the result on the floor. Observed in an e2e run; os.homedir() fixes it.
+  const sandboxDir = gen3dSandboxDir(homedir());
   mkdirSync(cacheDir, { recursive: true });
   mkdirSync(sandboxDir, { recursive: true });
   const registryPath = path.join(cacheDir, 'registry.json');
@@ -204,6 +210,9 @@ function handleSidecarEvent(value: unknown): void {
       stagePercent: update.stagePercent,
       overallPercent: update.overallPercent,
       ...(update.artifact !== undefined ? { artifact: update.artifact } : {}),
+      // The rig stage's shape measurement — the renderer asks the user
+      // "humanoid?" from this, so it MUST survive the re-broadcast.
+      ...(update.humanoid !== undefined ? { humanoid: update.humanoid } : {}),
       done: update.done,
       ...(update.error !== undefined ? { error: update.error } : {}),
     });

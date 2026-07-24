@@ -36,7 +36,7 @@ import {
   IcUpload,
 } from './icons';
 import { Hint, MenuAnchor, MenuItem, Segmented, SliderRow, Toggle } from './primitives';
-import { type TripoInputMode, useTripoStore } from './store';
+import { currentVersion, type TripoInputMode, useTripoStore } from './store';
 import { addInputImages, importModelFile, MAX_INPUT_IMAGES } from './viewer-io';
 
 // ── shared bits ───────────────────────────────────────────────────────────
@@ -715,11 +715,18 @@ function StagePanel({
   const engineReady = useGen3dStore((s) => s.engineReady);
   const models = useGen3dStore((s) => s.models);
   const runStageEngine = useGen3dStore((s) => s.runStage);
+  const job = useGen3dStore((s) => s.job);
   const loaded = assets.find((a) => a.id === loadedAssetId);
+  const version = loaded === undefined ? undefined : currentVersion(loaded);
   const engineModel = models.find((m) => m.id === engineId);
   const engineInstalled = engineReady && engineModel?.installed === true;
+  const targetQuads = useTripoStore((s) => s.faceLimit);
 
-  const op = capability as 'segment' | 'retopo' | 'texture';
+  const op = capability as 'segment' | 'retopo' | 'texture' | 'rig';
+  const busy = job !== null && !job.done;
+  // A version can only feed a stage op if its bytes exist on disk — a version
+  // restored from a previous session without a path cannot be re-processed.
+  const runnable = version?.diskPath !== undefined;
 
   let footer: ReactNode;
   if (!engineInstalled) {
@@ -731,15 +738,21 @@ function StagePanel({
         testid={runTestid}
       />
     );
-  } else if (loaded === undefined) {
-    footer = <GenerateButton label={runLabel} disabled testid={runTestid} />;
+  } else if (loaded === undefined || !runnable || busy) {
+    footer = <GenerateButton label={busy ? 'Running…' : runLabel} disabled testid={runTestid} />;
   } else {
     footer = (
       <GenerateButton
         label={runLabel}
         testid={runTestid}
         onClick={() => {
-          if (loaded.diskPath !== undefined) void runStageEngine(op, loaded.diskPath);
+          if (version?.diskPath === undefined) return;
+          void runStageEngine(
+            op,
+            version.diskPath,
+            { assetId: loaded.id, versionId: version.id, op },
+            op === 'retopo' ? { targetQuads: targetQuads * 1000 } : undefined,
+          );
         }}
       />
     );
@@ -752,10 +765,23 @@ function StagePanel({
         <EngineRow name={engine} />
         {!engineInstalled ? <StageNeedsModel capability={capability} modelId={engineId} /> : null}
         {loaded !== undefined ? (
-          <div className="tp-engine-row" data-testid="tp-stage-target">
-            <span className="tp-field-label">Target</span>
-            <span className="tp-engine-name">{loaded.name}</span>
-          </div>
+          <>
+            <div className="tp-engine-row" data-testid="tp-stage-target">
+              <span className="tp-field-label">Target</span>
+              <span className="tp-engine-name">
+                {loaded.name}
+                {version !== undefined && version.op !== 'source' ? (
+                  <span className="tp-stage-target-version"> · {version.label}</span>
+                ) : null}
+              </span>
+            </div>
+            {!runnable ? (
+              <p className="tp-stage-warn" data-testid="tp-stage-unrunnable">
+                This version has no file on disk (restored from a previous session), so it can't
+                be re-processed. Load a newer version or re-import the model.
+              </p>
+            ) : null}
+          </>
         ) : (
           <>
             <p className="tp-select-copy" data-testid="tp-stage-empty-copy">

@@ -128,11 +128,16 @@ class Registry:
         return False
 
     def is_installed(self, model_id: str) -> bool:
-        return (
-            self.stamp_path(model_id).exists()
-            and self.weights_present(model_id)
-            and self.env_present(model_id)
-        )
+        if not (self.weights_present(model_id) and self.env_present(model_id)):
+            return False
+        # A stamp records "the download finished". Models with NO weights to
+        # download (the AutoRemesher binary, the local humanoid rigger) are
+        # fully described by env_present, and demanding a stamp they can never
+        # earn just makes a working tool look uninstalled.
+        model = self.model(model_id)
+        if model is not None and not model["repos"]:
+            return True
+        return self.stamp_path(model_id).exists()
 
     def write_stamp(self, model_id: str) -> None:
         self.stamp_path(model_id).write_text(json.dumps({"id": model_id, "ok": True}))

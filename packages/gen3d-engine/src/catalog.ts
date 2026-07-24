@@ -183,10 +183,10 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
     id: 'humanoid-rig',
     label: 'Humanoid Auto-Rig',
     role: 'rig',
-    // Deliberately explicit: this is a geometric fit, not SkinTokens and not a
-    // learned rigger. It produces the Mixamo/ARDY joint hierarchy so humanoid
-    // motion can be retargeted onto the result.
-    note: 'Geometric humanoid rig — fits the Mixamo/ARDY bone hierarchy + skin weights. Local, no weights to download.',
+    // Deliberately explicit: this is a geometric fit, not SkinTokens (which is
+    // CUDA-only and cannot run here). It produces ARDY's exact 27-joint
+    // hierarchy so ARDY-authored motion retargets onto the result.
+    note: "Geometric humanoid rig — fits ARDY's 27-joint skeleton + skin weights. Local, nothing to download.",
     env: 'meshtools',
     repos: [],
   },
@@ -225,9 +225,20 @@ export function detectInstalled(
 ): Record<Gen3dModelId, boolean> {
   const out = {} as Record<Gen3dModelId, boolean>;
   for (const spec of GEN3D_MODEL_SPECS) {
+    // Tools with nothing to download earn no stamp — probe what they actually
+    // need on disk instead (mirrors Registry.is_installed on the Python side).
+    if (spec.repos.length === 0) {
+      out[spec.id] = spec.env === 'binary' ? existsFn(autoremesherCli(cacheDir)) : true;
+      continue;
+    }
     out[spec.id] = existsFn(installStampPath(cacheDir, spec.id));
   }
   return out;
+}
+
+/** The AutoRemesher CLI inside the installed .app bundle. */
+export function autoremesherCli(cacheDir: string): string {
+  return path.join(cacheDir, 'bin', 'autoremesher.app', 'Contents', 'MacOS', 'autoremesher');
 }
 
 /** The JSON registry handed to the Python sidecar (single source of truth —

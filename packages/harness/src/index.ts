@@ -329,11 +329,44 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
   // (no PI_DESKTOP_UTILITY_BASE_URL and no injected callModel) → those features
   // degrade to heuristic/skip; the rest of the harness is unaffected.
   const callModel: CallModel | undefined = options.callModel ?? callModelFromEnv();
-  // Debounce the preemptive warm-up so a model is primed at most once per session
-  // (model_select can re-fire); the key is the model id we last warmed.
-  let warmedModelId: string | null = null;
+  // Debounce the preemptive warm-up by the CANONICAL prompt content: warm each
+  // unique system+tools prefix once. Keyed on content (not model id) because it
+  // fires on BOTH session_start and model_select — a new chat on the same model
+  // (no model_select) still needs the prefix resident, and a cwd change (new
+  // canonical) must re-warm.
+  let warmedCanonical: string | null = null;
   const asyncClassifier: AsyncClassifier | undefined =
     callModel !== undefined ? createClassifierEscalation(callModel) : undefined;
+
+  /**
+   * Fire-and-forget: prime the server's KV with the DETERMINISTIC prefix — the
+   * canonical system prompt + the initial (default-preset) tool set — so the
+   * user's FIRST message only prefills its own few tokens instead of paying a
+   * full cold system+tools prefill (~3s at real sizes). Called on session_start
+   * AND model_select so it fires whenever a model is ready with the utility
+   * endpoint available; debounced per canonical so it primes each prefix once.
+   * Also freezes runtime.canonicalSystemPrompt so the first real turn reuses this
+   * exact string (before_agent_start prefers it) → the warmed KV is actually hit.
+   */
+  function maybeWarmPrefix(ctx: ExtensionContext): void {
+    if (callModel === undefined || typeof ctx.getSystemPrompt !== 'function') return;
+    const canonical = augmentSystemPrompt(ctx.getSystemPrompt());
+    if (canonical.trim().length === 0 || canonical === warmedCanonical) return;
+    warmedCanonical = canonical;
+    runtime.canonicalSystemPrompt = canonical;
+    const all = pi.getAllTools();
+    const warmClass: TaskClass = runtime.config.preset === 'auto' ? 'coding' : runtime.config.preset;
+    // Build the tool list in the SAME ORDER a real turn does (applyPreset unions
+    // resolvePresetTools' order), NOT pi.getAllTools() registry order — chat
+    // templates render tools positionally, so a different order = a different
+    // prefix = zero KV reuse even with the identical tool SET.
+    const byName = new Map(all.map((t) => [t.name, t] as const));
+    const warmTools = resolvePresetTools(warmClass, all.map((t) => t.name))
+      .map((n) => byName.get(n))
+      .filter((t): t is NonNullable<typeof t> => t !== undefined)
+      .map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
+    void warmSystemPrompt(callModel, canonical, { tools: warmTools });
+  }
 
   // A session-stable per-tool failure counter shared by rungs 4 (bump) and 5
   // (read → abort at threshold). Persists across effort changes (which only
@@ -851,6 +884,10 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     runtime.statusTimer = setInterval(() => publishStatus(ctx), 1000);
     publishStatus(ctx);
     publishSubagents(ctx);
+    // Warm the deterministic prefix now that the session (and its model + utility
+    // endpoint) is up — covers the common case where model_select never fires
+    // (new chat / app restart on the same model).
+    maybeWarmPrefix(ctx);
   });
 
   pi.on('session_shutdown', () => {
@@ -1018,32 +1055,14 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
       if (warning !== null && ctx.hasUI) ctx.ui.notify(warning, 'warning');
     }
     publishStatus(ctx);
-    // Preemptively prime the freshly-selected model BEFORE the user's first message
-    // (jedd): one tiny completion warms the server's Metal kernels + KV cache with
-    // the whole DETERMINISTIC prefix — system prompt AND the initial tool set — so
-    // the first message only prefills its own few tokens instead of paying a full
-    // cold system+tools prefill (measured ~4-5s at real tool-set sizes). CRITICAL:
-    // chat templates render tools at the START of the prompt, so a system-ONLY
-    // warm-up reuses NOTHING once the real turn carries tools (cache_n=0) — the
-    // tools MUST be in the warm-up. The set mirrors the first turn's preset (the
-    // agentic 'coding' default under auto-classify, or the fixed preset), rendered
-    // through the same {type:'function'} shape the provider uses so the prefix is
-    // byte-identical. Fire-and-forget (never awaited, never throws); once per model.
-    if (callModel !== undefined && event.model.id !== warmedModelId) {
-      warmedModelId = event.model.id;
-      const all = pi.getAllTools();
-      const warmClass: TaskClass = runtime.config.preset === 'auto' ? 'coding' : runtime.config.preset;
-      const warmNames = new Set(resolvePresetTools(warmClass, all.map((t) => t.name)));
-      const warmTools = all
-        .filter((t) => warmNames.has(t.name))
-        .map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
-      // Capture the canonical system prompt NOW so the first real turn reuses this
-      // exact string (before_agent_start prefers runtime.canonicalSystemPrompt) —
-      // the warm-up and every turn then share a byte-identical system+tools prefix,
-      // so the KV the warm-up primes is actually reused on the first message.
-      runtime.canonicalSystemPrompt = augmentSystemPrompt(ctx.getSystemPrompt());
-      void warmSystemPrompt(callModel, runtime.canonicalSystemPrompt, { tools: warmTools });
-    }
+    // Preemptively prime the DETERMINISTIC prefix (canonical system prompt + the
+    // initial tool set) BEFORE the user's first message, so it only prefills its
+    // own few tokens instead of a full cold system+tools prefill (~3s). Shared with
+    // session_start (see maybeWarmPrefix) so it fires whether the model CHANGED or
+    // a new session just came up on the same model. CRITICAL: chat templates render
+    // tools at the START of the prompt, so a system-ONLY warm-up reuses nothing once
+    // the real turn carries tools — the tools MUST be in the warm-up.
+    maybeWarmPrefix(ctx);
   });
 
   // /harness command protocol.

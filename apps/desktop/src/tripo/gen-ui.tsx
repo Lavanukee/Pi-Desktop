@@ -142,6 +142,7 @@ const ROLE_LABEL: Record<Gen3dRole, string> = {
   texture: 'Texturing',
   segment: 'Segmentation',
   retopo: 'Retopology',
+  rig: 'Rigging',
 };
 
 /** Plain-language "what this unlocks" line per role — the headline the user
@@ -152,6 +153,7 @@ const ROLE_BLURB: Record<Gen3dRole, string> = {
   texture: 'Generate PBR textures and paint them onto a model.',
   segment: 'Split a model into clean, named semantic parts.',
   retopo: 'Rebuild a messy mesh as clean, animation-ready quad topology.',
+  rig: 'Fit a humanoid skeleton and skin weights so the model can be animated.',
 };
 
 function ModelCard({ id }: { readonly id: Gen3dModelId }): JSX.Element | null {
@@ -283,12 +285,13 @@ const STAGE_CHIP: Record<Gen3dRole, string> = {
   texture: 'Texture',
   segment: 'Segment',
   retopo: 'Retopo',
+  rig: 'Rig',
 };
 
 /** The chips shown for a job: the full generate pipeline shows its chain; a
  * single stage op shows just itself. */
 function chipsFor(stage: Gen3dRole): readonly Gen3dRole[] {
-  if (stage === 'segment' || stage === 'retopo') return [stage];
+  if (stage === 'segment' || stage === 'retopo' || stage === 'rig') return [stage];
   return ['image', 'geometry', 'texture'];
 }
 

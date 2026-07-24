@@ -121,6 +121,10 @@ class Registry:
             return self.venv_python("Hunyuan3D-2.1-mac").exists()
         if env == "binary":
             return self.autoremesher_cli().exists() and self.meshtools_python().exists()
+        if env == "meshtools":
+            # The humanoid rigger runs entirely inside the mesh-prep venv —
+            # nothing to download, so "installed" == the venv is usable.
+            return self.meshtools_python().exists()
         return False
 
     def is_installed(self, model_id: str) -> bool:

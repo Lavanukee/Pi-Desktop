@@ -8,7 +8,7 @@
  * is the UX contract: the untextured GLB event arrives while texturing runs).
  */
 
-export type Gen3dStage = 'image' | 'geometry' | 'texture' | 'segment' | 'retopo';
+export type Gen3dStage = 'image' | 'geometry' | 'texture' | 'segment' | 'retopo' | 'rig';
 
 export interface StagePlan {
   readonly stage: Gen3dStage;
@@ -40,8 +40,22 @@ export function planGenerate(kind: 'text' | 'image', texture: boolean): readonly
     : [{ stage: 'geometry', weight: 1 }];
 }
 
-export function planStageOp(op: 'segment' | 'retopo' | 'texture'): readonly StagePlan[] {
+export function planStageOp(op: 'segment' | 'retopo' | 'texture' | 'rig'): readonly StagePlan[] {
   return [{ stage: op, weight: 1 }];
+}
+
+/** What the rig stage's shape probe measured — the basis for asking the user
+ * "humanoid?" instead of guessing. */
+export interface HumanoidProbe {
+  readonly isHumanoid: boolean;
+  /** 0..1 — how strongly the mesh reads as a humanoid. */
+  readonly confidence: number;
+  readonly height: number;
+  readonly width: number;
+  readonly depth: number;
+  readonly armSpanRatio: number;
+  /** Plain-language notes on what did NOT match (shown to the user). */
+  readonly reasons: readonly string[];
 }
 
 /** One event on the sidecar's /events stream with type:"job". */
@@ -54,10 +68,13 @@ export interface SidecarJobEvent {
   readonly step?: number;
   readonly totalSteps?: number;
   readonly artifact?: {
-    readonly kind: 'image' | 'model-glb';
+    /** 'model-obj' is the retopo stage's quad mesh — glTF cannot store quads. */
+    readonly kind: 'image' | 'model-glb' | 'model-obj';
     readonly path: string;
     readonly label: string;
   };
+  /** Humanoid measurements from the rig stage's shape probe. */
+  readonly humanoid?: HumanoidProbe;
   readonly stageDone?: boolean;
   readonly done: boolean;
   readonly error?: string;
@@ -72,6 +89,7 @@ export interface JobUpdate {
   readonly stagePercent: number;
   readonly overallPercent: number;
   readonly artifact?: SidecarJobEvent['artifact'];
+  readonly humanoid?: HumanoidProbe;
   readonly done: boolean;
   readonly error?: string;
 }
@@ -110,6 +128,7 @@ export function mapJobEvent(plan: readonly StagePlan[], ev: SidecarJobEvent): Jo
     stagePercent: ev.done && ev.error === undefined ? 100 : stagePercent,
     overallPercent,
     ...(ev.artifact !== undefined ? { artifact: ev.artifact } : {}),
+    ...(ev.humanoid !== undefined ? { humanoid: ev.humanoid } : {}),
     done: ev.done,
     ...(ev.error !== undefined ? { error: ev.error } : {}),
   };

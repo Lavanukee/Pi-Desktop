@@ -18,10 +18,16 @@
  */
 
 /** Engine model ids (stable — used in settings, downloads, and the catalog). */
-export type Gen3dModelId = 'trellis2' | 'mageflow' | 'hunyuan-paint' | 'cubepart' | 'autoremesher';
+export type Gen3dModelId =
+  | 'trellis2'
+  | 'mageflow'
+  | 'hunyuan-paint'
+  | 'cubepart'
+  | 'autoremesher'
+  | 'humanoid-rig';
 
 /** Which studio stage a model backs. */
-export type Gen3dRole = 'geometry' | 'image' | 'texture' | 'segment' | 'retopo';
+export type Gen3dRole = 'geometry' | 'image' | 'texture' | 'segment' | 'retopo' | 'rig';
 
 export interface Gen3dModelInfo {
   readonly id: Gen3dModelId;
@@ -53,14 +59,29 @@ export interface Gen3dJobUpdate {
   readonly overallPercent: number;
   /** A produced artifact, pushed AS SOON as it exists (geometry-first). */
   readonly artifact?: {
-    readonly kind: 'image' | 'model-glb';
+    /** 'model-obj' is a side artifact (the retopo quad mesh — glTF stores only
+     * triangles, so the quad topology also ships as OBJ). */
+    readonly kind: 'image' | 'model-glb' | 'model-obj';
     /** Absolute path on disk (renderer loads via the pd-file scheme / fs read). */
     readonly path: string;
     /** Label, e.g. "Untextured geometry" / "Textured model" / "Input image". */
     readonly label: string;
   };
+  /** Rig stage only: what the shape probe measured. */
+  readonly humanoid?: Gen3dHumanoidProbe;
   readonly done: boolean;
   readonly error?: string;
+}
+
+/** Humanoid measurements behind the rig stage's "humanoid?" question. */
+export interface Gen3dHumanoidProbe {
+  readonly isHumanoid: boolean;
+  readonly confidence: number;
+  readonly height: number;
+  readonly width: number;
+  readonly depth: number;
+  readonly armSpanRatio: number;
+  readonly reasons: readonly string[];
 }
 
 export interface Gen3dDownloadUpdate {
@@ -111,10 +132,17 @@ export type Gen3dInvokeMap = {
   /** Run a single downstream stage on an existing model file. */
   'gen3d:stage': {
     request: {
-      readonly op: 'segment' | 'retopo' | 'texture';
+      readonly op: 'segment' | 'retopo' | 'texture' | 'rig';
       readonly modelPath: string;
       /** Optional image/prompt context for texturing. */
       readonly prompt?: string;
+      /** Retopo tuning (AutoRemesher target density / curvature adaptivity). */
+      readonly targetQuads?: number;
+      readonly adaptivity?: number;
+      /** Rig: measure the shape and STOP — the UI asks "humanoid?" from this. */
+      readonly probeOnly?: boolean;
+      /** Rig: refuse to fit a humanoid skeleton to a non-humanoid mesh. */
+      readonly requireHumanoid?: boolean;
     };
     response: { readonly ok: boolean; readonly jobId?: string; readonly error?: string };
   };

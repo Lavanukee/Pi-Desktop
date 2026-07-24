@@ -17,10 +17,11 @@ describe('catalog', () => {
     expect(TRELLIS_PIPELINE_TYPES.high).toBe('1536_cascade');
   });
 
-  it('covers all five contract model ids exactly once', () => {
+  it('covers every contract model id exactly once', () => {
     expect(GEN3D_MODEL_SPECS.map((s) => s.id).sort()).toEqual([
       'autoremesher',
       'cubepart',
+      'humanoid-rig',
       'hunyuan-paint',
       'mageflow',
       'trellis2',
@@ -65,7 +66,7 @@ describe('catalog', () => {
 
   it('sidecar registry carries repos, mirrors and pipeline types', () => {
     const registry = toSidecarRegistry();
-    expect(registry.models).toHaveLength(5);
+    expect(registry.models).toHaveLength(6);
     expect(registry.gatedMirrors['facebook/dinov3-vitl16-pretrain-lvd1689m']).toContain(
       'camenduru',
     );

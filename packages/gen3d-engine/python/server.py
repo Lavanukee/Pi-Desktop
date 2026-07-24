@@ -51,6 +51,7 @@ if _pre_args.cache_dir:
 
 from engine.bus import EventBus  # noqa: E402
 from engine.downloads import DownloadManager  # noqa: E402
+from engine.envs import make_autoremesher_headless  # noqa: E402
 from engine.jobs import JobManager  # noqa: E402
 from engine.registry import Registry  # noqa: E402
 
@@ -71,6 +72,9 @@ def main() -> None:
     sandbox_dir.mkdir(parents=True, exist_ok=True)
 
     registry = Registry.load(Path(args.registry), cache_dir)
+    # Self-heal an AutoRemesher installed before the Dock-tile fix existed
+    # (idempotent; a no-op once the bundle is already an LSUIElement agent).
+    make_autoremesher_headless(registry, lambda m: print(m, flush=True))
     bus = EventBus()
     downloads = DownloadManager(registry, bus)
     jobs = JobManager(registry, bus, sandbox_dir)

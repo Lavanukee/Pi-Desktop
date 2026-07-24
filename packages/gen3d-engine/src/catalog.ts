@@ -22,8 +22,14 @@
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-export type Gen3dModelId = 'trellis2' | 'mageflow' | 'hunyuan-paint' | 'cubepart' | 'autoremesher';
-export type Gen3dRole = 'geometry' | 'image' | 'texture' | 'segment' | 'retopo';
+export type Gen3dModelId =
+  | 'trellis2'
+  | 'mageflow'
+  | 'hunyuan-paint'
+  | 'cubepart'
+  | 'autoremesher'
+  | 'humanoid-rig';
+export type Gen3dRole = 'geometry' | 'image' | 'texture' | 'segment' | 'retopo' | 'rig';
 export type Gen3dResolution = 'low' | 'medium' | 'high';
 
 /** One HF repo (or subset of it) a model needs on disk. */
@@ -42,7 +48,7 @@ export interface Gen3dModelSpec {
   readonly note: string;
   readonly repos: readonly Gen3dRepoSpec[];
   /** Which runtime environment the sidecar must provision for this model. */
-  readonly env: 'trellis' | 'mageflow' | 'cubepart' | 'paint' | 'binary';
+  readonly env: 'trellis' | 'mageflow' | 'cubepart' | 'paint' | 'binary' | 'meshtools';
 }
 
 /**
@@ -173,12 +179,24 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
     env: 'binary',
     repos: [],
   },
+  {
+    id: 'humanoid-rig',
+    label: 'Humanoid Auto-Rig',
+    role: 'rig',
+    // Deliberately explicit: this is a geometric fit, not SkinTokens and not a
+    // learned rigger. It produces the Mixamo/ARDY joint hierarchy so humanoid
+    // motion can be retargeted onto the result.
+    note: 'Geometric humanoid rig — fits the Mixamo/ARDY bone hierarchy + skin weights. Local, no weights to download.',
+    env: 'meshtools',
+    repos: [],
+  },
 ];
 
 /** Total bytes the download dialog shows for a model (weights only; the
  * AutoRemesher binary is its release dmg). */
 export function specTotalBytes(spec: Gen3dModelSpec): number {
   if (spec.id === 'autoremesher') return AUTOREMESHER_DMG_BYTES;
+  if (spec.id === 'humanoid-rig') return 0;
   return spec.repos.reduce((sum, r) => sum + r.bytes, 0);
 }
 

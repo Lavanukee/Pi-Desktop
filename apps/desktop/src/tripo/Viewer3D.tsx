@@ -181,6 +181,38 @@ function downloadBlob(data: BlobPart, fileName: string, mime: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
+/**
+ * Quad topology recorded by the retopo worker in `meshes[].extras.pd_topology`.
+ * glTF stores triangles ONLY, so a retopologised mesh would otherwise read as
+ * "Triangle" in the viewer even though AutoRemesher produced quads. The worker
+ * ships the real polygon counts plus the polygon-boundary edge list, which is
+ * what a quad wireframe must draw (triangulation adds diagonals that are not
+ * real topology).
+ */
+export interface PdTopology {
+  readonly kind: 'quad' | 'mixed';
+  readonly quads: number;
+  readonly tris: number;
+  readonly ngons: number;
+  readonly polygons: number;
+  readonly vertices: number;
+  readonly watertight?: boolean;
+  readonly wireEdges?: readonly number[];
+}
+
+function readPdTopology(root: InstanceType<typeof THREE.Object3D>): PdTopology | null {
+  let found: PdTopology | null = null;
+  root.traverse((obj) => {
+    if (found !== null) return;
+    const raw = (obj.userData as { pd_topology?: unknown }).pd_topology;
+    if (raw !== undefined && raw !== null && typeof raw === 'object') {
+      const t = raw as PdTopology;
+      if (typeof t.quads === 'number' && typeof t.polygons === 'number') found = t;
+    }
+  });
+  return found;
+}
+
 /** Minimal shape of the GLTFLoader.parse result we consume. */
 interface LoadedGLTF {
   readonly scene: InstanceType<typeof THREE.Group>;
@@ -334,6 +366,8 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
     let importedGroup: InstanceType<typeof THREE.Group> | null = null;
     let importedWire: InstanceType<typeof THREE.LineSegments> | null = null;
     let importedId: string | null = null;
+    /** Quad topology of the loaded asset (retopo results only). */
+    let importedTopology: PdTopology | null = null;
     const importedBodies: BodyRef[] = [];
 
     // Thumbnail capture queue: asset ids whose real preview is still pending.
@@ -445,14 +479,34 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       group.position.y -= bb2.min.y - GROUND_Y;
 
       collectBodies(group, importedBodies);
-      // The model's REAL edge wireframe (its actual topology) for retopo view.
+      // Quad topology the retopo worker recorded on the GLB, if this asset is a
+      // retopology result (glTF itself can only carry triangles).
+      importedTopology = readPdTopology(group);
+
+      // The model's REAL edge wireframe. When the asset carries quad topology we
+      // draw the POLYGON edges the remesher produced; otherwise the triangle
+      // edges, which is genuinely what the geometry is.
       const wires = new THREE.Group();
+      const quadEdges = importedTopology?.wireEdges;
       for (const { mesh } of importedBodies) {
-        const wg = new THREE.WireframeGeometry(mesh.geometry);
-        const seg = new THREE.LineSegments(
-          wg,
-          new THREE.LineBasicMaterial({ transparent: true, opacity: 0.85 }),
-        );
+        const wireMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.85 });
+        let seg: InstanceType<typeof THREE.LineSegments>;
+        if (quadEdges !== undefined && quadEdges.length > 0 && importedBodies.length === 1) {
+          const pos = mesh.geometry.getAttribute('position');
+          const pts = new Float32Array(quadEdges.length * 3);
+          for (let i = 0; i < quadEdges.length; i++) {
+            const v = quadEdges[i] ?? 0;
+            if (v >= pos.count) continue;
+            pts[i * 3] = pos.getX(v);
+            pts[i * 3 + 1] = pos.getY(v);
+            pts[i * 3 + 2] = pos.getZ(v);
+          }
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+          seg = new THREE.LineSegments(geo, wireMat);
+        } else {
+          seg = new THREE.LineSegments(new THREE.WireframeGeometry(mesh.geometry), wireMat);
+        }
         mesh.updateWorldMatrix(true, false);
         seg.applyMatrix4(mesh.matrixWorld);
         wires.add(seg);
@@ -622,7 +676,9 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
         for (const { mesh } of activeBodies) ensureWireOverlay(mesh).visible = true;
       }
 
-      // Real topology stats for what is on screen.
+      // Real topology stats for what is on screen. A retopology result carries
+      // its true polygon counts on the GLB (glTF triangulates on the way in), so
+      // report THOSE rather than the triangulated stand-in.
       let faces = 0;
       let verts = 0;
       for (const { mesh } of activeBodies) {
@@ -632,7 +688,15 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
         );
         verts += g.getAttribute('position').count;
       }
-      const stats = { topology: 'Triangle', faces, vertices: verts };
+      const topo = importedId === assetId ? importedTopology : null;
+      const stats =
+        topo !== null
+          ? {
+              topology: topo.kind === 'quad' ? 'Quad' : 'Quad + tri',
+              faces: topo.polygons,
+              vertices: topo.vertices,
+            }
+          : { topology: 'Triangle', faces, vertices: verts };
       const prev = s.stats;
       if (prev === null || prev.faces !== stats.faces || prev.topology !== stats.topology) {
         useTripoStore.getState().set('stats', stats);

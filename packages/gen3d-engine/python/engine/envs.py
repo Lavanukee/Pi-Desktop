@@ -48,6 +48,8 @@ def provision(registry: Registry, model: dict, log, cancelled: threading.Event) 
         _provision_paint(registry, log)
     elif env_kind == "binary":
         _provision_autoremesher(registry, model, log)
+    elif env_kind == "meshtools":
+        _provision_meshtools(registry, log)
     else:
         raise RuntimeError(f"unknown env kind: {env_kind}")
 
@@ -212,27 +214,85 @@ def _provision_autoremesher(registry: Registry, model: dict, log) -> None:
             capture_output=True,
         )
         dmg.unlink(missing_ok=True)
-    # Tiny mesh-conversion venv (GLB<->OBJ for the retopo worker).
-    if not registry.meshtools_python().exists():
-        uv = registry.uv_path
-        meshtools = registry.tool_dir("meshtools")
+    make_autoremesher_headless(registry, log)
+    _provision_meshtools(registry, log)
+
+
+def make_autoremesher_headless(registry: Registry, log) -> None:
+    """Stop AutoRemesher from bouncing into the Dock on every retopo.
+
+    AutoRemesher is a Qt app that also accepts `--input/--output`; even on the
+    headless path it constructs a QApplication. Its qmake-generated Info.plist
+    declares `NSPrincipalClass=NSApplication` with `CFBundlePackageType=APPL`
+    and no LSUIElement, so LaunchServices registers each run as a FOREGROUND
+    application — verified with `lsappinfo info <pid>` reporting
+    type="Foreground" during a real retopo.
+
+    LSUIElement=true is the documented "agent" opt-out: same Cocoa platform
+    plugin, no Dock tile and no menu bar. Editing Info.plist breaks the bundle
+    seal, so we re-sign ad-hoc afterwards. Idempotent — it also repairs an
+    install made before this fix existed.
+    """
+    app_dir = registry.bin_dir / "autoremesher.app"
+    plist_path = app_dir / "Contents" / "Info.plist"
+    if not plist_path.exists():
+        return
+    try:
+        info = plistlib.loads(plist_path.read_bytes())
+    except Exception as err:  # noqa: BLE001 — never block a retopo on this
+        log(f"could not read autoremesher Info.plist: {err}")
+        return
+    if info.get("LSUIElement") is True:
+        return
+    info["LSUIElement"] = True
+    plist_path.write_bytes(plistlib.dumps(info))
+    # Re-seal: the signature covers Info.plist. An ad-hoc signature is enough —
+    # the bundle is already de-quarantined, so Gatekeeper does not evaluate it.
+    subprocess.run(
+        ["codesign", "--force", "--sign", "-", str(app_dir)], capture_output=True
+    )
+    log("Patched autoremesher.app → LSUIElement (no Dock tile)")
+
+
+# trimesh's repair paths (fill_holes, fix_winding, connected-component split)
+# are graph-backed: without networkx they RAISE, the retopo input reaches
+# AutoRemesher unhealed, and the remesh comes back full of holes. scipy backs
+# the spatial queries those repairs use. Both are load-bearing, not optional.
+MESHTOOLS_PACKAGES = [
+    "trimesh==4.5.3",
+    "numpy",
+    "pillow",
+    "networkx",
+    "scipy",
+    # Quadric decimation — the retopo stage caps input density before handing
+    # the mesh to AutoRemesher (see _meshprep.decimate_to for the measurement).
+    "fast-simplification",
+]
+MESHTOOLS_IMPORTS = ["trimesh", "numpy", "PIL", "networkx", "scipy", "fast_simplification"]
+
+
+def _provision_meshtools(registry: Registry, log) -> None:
+    """Tiny mesh-prep venv (weld/heal + GLB↔OBJ) for the retopo worker.
+
+    Repairs an EXISTING venv too — an install from before networkx was required
+    would otherwise silently keep producing holed retopology.
+    """
+    uv = registry.uv_path
+    meshtools = registry.tool_dir("meshtools")
+    python = registry.meshtools_python()
+    if not python.exists():
         meshtools.mkdir(parents=True, exist_ok=True)
         log("Creating meshtools venv (trimesh)…")
         _run([uv, "venv", str(meshtools / ".venv"), "--python", "3.12"], meshtools, log)
-        _run(
-            [
-                registry.uv_path,
-                "pip",
-                "install",
-                "--python",
-                str(registry.meshtools_python()),
-                "trimesh==4.5.3",
-                "numpy",
-                "pillow",
-            ],
-            meshtools,
-            log,
-        )
+    probe = subprocess.run(
+        [str(python), "-c", "import " + ", ".join(MESHTOOLS_IMPORTS)],
+        capture_output=True,
+        text=True,
+    )
+    if probe.returncode == 0:
+        return
+    log("Installing meshtools dependencies (trimesh + repair stack)…")
+    _run([uv, "pip", "install", "--python", str(python), *MESHTOOLS_PACKAGES], meshtools, log)
 
 
 def write_registry_note(path: Path, payload: dict) -> None:

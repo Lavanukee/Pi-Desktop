@@ -110,17 +110,28 @@ class JobManager:
         op = body.get("op")
         model_path = body.get("modelPath") or ""
         prompt = (body.get("prompt") or "").strip()
-        if op not in ("segment", "retopo", "texture"):
+        if op not in ("segment", "retopo", "texture", "rig"):
             return {"ok": False, "error": f"unknown stage op: {op}"}
         if not model_path or not Path(model_path).exists():
             return {"ok": False, "error": "model file not found"}
-        required = {"segment": "cubepart", "retopo": "autoremesher", "texture": "hunyuan-paint"}[op]
+        required = {
+            "segment": "cubepart",
+            "retopo": "autoremesher",
+            "texture": "hunyuan-paint",
+            "rig": "humanoid-rig",
+        }[op]
         if not self.registry.is_installed(required):
             return {"ok": False, "error": f"{required} is not installed yet"}
 
+        # Stage tuning knobs travel as plain optional fields on the request.
+        options = {
+            k: body[k]
+            for k in ("targetQuads", "adaptivity", "probeOnly", "requireHumanoid")
+            if body.get(k) is not None
+        }
         job = self._new_job([op])
         threading.Thread(
-            target=self._run_stage, args=(job, op, model_path, prompt), daemon=True
+            target=self._run_stage, args=(job, op, model_path, prompt, options), daemon=True
         ).start()
         return {"ok": True, "jobId": job.job_id}
 
@@ -226,8 +237,11 @@ class JobManager:
             stage = job.plan[-1]
             self._publish(job, stage, message=str(err), done=True, error=str(err))
 
-    def _run_stage(self, job: Job, op: str, model_path: str, prompt: str) -> None:
+    def _run_stage(
+        self, job: Job, op: str, model_path: str, prompt: str, options: dict | None = None
+    ) -> None:
         job_dir = self._job_dir(job)
+        options = options or {}
         try:
             if op == "segment":
                 venv = self.registry.venv_python("cube")
@@ -247,7 +261,18 @@ class JobManager:
                     "--mesh", model_path,
                     "--out-dir", str(job_dir),
                     "--cli", str(self.registry.autoremesher_cli()),
+                    "--target-quads", str(int(options.get("targetQuads") or 20_000)),
+                    "--adaptivity", str(float(options.get("adaptivity") or 1.0)),
                 ]
+                cwd = self.registry.tool_dir("meshtools")
+            elif op == "rig":
+                venv = self.registry.meshtools_python()
+                script = WORKERS_DIR / "rig_worker.py"
+                args = ["--mesh", model_path, "--out-dir", str(job_dir)]
+                if options.get("probeOnly"):
+                    args.append("--probe-only")
+                if options.get("requireHumanoid"):
+                    args.append("--require-humanoid")
                 cwd = self.registry.tool_dir("meshtools")
             else:  # texture (Hunyuan Paint)
                 venv = self.registry.venv_python("Hunyuan3D-2.1-mac")
@@ -340,6 +365,10 @@ class JobManager:
                         "label": msg.get("label", ""),
                     },
                 )
+            elif event == "probe":
+                # The rig worker's humanoid measurements — the UI asks the user
+                # "humanoid?" from these rather than guessing.
+                self._publish(job, stage, message="", humanoid=msg.get("humanoid"))
             elif event == "stage-done":
                 self._publish(job, stage, message=msg.get("message", ""), stageDone=True)
             elif event == "error":

@@ -461,7 +461,14 @@ export function createEventRouter(sink: StoreSink, options: EventRouterOptions =
       case 'compaction_end':
         sink.setAgentStatus({ isCompacting: false });
         if (e.errorMessage !== undefined && e.errorMessage !== '' && e.aborted !== true) {
-          sink.notify('error', `Compaction failed: ${e.errorMessage}`);
+          // A compaction failure must NEVER dump a raw provider blob or a scary
+          // hard-fail into the chat. A context-OVERFLOW compaction failure is
+          // already recovered BELOW pi by the llama-server provider (it trims the
+          // oldest tool results and retries the turn — see provider-llamacpp/
+          // context-trim.ts), so the turn keeps going and we stay SILENT here.
+          // Any OTHER compaction error surfaces as a short, cleaned message.
+          const clean = cleanCompactionError(e.errorMessage);
+          if (clean !== null) sink.notify('error', clean);
         }
         break;
 
@@ -625,6 +632,49 @@ export function extractToolResultText(tr: unknown): string {
 /** Strip ANSI escape sequences (pi extensions emit ANSI for terminal colors). */
 export function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, '');
+}
+
+/** True when a string looks like a RAW provider error — an HTTP-status blob or a
+ * JSON error object — that must never be shown verbatim in the chat. */
+function looksLikeRawProviderError(s: string): boolean {
+  return /llama-server http\b|"error"\s*:|exceed_context_size|\bn_ctx\b/i.test(s);
+}
+
+/**
+ * Sanitize an error string for display in the chat: a raw provider blob (an HTTP
+ * status + JSON body) collapses to a short, human message; anything already
+ * human passes through (ANSI stripped). Defense-in-depth — the llama-server
+ * provider already emits clean messages, but a raw error must never render even
+ * if one reaches here via a replayed transcript or a future code path. Pure.
+ */
+export function cleanErrorText(raw: string): string {
+  const s = stripAnsi(raw).trim();
+  if (looksLikeRawProviderError(s)) {
+    return 'The local model server returned an error. Please try again.';
+  }
+  return s;
+}
+
+/**
+ * Clean a pi `compaction_end` error message for the toast, or `null` to stay
+ * SILENT. A context-overflow compaction failure returns null: the provider
+ * recovers it below pi (trims tool results + retries), so the turn continues and
+ * the user needn't see a hard "failed". Any other failure returns a short string
+ * with any embedded raw provider blob stripped. Pure.
+ */
+export function cleanCompactionError(raw: string): string | null {
+  const lower = raw.toLowerCase();
+  if (
+    (lower.includes('context') && (lower.includes('overflow') || lower.includes('exceed'))) ||
+    lower.includes('available context size') ||
+    lower.includes('exceed_context_size')
+  ) {
+    return null; // recovered downstream by the provider — no toast
+  }
+  if (looksLikeRawProviderError(raw)) {
+    return 'Compaction failed — continuing with the current context.';
+  }
+  return `Compaction failed: ${raw}`;
 }
 
 // Constructed from a string to keep literal control chars out of the source.

@@ -24,6 +24,13 @@ import {
   type ToolCall,
 } from '@mariozechner/pi-ai';
 import {
+  cleanProviderError,
+  MAX_OVERFLOW_RETRIES,
+  parseContextOverflow,
+  REPLY_MARGIN_TOKENS,
+  trimContextForOverflow,
+} from './context-trim.js';
+import {
   fuzzyMatchToolName,
   type RepairRung,
   reconstructToolCallFromContent,
@@ -379,31 +386,64 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
         // penalties + max_tokens) onto the outgoing body and (b) ARM its per-call
         // hang watchdog. `onPayload` returns the (possibly new) payload, or a value
         // we ignore unless it is a fresh object; absent (normal chat) → unchanged.
-        let body = buildChatCompletionsRequest(model, context, options);
-        const replaced = await options?.onPayload?.(body, model);
-        if (replaced !== null && typeof replaced === 'object') {
-          body = replaced as Record<string, unknown>;
-        }
-        const res = await doFetch(`${model.baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', ...(model.headers ?? {}) },
-          body: JSON.stringify(body),
-          signal: options?.signal,
-        });
-        // A response arrived (headers received, before the body is consumed) → notify
-        // the host via pi's `onResponse` (`after_provider_response`), mirroring the
-        // built-in openai-completions handler. The corp uses this to DISARM its
-        // per-call watchdog: the server responded, so this request is not a hung
-        // socket and the (legitimately long) stream may run unbounded. No-op in
-        // normal chat (no handler). Fired on ANY status so an error response also
-        // clears the watchdog rather than tripping it.
-        await options?.onResponse?.(
-          { status: res.status, headers: headersToRecord(res.headers) },
-          model,
-        );
-        if (!res.ok) {
+        // Context-overflow recovery loop. llama-server rejects a prompt bigger
+        // than its `n_ctx` with HTTP 400 `exceed_context_size_error`. Instead of
+        // throwing that raw blob into the chat (or letting pi's compaction hard-
+        // fail), we TRIM the oldest/largest tool results out of the request and
+        // retry — re-reading the fresh token counts the server reports on each
+        // pass — until the prompt fits or nothing is left to trim. This keeps the
+        // turn going transparently; pi never sees the overflow. See context-trim.ts.
+        let sendContext = context;
+        let res: Response;
+        for (let attempt = 0; ; attempt++) {
+          let body = buildChatCompletionsRequest(model, sendContext, options);
+          const replaced = await options?.onPayload?.(body, model);
+          if (replaced !== null && typeof replaced === 'object') {
+            body = replaced as Record<string, unknown>;
+          }
+          res = await doFetch(`${model.baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', ...(model.headers ?? {}) },
+            body: JSON.stringify(body),
+            signal: options?.signal,
+          });
+          // A response arrived (headers received, before the body is consumed) → notify
+          // the host via pi's `onResponse` (`after_provider_response`), mirroring the
+          // built-in openai-completions handler. The corp uses this to DISARM its
+          // per-call watchdog: the server responded, so this request is not a hung
+          // socket and the (legitimately long) stream may run unbounded. No-op in
+          // normal chat (no handler). Fired on ANY status so an error response also
+          // clears the watchdog rather than tripping it. Re-fired on each retry so a
+          // recovered request re-arms/re-disarms the watchdog like a fresh call.
+          await options?.onResponse?.(
+            { status: res.status, headers: headersToRecord(res.headers) },
+            model,
+          );
+          if (res.ok) break;
+
           const detail = await res.text().catch(() => '');
-          throw new Error(`llama-server HTTP ${res.status}: ${detail.slice(0, 500)}`);
+          const overflow = parseContextOverflow(detail);
+          if (overflow !== undefined && attempt < MAX_OVERFLOW_RETRIES) {
+            // Free the overshoot plus a reply margin, shedding stale tool results.
+            const target = overflow.nPromptTokens - overflow.nCtx + REPLY_MARGIN_TOKENS;
+            const trim = trimContextForOverflow(sendContext, target);
+            if (trim.trimmedCount > 0) {
+              sendContext = trim.context;
+              // eslint-disable-next-line no-console
+              console.log(
+                `[pi-ctx] overflow ${overflow.nPromptTokens}/${overflow.nCtx} tok — trimmed ~${trim.removedTokens} tok from ${trim.trimmedCount} tool result(s), retrying (attempt ${attempt + 1}/${MAX_OVERFLOW_RETRIES})`,
+              );
+              continue;
+            }
+          }
+          // Unrecoverable: a non-overflow error, retries exhausted, or nothing
+          // left to trim (pathological). Surface a CLEAN short message — never the
+          // raw HTTP/JSON blob (log the detail for debugging only).
+          if (detail.length > 0) {
+            // eslint-disable-next-line no-console
+            console.error(`[pi-ctx] llama-server HTTP ${res.status}: ${detail.slice(0, 500)}`);
+          }
+          throw new Error(cleanProviderError(res.status, overflow));
         }
 
         // KV-reuse visibility (jedd): log ONCE per turn from the first prefill

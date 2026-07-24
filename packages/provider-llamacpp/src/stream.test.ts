@@ -493,8 +493,16 @@ describe('createLlamaCppStream — rung 0 (corp raw-XML tool call from content)'
   it('reconstructs a <function=write> call whose <parameter=content> is TS with braces', async () => {
     const tsBody = 'export function f() { return { a: 1, b: { c: 2 } }; }';
     const { fetchImpl } = sseFetch([
-      { choices: [{ delta: { content: `<function=write>\n<parameter=path>\nsrc/foo.ts\n</parameter>\n` } }] },
-      { choices: [{ delta: { content: `<parameter=content>\n${tsBody}\n</parameter>\n</function>` } }] },
+      {
+        choices: [
+          { delta: { content: `<function=write>\n<parameter=path>\nsrc/foo.ts\n</parameter>\n` } },
+        ],
+      },
+      {
+        choices: [
+          { delta: { content: `<parameter=content>\n${tsBody}\n</parameter>\n</function>` } },
+        ],
+      },
       { choices: [{ delta: {}, finish_reason: 'stop' }] },
     ]);
     const stream = createLlamaCppStream({ fetchImpl })(makeModel(), emptyContext(writeTools));
@@ -637,5 +645,126 @@ describe('createLlamaCppStream — per-session relaxed schema (rung 4)', () => {
     expect(onRepair).not.toHaveBeenCalled();
     const call = final.content.find((c) => c.type === 'toolCall');
     expect(call?.type === 'toolCall' && call.arguments).toEqual({ wrong: 1 });
+  });
+});
+
+describe('createLlamaCppStream — context-overflow recovery', () => {
+  /** A fetch that returns HTTP 400 overflow `failTimes` times, then a 200 SSE
+   * with a single "ok" text delta. Records each request's parsed body. */
+  function overflowThenOk(
+    failTimes: number,
+    overflowBody: string,
+  ): { fetchImpl: typeof fetch; bodies: Record<string, unknown>[] } {
+    const bodies: Record<string, unknown>[] = [];
+    let calls = 0;
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(init.body as string));
+      if (calls++ < failTimes) {
+        return {
+          ok: false,
+          status: 400,
+          headers: new Headers(),
+          text: async () => overflowBody,
+        } as unknown as Response;
+      }
+      async function* body(): AsyncGenerator<Uint8Array> {
+        const enc = new TextEncoder();
+        yield enc.encode(
+          `data: ${JSON.stringify({ choices: [{ delta: { content: 'ok' } }] })}\n\n`,
+        );
+        yield enc.encode('data: [DONE]\n\n');
+      }
+      return { ok: true, status: 200, headers: new Headers(), body: body() } as unknown as Response;
+    }) as unknown as typeof fetch;
+    return { fetchImpl, bodies };
+  }
+
+  /** A context with two big tool results (the overflow bulk) + a user message. */
+  const overflowContext = (): Context => ({
+    systemPrompt: 'You are a test.',
+    messages: [
+      { role: 'user', content: 'explore the repo', timestamp: 0 },
+      {
+        role: 'toolResult',
+        toolCallId: 'a',
+        toolName: 'bash',
+        content: [{ type: 'text', text: 'A'.repeat(40_000) }],
+        isError: false,
+        timestamp: 0,
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'b',
+        toolName: 'bash',
+        content: [{ type: 'text', text: 'B'.repeat(40_000) }],
+        isError: false,
+        timestamp: 0,
+      },
+    ],
+  });
+
+  const OVERFLOW_BODY = JSON.stringify({
+    error: {
+      code: 400,
+      message: 'request (32978 tokens) exceeds the available context size (32768 tokens)',
+      type: 'exceed_context_size_error',
+      n_prompt_tokens: 32978,
+      n_ctx: 32768,
+    },
+  });
+
+  it('trims oldest tool results and retries, then streams successfully', async () => {
+    const { fetchImpl, bodies } = overflowThenOk(1, OVERFLOW_BODY);
+    const stream = createLlamaCppStream({ fetchImpl })(makeModel(), overflowContext());
+    const { final } = await consume(stream);
+
+    expect(final.stopReason).toBe('stop'); // recovered — NOT an error turn
+    expect(final.errorMessage).toBeUndefined();
+    const text = final.content.find((c) => c.type === 'text');
+    expect(text?.type === 'text' && text.text).toBe('ok');
+
+    // Two requests: the overflowing one, then a trimmed retry.
+    expect(bodies).toHaveLength(2);
+    const retryMsgs = (bodies[1] as { messages: { role: string; content: unknown }[] }).messages;
+    // The oldest tool result was replaced by the placeholder; the user message stayed.
+    const toolMsgs = retryMsgs.filter((m) => m.role === 'tool');
+    expect(toolMsgs[0]?.content).toBe('[earlier tool output trimmed to fit context]');
+    expect(retryMsgs.some((m) => m.role === 'user' && m.content === 'explore the repo')).toBe(true);
+  });
+
+  it('never dumps the raw HTTP/JSON blob — a clean message on unrecoverable overflow', async () => {
+    // No tool results to trim → recovery can't help → clean, short message.
+    const { fetchImpl } = overflowThenOk(99, OVERFLOW_BODY);
+    const noTrimContext: Context = {
+      systemPrompt: 'You are a test.',
+      messages: [{ role: 'user', content: 'hi', timestamp: 0 }],
+    };
+    const stream = createLlamaCppStream({ fetchImpl })(makeModel(), noTrimContext);
+    const { final } = await consume(stream);
+
+    expect(final.stopReason).toBe('error');
+    expect(final.errorMessage).toBeDefined();
+    // Clean text — never the raw blob.
+    expect(final.errorMessage).not.toContain('{');
+    expect(final.errorMessage).not.toContain('n_ctx');
+    expect(final.errorMessage).not.toContain('llama-server HTTP');
+    expect(final.errorMessage).toContain('too long');
+  });
+
+  it('cleans a NON-overflow HTTP error to a short message (no raw blob)', async () => {
+    const fetchImpl = (async () =>
+      ({
+        ok: false,
+        status: 500,
+        headers: new Headers(),
+        text: async () => '{"error":{"message":"internal boom","code":500}}',
+      }) as unknown as Response) as unknown as typeof fetch;
+    const stream = createLlamaCppStream({ fetchImpl })(makeModel(), emptyContext());
+    const { final } = await consume(stream);
+    expect(final.stopReason).toBe('error');
+    expect(final.errorMessage).toBe(
+      'The local model server returned an error (HTTP 500). Please try again.',
+    );
+    expect(final.errorMessage).not.toContain('boom');
   });
 });

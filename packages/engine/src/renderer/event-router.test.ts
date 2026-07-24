@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PiBridgeEvent } from '../types/rpc';
-import { createEventRouter, extractToolResultText, opFor, stripAnsi } from './event-router';
+import {
+  cleanCompactionError,
+  cleanErrorText,
+  createEventRouter,
+  extractToolResultText,
+  opFor,
+  stripAnsi,
+} from './event-router';
 import { abortEvents, loadFixture, promptEvents } from './test-helpers/fixtures';
 import { RecordingSink } from './test-helpers/recording-sink';
 
@@ -861,6 +868,36 @@ describe('event router — misc defensive behaviors', () => {
       ['notify', 'error', 'Compaction failed: quota exceeded'],
     ]);
   });
+
+  it('stays SILENT on a context-overflow compaction failure (recovered by the provider)', () => {
+    const { sink, route } = makeRouter();
+    route({
+      type: 'compaction_end',
+      reason: 'threshold',
+      result: undefined,
+      aborted: false,
+      willRetry: false,
+      errorMessage:
+        'Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.',
+    });
+    // No toast — the llama-server provider trims + retries below pi, so the turn continues.
+    expect(sink.callsFor('notify')).toEqual([]);
+  });
+
+  it('cleans a raw provider blob folded into a compaction error', () => {
+    const { sink, route } = makeRouter();
+    route({
+      type: 'compaction_end',
+      reason: 'threshold',
+      result: undefined,
+      aborted: false,
+      willRetry: false,
+      errorMessage: 'llama-server HTTP 500: {"error":{"message":"boom"}}',
+    });
+    expect(sink.callsFor('notify')).toEqual([
+      ['notify', 'error', 'Compaction failed — continuing with the current context.'],
+    ]);
+  });
 });
 
 describe('helpers', () => {
@@ -879,6 +916,25 @@ describe('helpers', () => {
     ).toBe('a\nb');
     expect(extractToolResultText({ output: 'out' })).toBe('out');
     expect(extractToolResultText(undefined)).toBe('');
+  });
+
+  it('cleanErrorText collapses a raw provider blob but passes human text through', () => {
+    expect(
+      cleanErrorText(
+        'llama-server HTTP 400: {"error":{"message":"exceeds the available context size","n_ctx":32768}}',
+      ),
+    ).toBe('The local model server returned an error. Please try again.');
+    expect(cleanErrorText('  Model timed out  ')).toBe('Model timed out');
+  });
+
+  it('cleanCompactionError is silent on overflow, cleans blobs, keeps plain failures', () => {
+    expect(
+      cleanCompactionError('Context overflow recovery failed after one compact-and-retry attempt.'),
+    ).toBeNull();
+    expect(cleanCompactionError('llama-server HTTP 500: {"error":{}}')).toBe(
+      'Compaction failed — continuing with the current context.',
+    );
+    expect(cleanCompactionError('quota exceeded')).toBe('Compaction failed: quota exceeded');
   });
 
   it('stripAnsi removes escape sequences', () => {

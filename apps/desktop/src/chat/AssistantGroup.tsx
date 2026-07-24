@@ -12,7 +12,12 @@
  * rail while streaming (a thinking run is an ActivityChain, not a component that
  * swaps type when it settles), and real tool/file activity rows.
  */
-import type { AssistantMsg, ContentBlock, ToolResultMsg } from '@pi-desktop/engine';
+import {
+  type AssistantMsg,
+  type ContentBlock,
+  cleanErrorText,
+  type ToolResultMsg,
+} from '@pi-desktop/engine';
 import type { ReactNode } from 'react';
 import { generatedImageSrc, segmentGroup } from './activity-mapping';
 import { InlineArtifact } from './canvas/InlineArtifacts';
@@ -111,7 +116,10 @@ export function AssistantGroup({
         );
       })}
       {errorMessage !== undefined ? (
-        <div className="text-footnote text-status-danger-fg">{errorMessage}</div>
+        // Defense-in-depth: never render a raw provider blob (an HTTP/JSON error)
+        // in the chat — collapse it to a short human message. The provider already
+        // emits clean text; this guards replayed transcripts + future paths.
+        <div className="text-footnote text-status-danger-fg">{cleanErrorText(errorMessage)}</div>
       ) : null}
     </div>
   );

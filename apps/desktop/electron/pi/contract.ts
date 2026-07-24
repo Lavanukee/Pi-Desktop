@@ -149,6 +149,26 @@ export type PiInvokeMap = {
   };
   /** Abort an in-flight resume (a Pause/Stop pressed during the continuation). */
   'pi:resume-abort': { request: undefined; response: { ok: boolean } };
+
+  // ── Predictive prefill ───────────────────────────────────────────────────
+  /** PRIME the slot's KV with the message being composed BEFORE it is sent, so
+   * the real turn reuses it (see @pi-desktop/provider-llamacpp/prefill). Talks to
+   * the running llama-server DIRECTLY (the utility base URL), NOT the pi child.
+   * Fire-and-forget: a superseding call (or `pi:prefill-abort`) cancels any
+   * in-flight one for that sender; a cancelled prefill resolves `aborted:true`.
+   * Text only — images are excluded (their encode is re-run per request). */
+  'pi:prefill': {
+    request: {
+      /** `[system, ...history, {role:'user', content: draft}]`, OpenAI-shaped,
+       * text only — byte-identical to the turn's prefix so the KV matches. */
+      messages: Array<Record<string, unknown>>;
+      /** The turn's tools, in render order (part of the prefix identity). */
+      tools?: Array<{ name: string; description?: string; parameters?: unknown }>;
+    };
+    response: { success: boolean; aborted?: boolean; promptN?: number; error?: string };
+  };
+  /** Abort an in-flight prefill (the draft changed or the turn was sent). */
+  'pi:prefill-abort': { request: undefined; response: { ok: boolean } };
 };
 
 /** One child-agent record for the sidebar dropdown. */
@@ -199,6 +219,8 @@ export const PI_INVOKE_CHANNELS = [
   'pi:report-active-session',
   'pi:resume-continue',
   'pi:resume-abort',
+  'pi:prefill',
+  'pi:prefill-abort',
 ] as const satisfies readonly (keyof PiInvokeMap)[];
 
 export type PiEventMap = {

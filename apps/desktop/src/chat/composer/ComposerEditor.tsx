@@ -27,6 +27,7 @@ import {
   KEY_ENTER_COMMAND,
   KEY_ESCAPE_COMMAND,
   KEY_TAB_COMMAND,
+  PASTE_COMMAND,
   SELECTION_CHANGE_COMMAND,
 } from 'lexical';
 import { type MutableRefObject, useEffect, useRef } from 'react';
@@ -63,6 +64,13 @@ interface ComposerEditorProps {
   onSubmit: () => void;
   keymap: ComposerKeymap;
   apiRef: MutableRefObject<ComposerEditorApi | null>;
+  /**
+   * Offered a plain-text clipboard paste BEFORE it lands in the editor. Return
+   * true to CONSUME it (the parent turned it into a "pasted content" attachment
+   * so a large block doesn't flood the input); return false to let it paste
+   * normally. Only fires for plain-text pastes with no clipboard files.
+   */
+  onLargePaste?: (text: string) => boolean;
 }
 
 function readSync(
@@ -205,6 +213,28 @@ function EditorBridge(props: Omit<ComposerEditorProps, 'placeholder' | 'disabled
             return true;
           }
           return keymap.dismissSuggestions();
+        },
+        COMMAND_PRIORITY_HIGH,
+      ),
+      // Large plain-text paste → offer it to the parent BEFORE it enters the
+      // editor. If the parent consumes it (turns it into a "pasted content"
+      // attachment), swallow the paste so a huge block never floods the input;
+      // otherwise fall through to the normal plain-text paste. File/image pastes
+      // and non-clipboard paste events are left untouched.
+      editor.registerCommand(
+        PASTE_COMMAND,
+        (event: ClipboardEvent | InputEvent | KeyboardEvent) => {
+          const { onLargePaste } = cb.current;
+          if (onLargePaste === undefined) return false;
+          if (!(event instanceof ClipboardEvent) || event.clipboardData === null) return false;
+          if (event.clipboardData.files.length > 0) return false;
+          const pasted = event.clipboardData.getData('text/plain');
+          if (pasted.length === 0) return false;
+          if (onLargePaste(pasted)) {
+            event.preventDefault();
+            return true;
+          }
+          return false;
         },
         COMMAND_PRIORITY_HIGH,
       ),

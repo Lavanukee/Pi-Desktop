@@ -23,6 +23,7 @@ import { type ChildAgents, createChildAgents } from './child-agents';
 import type { PiInvokeMap } from './contract';
 import { extensionPackageDirs } from './extension-dirs';
 import { createPiSessions, type PiSessionHandlers } from './pi-sessions';
+import { registerPrefillIpc } from './prefill-main';
 import { installPiQuitHold } from './quit-hold';
 import { registerResumeIpc } from './resume-main';
 import { registerSubagentBridge } from './subagent-bridge';
@@ -268,6 +269,7 @@ export function registerPiIpc(
   registerAll(sessions.handlers);
   registerChildAgentIpc();
   registerResumeIpc();
+  registerPrefillIpc();
   if (opts.getWindow !== undefined) registerSubagentBridge(opts.getWindow, childAgents);
 
   installPiQuitHold(app, {

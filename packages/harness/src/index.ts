@@ -335,6 +335,10 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
   // (no model_select) still needs the prefix resident, and a cwd change (new
   // canonical) must re-warm.
   let warmedCanonical: string | null = null;
+  // Last-published predictive-prefill context (deduped so a per-turn applyPreset
+  // that changed nothing doesn't re-push the ~7k-char system + tool schemas).
+  let publishedPrefillSystem: string | null = null;
+  let publishedPrefillTools: string | null = null;
   const asyncClassifier: AsyncClassifier | undefined =
     callModel !== undefined ? createClassifierEscalation(callModel) : undefined;
 
@@ -366,13 +370,41 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
       .map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
   }
 
+  /**
+   * PUBLISH the deterministic prefill prefix — the canonical system prompt and
+   * the tools resident in the slot, in render order — to the renderer, so the
+   * composer can PREDICTIVELY prefill the message being typed (pi:prefill) with a
+   * prefix byte-identical to the one the real turn will process. Two keys so a
+   * per-turn tool change never re-pushes the (large, unchanging) system prompt;
+   * each deduped by content so an unchanged turn publishes nothing. The tools are
+   * built with the SAME `orderedToolDefs` the warm-up/naming use, so all three
+   * reproduce the turn's prefix identically.
+   */
+  function publishPrefillContext(
+    ctx: ExtensionContext,
+    tools: { name: string; description?: string; parameters?: unknown }[],
+  ): void {
+    if (ctx.hasUI !== true) return;
+    const system = runtime.canonicalSystemPrompt ?? '';
+    if (system.length > 0 && system !== publishedPrefillSystem) {
+      publishedPrefillSystem = system;
+      ctx.ui.setStatus('harness-prefill-system', system);
+    }
+    const toolsJson = JSON.stringify(tools);
+    if (toolsJson !== publishedPrefillTools) {
+      publishedPrefillTools = toolsJson;
+      ctx.ui.setStatus('harness-prefill-tools', toolsJson);
+    }
+  }
+
   function maybeWarmPrefix(ctx: ExtensionContext): void {
     if (callModel === undefined || typeof ctx.getSystemPrompt !== 'function') return;
     const canonical = augmentSystemPrompt(ctx.getSystemPrompt());
     if (canonical.trim().length === 0 || canonical === warmedCanonical) return;
     warmedCanonical = canonical;
     runtime.canonicalSystemPrompt = canonical;
-    const warmClass: TaskClass = runtime.config.preset === 'auto' ? 'coding' : runtime.config.preset;
+    const warmClass: TaskClass =
+      runtime.config.preset === 'auto' ? 'coding' : runtime.config.preset;
     // Build the tool list in the SAME ORDER a real turn does (applyPreset unions
     // resolvePresetTools' order), NOT pi.getAllTools() registry order.
     const warmTools = orderedToolDefs(
@@ -382,6 +414,10 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
       ),
     );
     void warmSystemPrompt(callModel, canonical, { tools: warmTools });
+    // Seed the renderer's predictive-prefill context with exactly what the warm-up
+    // just made resident ([system][warm preset tools]) — so a first message typed
+    // BEFORE any turn (activeTools still empty) prefills against the real prefix.
+    publishPrefillContext(ctx, warmTools);
   }
 
   // A session-stable per-tool failure counter shared by rungs 4 (bump) and 5
@@ -803,7 +839,11 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     ctx.ui.setStatus(HARNESS_SUBAGENTS_STATUS_KEY, JSON.stringify(payload));
   }
 
-  function applyPreset(cls: TaskClass, ctx: ExtensionContext, extraTools: readonly string[] = []): void {
+  function applyPreset(
+    cls: TaskClass,
+    ctx: ExtensionContext,
+    extraTools: readonly string[] = [],
+  ): void {
     const available = pi.getAllTools().map((t) => t.name);
     // The class preset PLUS any semantically-preloaded tools for this message
     // (top matches + their peer pipelines — preloadToolNames already filtered to
@@ -848,6 +888,9 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
       const warning = smallModelWarning(runtime.model, cls);
       if (warning !== null && ctx.hasUI) ctx.ui.notify(warning, 'warning');
     }
+    // Keep the renderer's predictive-prefill tools in sync with what's now
+    // resident on the slot (deduped ⇒ a no-op when the set didn't grow).
+    publishPrefillContext(ctx, orderedToolDefs(runtime.activeTools));
     publishStatus(ctx);
   }
 

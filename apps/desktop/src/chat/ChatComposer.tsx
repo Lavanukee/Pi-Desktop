@@ -38,12 +38,14 @@ import { useThemeStore } from '../store/theme';
 import { ComposerBar } from './ComposerBar';
 import { ComposerFooter } from './ComposerFooter';
 import { type AcItem, Autocomplete } from './composer/Autocomplete';
+import { buildAgentMessage } from './composer/agent-message';
 import {
   ComposerEditor,
   type ComposerEditorApi,
   type ComposerKeymap,
 } from './composer/ComposerEditor';
 import { useDropStore } from './composer/drop-store';
+import { usePredictivePrefill } from './composer/predictive-prefill';
 import { type AcToken, EMPTY_TOKEN } from './composer/tokens';
 import { GEN_ACTION_PLANS, type TaskClass } from './composer-gen-actions';
 
@@ -122,6 +124,13 @@ const TEXT_EXTENSIONS = new Set([
 ]);
 /** Cap the per-file size we inline into a prompt (256 KB). */
 const TEXT_MAX_BYTES = 256 * 1024;
+/**
+ * A pasted plain-text block at/above this many characters becomes a "pasted
+ * content" attachment instead of flooding the editor (jedd) — and, being an
+ * attachment, it feeds predictive prefill. Below it, paste behaves normally so a
+ * sentence or short snippet still lands inline where you'd expect.
+ */
+const PASTE_AS_FILE_MIN_CHARS = 1000;
 
 function isTextFile(file: File): boolean {
   if (file.type.startsWith('text/')) return true;
@@ -271,6 +280,16 @@ export function ChatComposer({
   const canSend = text.trim().length > 0 || attachments.length > 0;
   const bashMode = text.trim().startsWith('!');
 
+  // PREDICTIVE PREFILL: prime the model's KV with the message being composed —
+  // the exact `agentMessage` submit() will send (typed text + folded text files)
+  // — so the real turn reuses it. `abortPrefill` is called in submit() so the
+  // dispatched turn never queues behind an in-flight prefill on the single slot.
+  const draftContent = buildAgentMessage(
+    text.trim(),
+    attachments.filter((a) => a.kind === 'text'),
+  );
+  const { abortPrefill } = usePredictivePrefill(draftContent);
+
   // Accept images (sent to pi as ImageContent) AND text files (read + folded
   // into the prompt text on send). Anything else — binary the prompt can't carry
   // (pdf, zip, …) — is NOT silently dropped: its name shows in an inline note.
@@ -297,6 +316,20 @@ export function ChatComposer({
       if (skipTimer.current !== null) clearTimeout(skipTimer.current);
       skipTimer.current = setTimeout(() => setSkipped([]), 6000);
     }
+  };
+
+  // A large plain-text paste (jedd): rather than dumping a wall of text into the
+  // editor, capture it as a "pasted content" text attachment — same model as a
+  // dropped .txt, so it echoes as a tidy chip AND feeds predictive prefill. Returns
+  // true when consumed so ComposerEditor swallows the paste; false lets it paste
+  // inline (short snippets stay where you'd expect them).
+  const handleLargePaste = (pasted: string): boolean => {
+    if (pasted.length < PASTE_AS_FILE_MIN_CHARS) return false;
+    setAttachments((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), name: 'pasted content', kind: 'text', text: pasted },
+    ]);
+    return true;
   };
 
   // Drain files dropped on the window-level fullscreen overlay (#A8b) into our
@@ -444,6 +477,10 @@ export function ChatComposer({
     // One-shot: capture + clear the pinned class so only THIS send is forced.
     const pinnedClass = forcedClass;
     setForcedClass(null);
+    // Free the slot for the real turn: cancel any in-flight predictive prefill so
+    // the dispatched turn (which reuses whatever the prefill already made resident)
+    // never queues behind it on the single-slot server.
+    abortPrefill();
     const imageUris = attachments
       .filter((a) => a.kind === 'image')
       .map((a) => a.dataUri)
@@ -469,12 +506,9 @@ export function ChatComposer({
     window.setTimeout(() => setPendingStart(false), 5000);
     // Fold attached text-file contents into pi's copy of the message (the send
     // path is otherwise images-only); the visible bubble echoes only the typed
-    // text (or the filenames when nothing was typed).
-    const fileBlocks = textFiles
-      .map((a) => `Attached file \`${a.name}\`:\n\`\`\`\n${a.text ?? ''}\n\`\`\``)
-      .join('\n\n');
-    const agentMessage =
-      fileBlocks.length > 0 ? (raw.length > 0 ? `${fileBlocks}\n\n${raw}` : fileBlocks) : raw;
+    // text (or the filenames when nothing was typed). Shared with predictive
+    // prefill so the prefilled draft byte-matches this exact body.
+    const agentMessage = buildAgentMessage(raw, textFiles);
     const echo =
       raw.length > 0 ? raw : textFiles.length > 0 ? textFiles.map((a) => a.name).join(', ') : raw;
 
@@ -710,6 +744,7 @@ export function ChatComposer({
               onTextChange={setText}
               onTokenChange={setToken}
               onSubmit={() => void submit()}
+              onLargePaste={handleLargePaste}
               keymap={keymap}
               apiRef={apiRef}
             />

@@ -1036,7 +1036,9 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     setStage('working', ctx);
     publishStatus(ctx);
   });
-  pi.on('agent_end', async (event, ctx) => {
+  // NOT async by design — see the comment on setStage(settled) below: anything
+  // awaited here delays the turn-complete signal reaching the UI.
+  pi.on('agent_end', (event, ctx) => {
     runtime.currentCtx = ctx;
     runtime.taskStart = null;
     publishStatus(ctx);
@@ -1074,14 +1076,42 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
       });
     }
     const output = extractAssistantText(event.messages);
-    // 1) Effort high/max → run the project's REAL checks on coding/file-ops turns.
-    //    If it steers a fix, skip the LLM reviewer this cycle (don't double-steer
-    //    the same revision — the reviewer runs on the fixed result next time).
-    const fixRequested = await verifyTurn(ctx);
-    // 2) Otherwise → reviewer + adversarial critique of the produced result.
-    const revisionRequested = fixRequested || (await reviewTurn(output, ctx));
-    // 3) Final stage for the turn: 'revising' if another loop follows, else done/idle.
-    setStage(revisionRequested ? 'revising' : output.length > 0 ? 'done' : 'idle', ctx);
+    const settled: HarnessStage = output.length > 0 ? 'done' : 'idle';
+    // Settle the turn NOW. CRITICAL (jedd: "the stop/pause buttons persist a few
+    // seconds after generation is complete"): pi delivers `agent_end` to its RPC
+    // subscribers — i.e. the app — only AFTER every extension handler has resolved
+    // (agent-session emits to extensions first, listeners after). The composer's
+    // Stop/Pause button is driven by that event, so awaiting post-turn work here
+    // pinned the button on Stop for the whole reviewer pass (a blocking utility-LLM
+    // call: up to 5s at the default effort, far longer at high/max with real
+    // verify). So this handler must never await: the turn's completion signal
+    // reaches the UI immediately, and verify/review run DETACHED below.
+    setStage(settled, ctx);
+    // Post-turn verify/review, off the event-delivery path. A revision still
+    // arrives the same way it always did — a private `followUp` steer from
+    // verifyTurn/reviewTurn — it just starts as a visible follow-up turn instead of
+    // silently holding the turn open.
+    const turnAtEnd = runtime.turnIndex;
+    void (async () => {
+      try {
+        // 1) Effort high/max → run the project's REAL checks on coding/file-ops
+        //    turns. If it steers a fix, skip the LLM reviewer this cycle (don't
+        //    double-steer the same revision — the reviewer runs on the fixed
+        //    result next time).
+        const fixRequested = await verifyTurn(ctx);
+        // 2) Otherwise → reviewer + adversarial critique of the produced result.
+        const revisionRequested = fixRequested || (await reviewTurn(output, ctx));
+        // Stage bookkeeping, but ONLY while this turn is still the current one:
+        // verifyTurn/reviewTurn move the stage to 'verifying'/'reviewing', and a
+        // NEW user turn may have started while they ran — never stomp its
+        // 'working' stage with this turn's leftovers.
+        if (runtime.turnIndex !== turnAtEnd) return;
+        setStage(revisionRequested ? 'revising' : settled, ctx);
+      } catch {
+        // Post-turn work is best-effort: never surface as a turn failure.
+        if (runtime.turnIndex === turnAtEnd) setStage(settled, ctx);
+      }
+    })();
   });
 
   // Loop / no-progress breaking (fix #3), plus touched-file tracking for the

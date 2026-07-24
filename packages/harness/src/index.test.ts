@@ -191,6 +191,46 @@ describe('wireHarness', () => {
     expect(tools).toContain('python_run');
   });
 
+  it('agent_end settles the turn WITHOUT awaiting the post-turn reviewer', async () => {
+    // Regression (jedd: "the stop/pause buttons persist a few seconds after
+    // generation is complete"). pi delivers agent_end to the app only after every
+    // extension handler resolves, and the composer's Stop button is driven by that
+    // event — so if this handler awaits the reviewer's utility-model call, Stop
+    // stays up for the whole pass. Here the reviewer's callModel NEVER resolves:
+    // agent_end must still settle, and the stage must already read 'done'.
+    const f = makeFakePi(['read']);
+    let reviewCalled = false;
+    const callModel = vi.fn(() => {
+      reviewCalled = true;
+      return new Promise<string>(() => {}); // never resolves
+    });
+    wireHarness(f.pi, { callModel });
+    const { ctx, setStatus } = makeCtx(f.entries);
+    await f.fire('session_start', { type: 'session_start', reason: 'startup' }, ctx);
+    await f.fire(
+      'before_agent_start',
+      { type: 'before_agent_start', prompt: 'hi', systemPrompt: '', systemPromptOptions: {} },
+      ctx,
+    );
+
+    // Would hang forever (test timeout) if the handler awaited the reviewer.
+    await f.fire(
+      'agent_end',
+      { type: 'agent_end', messages: [{ role: 'assistant', content: 'the answer' }] },
+      ctx,
+    );
+
+    const stages = setStatus.mock.calls
+      .filter((c) => c[0] === 'harness')
+      .map((c) => JSON.parse(c[1] as string).stage as string);
+    // The turn settled ('done') BEFORE the reviewer moved the stage to
+    // 'reviewing' — i.e. completion was published up front, not after the pass.
+    expect(stages).toContain('done');
+    expect(stages.indexOf('done')).toBeLessThan(stages.lastIndexOf('reviewing'));
+    // ...and the post-turn work really did start (it's detached, not skipped).
+    expect(reviewCalled).toBe(true);
+  });
+
   it('publishes a status JSON under the "harness" key', async () => {
     const f = makeFakePi(['read']);
     wireHarness(f.pi);

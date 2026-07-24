@@ -15,6 +15,7 @@ import type { TaskClass } from '@pi-desktop/harness';
 import { ensureChatServerReady, maybeRouteAuto } from '../chat/auto-router';
 import { ADVANCED_GROUNDTRUTH_KEY } from './advanced-store';
 import { resetCanvasForNewSession, restoreCanvas, snapshotCanvas } from './canvas-store';
+import { renameChat } from './chat-org';
 import { ensureVisionMode } from './local-model';
 import { type BgRun, createPiSink, type PausedChat, type QueuedSend, usePiStore } from './pi-slice';
 import { useSettingsStore } from './settings-store';
@@ -683,14 +684,26 @@ export async function setSessionName(name: string) {
 /**
  * Apply the harness's auto-generated conversation title to the active session
  * (sidebar + top-bar). Unlike {@link setSessionName} this does NOT lock the
- * title — a subsequent user rename still wins. Persisted via the same RPC so a
- * reload / the sidebar list reflects it. Gated by `useHarnessTitleSync` (which
- * checks the user-rename lock), so it never clobbers a user-chosen name.
+ * title — a subsequent user rename still wins. Gated by `useHarnessTitleSync`
+ * (which checks the user-rename lock), so it never clobbers a user-chosen name.
+ *
+ * The SIDEBAR row is the point (jedd: auto-naming "doesn't get renamed or named
+ * at all in the left sidebar"). A row's label is `chatOrg.titles[file] ??` the
+ * main-process-derived first-user-message (see chat-org displayTitle), so the
+ * title has to land in that SAME per-file map the manual rename box writes —
+ * `windowTitle` only drives the header, and the `pi:set-session-name` RPC is
+ * forwarded to the pi child and never read back by the session list. So we write
+ * all three: the header state, the persisted per-file title the sidebar actually
+ * reads (which also survives a restart), and the RPC for pi's own bookkeeping.
  */
 export async function applyHarnessTitle(name: string): Promise<void> {
   const trimmed = name.trim();
   if (trimmed.length === 0) return;
   usePiStore.setState({ windowTitle: trimmed });
+  const sessionFile = usePiStore.getState().session?.sessionFile ?? null;
+  if (sessionFile !== null && sessionFile.length > 0) {
+    await renameChat(sessionFile, trimmed).catch(() => {});
+  }
   await window.piDesktop.invoke('pi:set-session-name', { name: trimmed }).catch(() => {});
 }
 

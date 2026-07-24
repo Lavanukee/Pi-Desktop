@@ -65,7 +65,11 @@ export function AssistantGroup({
   const segments = segmentGroup(group);
   const lastSegment = segments[segments.length - 1];
   const groupId = group[0]?.id ?? 'g';
-  const errorMessage = group.find((m) => m.errorMessage !== undefined)?.errorMessage;
+  const rawError = group.find((m) => m.errorMessage !== undefined)?.errorMessage;
+  // Clean once: a raw provider blob collapses to a short message, and a
+  // user-initiated pause/stop ("aborted"/AbortError) collapses to '' — a clean
+  // end renders NOTHING (never a red error row).
+  const errorText = rawError !== undefined ? cleanErrorText(rawError) : '';
   let textN = 0;
   let activityN = 0;
   return (
@@ -115,11 +119,12 @@ export function AssistantGroup({
           </div>
         );
       })}
-      {errorMessage !== undefined ? (
+      {errorText !== '' ? (
         // Defense-in-depth: never render a raw provider blob (an HTTP/JSON error)
         // in the chat — collapse it to a short human message. The provider already
-        // emits clean text; this guards replayed transcripts + future paths.
-        <div className="text-footnote text-status-danger-fg">{cleanErrorText(errorMessage)}</div>
+        // emits clean text; this guards replayed transcripts + future paths. An
+        // abort (pause/stop) cleaned to '' renders nothing.
+        <div className="text-footnote text-status-danger-fg">{errorText}</div>
       ) : null}
     </div>
   );

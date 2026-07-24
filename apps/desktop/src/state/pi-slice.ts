@@ -3,18 +3,18 @@
  * implements the engine's StoreSink, fed by the event router. W3 builds the
  * real chat UI on top of exactly this state; nothing here is throwaway.
  */
-import type {
-  AgentStatusPatch,
-  ArtifactCandidate,
-  AssistantMsg,
-  ChatMsg,
-  ContentBlock,
-  NotifyLevel,
-  SessionChangeInfo,
-  StoreSink,
-  ThinkingLevel,
-  ToolResultMsg,
-  UiDialogRequest,
+import {
+  type AgentStatusPatch,
+  type ArtifactCandidate,
+  type ChatMsg,
+  type ContentBlock,
+  isAbortMessage,
+  type NotifyLevel,
+  type SessionChangeInfo,
+  type StoreSink,
+  type ThinkingLevel,
+  type ToolResultMsg,
+  type UiDialogRequest,
 } from '@pi-desktop/engine';
 import { create } from 'zustand';
 import { useCorpStore } from './corp-store';
@@ -141,6 +141,11 @@ interface PiSliceState {
   enqueueSend: (item: QueuedSend) => void;
   /** The user-paused turn for THIS chat (aborted-but-resumable), or null. */
   pausedChat: PausedChat | null;
+  /** True while a paused reply is being CONTINUED token-exact (the non-pi
+   * `/completion` resume streams into the frozen partial). Drives the composer's
+   * busy affordance during resume — it isn't a pi turn, so `agent.isStreaming`
+   * stays false; the Pause/Stop buttons route to the resume abort. */
+  resuming: boolean;
   /** A chat generating in the background while the user views another. See {@link BgRun}. */
   bgRun: BgRun | null;
   /** Chats with something the user hasn't looked at yet — a completed reply
@@ -238,6 +243,7 @@ export const usePiStore = create<PiSliceState>((set) => ({
   queuedSends: [],
   enqueueSend: (item) => set((s) => ({ queuedSends: [...s.queuedSends, item] })),
   pausedChat: null,
+  resuming: false,
   bgRun: null,
   unread: {},
   markUnread: (sessionFile, kind) =>
@@ -299,6 +305,9 @@ export const usePiStore = create<PiSliceState>((set) => ({
       // The paused-turn marker belongs to the session we're leaving; a fresh /
       // switched session either restores its own (snapshot) or starts unpaused.
       pausedChat: null,
+      // A resume in flight belongs to the session we're leaving — drop the flag
+      // (the resume's own abort/finally clears the streaming marker on return).
+      resuming: false,
       runningToolCalls: [],
       // Keep session-TAGGED dialog requests across a switch — a background chat's
       // ask_user must survive until the user swaps in to answer it (it's gated to
@@ -566,6 +575,10 @@ export function createPiSink(
 
     notify: (level, message) =>
       set((s) => {
+        // A user pause/stop is a clean, expected end — never a red toast. Swallow
+        // any error notification that is the fingerprint of an abort, whatever
+        // path raised it (turn error, extension error, bridge error).
+        if (level === 'error' && isAbortMessage(message)) return {};
         // A deliberate restart (model switch / recovery) disposes pi, so the
         // router emits a paired "pi exited (…)." error alongside bridgeExit.
         // Suppress just that line while a restart is in flight; real crashes

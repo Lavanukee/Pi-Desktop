@@ -24,6 +24,7 @@ import type { PiInvokeMap } from './contract';
 import { extensionPackageDirs } from './extension-dirs';
 import { createPiSessions, type PiSessionHandlers } from './pi-sessions';
 import { installPiQuitHold } from './quit-hold';
+import { registerResumeIpc } from './resume-main';
 import { registerSubagentBridge } from './subagent-bridge';
 
 const log = createLogger('desktop:pi');
@@ -266,6 +267,7 @@ export function registerPiIpc(
 ): void {
   registerAll(sessions.handlers);
   registerChildAgentIpc();
+  registerResumeIpc();
   if (opts.getWindow !== undefined) registerSubagentBridge(opts.getWindow, childAgents);
 
   installPiQuitHold(app, {

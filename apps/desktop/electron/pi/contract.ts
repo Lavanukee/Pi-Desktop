@@ -122,6 +122,33 @@ export type PiInvokeMap = {
   /** Renderer → main: the chat currently viewed, so a model-spawned subagent
    * (spawn_subagent → app bridge) nests under it in the dropdown. */
   'pi:report-active-session': { request: { sessionFile: string }; response: { ok: boolean } };
+
+  // ── Token-exact pause/resume ─────────────────────────────────────────────
+  /** Continue a PAUSED assistant reply token-exact via the separated llama.cpp
+   * resume adapter (apply-template + raw `/completion` + `cache_prompt`). Talks
+   * to the running llama-server DIRECTLY (the utility base URL), NOT the pi
+   * child — the paused generation left the reply's KV resident on the slot, so
+   * the continuation reuses it and generates exactly where it stopped.
+   * Continuation tokens stream back over `pi:resume-delta` (tagged `resumeId`);
+   * this invoke resolves when the reply ends (or the resume is aborted). */
+  'pi:resume-continue': {
+    request: {
+      /** Correlates the streamed `pi:resume-delta` tokens with this call. */
+      resumeId: string;
+      /** The EXACT `[system, ...history, user]` the paused turn was sent
+       * (OpenAI-shaped: the captured ground truth, else reconstructed). */
+      messages: Array<Record<string, unknown>>;
+      /** The frozen partial reply's blocks; the adapter serializes them to the
+       * raw generated text (its template-specific seam) before continuing. */
+      partial: Array<{ type: 'text'; text: string } | { type: 'thinking'; thinking: string }>;
+      /** enable_thinking for the paused turn (matches the template render). */
+      enableThinking: boolean;
+      temperature?: number;
+    };
+    response: { success: boolean; aborted?: boolean; promptN?: number; error?: string };
+  };
+  /** Abort an in-flight resume (a Pause/Stop pressed during the continuation). */
+  'pi:resume-abort': { request: undefined; response: { ok: boolean } };
 };
 
 /** One child-agent record for the sidebar dropdown. */
@@ -170,6 +197,8 @@ export const PI_INVOKE_CHANNELS = [
   'pi:child-dispose',
   'pi:child-list',
   'pi:report-active-session',
+  'pi:resume-continue',
+  'pi:resume-abort',
 ] as const satisfies readonly (keyof PiInvokeMap)[];
 
 export type PiEventMap = {
@@ -178,4 +207,8 @@ export type PiEventMap = {
   /** A child agent's bridge event, tagged with its childId/parentId so the
    * renderer folds it into that child's own transcript (a nested chat). */
   'pi:child-event': ChildAgentEvent;
+  /** One streamed continuation token for a token-exact resume, tagged with the
+   * `resumeId` from `pi:resume-continue` so the renderer appends it to the right
+   * paused reply. */
+  'pi:resume-delta': { resumeId: string; token: string };
 };

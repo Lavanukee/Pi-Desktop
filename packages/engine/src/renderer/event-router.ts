@@ -641,6 +641,28 @@ function looksLikeRawProviderError(s: string): boolean {
 }
 
 /**
+ * True when an error string is the fingerprint of a USER-INITIATED abort — a
+ * pause or stop — rather than a real failure. A pause/stop is a clean, expected
+ * end of a turn, so its "operation was aborted" / "AbortError" / "aborted" text
+ * must NEVER render as a red error. Kept narrow (abort/cancel wording only) so a
+ * genuine failure like "Model timed out" or "quota exceeded" still surfaces.
+ * Pure.
+ */
+export function isAbortMessage(raw: string): boolean {
+  const s = stripAnsi(raw).toLowerCase();
+  return (
+    /\baborted\b/.test(s) ||
+    s.includes('aborterror') ||
+    s.includes('operation was aborted') ||
+    s.includes('the user aborted a request') ||
+    s.includes('signal is aborted') ||
+    s.includes('request was aborted') ||
+    s.includes('the operation was canceled') ||
+    s.includes('bodystreambuffer was aborted')
+  );
+}
+
+/**
  * Sanitize an error string for display in the chat: a raw provider blob (an HTTP
  * status + JSON body) collapses to a short, human message; anything already
  * human passes through (ANSI stripped). Defense-in-depth — the llama-server
@@ -649,6 +671,9 @@ function looksLikeRawProviderError(s: string): boolean {
  */
 export function cleanErrorText(raw: string): string {
   const s = stripAnsi(raw).trim();
+  // A user pause/stop is a clean end, not an error — swallow its abort text
+  // entirely (callers render nothing for an empty string).
+  if (isAbortMessage(s)) return '';
   if (looksLikeRawProviderError(s)) {
     return 'The local model server returned an error. Please try again.';
   }
@@ -664,6 +689,8 @@ export function cleanErrorText(raw: string): string {
  */
 export function cleanCompactionError(raw: string): string | null {
   const lower = raw.toLowerCase();
+  // A compaction cut short by a user pause/stop is not a failure — stay silent.
+  if (isAbortMessage(raw)) return null;
   if (
     (lower.includes('context') && (lower.includes('overflow') || lower.includes('exceed'))) ||
     lower.includes('available context size') ||

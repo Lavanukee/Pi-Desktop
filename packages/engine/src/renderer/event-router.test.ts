@@ -5,6 +5,7 @@ import {
   cleanErrorText,
   createEventRouter,
   extractToolResultText,
+  isAbortMessage,
   opFor,
   stripAnsi,
 } from './event-router';
@@ -927,6 +928,24 @@ describe('helpers', () => {
     expect(cleanErrorText('  Model timed out  ')).toBe('Model timed out');
   });
 
+  it('isAbortMessage matches pause/stop wording but not real failures', () => {
+    expect(isAbortMessage('The operation was aborted')).toBe(true);
+    expect(isAbortMessage('AbortError: signal is aborted without reason')).toBe(true);
+    expect(isAbortMessage('The user aborted a request.')).toBe(true);
+    expect(isAbortMessage('request was aborted')).toBe(true);
+    // Real failures must NOT be swallowed.
+    expect(isAbortMessage('Model timed out')).toBe(false);
+    expect(isAbortMessage('quota exceeded')).toBe(false);
+    expect(isAbortMessage('llama-server HTTP 500')).toBe(false);
+  });
+
+  it('cleanErrorText swallows a user-initiated abort to empty (renders nothing)', () => {
+    expect(cleanErrorText('operation was aborted')).toBe('');
+    expect(cleanErrorText('AbortError')).toBe('');
+    // A genuine error still passes through.
+    expect(cleanErrorText('Model timed out')).toBe('Model timed out');
+  });
+
   it('cleanCompactionError is silent on overflow, cleans blobs, keeps plain failures', () => {
     expect(
       cleanCompactionError('Context overflow recovery failed after one compact-and-retry attempt.'),
@@ -935,6 +954,8 @@ describe('helpers', () => {
       'Compaction failed — continuing with the current context.',
     );
     expect(cleanCompactionError('quota exceeded')).toBe('Compaction failed: quota exceeded');
+    // A compaction cut short by a user pause/stop stays silent.
+    expect(cleanCompactionError('The operation was aborted')).toBeNull();
   });
 
   it('stripAnsi removes escape sequences', () => {

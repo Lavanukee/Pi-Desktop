@@ -7,7 +7,8 @@
   "description": "pi provider extension: llama-server streamSimple with repair rungs 1-2 and TPS from timings.",
   "exports": {
     ".": "./src/index.ts",
-    "./repair": "./src/repair.ts"
+    "./repair": "./src/repair.ts",
+    "./resume": "./src/resume-completion.ts"
   },
   "scripts": {
     "lint": "biome check .",

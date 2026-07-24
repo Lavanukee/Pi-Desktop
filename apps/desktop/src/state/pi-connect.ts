@@ -5,6 +5,7 @@
  */
 import type { CanvasState } from '@pi-desktop/canvas';
 import {
+  type AssistantMsg,
   type ChatMsg,
   createEventRouter,
   type ImageContent,
@@ -12,10 +13,16 @@ import {
 } from '@pi-desktop/engine';
 import type { TaskClass } from '@pi-desktop/harness';
 import { ensureChatServerReady, maybeRouteAuto } from '../chat/auto-router';
+import { ADVANCED_GROUNDTRUTH_KEY } from './advanced-store';
 import { resetCanvasForNewSession, restoreCanvas, snapshotCanvas } from './canvas-store';
 import { ensureVisionMode } from './local-model';
 import { type BgRun, createPiSink, type PausedChat, type QueuedSend, usePiStore } from './pi-slice';
 import { useSettingsStore } from './settings-store';
+import { appendOrMergeBlock, mutateAssistant } from './transcript-fold';
+
+/** A resume continuation's raw partial-block shape (matches the IPC contract +
+ * the adapter's `PartialBlock`), mapped from the frozen reply's ChatMsg blocks. */
+type ResumePartialBlock = { type: 'text'; text: string } | { type: 'thinking'; thinking: string };
 
 /** An outgoing message's vision-relevant shape (pure helper input). */
 export interface OutgoingMessage {
@@ -434,7 +441,14 @@ export async function steerPrompt(message: string, agentMessage?: string) {
 export async function abortPi() {
   // Stopping interrupts the current turn AND drops anything queued behind it —
   // the user asked to halt, so pending messages must not fire after the abort.
+  const resuming = usePiStore.getState().resuming;
   usePiStore.setState({ queuedSends: [], pausedChat: null });
+  // Stop pressed DURING a token-exact resume: there's no pi turn to abort — cancel
+  // the direct `/completion` continuation instead. Discards resumability (Stop).
+  if (resuming) {
+    usePiStore.setState({ resuming: false });
+    return window.piDesktop.invoke('pi:resume-abort', undefined);
+  }
   return window.piDesktop.invoke('pi:abort', undefined);
 }
 
@@ -454,13 +468,13 @@ export async function stopRunningForQueue(): Promise<void> {
  * PAUSE the current turn (distinct from Stop): halt generation to free the local
  * model, but — unlike {@link abortPi} — KEEP any queued sends so they can now go
  * through, and record the chat as paused (with its last user prompt) so a Resume
- * affordance can re-run it. The frozen partial reply is left in the thread. This
+ * affordance can continue it. The frozen partial reply is left in the thread. This
  * is the "free the model for another message, but I may come back to this reply"
  * control jedd asked for, sitting left of Stop in the composer + the queue modal.
  *
- * Note (single-child reality): the local llama-server can't byte-resume an
- * interrupted generation, so Resume REGENERATES from the same prompt rather than
- * continuing token-exact. Honest + good enough until true continuation lands.
+ * The pause aborts the generation but the slot's KV (system+history+user+partial)
+ * stays resident, which is what lets {@link resumePausedChat} continue the reply
+ * TOKEN-EXACT rather than regenerate it.
  */
 export async function pausePi(): Promise<void> {
   const store = usePiStore.getState();
@@ -469,23 +483,87 @@ export async function pausePi(): Promise<void> {
   usePiStore.setState({
     pausedChat: { sessionFile: store.session?.sessionFile ?? null, userText },
   });
+  // Pausing DURING a token-exact resume: cancel the direct `/completion`
+  // continuation (not a pi turn) but stay resumable (pausedChat set above).
+  if (store.resuming) {
+    usePiStore.setState({ resuming: false });
+    await window.piDesktop.invoke('pi:resume-abort', undefined);
+    return;
+  }
   await window.piDesktop.invoke('pi:abort', undefined);
 }
 
-/**
- * Resume a paused chat: clear the paused marker and re-run its last user prompt as
- * a fresh turn. The frozen partial reply is dropped so the regenerate replaces it
- * in place under the existing user bubble (no duplicate echo). A no-op if nothing
- * is paused or the prompt was empty.
- */
-export async function resumePausedChat(): Promise<void> {
-  const paused = usePiStore.getState().pausedChat;
-  if (paused === null) return;
-  const text = paused.userText.trim();
-  usePiStore.setState({ pausedChat: null });
+/** The frozen partial assistant reply to continue: the last assistant row that
+ * isn't still streaming. Null if the thread has no such row (nothing to continue). */
+function frozenPartialAssistant(messages: ChatMsg[]): AssistantMsg | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m === undefined) continue;
+    if (m.kind === 'assistant') return m.isStreaming === true ? null : m;
+    if (m.kind === 'user') return null; // hit the prompt without an assistant row
+  }
+  return null;
+}
+
+/** Map a frozen reply's blocks to the resume payload (text/thinking only; a
+ * tool-call block is not continued through the `/completion` path). */
+function partialBlocksOf(assistant: AssistantMsg): ResumePartialBlock[] {
+  const out: ResumePartialBlock[] = [];
+  for (const b of assistant.blocks) {
+    if (b.type === 'text') out.push({ type: 'text', text: b.text });
+    else if (b.type === 'thinking') out.push({ type: 'thinking', thinking: b.thinking });
+  }
+  return out;
+}
+
+/** The EXACT `[system, ...history, user]` the paused turn was sent, from the
+ * captured ground truth (the provider's `before_provider_request` snapshot —
+ * includes the real system prompt, so the render is token-exact + KV-resident).
+ * Null when unavailable → the caller reconstructs from the thread. */
+function groundTruthMessages(): Array<Record<string, unknown>> | null {
+  const raw = usePiStore.getState().extensionStatus[ADVANCED_GROUNDTRUTH_KEY];
+  if (raw === undefined || raw.length === 0) return null;
+  try {
+    const parsed = JSON.parse(raw) as { messages?: unknown };
+    return Array.isArray(parsed.messages)
+      ? (parsed.messages as Array<Record<string, unknown>>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Fallback: reconstruct `[...history, user]` (no system prompt) from the thread,
+ * up to but excluding the partial reply. Used only when the ground-truth capture
+ * is unavailable — the continuation is still correct (the server re-prefills),
+ * just not byte-identical to the never-paused one-shot. */
+function reconstructMessages(
+  messages: ChatMsg[],
+  partialId: string,
+): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const m of messages) {
+    if (m.kind === 'assistant' && m.id === partialId) break;
+    if (m.kind === 'user') {
+      out.push({ role: 'user', content: m.text });
+    } else if (m.kind === 'assistant') {
+      const text = m.blocks
+        .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
+        .map((b) => b.text)
+        .join('');
+      out.push({ role: 'assistant', content: text });
+    }
+  }
+  return out;
+}
+
+let resumeCounter = 0;
+
+/** Re-run the last user prompt as a fresh pi turn (the pre-token-exact fallback),
+ * dropping the frozen partial so the new reply replaces it under the same user
+ * bubble. Used when there is no partial to continue. */
+async function regenerateFromPrompt(text: string): Promise<void> {
   if (text.length === 0) return;
-  // Drop the last message if it's the frozen (non-streaming) partial assistant
-  // reply, then mark in-flight and re-dispatch the same prompt to pi.
   usePiStore.setState((s) => {
     const messages = [...s.messages];
     const last = messages[messages.length - 1];
@@ -500,6 +578,86 @@ export async function resumePausedChat(): Promise<void> {
     return;
   }
   await window.piDesktop.invoke('pi:prompt', { message: text });
+}
+
+/**
+ * Resume a paused chat by CONTINUING its partial reply TOKEN-EXACT. The pause
+ * left the reply's KV resident on the llama-server slot; here we render the exact
+ * `[system, ...history, user]` prompt and continue the frozen partial over the
+ * raw `/completion` endpoint (via the separated llama.cpp adapter in main),
+ * streaming the continuation tokens straight into the SAME assistant message —
+ * so the reply seamlessly picks up where it stopped, no duplicate echo, no
+ * regeneration. Falls back to re-running the prompt when there is no partial to
+ * continue. A no-op if nothing is paused.
+ */
+export async function resumePausedChat(): Promise<void> {
+  const store = usePiStore.getState();
+  const paused = store.pausedChat;
+  if (paused === null) return;
+  usePiStore.setState({ pausedChat: null });
+
+  const partial = frozenPartialAssistant(store.messages);
+  if (partial === null) {
+    // Nothing to continue (empty/streaming/no assistant row) — regenerate.
+    await regenerateFromPrompt(paused.userText.trim());
+    return;
+  }
+
+  const messages = groundTruthMessages() ?? reconstructMessages(store.messages, partial.id);
+  const partialBlocks = partialBlocksOf(partial);
+  const enableThinking =
+    partial.blocks.some((b) => b.type === 'thinking') || store.agent.thinkingLevel !== 'off';
+  const temperature = useSettingsStore.getState().settings.advanced.sampling.temperature;
+  const resumeId = `resume-${Date.now()}-${++resumeCounter}`;
+  const partialId = partial.id;
+
+  // Re-mark the frozen reply as streaming + flag the resume so the composer shows
+  // the Pause/Stop affordance (this is not a pi turn, so agent.isStreaming stays
+  // false — `resuming` drives the busy state).
+  usePiStore.setState((s) => ({
+    resuming: true,
+    messages: mutateAssistant(s.messages, partialId, (m) => ({ ...m, isStreaming: true })),
+  }));
+
+  // Stream each continuation token onto the SAME assistant message. `appendOrMerge
+  // Block` merges into the trailing text block (the visible answer), producing the
+  // seamless continue.
+  const off = window.piDesktop.onEvent('pi:resume-delta', (e) => {
+    if (e.resumeId !== resumeId) return;
+    usePiStore.setState((s) => ({
+      messages: appendOrMergeBlock(s.messages, partialId, 'text', e.token),
+    }));
+  });
+
+  const epoch = store.sessionEpoch;
+  try {
+    const res = await window.piDesktop.invoke('pi:resume-continue', {
+      resumeId,
+      messages,
+      partial: partialBlocks,
+      enableThinking,
+      temperature,
+    });
+    // A GENUINE failure (server down mid-stream) returns { success:false }: the
+    // partial stays in the thread and — unless the user switched chats — Resume is
+    // re-offered so they can retry, with no error toast. An abort (pause/stop)
+    // resolves { success:true, aborted:true } and already set the right
+    // paused/cleared state, so it is left alone.
+    if (res.success === false && usePiStore.getState().sessionEpoch === epoch) {
+      usePiStore.setState({
+        pausedChat: { sessionFile: paused.sessionFile, userText: paused.userText },
+      });
+    }
+  } finally {
+    off();
+    // Only touch THIS session's state (a switch during the resume moved on).
+    if (usePiStore.getState().sessionEpoch === epoch) {
+      usePiStore.setState((s) => ({
+        resuming: false,
+        messages: mutateAssistant(s.messages, partialId, (m) => ({ ...m, isStreaming: false })),
+      }));
+    }
+  }
 }
 
 export async function setModel(provider: string, modelId: string) {

@@ -218,6 +218,10 @@ export function ChatComposer({
   // is true but it isn't THIS view's turn — so the composer shows Send (not Stop),
   // and a send here queues (pi is busy) rather than dispatching into that chat.
   const bgStreaming = usePiStore((s) => s.bgRun?.streaming === true);
+  // A token-exact resume is streaming a paused reply's continuation. It isn't a pi
+  // turn (agent.isStreaming stays false), so it drives the composer's busy state
+  // (Pause/Stop) on its own — Pause/Stop route to the resume abort.
+  const resuming = usePiStore((s) => s.resuming);
   // Whether this chat has any message waiting to send — drives the "Queued · Why
   // isn't my message sending?" hint below the input.
   const hasQueued = usePiStore((s) => s.queuedSends.length > 0);
@@ -564,7 +568,7 @@ export function ChatComposer({
   // the perceptible gap — the button can never get stuck in the optimistic state.
   // `isStreaming` counts only when it's THIS view's turn — a background chat's turn
   // (bgStreaming) must not make the viewed chat's composer show Stop.
-  const realBusy = (isStreaming && !bgStreaming) || corpRunning || promptInFlight;
+  const realBusy = (isStreaming && !bgStreaming) || corpRunning || promptInFlight || resuming;
   const [pendingStart, setPendingStart] = useState(false);
   const [pendingStop, setPendingStop] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: reconcile on realBusy transitions only

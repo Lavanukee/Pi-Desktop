@@ -50,6 +50,13 @@ const app = await electron.launch({
     MOCK_PI_FIXTURE: fixture,
     PI_E2E: '1',
     PI_DESKTOP_TRIPO: '1',
+    // This is a UI probe: force the "engine not installed" state so the
+    // download flow is deterministic regardless of what's installed on the
+    // machine (the real sidecar is exercised by gen3d-live-probe.mjs). A
+    // nonexistent sidecar dir keeps it from booting, and an empty cache dir
+    // makes the TS-side installed probe report nothing installed.
+    GEN3D_PY_DIR: '/nonexistent-gen3d-py-dir',
+    GEN3D_CACHE_DIR: realpathSync(mkdtempSync(path.join(tmpdir(), 'gen3d-empty-'))),
   },
 });
 
@@ -122,6 +129,8 @@ try {
   // ── Generate without the engine → the DOWNLOAD PANEL (full left module) ──
   await page.click('[data-testid="tp-generate-btn"]');
   await page.waitForSelector('[data-testid="tp-download-panel"]', { timeout: 8000 });
+  // The catalog populates asynchronously (engine refresh); wait for the cards.
+  await page.waitForSelector('[data-testid="tp-dlcard-trellis2"]', { timeout: 8000 });
   const dlText = await page.textContent('[data-testid="tp-download-panel"]');
   for (const expected of ['TRELLIS-2', 'Mage-Flow', 'Hunyuan Paint', 'CubePart', 'AutoRemesher']) {
     assert(dlText.includes(expected), `download panel lists ${expected}`);

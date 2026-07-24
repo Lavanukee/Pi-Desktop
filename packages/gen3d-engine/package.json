@@ -1,0 +1,22 @@
+{
+  "name": "@pi-desktop/gen3d-engine",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "The Bobble 3D generation engine: model catalog + uv/Python sidecar supervisor (TRELLIS.2 on MPS, Mage-Flow, CubePart, Hunyuan Paint, AutoRemesher).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.2",
+    "@types/node": "^24.13.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  }
+}

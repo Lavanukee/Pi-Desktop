@@ -27,6 +27,7 @@
     "@pi-desktop/gen-canvas": "workspace:*",
     "@pi-desktop/gen-service": "workspace:*",
     "@pi-desktop/gen-tools": "workspace:*",
+    "@pi-desktop/gen3d-engine": "workspace:*",
     "@pi-desktop/harness": "workspace:*",
     "@pi-desktop/importers": "workspace:*",
     "@pi-desktop/inference": "workspace:*",

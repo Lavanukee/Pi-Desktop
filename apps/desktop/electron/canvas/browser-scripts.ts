@@ -97,10 +97,12 @@ export function cursorCommand(op: CursorOp): string {
       if (tp && tp.style.display !== 'none') { tp.style.left = (op.x + 20) + 'px'; tp.style.top = (op.y + 28) + 'px'; }
     }
     if (op.kind === 'click') {
-      // Tactile press: dip the cursor toward its tip, then spring back.
+      // Click "pop" from the tip: a tiny shrink, then grow past 1, then settle
+      // (the 0.16s transform transition eases each step). jedd.
       if (!reduce) {
         cur.style.transform = 'scale(0.82)';
-        setTimeout(function(){ cur.style.transform = 'scale(1)'; }, 140);
+        setTimeout(function(){ cur.style.transform = 'scale(1.09)'; }, 90);
+        setTimeout(function(){ cur.style.transform = 'scale(1)'; }, 210);
       }
       // Expanding pulse ring centred on the click point.
       var ring = document.createElement('div');

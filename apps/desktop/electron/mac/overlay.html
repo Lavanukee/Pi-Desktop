@@ -59,17 +59,32 @@
   }
   #cursor {
     display: block;
-    /* The pointing nose sits at ~(95%,49%) of the 34×31 box → negative margin so
-       the wrap's translate() means "nose at this point". */
-    margin: -15.1px 0 0 -32.3px;
+    /* The pointing TIP (top-left point) sits at ~(8.5%,5.2%) of the 34×31 box →
+       negative margin so the wrap's translate() means "tip at this point". */
+    margin: -1.6px 0 0 -2.9px;
     filter: drop-shadow(0 1px 2px rgba(10, 12, 40, 0.42))
       drop-shadow(0 0 4px rgba(205, 210, 255, 0.9))
       drop-shadow(0 0 11px rgba(139, 155, 255, 0.55));
-    transform-origin: 95% 49%;
+    transform-origin: 8.5% 5.2%;
     transition: transform 0.15s ease-out;
   }
+  /* Click "pop": a tiny shrink then grow, radiating from the tip (jedd). */
   #cursor.press {
-    transform: scale(0.82);
+    animation: cursor-pop 0.34s cubic-bezier(0.3, 0.7, 0.3, 1.25);
+  }
+  @keyframes cursor-pop {
+    0% {
+      transform: scale(1);
+    }
+    38% {
+      transform: scale(0.82);
+    }
+    70% {
+      transform: scale(1.09);
+    }
+    100% {
+      transform: scale(1);
+    }
   }
 
   /* ── the status bubble (rides the cursor) ───────────────────────────── */
@@ -216,7 +231,8 @@
       transition: none;
     }
     #bubble.pulse,
-    #bdots span {
+    #bdots span,
+    #cursor.press {
       animation: none;
     }
   }
@@ -350,10 +366,13 @@
     }
 
     function press() {
+      // Restart the keyframe each click (remove → reflow → add).
+      cursor.classList.remove('press');
+      void cursor.offsetWidth;
       cursor.classList.add('press');
       setTimeout(() => {
         cursor.classList.remove('press');
-      }, 150);
+      }, 360);
     }
 
     var STATUS = {

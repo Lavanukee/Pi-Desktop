@@ -13,18 +13,20 @@
  * top-left sheen and a thin bright-white keyline — over a soft luminous rim
  * glow. The glow lives on the host element via CSS `filter: drop-shadow(...)`
  * (AGENT_CURSOR_FILTER), NOT in the SVG, so the glyph stays crisp at any size.
- * The pointing NOSE (the rightmost drawn point) is the hotspot; TIP fractions
- * below place it exactly on the target.
+ * The pointing TIP — the sharp TOP-LEFT point, like a normal cursor — is the
+ * hotspot; clicks radiate from there. TIP fractions below place it exactly on
+ * the target. (The glyph's right + bottom points are its two tails.)
  */
 
 /** The tight viewBox around the glyph, and its width/height (aspect ≈ 1.097). */
 export const AGENT_CURSOR_VIEWBOX = '8.14 8.24 26.56 24.21';
 export const AGENT_CURSOR_VIEWBOX_W = 26.56;
 export const AGENT_CURSOR_VIEWBOX_H = 24.21;
-/** Nose (hotspot) position as a fraction of the box — for transform-origin on
- * press dips and for offsetting so translate() means "nose at this point". */
-export const AGENT_CURSOR_TIP_X_FRACTION = 0.9509;
-export const AGENT_CURSOR_TIP_Y_FRACTION = 0.4863;
+/** Tip (hotspot) position as a fraction of the box — the top-left point — for
+ * transform-origin on press pops and for offsetting so translate() means "tip
+ * at this point". */
+export const AGENT_CURSOR_TIP_X_FRACTION = 0.085;
+export const AGENT_CURSOR_TIP_Y_FRACTION = 0.052;
 
 /** The rounded send-dart body (right-pointing, frosted). Shared by both surfaces. */
 export const AGENT_CURSOR_PATH =

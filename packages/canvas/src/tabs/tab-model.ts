@@ -1,4 +1,5 @@
 import type { CoordinationEvent } from '@pi-desktop/coordination';
+import type { DiffFileData } from '@pi-desktop/ui';
 import type { ReactNode } from 'react';
 import type { Artifact } from '../model.ts';
 import type { NodeTiming } from '../situation/situation-model.ts';
@@ -141,6 +142,13 @@ export interface CanvasTab {
    */
   addedLines?: number;
   removedLines?: number;
+  /**
+   * A LIVE EDIT DIFF for a file tab: when set, the file surface renders this
+   * diff (deletions + additions) instead of the file's content, and follows it
+   * as the edit's args stream — the str_replace twin of a streamed whole-file
+   * write. Cleared on completion, when the tab settles to the on-disk file.
+   */
+  diff?: DiffFileData[];
 
   // browser surface state (app-updated via controller.updateTab)
   url?: string;

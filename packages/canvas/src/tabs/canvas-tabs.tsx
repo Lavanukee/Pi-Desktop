@@ -758,6 +758,9 @@ function DefaultSurface({
           // Live +N/−N badge while a corp worker writes the file (unset otherwise).
           addedLines={tab.addedLines}
           removedLines={tab.removedLines}
+          // Live edit-diff (a str_replace in flight) — the surface renders this
+          // instead of the file content and follows the hunk as it streams.
+          diff={tab.diff}
         />
       );
     }

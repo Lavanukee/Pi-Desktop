@@ -22,6 +22,15 @@ const JSON_ESCAPES: Record<string, string> = {
 /** Candidate keys for a written file's path / whole-file content, in priority order. */
 export const PATH_KEYS = ['path', 'file_path', 'filename', 'file', 'target_file'] as const;
 export const CONTENT_KEYS = ['content', 'file_text', 'contents'] as const;
+/**
+ * Candidate keys for a str_replace-style EDIT's replaced / replacement text — the
+ * live-diff twin of {@link CONTENT_KEYS}. Deliberately EXCLUDES the whole-file
+ * `content`/`file_text` keys: an edit is a hunk (old→new), a write is the whole
+ * file, and the two are routed differently (a diff view vs. streamed content).
+ * Kept in lock-step with the edit-arg aliases in file-writes.ts + activity-mapping.
+ */
+export const OLD_STRING_KEYS = ['old_string', 'oldText', 'old', 'oldStr'] as const;
+export const NEW_STRING_KEYS = ['new_string', 'newText', 'new', 'newStr'] as const;
 
 /**
  * Locate `"key": "` in `buf` and decode the JSON string that follows up to its

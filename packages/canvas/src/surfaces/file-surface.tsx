@@ -1,4 +1,4 @@
-import { Markdown } from '@pi-desktop/ui';
+import { type DiffFileData, DiffView, Markdown } from '@pi-desktop/ui';
 import { type ReactNode, type RefObject, useCallback, useEffect, useRef } from 'react';
 import type { ArtifactContent } from '../model.ts';
 import type { FileViewMode } from '../tabs/tab-model.ts';
@@ -42,7 +42,8 @@ function useStickToBottom(
     if (!body) return null;
     return (
       body.querySelector<HTMLElement>('.cm-scroller') ??
-      body.querySelector<HTMLElement>('.pd-canvas-markdown')
+      body.querySelector<HTMLElement>('.pd-canvas-markdown') ??
+      body.querySelector<HTMLElement>('.pd-canvas-diff')
     );
   }, [bodyRef]);
 
@@ -143,6 +144,19 @@ export interface FileSurfaceProps {
    */
   addedLines?: number;
   removedLines?: number;
+  /**
+   * A LIVE EDIT DIFF (a str_replace-style edit in flight): when present, the
+   * surface renders this diff (deletions + additions) instead of the file's
+   * content, sticking to the newest line as the hunk streams — the edit twin of
+   * streamed whole-file content. Reuses the shared {@link DiffView}/diff.css.
+   */
+  diff?: DiffFileData[];
+}
+
+/** Total renderable rows across a diff — the per-delta scroll trigger + the
+ * "is there anything to show" gate for the live edit-diff view. */
+function diffLineCount(diff: DiffFileData[] | undefined): number {
+  return diff ? diff.reduce((n, file) => n + file.lines.length, 0) : 0;
 }
 
 /** The +N/−N diff badge shown while a file streams in (corp file tabs). Renders
@@ -181,6 +195,7 @@ export function FileSurface({
   className,
   addedLines,
   removedLines,
+  diff,
 }: FileSurfaceProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const view = mode ?? defaultFileViewMode(content);
@@ -191,8 +206,16 @@ export function FileSurface({
   // rendered↔raw toggle markdown already had; images stay always-rendered — they
   // never route here, they open on the media surface.)
   const rendered = view === 'rendered' && isRenderableKind(content.kind);
+  // A live edit-diff (str_replace in flight) takes over the body: the shared
+  // DiffView shows the deletions + additions, following the newest line as the
+  // hunk streams — the edit twin of streamed whole-file content. It settles back
+  // to the file view when the edit completes (the app clears `diff`).
+  const diffLines = diffLineCount(diff);
+  const showDiff = diffLines > 0;
 
-  useStickToBottom(bodyRef, streaming, content.text);
+  // While diffing, stick to the newest diff row on each delta; otherwise track the
+  // content text (a streaming whole-file write). Same free-scroll rules either way.
+  useStickToBottom(bodyRef, streaming, showDiff ? diffLines : content.text);
 
   const rootClass = ['pd-file', className].filter(Boolean).join(' ');
   return (
@@ -200,7 +223,11 @@ export function FileSurface({
       <FileDiffBadge added={addedLines} removed={removedLines} />
       {showFilename && filename ? <div className="pd-file-name">{filename}</div> : null}
       <div ref={bodyRef} className="pd-file-body">
-        {rendered ? (
+        {showDiff && diff ? (
+          <div className="pd-canvas-diff pd-scroll">
+            <DiffView files={diff} />
+          </div>
+        ) : rendered ? (
           content.kind === 'html' ? (
             <HtmlSurface content={content} streaming={streaming} />
           ) : content.kind === 'svg' ? (

@@ -72,7 +72,7 @@ describe('detectFileWrites', () => {
     expect(ev?.contentHint).toBe('hi');
   });
 
-  it('detects a str_replace edit WITHOUT a content hint, done once a result lands', () => {
+  it('detects a str_replace edit as an EDIT HUNK (old/new strings), no content hint', () => {
     const msgs = [
       assistant('a1', [call('c1', 'edit', { path: '/x/b.ts', oldText: 'a', newText: 'b' })]),
       result('c1', 'ok'),
@@ -81,6 +81,33 @@ describe('detectFileWrites', () => {
     expect(ev?.path).toBe('/x/b.ts');
     expect(ev?.running).toBe(false);
     expect(ev?.contentHint).toBeUndefined();
+    // The hunk drives the LIVE DIFF in the canvas (deletions + additions).
+    expect(ev?.edit).toEqual({ oldText: 'a', newText: 'b' });
+  });
+
+  it('reads a STREAMING str_replace hunk from argsText (path closed, new_string partial)', () => {
+    const streaming = assistant('a1', [
+      {
+        type: 'toolCall',
+        id: 'c1',
+        name: 'str_replace',
+        arguments: {},
+        argsText: '{"path":"b.ts","old_string":"foo","new_string":"ba',
+      } as ContentBlock,
+    ]);
+    const [ev] = detectFileWrites([streaming], '/proj');
+    expect(ev?.path).toBe('/proj/b.ts');
+    expect(ev?.running).toBe(true);
+    expect(ev?.contentHint).toBeUndefined();
+    // Old string fully arrived, new string still streaming — both feed the diff.
+    expect(ev?.edit).toEqual({ oldText: 'foo', newText: 'ba' });
+  });
+
+  it('keeps a whole-file write as a content hint (NOT an edit hunk)', () => {
+    const msgs = [assistant('a1', [call('c1', 'write', { path: 'a.ts', content: 'hello' })])];
+    const [ev] = detectFileWrites(msgs, '/proj');
+    expect(ev?.contentHint).toBe('hello');
+    expect(ev?.edit).toBeUndefined();
   });
 
   it('detects a bash redirect write and dedupes by path (last write wins)', () => {

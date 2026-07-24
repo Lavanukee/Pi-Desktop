@@ -52,6 +52,9 @@ const RENDERABLE_KINDS: ReadonlySet<CanvasTabKind> = new Set(['html', 'svg', 'co
  * form); artifact-backed html/svg/code/markdown tabs always do.
  */
 export function hasViewToggle(tab: CanvasTab): boolean {
+  // A file showing a LIVE EDIT DIFF has no raw↔rendered choice — the surface is
+  // the diff, not the file's content — so hide the (dead) toggle until it settles.
+  if (tab.diff !== undefined && tab.diff.length > 0) return false;
   if (tab.kind === 'file') return isRenderableFile(tab);
   return RENDERABLE_KINDS.has(tab.kind);
 }

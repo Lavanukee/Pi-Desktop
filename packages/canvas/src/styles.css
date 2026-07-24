@@ -1332,6 +1332,15 @@
   min-height: 0;
 }
 
+/* Live edit-diff scroller (a str_replace in flight): the shared DiffView fills
+ * the file body and scrolls vertically, sticking to the newest line as the hunk
+ * streams (the surface's stick-to-bottom targets this element). */
+.pd-canvas-diff {
+  height: 100%;
+  overflow: auto;
+  padding: var(--pd-space-sm);
+}
+
 /* ─────────────────────────────────────────────────────────────────────────
  * Inline widget (THEME 2 — size-capped, NEVER scrollable)
  * ────────────────────────────────────────────────────────────────────── */

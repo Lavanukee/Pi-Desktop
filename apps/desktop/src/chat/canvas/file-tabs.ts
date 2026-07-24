@@ -21,11 +21,12 @@ import {
   useCanvasTabs,
 } from '@pi-desktop/canvas';
 import type { ChatMsg } from '@pi-desktop/engine';
+import type { DiffFileData, DiffLine } from '@pi-desktop/ui';
 import { useEffect, useRef } from 'react';
 import { usePiStore } from '../../state/pi-slice';
 import { useProjectStore } from '../../state/project-store';
 import { pdFileUrl, previewKindForExt } from './file-preview';
-import { basename, detectFileWrites, dirname } from './file-writes';
+import { basename, detectFileWrites, dirname, type EditHunk } from './file-writes';
 
 /** Same `?piE2E=1` opt-in as the other E2E hooks — skips the real app-list
  * shell-out (sips/duti) so probes stay fast + deterministic. */
@@ -175,6 +176,30 @@ export function fileArtifactFromText(absPath: string, text: string): Artifact {
  * args), before the authoritative disk read lands. */
 function hintArtifact(absPath: string, text: string): Artifact {
   return fileArtifactFromText(absPath, text);
+}
+
+/**
+ * A single-file {@link DiffFileData} from a str_replace edit's old/new strings —
+ * the deletions (old_string) as `−` rows, then the additions (new_string) as `+`
+ * rows, exactly mirroring `activity-mapping`'s inline `editDiff` so the canvas
+ * diff and the chain-step diff are identical. Empty/absent sides contribute no
+ * rows, so a hunk mid-stream (old known, new still arriving) draws just the
+ * deletions, then grows the additions — the live-follow. The header shows the
+ * filename (the operation-bar breadcrumb already carries the full path).
+ */
+function buildEditDiff(absPath: string, edit: EditHunk): DiffFileData[] {
+  const { oldText, newText } = edit;
+  const lines: DiffLine[] = [];
+  if (oldText) for (const l of oldText.split('\n')) lines.push({ kind: 'del', text: l });
+  if (newText) for (const l of newText.split('\n')) lines.push({ kind: 'add', text: l });
+  return [
+    {
+      path: basename(absPath),
+      added: newText ? newText.split('\n').length : 0,
+      deleted: oldText ? oldText.split('\n').length : 0,
+      lines,
+    },
+  ];
 }
 
 async function readFile(absPath: string): Promise<ReadFileResult | null> {
@@ -352,6 +377,9 @@ export async function openFileInCanvas(
   controller.updateTab(tab.id, {
     streaming: false,
     fileTree: tree,
+    // Opening a file explicitly shows its CONTENT — drop any live edit-diff a
+    // mid-stream edit left on this tab so the user sees the file, not the hunk.
+    diff: undefined,
     // Only replace content with a read that actually loaded — a missing/raced
     // read must never blank the surface (round-blindtest #10).
     ...(readHasContent(read) ? { artifact: fileArtifact(absPath, read) } : {}),
@@ -373,10 +401,72 @@ export function useFileWriteCanvasRouting(): void {
 
   const opened = useRef<Set<string>>(new Set());
   const finalized = useRef<Set<string>>(new Set());
+  // Per-edit-call signature of the last diff we pushed, so a stable/older edit
+  // isn't re-applied on every stream tick (mirrors the write path's content
+  // compare). Keyed by callId — a second edit to the SAME path is a new call, so
+  // its diff still lands on the existing tab.
+  const editSig = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     for (const ev of detectFileWrites(messages, cwd)) {
       const key = fileTabKey(ev.path);
+
+      // ── str_replace-style EDIT → a LIVE DIFF in the file tab ────────────────
+      // Mirrors the whole-file write path (open once per path; a user-closed tab
+      // is not reopened; a later edit refreshes quietly) but shows the edit's
+      // deletions + additions as a diff, following the hunk as its args stream.
+      // On completion it settles from disk to the on-disk file, dropping the diff
+      // — the same finalize the write path does, so the tab stays a normal,
+      // editable file view afterward.
+      if (ev.edit !== undefined) {
+        const existing = controller.getState().tabs.find((t) => t.key === key);
+        const diff = buildEditDiff(ev.path, ev.edit);
+        const sig = `${ev.edit.oldText?.length ?? -1}:${ev.edit.newText?.length ?? -1}:${
+          ev.running ? 'r' : 'd'
+        }`;
+
+        if (existing === undefined) {
+          if (!opened.current.has(key)) {
+            opened.current.add(key);
+            editSig.current.set(ev.callId, sig);
+            controller.upsertTab(key, {
+              ...fileTabSpec(ev.path, cwd),
+              streaming: ev.running,
+              diff,
+            });
+            const { root } = treeRootFor(ev.path, cwd);
+            void readTree(root).then((tree) => {
+              const tab = controller.getState().tabs.find((t) => t.key === key);
+              if (tab) controller.updateTab(tab.id, { fileTree: tree });
+            });
+            void hydrateOpenApps(controller, key, ev.path);
+          }
+          // else: the user closed this tab — don't nag it back open.
+        } else if (editSig.current.get(ev.callId) !== sig) {
+          // Live-follow: apply the newest hunk (and running flag) to the tab —
+          // including when the edit lands on a tab opened by an earlier write.
+          editSig.current.set(ev.callId, sig);
+          controller.updateTab(existing.id, { diff, streaming: ev.running });
+        }
+
+        // Finalize once from disk when the edit completes: swap the diff for the
+        // authoritative on-disk file and drop `streaming` (retried, since a fresh
+        // edit can lag its result a beat — round-blindtest #10).
+        if (!ev.running && !finalized.current.has(ev.callId)) {
+          finalized.current.add(ev.callId);
+          void readFileSettled(ev.path).then((read) => {
+            const tab = controller.getState().tabs.find((t) => t.key === key);
+            if (tab === undefined) return;
+            controller.updateTab(tab.id, {
+              streaming: false,
+              diff: undefined,
+              ...(readHasContent(read) ? { artifact: fileArtifact(ev.path, read) } : {}),
+            });
+          });
+        }
+        continue;
+      }
+
       const preview = previewKindForExt(extname(basename(ev.path)));
       const existing = controller.getState().tabs.find((t) => t.key === key);
 
@@ -449,6 +539,9 @@ export function useFileWriteCanvasRouting(): void {
           if (tab === undefined) return;
           controller.updateTab(tab.id, {
             streaming: false,
+            // A whole-file write shows CONTENT — clear any edit-diff a prior edit
+            // to this path left behind, so the written bytes are never masked.
+            diff: undefined,
             ...(readHasContent(read) ? { artifact: fileArtifact(ev.path, read) } : {}),
           });
         });

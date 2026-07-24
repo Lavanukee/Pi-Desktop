@@ -59,6 +59,12 @@
   backdrop-filter: blur(var(--pd-sidebar-blur));
 }
 
+/* Bobble: a hairline divider on the sidebar's right edge, marking the boundary
+ * with the chat area (jedd). Inset shadow so it adds no layout width. */
+:root[data-flavor="bobble"] .pd-sidebar {
+  box-shadow: inset -1px 0 0 0 var(--pd-sidebar-border, var(--pd-border-subtle));
+}
+
 .pd-sidebar-scroll {
   flex: 1;
   min-height: 0;

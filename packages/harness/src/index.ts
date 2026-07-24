@@ -999,13 +999,27 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     }
     publishStatus(ctx);
     // Preemptively prime the freshly-selected model BEFORE the user's first message
-    // (jedd): one tiny system-prompt-only completion warms the server's Metal
-    // kernels + KV cache so turn-1 TTFT drops toward a warm follow-up's. Fire-and-
-    // forget (never awaited, never throws); the turn-1 classify piggyback shares
-    // the same prefix and warms it anyway if this is skipped. Once per model id.
+    // (jedd): one tiny completion warms the server's Metal kernels + KV cache with
+    // the whole DETERMINISTIC prefix — system prompt AND the initial tool set — so
+    // the first message only prefills its own few tokens instead of paying a full
+    // cold system+tools prefill (measured ~4-5s at real tool-set sizes). CRITICAL:
+    // chat templates render tools at the START of the prompt, so a system-ONLY
+    // warm-up reuses NOTHING once the real turn carries tools (cache_n=0) — the
+    // tools MUST be in the warm-up. The set mirrors the first turn's preset (the
+    // agentic 'coding' default under auto-classify, or the fixed preset), rendered
+    // through the same {type:'function'} shape the provider uses so the prefix is
+    // byte-identical. Fire-and-forget (never awaited, never throws); once per model.
     if (callModel !== undefined && event.model.id !== warmedModelId) {
       warmedModelId = event.model.id;
-      void warmSystemPrompt(callModel, augmentSystemPrompt(ctx.getSystemPrompt()));
+      const all = pi.getAllTools();
+      const warmClass: TaskClass = runtime.config.preset === 'auto' ? 'coding' : runtime.config.preset;
+      const warmNames = new Set(resolvePresetTools(warmClass, all.map((t) => t.name)));
+      const warmTools = all
+        .filter((t) => warmNames.has(t.name))
+        .map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
+      void warmSystemPrompt(callModel, augmentSystemPrompt(ctx.getSystemPrompt()), {
+        tools: warmTools,
+      });
     }
   });
 

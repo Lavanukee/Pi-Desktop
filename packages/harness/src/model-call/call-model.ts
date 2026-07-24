@@ -39,6 +39,17 @@ export interface CallModelRequest {
   readonly temperature?: number;
   readonly maxTokens?: number;
   /**
+   * Tool definitions to include in the request (OpenAI `tools`). Used by the
+   * WARM-UP so the primed KV prefix matches a real turn's — chat templates render
+   * tools at the START of the prompt, so a system-only warm-up reuses NOTHING
+   * once the real turn carries tools. Mapped to `{type:'function',function:{…}}`.
+   */
+  readonly tools?: readonly {
+    readonly name: string;
+    readonly description?: string;
+    readonly parameters?: unknown;
+  }[];
+  /**
    * OpenAI-compatible `response_format` for constrained/structured decoding,
    * e.g. `{type:'json_schema', json_schema:{…}}`. llama-server compiles this to
    * a grammar, guaranteeing a parseable object from a small model — used by the
@@ -116,6 +127,14 @@ export function createOpenAiCompatCallModel(config: OpenAiCompatConfig): CallMod
         stream: false,
         temperature: req.temperature ?? 0,
         ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+        ...(req.tools !== undefined && req.tools.length > 0
+          ? {
+              tools: req.tools.map((t) => ({
+                type: 'function',
+                function: { name: t.name, description: t.description, parameters: t.parameters },
+              })),
+            }
+          : {}),
         ...(req.responseFormat !== undefined ? { response_format: req.responseFormat } : {}),
       }),
       signal,

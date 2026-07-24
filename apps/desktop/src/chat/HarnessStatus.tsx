@@ -51,13 +51,20 @@ function ProcessingRing({
   percent,
   label,
   fading,
+  elapsedMs,
 }: {
   percent: number | null;
   label: string;
   fading: boolean;
+  /** Live elapsed time in the processing phase — a visible prefill/TTFT timer
+   * (jedd) so the "processing circle" duration is readable, e.g. "45% processing
+   * · 2.3s". */
+  elapsedMs?: number;
 }): ReactElement {
   const value = percent === null ? 0 : Math.min(1, Math.max(0, percent / 100));
-  const text = percent === null ? label.toLowerCase() : `${Math.round(percent)}% ${label.toLowerCase()}`;
+  const base = percent === null ? label.toLowerCase() : `${Math.round(percent)}% ${label.toLowerCase()}`;
+  const timer = elapsedMs !== undefined && elapsedMs >= 100 ? ` · ${(elapsedMs / 1000).toFixed(1)}s` : '';
+  const text = `${base}${timer}`;
   return (
     <div
       className={`pd-processing${fading ? ' pd-processing--fading' : ''}`}
@@ -146,6 +153,21 @@ export function ThreadStatusIndicator(): ReactElement | null {
     return () => clearTimeout(t);
   }, [processing]);
 
+  // Live elapsed timer for the processing phase (jedd): starts when processing
+  // begins, ticks every 100ms, and freezes at its final value through the fade so
+  // the prefill/TTFT duration stays readable (e.g. "45% processing · 2.3s").
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const procStart = useRef<number | null>(null);
+  useEffect(() => {
+    if (!processing) return undefined;
+    procStart.current = performance.now();
+    setElapsedMs(0);
+    const id = setInterval(() => {
+      if (procStart.current !== null) setElapsedMs(performance.now() - procStart.current);
+    }, 100);
+    return () => clearInterval(id);
+  }, [processing]);
+
   if (!processing && !fading) return null;
   // Cold model LOAD → indeterminate pulse + "Loading model" (no fake %). Ingesting
   // → the REAL prefill % (parsePrefillPercent caps at 99, so it never falsely
@@ -156,6 +178,7 @@ export function ThreadStatusIndicator(): ReactElement | null {
       percent={percent}
       label={serverStarting ? 'Loading model' : 'Processing'}
       fading={fading}
+      elapsedMs={elapsedMs}
     />
   );
 }

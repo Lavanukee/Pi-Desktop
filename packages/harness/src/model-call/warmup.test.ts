@@ -21,6 +21,17 @@ describe('warmSystemPrompt', () => {
     });
   });
 
+  it('carries the initial tool set so the warmed prefix matches a real turn', async () => {
+    const seen: CallModelRequest[] = [];
+    const callModel = vi.fn(async (req: CallModelRequest) => {
+      seen.push(req);
+      return 'ok';
+    });
+    const tools = [{ name: 'read_file', description: 'read', parameters: { type: 'object' } }];
+    await warmSystemPrompt(callModel, 'You are a local agent.', { tools });
+    expect(seen[0]?.tools).toEqual(tools);
+  });
+
   it('skips an empty / whitespace system prompt without calling the model', async () => {
     const callModel = vi.fn(async () => 'x');
     expect(await warmSystemPrompt(callModel, '')).toBe(false);

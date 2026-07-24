@@ -18,17 +18,26 @@
  * the cache on the first real message regardless. Pure enough to unit-test with an
  * injected {@link CallModel}.
  */
-import type { CallModel } from './call-model.js';
+import type { CallModel, CallModelRequest } from './call-model.js';
 
 export interface WarmupOptions {
   readonly signal?: AbortSignal;
+  /**
+   * Tool defs to include so the warmed prefix matches a REAL turn's. CRITICAL:
+   * chat templates render tools at the START of the prompt, so a system-only
+   * warm-up reuses NOTHING once the real turn carries tools (measured: cache_n=0,
+   * a full cold re-prefill — the "first message takes 4-5s" jedd hit). Passing
+   * the initial tool set makes the whole deterministic prefix (system + tools)
+   * resident, so the first message only prefills its own few tokens.
+   */
+  readonly tools?: CallModelRequest['tools'];
 }
 
 /**
- * Warm the local model with a 1-token completion of `systemPrompt`. Returns true
- * if the warm-up call completed, false if it was skipped (empty prompt) or failed
- * (swallowed). Callers should NOT await this on the critical path — fire it and
- * move on.
+ * Warm the local model with a 1-token completion of `systemPrompt` (+ `tools`).
+ * Returns true if the warm-up call completed, false if it was skipped (empty
+ * prompt) or failed (swallowed). Callers should NOT await this on the critical
+ * path — fire it and move on.
  */
 export async function warmSystemPrompt(
   callModel: CallModel,
@@ -40,9 +49,10 @@ export async function warmSystemPrompt(
   try {
     await callModel({
       system: sys,
-      // A minimal user turn so the request is well-formed; the SYSTEM prefix is
-      // what we want resident in the KV cache (it precedes the user message).
+      // A minimal user turn so the request is well-formed; the SYSTEM (+ tools)
+      // prefix is what we want resident in the KV cache (it precedes the message).
       prompt: '.',
+      ...(opts.tools !== undefined && opts.tools.length > 0 ? { tools: opts.tools } : {}),
       maxTokens: 1,
       temperature: 0,
       // Never let a reasoning model "think" during a warm-up — we only want the

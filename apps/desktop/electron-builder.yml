@@ -59,6 +59,11 @@ asarUnpack:
   # is what binds the Accessibility + Screen-Recording TCC grants to the signed
   # Bobble.app bundle.
   - node_modules/@pi-desktop/pi-mac/**
+  # The gen3d 3D-engine sidecar is a uv/Python program (packages/gen3d-engine,
+  # rides along as a `dependencies` entry). uv + python cannot exec server.py
+  # from inside the asar, so unpack the package to real disk; gen3d-main.ts
+  # resolves <Resources>/app.asar.unpacked/…/gen3d-engine/python/server.py.
+  - node_modules/@pi-desktop/gen3d-engine/**
 mac:
   target: dir
   category: public.app-category.developer-tools

@@ -87,10 +87,22 @@ const downloading = new Set<string>();
 function sidecarScriptPath(): string {
   const override = process.env.GEN3D_PY_DIR;
   if (override !== undefined && override.length > 0) return path.join(override, 'server.py');
+  // Packaged app: the @pi-desktop/gen3d-engine dependency is copied into the
+  // asar and UNPACKED to real disk (electron-builder.yml asarUnpack), because
+  // uv/python cannot exec a script from inside the asar.
+  const packaged = path.join(
+    process.resourcesPath ?? '',
+    'app.asar.unpacked',
+    'node_modules',
+    '@pi-desktop',
+    'gen3d-engine',
+    'python',
+    'server.py',
+  );
   const tail = ['packages', 'gen3d-engine', 'python', 'server.py'];
   const bundlePath = path.join(__dirname, '..', '..', '..', ...tail);
   const devPath = path.join(__dirname, '..', '..', '..', '..', ...tail);
-  return [bundlePath, devPath].find((p) => existsSync(p)) ?? bundlePath;
+  return [packaged, bundlePath, devPath].find((p) => existsSync(p)) ?? devPath;
 }
 
 async function ensureSidecar(): Promise<Gen3dSidecar | null> {

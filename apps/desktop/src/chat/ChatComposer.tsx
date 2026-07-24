@@ -19,7 +19,7 @@ import {
   IconClose,
 } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
-import { IconPause } from '../settings/icons';
+import { IconPause, IconPlay, IconStop } from '../settings/icons';
 import { abortCorpTask } from '../state/corp-connect';
 import { useCorpStore } from '../state/corp-store';
 import {
@@ -596,9 +596,15 @@ export function ChatComposer({
     setPendingStart(false);
     void pausePi();
   };
-  // A chat whose turn the user paused — drives the "Paused · Resume" strip shown
-  // when the chat has settled idle (nothing is streaming to interrupt).
+  // A chat whose turn the user paused — drives the paused control cluster (the
+  // Pause button becomes a Resume ▶, an X stays to discard) shown once the chat
+  // has settled idle (nothing is streaming to interrupt).
   const pausedChat = usePiStore((s) => s.pausedChat);
+  // Discard a paused turn: drop the resume affordance (the turn is already
+  // halted; the frozen partial reply stays in the thread as-is).
+  const discardPaused = (): void => {
+    usePiStore.setState({ pausedChat: null });
+  };
   // jedd #12: the primary placeholder is friendly for a first-timer — the
   // developer-jargon @ / ! hints were demoted to the subtle helper line below
   // (home only), not baked into the placeholder. A single short line also stops
@@ -649,25 +655,6 @@ export function ChatComposer({
     // sticking-out ComposerBar (mounted below the input card) protrudes cleanly
     // — the whole input bar reads as nudged up to make room for the thin ledge.
     <div className="mx-auto w-full max-w-[700px] pb-1.5">
-      {/* A paused turn (Pause, not Stop): once the chat settles idle, offer to
-          resume it. Hidden while busy (there's a live reply to Pause/Stop instead). */}
-      {pausedChat !== null && !isBusy ? (
-        <div
-          className="mb-1.5 flex items-center gap-2 px-1 text-footnote"
-          data-testid="composer-paused"
-        >
-          <IconPause size={12} className="text-text-muted" />
-          <span className="text-text-muted">Paused</span>
-          <button
-            type="button"
-            className="text-text-link hover:underline"
-            onClick={() => void resumePausedChat()}
-            data-testid="composer-resume"
-          >
-            Resume
-          </button>
-        </div>
-      ) : null}
       <div className="pd-composer-root relative">
         <Autocomplete
           items={token.mode !== null ? items : []}
@@ -750,44 +737,67 @@ export function ChatComposer({
             />
             <div className="pd-composer-footer-spacer" />
             <ComposerFooter piModels={piModels} onOpenModels={onOpenModels} />
-            {showSend ? (
-              isBusy ? (
-                <div className="flex items-center gap-1.5">
-                  {/* Pause sits to the LEFT of Stop (jedd). Plain chat only — a
-                      corp run's cooperative halt has no resumable single turn. */}
-                  {!corpRunning ? (
-                    <IconButton
-                      aria-label="Pause — keep this reply to resume later"
-                      variant="secondary"
-                      circle
-                      onClick={() => pauseBusy()}
-                      data-testid="composer-pause"
-                    >
-                      <IconPause size={13} />
-                    </IconButton>
-                  ) : null}
+            {isBusy ? (
+              // Streaming: Pause (left) + a SQUARE Stop (right). The Stop's
+              // per-flavor look (bobble = blue button, white square) comes from
+              // the primary variant + .pd-stop-btn.
+              <div className="flex items-center gap-1.5">
+                {!corpRunning ? (
                   <IconButton
-                    aria-label={corpRunning ? 'Stop — halt all agents' : 'Stop'}
-                    variant="primary"
+                    aria-label="Pause — keep this reply to resume later"
+                    variant="secondary"
                     circle
-                    onClick={() => stopBusy()}
-                    data-testid="composer-stop"
+                    onClick={() => pauseBusy()}
+                    data-testid="composer-pause"
                   >
-                    <IconClose size={14} />
+                    <IconPause size={13} />
                   </IconButton>
-                </div>
-              ) : (
+                ) : null}
                 <IconButton
-                  aria-label="Send message"
-                  variant="primary"
+                  aria-label={corpRunning ? 'Stop — halt all agents' : 'Stop'}
+                  variant="accent"
                   circle
-                  disabled={!canSend}
-                  onClick={() => void submit()}
-                  data-testid="composer-send"
+                  onClick={() => stopBusy()}
+                  data-testid="composer-stop"
                 >
-                  <IconArrowUp size={14} />
+                  <IconStop size={13} />
                 </IconButton>
-              )
+              </div>
+            ) : pausedChat !== null ? (
+              // Paused: the Pause button became a Resume ▶ IN PLACE, with text
+              // asking to resume; the X stays to discard (jedd).
+              <div className="flex items-center gap-1.5" data-testid="composer-paused">
+                <span className="mr-0.5 text-caption text-text-muted">Paused</span>
+                <IconButton
+                  aria-label="Resume this reply"
+                  variant="accent"
+                  circle
+                  onClick={() => void resumePausedChat()}
+                  data-testid="composer-resume"
+                >
+                  <IconPlay size={13} />
+                </IconButton>
+                <IconButton
+                  aria-label="Discard — don't resume this reply"
+                  variant="secondary"
+                  circle
+                  onClick={() => discardPaused()}
+                  data-testid="composer-discard"
+                >
+                  <IconClose size={14} />
+                </IconButton>
+              </div>
+            ) : showSend ? (
+              <IconButton
+                aria-label="Send message"
+                variant="primary"
+                circle
+                disabled={!canSend}
+                onClick={() => void submit()}
+                data-testid="composer-send"
+              >
+                <IconArrowUp size={14} />
+              </IconButton>
             ) : null}
           </div>
         </div>

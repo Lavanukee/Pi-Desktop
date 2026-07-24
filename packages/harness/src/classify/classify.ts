@@ -98,6 +98,30 @@ export interface ClassifyInput {
    * ignores this field entirely.
    */
   readonly priorMessages?: readonly ClassifyMessage[];
+  /**
+   * The tool defs the just-run turn carried, forwarded to the tier-2 piggyback so
+   * its request shares the slot's FULL prefix. Chat templates render tools at the
+   * START of the prompt, so a title request that OMITS them diverges from the
+   * slot right after the system block: it re-prefills the whole conversation AND
+   * evicts the turn's tool KV, which then re-prefills on the next real turn. With
+   * the same tools, the prefix is [system][tools][conversation] — byte-identical
+   * to the resident slot — so only the short title instruction + tiny JSON answer
+   * are new (the "cache PRE-WARM, not a cost" the escalation header promises). The
+   * tier-1 heuristic ignores this field.
+   */
+  readonly tools?: readonly {
+    readonly name: string;
+    readonly description?: string;
+    readonly parameters?: unknown;
+  }[];
+  /**
+   * Per-call timeout (ms) for the tier-2 piggyback's model call. The post-turn
+   * naming is fire-and-forget (never blocks the reply), so it opts into a longer
+   * bound than the tight default: a warm reasoning model can still spend several
+   * seconds thinking before the tiny JSON, and clipping at the default just drops
+   * the title. Unset ⇒ the callModel default applies.
+   */
+  readonly timeoutMs?: number;
 }
 
 export interface ClassifyResult {

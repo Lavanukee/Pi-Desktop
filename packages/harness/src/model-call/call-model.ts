@@ -68,6 +68,16 @@ export interface CallModelRequest {
    */
   readonly extraBody?: Readonly<Record<string, unknown>>;
   readonly signal?: AbortSignal;
+  /**
+   * Per-call timeout override (ms). The shared default ({@link DEFAULT_TIMEOUT_MS})
+   * is tuned for calls that BLOCK a turn (fixer / reviewer-in-path), so it's
+   * deliberately tight. Background, fire-and-forget calls that never block the
+   * reply — notably the post-turn conversation NAMING — should pass a larger
+   * value: even a warm reasoning model can spend several seconds "thinking" before
+   * the tiny JSON, and clipping that at 5s just drops the title. Composed with the
+   * default via `AbortSignal.any`, so whichever fires first still wins.
+   */
+  readonly timeoutMs?: number;
 }
 
 /** Call a model and get its text back. Throws on transport/HTTP failure. */
@@ -111,9 +121,10 @@ export function createOpenAiCompatCallModel(config: OpenAiCompatConfig): CallMod
     if (config.apiKey !== undefined && config.apiKey.length > 0) {
       headers.authorization = `Bearer ${config.apiKey}`;
     }
-    // Compose the caller's signal (if any) with a default timeout so a hung
-    // endpoint can never wedge the turn — whichever aborts first wins.
-    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    // Compose the caller's signal (if any) with a timeout so a hung endpoint can
+    // never wedge the turn — whichever aborts first wins. A per-request override
+    // lets background calls (naming) opt into a longer bound than blocking ones.
+    const timeoutSignal = AbortSignal.timeout(req.timeoutMs ?? timeoutMs);
     const signal =
       req.signal !== undefined ? AbortSignal.any([req.signal, timeoutSignal]) : timeoutSignal;
     const res = await doFetch(`${base}/chat/completions`, {

@@ -348,23 +348,39 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
    * Also freezes runtime.canonicalSystemPrompt so the first real turn reuses this
    * exact string (before_agent_start prefers it) → the warmed KV is actually hit.
    */
+  /**
+   * Map ordered tool NAMES to the {name, description, parameters} defs the
+   * provider renders, preserving order. Chat templates emit tools positionally, so
+   * order is part of the KV-prefix identity — a different order (e.g. registry
+   * order vs. a real turn's applyPreset order) reuses NOTHING even with the same
+   * tool SET. Unknown names are dropped. Shared by the warm-up and the post-turn
+   * naming so both reproduce a real turn's prefix byte-for-byte.
+   */
+  function orderedToolDefs(
+    names: readonly string[],
+  ): { name: string; description?: string; parameters?: unknown }[] {
+    const byName = new Map(pi.getAllTools().map((t) => [t.name, t] as const));
+    return names
+      .map((n) => byName.get(n))
+      .filter((t): t is NonNullable<typeof t> => t !== undefined)
+      .map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
+  }
+
   function maybeWarmPrefix(ctx: ExtensionContext): void {
     if (callModel === undefined || typeof ctx.getSystemPrompt !== 'function') return;
     const canonical = augmentSystemPrompt(ctx.getSystemPrompt());
     if (canonical.trim().length === 0 || canonical === warmedCanonical) return;
     warmedCanonical = canonical;
     runtime.canonicalSystemPrompt = canonical;
-    const all = pi.getAllTools();
     const warmClass: TaskClass = runtime.config.preset === 'auto' ? 'coding' : runtime.config.preset;
     // Build the tool list in the SAME ORDER a real turn does (applyPreset unions
-    // resolvePresetTools' order), NOT pi.getAllTools() registry order — chat
-    // templates render tools positionally, so a different order = a different
-    // prefix = zero KV reuse even with the identical tool SET.
-    const byName = new Map(all.map((t) => [t.name, t] as const));
-    const warmTools = resolvePresetTools(warmClass, all.map((t) => t.name))
-      .map((n) => byName.get(n))
-      .filter((t): t is NonNullable<typeof t> => t !== undefined)
-      .map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
+    // resolvePresetTools' order), NOT pi.getAllTools() registry order.
+    const warmTools = orderedToolDefs(
+      resolvePresetTools(
+        warmClass,
+        pi.getAllTools().map((t) => t.name),
+      ),
+    );
     void warmSystemPrompt(callModel, canonical, { tools: warmTools });
   }
 
@@ -978,6 +994,13 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
         prompt: namePrompt,
         turnIndex: 1,
         priorMessages: buildConversationPrefix(getEntries(ctx), sys, namePrompt),
+        // Same tools the turn ran with (in the same order) so the naming request's
+        // prefix matches the resident slot — cheap and non-evicting (see below).
+        tools: orderedToolDefs(runtime.activeTools),
+        // Fire-and-forget: never blocks the reply, so give it room to finish even
+        // if the reasoning model spends a few seconds before the tiny JSON (the
+        // 5s default was clipping it → null title).
+        timeoutMs: 30000,
       };
       void asyncClassifier(input, classify(input)).then((r) => {
         if (r?.title !== undefined) setTitle(r.title, ctx);

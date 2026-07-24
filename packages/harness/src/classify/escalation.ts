@@ -172,6 +172,13 @@ export function createClassifierEscalation(callModel: CallModel): AsyncClassifie
         maxTokens: MAX_TOKENS,
         responseFormat: titleClassResponseFormat(),
         extraBody: NO_THINKING,
+        // Carry the turn's tools so this request's prefix ([system][tools][convo])
+        // matches the resident slot exactly — otherwise it re-prefills the whole
+        // conversation and evicts the tool KV (see ClassifyInput.tools).
+        ...(input.tools !== undefined && input.tools.length > 0 ? { tools: input.tools } : {}),
+        // Fire-and-forget naming opts into a longer timeout than the tight default
+        // (a warm reasoning model can still spend a few seconds before the JSON).
+        ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
       });
     } catch {
       return undefined;

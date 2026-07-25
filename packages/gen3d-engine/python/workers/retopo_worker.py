@@ -127,6 +127,54 @@ def drop_small_components(mesh, min_fraction: float, say):
     return merged
 
 
+def count_boundary_and_nonmanifold(mesh) -> tuple[int, int]:
+    """(boundary, non-manifold) edge counts — the two things a quad remesher hates."""
+    seen: Counter = Counter()
+    for f in mesh.faces:
+        for a, b in ((f[0], f[1]), (f[1], f[2]), (f[2], f[0])):
+            seen[(a, b) if a < b else (b, a)] += 1
+    return (
+        sum(1 for v in seen.values() if v == 1),
+        sum(1 for v in seen.values() if v > 2),
+    )
+
+
+def make_manifold(mesh, grid: int, say):
+    """Rebuild the surface through a voxel grid so it is closed and manifold.
+
+    QuadriFlow needs a manifold surface. TRELLIS output is NOT one — measured on
+    a clean single-component mesh: 26,538 boundary edges (1.65% of edges) and
+    13,295 genuine non-manifold edges (T-junctions/pinches from marching cubes,
+    not duplicate or degenerate faces — removing those changed nothing, and
+    manifold3d rejects the mesh outright rather than repairing it).
+
+    Rasterising to a voxel grid and re-extracting with marching cubes gives
+    boundary=0, non-manifold=0, watertight=True (measured, ~5s). It IS lossy —
+    detail below the grid pitch is rounded off — so callers only reach for it
+    when the mesh actually needs repair; an already-manifold import goes to the
+    remesher untouched.
+    """
+    import trimesh as _tm
+
+    extent = float(max(mesh.extents))
+    if extent <= 0:
+        return mesh
+    pitch = extent / float(grid)
+    say(f"Rebuilding a closed surface at {grid}³ to make it remeshable…")
+    vox = mesh.voxelized(pitch=pitch).fill()
+    solid = vox.marching_cubes
+    solid.merge_vertices()
+    _tm.repair.fix_normals(solid)
+    return solid
+
+
+def run_quadriflow(cli: str, in_obj: Path, out_obj: Path, faces: int, timeout_s: int):
+    """QuadriFlow CLI: `-i in.obj -o out.obj -f <target faces>`."""
+    return run_remesher(
+        [cli, "-i", str(in_obj), "-o", str(out_obj), "-f", str(faces)], timeout_s
+    )
+
+
 def run_remesher(cmd: list[str], timeout_s: int) -> subprocess.CompletedProcess:
     """Run AutoRemesher so it can NEVER outlive this worker.
 
@@ -193,12 +241,15 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--mesh", required=True)
     ap.add_argument("--out-dir", required=True)
-    ap.add_argument("--cli", required=True)
+    ap.add_argument("--cli", default="")  # AutoRemesher (fallback)
+    ap.add_argument("--quadriflow", default="")  # primary remesher
+    # Voxel grid used only when the surface needs closing before remeshing.
+    ap.add_argument("--voxel-grid", type=int, default=384)
     ap.add_argument("--target-quads", type=int, default=20_000)
     ap.add_argument("--adaptivity", type=float, default=1.0)
     ap.add_argument("--edge-scaling", type=float, default=1.0)
     ap.add_argument("--sharp-edge", type=float, default=90.0)
-    ap.add_argument("--max-input-faces", type=int, default=40_000)
+    ap.add_argument("--max-input-faces", type=int, default=1_500_000)
     # A remesh that has run this long is not going to finish usefully; the old
     # 3600s cap meant an hour of 99% CPU before anyone found out.
     ap.add_argument("--timeout", type=int, default=600)
@@ -230,50 +281,78 @@ def main() -> None:
             TOTAL_STEPS,
         )
 
-    healed = decimate_to(
-        healed, args.max_input_faces, lambda m: progress(STAGE, m, 2, TOTAL_STEPS)
-    )
-    # Clean up AFTER decimating, not just before. MEASURED on a clean TRELLIS
-    # mesh (a single connected component!): decimating 1,067,132 → 40,000 faces
-    # SHATTERED it into 2,440 components, and AutoRemesher then parametrises
-    # every one — the reason a retopo jedd expected to take ~2 minutes was still
-    # running after 12. Dropping components under 0.1% of the faces takes that
-    # 2,440 → 10 while retaining 87.6% of the surface. The pre-decimation heal
-    # cannot do this: the fragments do not exist yet when it runs.
-    healed = drop_small_components(
-        healed, args.min_component_fraction, lambda m: progress(STAGE, m, 2, TOTAL_STEPS)
-    )
+    # NO blanket decimation. The old hard 40k cap was a workaround for slowness
+    # that was really debris, and it did active harm: MEASURED, decimating a
+    # CLEAN single-component mesh 1,067,132 → 40,000 faces shattered it into
+    # 2,440 components. QuadriFlow handled the full 1.1M-face mesh in 15s, so
+    # the cap buys nothing. It only kicks in as a safety valve far above any
+    # normal mesh.
+    if args.max_input_faces > 0 and len(healed.faces) > args.max_input_faces:
+        healed = decimate_to(
+            healed, args.max_input_faces, lambda m: progress(STAGE, m, 2, TOTAL_STEPS)
+        )
+        # Decimation fragments the surface, so clean up AFTER it too — the
+        # pre-decimation heal cannot, the fragments don't exist yet.
+        healed = drop_small_components(
+            healed, args.min_component_fraction, lambda m: progress(STAGE, m, 2, TOTAL_STEPS)
+        )
+
+    # QuadriFlow needs a manifold surface; repair only if this one isn't.
+    bnd, nonman = count_boundary_and_nonmanifold(healed)
+    if bnd > 0 or nonman > 0:
+        progress(
+            STAGE,
+            f"{bnd:,} open edges + {nonman:,} non-manifold edges — closing the surface first",
+            2,
+            TOTAL_STEPS,
+        )
+        healed = make_manifold(healed, args.voxel_grid, lambda m: progress(STAGE, m, 2, TOTAL_STEPS))
+        bnd, nonman = count_boundary_and_nonmanifold(healed)
+        progress(STAGE, f"Surface closed — {len(healed.faces):,} faces, {bnd:,} open edges",
+                 2, TOTAL_STEPS)
 
     in_obj = out_dir / "retopo-input.obj"
     export_geometry_obj(healed, str(in_obj))
 
     out_obj = out_dir / "retopo-quads.obj"
     report = out_dir / "retopo-report.txt"
-    cmd = [
-        args.cli,
-        "--input", str(in_obj),
-        "--output", str(out_obj),
-        "--target-quads", str(args.target_quads),
-        "--adaptivity", str(args.adaptivity),
-        "--edge-scaling", str(args.edge_scaling),
-        "--sharp-edge", str(args.sharp_edge),
-        "--report", str(report),
-    ]
-    # AutoRemesher's parametrisation is TBB-parallel and OBSERVED to fail
-    # nondeterministically: two runs over a byte-identical input, one exited 1
-    # partway through the LS iterations, the next succeeded. A single retry
-    # turns that flake into a non-event instead of a dead-end error.
+
     progress(STAGE, f"Remeshing to ~{args.target_quads:,} quads…", 3, TOTAL_STEPS)
     result = None
-    for attempt in (1, 2):
-        result = run_remesher(cmd, args.timeout)
-        if result.returncode == 0 and out_obj.exists():
-            break
-        if attempt == 1:
-            progress(STAGE, "Remesher stopped early — retrying…", 3, TOTAL_STEPS)
+    engine = "QuadriFlow"
+    # PRIMARY: QuadriFlow. MEASURED on the same TRELLIS model AutoRemesher could
+    # not handle — 15s, 29,261 faces, 100% quads, 0 triangles.
+    if args.quadriflow and Path(args.quadriflow).exists():
+        result = run_quadriflow(args.quadriflow, in_obj, out_obj, args.target_quads, args.timeout)
+    # FALLBACK: AutoRemesher. Kept because it is the tool jedd rates and it may
+    # suit meshes QuadriFlow refuses — but it is NOT the default any more: it
+    # dies on a vendored-geogram assertion (hexdom/quad_cover.cpp:207) even on a
+    # watertight mesh, and hangs indefinitely at smaller inputs. Its
+    # parametrisation is also TBB-parallel and flakes nondeterministically, so
+    # it gets one retry.
+    if (result is None or result.returncode != 0 or not out_obj.exists()) and args.cli:
+        engine = "AutoRemesher"
+        cmd = [
+            args.cli,
+            "--input", str(in_obj),
+            "--output", str(out_obj),
+            "--target-quads", str(args.target_quads),
+            "--adaptivity", str(args.adaptivity),
+            "--edge-scaling", str(args.edge_scaling),
+            "--sharp-edge", str(args.sharp_edge),
+            "--report", str(report),
+        ]
+        progress(STAGE, "Trying the fallback remesher…", 3, TOTAL_STEPS)
+        for attempt in (1, 2):
+            result = run_remesher(cmd, args.timeout)
+            if result.returncode == 0 and out_obj.exists():
+                break
+            if attempt == 1:
+                progress(STAGE, "Remesher stopped early — retrying…", 3, TOTAL_STEPS)
     if result is None or result.returncode != 0 or not out_obj.exists():
-        error(f"AutoRemesher could not remesh this mesh — {failure_reason(result)}")
+        error(f"could not remesh this mesh — {failure_reason(result)}")
         sys.exit(1)
+    progress(STAGE, f"Remeshed with {engine}", 3, TOTAL_STEPS)
 
     progress(STAGE, "Measuring topology…", 4, TOTAL_STEPS)
     polys = read_polygons(out_obj)

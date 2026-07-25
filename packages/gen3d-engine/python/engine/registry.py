@@ -80,6 +80,19 @@ class Registry:
     def autoremesher_cli(self) -> Path:
         return self.bin_dir / "autoremesher.app" / "Contents" / "MacOS" / "autoremesher"
 
+    def quadriflow_cli(self) -> Path:
+        """QuadriFlow (MIT) — the PRIMARY quad remesher.
+
+        AutoRemesher could not remesh TRELLIS output at all on this machine: it
+        dies on an assertion inside its vendored geogram 1.8.3
+        (`hexdom/quad_cover.cpp:207`) even on a flawless watertight mesh, and at
+        smaller inputs it simply never converges (measured: crash in 2-4s at
+        200k faces, >7min no-output at 30k and 80k, every target-quad setting).
+        QuadriFlow remeshed the identical model in 15s at 100% quads. It is also
+        a plain CLI with no Qt, so it cannot take a dock tile.
+        """
+        return self.bin_dir / "quadriflow"
+
     def meshtools_python(self) -> Path:
         return self.tool_dir("meshtools") / ".venv" / "bin" / "python"
 

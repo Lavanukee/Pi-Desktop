@@ -320,6 +320,7 @@ class JobManager:
                     "--mesh", model_path,
                     "--out-dir", str(job_dir),
                     "--cli", str(self.registry.autoremesher_cli()),
+                    "--quadriflow", str(self.registry.quadriflow_cli()),
                     "--target-quads", str(int(options.get("targetQuads") or 20_000)),
                     "--adaptivity", str(float(options.get("adaptivity") or 1.0)),
                 ]

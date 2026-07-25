@@ -4104,69 +4104,136 @@
   color: var(--pd-text-danger, var(--pd-text-primary));
 }
 
-/* The bar itself, both sizes. */
-.tp-genbar {
-  position: relative;
-  overflow: hidden;
-  width: 100%;
-  border-radius: 999px;
-  background: var(--pd-bg-elevated);
-  border: 1px solid var(--pd-border-subtle);
-}
-.tp-genbar-hero {
-  height: 10px;
-}
-.tp-genbar-slim {
-  height: 4px;
-  border: none;
-}
-.tp-genbar-fill {
-  height: 100%;
-  border-radius: 999px;
-  background: var(--pd-accent-primary);
-  transition: width var(--pd-duration-normal, 260ms) var(--pd-easing-standard);
-}
-.tp-genbar[data-indeterminate="true"] .tp-genbar-fill {
-  width: 34%;
-  transition: none;
-  animation: tp-genbar-sweep 1.3s var(--pd-easing-standard) infinite;
-}
-@keyframes tp-genbar-sweep {
-  0% {
-    transform: translateX(-110%);
-  }
-  100% {
-    transform: translateX(330%);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .tp-genbar[data-indeterminate="true"] .tp-genbar-fill {
-    animation: none;
-    width: 100%;
-    opacity: 0.3;
-  }
-}
-.tp-genhero-chips {
+/* The chunked bar: one chunk per stage, each a row of ticks under its own word.
+   A finished chunk is green and its label reads in the past tense, so the row
+   says what happened without a legend. */
+.tp-chunks {
   display: flex;
-  gap: 6px;
-  margin-bottom: 2px;
+  width: 100%;
+  gap: 10px;
 }
-.tp-genhero-chip {
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--pd-border-subtle);
+.tp-chunk {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.tp-chunk-label {
   color: var(--pd-text-muted);
   font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color var(--pd-duration-normal, 260ms) var(--pd-easing-standard);
 }
-.tp-genhero-chip[data-state="active"] {
-  border-color: var(--pd-accent-primary);
-  background: var(--pd-bg-elevated);
+.tp-chunk[data-state="active"] .tp-chunk-label {
   color: var(--pd-text-primary);
 }
-.tp-genhero-chip[data-state="done"] {
-  color: var(--pd-text-secondary);
+.tp-chunk[data-state="done"] .tp-chunk-label {
+  color: var(--pd-status-success-fg);
+}
+.tp-chunk-ticks {
+  display: flex;
+  gap: 2px;
+}
+.tp-chunk-tick {
+  position: relative;
+  overflow: hidden;
+  flex: 1;
+  border-radius: 2px;
+  background: var(--pd-bg-track);
+}
+.tp-chunk-tick-fill {
+  display: block;
+  width: calc(var(--tp-tick, 0) * 100%);
+  height: 100%;
+  border-radius: 2px;
+  background: var(--pd-accent-primary);
+  transition:
+    width var(--pd-duration-normal, 260ms) linear,
+    background-color var(--pd-duration-normal, 260ms) var(--pd-easing-standard);
+}
+.tp-chunk[data-state="done"] .tp-chunk-tick-fill {
+  background: var(--pd-status-success-border);
+}
+.tp-chunks-hero .tp-chunk-tick {
+  height: 10px;
+}
+.tp-chunks-slim .tp-chunk-tick {
+  height: 5px;
+}
+.tp-chunks-slim .tp-chunk {
+  gap: 3px;
+}
+.tp-chunks-slim .tp-chunk-label {
+  font-size: 9.5px;
+}
+
+/* The worker has gone quiet mid-stage (the PBR bake reports once and then works
+   for a minute): breathe the tick it is inside, so the bar says "still going"
+   without moving to a number nobody reported. */
+.tp-chunk-tick[data-pulse="true"] {
+  animation: tp-chunk-breathe 1.8s var(--pd-easing-standard) infinite;
+}
+@keyframes tp-chunk-breathe {
+  0%,
+  100% {
+    background: var(--pd-bg-track);
+  }
+  50% {
+    background: var(--pd-accent-subtle);
+  }
+}
+
+/* Nothing measurable to report yet: the ticks of the ACTIVE chunk pulse in
+   sequence, so it reads as working rather than as stuck at zero. */
+.tp-chunk-ticks[data-indeterminate="true"] .tp-chunk-tick-fill {
+  width: 100%;
+  transition: none;
+  animation: tp-chunk-pulse 1.4s var(--pd-easing-standard) infinite;
+}
+.tp-chunk-ticks[data-indeterminate="true"] .tp-chunk-tick:nth-child(2) .tp-chunk-tick-fill {
+  animation-delay: 0.1s;
+}
+.tp-chunk-ticks[data-indeterminate="true"] .tp-chunk-tick:nth-child(3) .tp-chunk-tick-fill {
+  animation-delay: 0.2s;
+}
+.tp-chunk-ticks[data-indeterminate="true"] .tp-chunk-tick:nth-child(4) .tp-chunk-tick-fill {
+  animation-delay: 0.3s;
+}
+.tp-chunk-ticks[data-indeterminate="true"] .tp-chunk-tick:nth-child(5) .tp-chunk-tick-fill {
+  animation-delay: 0.4s;
+}
+.tp-chunk-ticks[data-indeterminate="true"] .tp-chunk-tick:nth-child(6) .tp-chunk-tick-fill {
+  animation-delay: 0.5s;
+}
+.tp-chunk-ticks[data-indeterminate="true"] .tp-chunk-tick:nth-child(7) .tp-chunk-tick-fill {
+  animation-delay: 0.6s;
+}
+@keyframes tp-chunk-pulse {
+  0%,
+  100% {
+    opacity: 0.12;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tp-chunk-ticks[data-indeterminate="true"] .tp-chunk-tick-fill {
+    animation: none;
+    opacity: 0.3;
+  }
+  .tp-chunk-tick[data-pulse="true"] {
+    animation: none;
+    background: var(--pd-accent-subtle);
+  }
+  .tp-chunk-tick-fill {
+    transition: none;
+  }
 }
 
 /* While the generating bottom bar is up, lift the floating viewport controls

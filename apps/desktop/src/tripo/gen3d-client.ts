@@ -15,6 +15,7 @@ import type {
   Gen3dModelId,
   Gen3dModelInfo,
   Gen3dResolution,
+  Gen3dRole,
 } from '../../electron/gen3d/gen3d-contract';
 import { type TripoOp, useTripoStore } from './store';
 
@@ -31,6 +32,16 @@ interface Gen3dState {
    * artifact only rides ONE update, but the generating UI has to stay in its
    * "model is visible, keep refining" phase for every update after it. */
   modelReadyJobId: string | null;
+  /**
+   * The stages THIS job will actually run, recorded at dispatch.
+   *
+   * The progress bar draws one chunk per stage, so it has to know the real
+   * plan: a run from a user-supplied image never touches `image`, and a run
+   * with auto-texture off ends at `geometry`. Inferring the chain from the
+   * current stage (what the old chips did) shows stages that will never
+   * happen and can never tick green.
+   */
+  jobPlan: { readonly jobId: string; readonly stages: readonly Gen3dRole[] } | null;
   /** Show the engine-download panel (fills the left column). */
   downloadPromptOpen: boolean;
   /** A model to scroll to + highlight when the panel opens (from a stage CTA). */
@@ -74,6 +85,7 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
   downloads: {},
   job: null,
   modelReadyJobId: null,
+  jobPlan: null,
   downloadPromptOpen: false,
   downloadFocus: null,
 
@@ -109,6 +121,9 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
       })
       .catch(() => null);
     if (res === null || !res.ok) return res?.error ?? 'generation failed to start';
+    if (res.jobId !== undefined) {
+      set({ jobPlan: { jobId: res.jobId, stages: plannedStages(req) } });
+    }
     return null;
   },
   runStage: async (op, modelPath, origin, extra) => {
@@ -117,6 +132,7 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
       .catch(() => null);
     if (res === null || !res.ok) return res?.error ?? `${op} failed to start`;
     if (res.jobId !== undefined) {
+      set({ jobPlan: { jobId: res.jobId, stages: [op] } });
       if (origin !== undefined) stageOrigins.set(res.jobId, origin);
       // Only a probe run should raise the "humanoid?" question — the rig run
       // that follows emits the same measurement and must not re-ask.
@@ -128,10 +144,22 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
     const job = get().job;
     if (job === null) return;
     await window.piDesktop.invoke('gen3d:cancel', { jobId: job.jobId }).catch(() => null);
-    set({ job: null, modelReadyJobId: null });
+    set({ job: null, modelReadyJobId: null, jobPlan: null });
   },
-  clearJob: () => set({ job: null, modelReadyJobId: null }),
+  clearJob: () => set({ job: null, modelReadyJobId: null, jobPlan: null }),
 }));
+
+/** Which stages a generate request will really run, in pipeline order. */
+function plannedStages(req: {
+  readonly kind: 'text' | 'image';
+  readonly texture: boolean;
+  readonly imageOnly?: boolean;
+}): readonly Gen3dRole[] {
+  if (req.imageOnly === true) return ['image'];
+  const stages: Gen3dRole[] = req.kind === 'text' ? ['image', 'geometry'] : ['geometry'];
+  if (req.texture) stages.push('texture');
+  return stages;
+}
 
 /** Human size: 16.2 GB / 640 MB. */
 export function formatGb(bytes: number): string {

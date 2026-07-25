@@ -74,14 +74,64 @@ WATCHDOG_HELP = (
 PREVIEW_FACE_BUDGET = 240_000
 
 
+# Fraction of the mesh's faces below which a connected component is treated as
+# debris rather than a part of the model. 0.1% of a 3M-face mesh is ~3k faces;
+# real parts are far bigger, specks far smaller.
+DEBRIS_FACE_FRACTION = 0.001
+
+
+def drop_debris(tm, label: str):
+    """Remove disconnected speck components from a generated mesh.
+
+    MEASURED on a 512 tank run: `geometry.glb` came back as **10,981 connected
+    components** with the largest holding only 77% of the faces — i.e. a mostly
+    correct model surrounded by ~11k floaters. That debris is what made the
+    viewport look like confetti, and it is far worse after decimation, which
+    spends its face budget on the specks and shatters the main body (the preview
+    measured 20,257 components, largest just 27.7%).
+
+    So drop components below {@link DEBRIS_FACE_FRACTION} of the total. The
+    threshold is deliberately tiny — real multi-part models (a turret, separate
+    treads) are orders of magnitude larger than a speck, so they survive. Returns
+    the mesh unchanged if anything goes wrong: cleanup must never fail a run.
+    """
+    try:
+        comps = tm.split(only_watertight=False)
+    except Exception:  # noqa: BLE001
+        return tm
+    if len(comps) <= 1:
+        return tm
+    import trimesh as _tm
+
+    total = max(1, len(tm.faces))
+    keep = [c for c in comps if len(c.faces) >= total * DEBRIS_FACE_FRACTION]
+    if not keep:  # everything looked like debris — keep the biggest component
+        keep = [max(comps, key=lambda c: len(c.faces))]
+    if len(keep) == len(comps):
+        return tm
+    merged = _tm.util.concatenate(keep)
+    progress(
+        "geometry",
+        f"Cleaned {label} — dropped {len(comps) - len(keep):,} stray fragments "
+        f"({len(tm.faces) - len(merged.faces):,} faces)",
+    )
+    return merged
+
+
 def export_untextured_glb(mesh_out, out_path: Path) -> tuple[int, int]:
     import trimesh
 
     verts = mesh_out.vertices.cpu().numpy()
     faces = mesh_out.faces.cpu().numpy()
+    # Default process=True, so trimesh MERGES the render-duplicated vertices the
+    # raw mesh carries — this file is welded and intact (unlike the preview,
+    # which used to skip that; see export_preview_glb).
     tm = trimesh.Trimesh(vertices=verts, faces=faces)
+    tm = drop_debris(tm, "geometry")
     tm.export(str(out_path))
-    return int(verts.shape[0]), int(faces.shape[0])
+    # Report what was actually WRITTEN, not the pre-weld input: the raw vertex
+    # count is inflated by the duplicates trimesh just merged away.
+    return int(len(tm.vertices)), int(len(tm.faces))
 
 
 def export_preview_glb(mesh_out, out_path: Path, full_faces: int) -> Path | None:
@@ -97,6 +147,24 @@ def export_preview_glb(mesh_out, out_path: Path, full_faces: int) -> Path | None
             faces=mesh_out.faces.cpu().numpy(),
             process=False,
         )
+        # WELD BEFORE DECIMATING. The raw mesh carries render-duplicated
+        # vertices (a marching-cubes/GLB export repeats positions per face), so
+        # with `process=False` its triangles do not SHARE vertices — quadric
+        # decimation cannot collapse an edge between two triangles that have no
+        # common vertex, so instead of simplifying the surface it shreds it into
+        # islands. MEASURED on an icosphere re-emitted unwelded: decimating to
+        # 2,048 faces gave 1,029 disconnected bodies and watertight=False,
+        # versus 1 body / watertight=True after merge_vertices() — the same face
+        # count, but confetti instead of a model. That confetti is what the
+        # viewer was showing (jedd: "the model is capable of much higher quality
+        # results, something is going wrong at inference" — it was the PREVIEW,
+        # not inference). Same root cause the retopo path already fixes by
+        # welding before AutoRemesher.
+        tm.merge_vertices()
+        # Strip debris BEFORE decimating: quadric decimation spends its budget
+        # per-component, so ~11k specks starve the real surface — measured, the
+        # preview's largest component fell to 27.7% of the mesh.
+        tm = drop_debris(tm, "preview")
         reduced = tm.simplify_quadric_decimation(face_count=PREVIEW_FACE_BUDGET)
         reduced.export(str(out_path))
         progress(

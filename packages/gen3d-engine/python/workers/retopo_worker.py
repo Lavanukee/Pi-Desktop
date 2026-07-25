@@ -16,8 +16,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import signal
 import subprocess
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -91,6 +94,83 @@ PROGRESS_NOISE = (
 )
 
 
+def drop_small_components(mesh, min_fraction: float, say):
+    """Drop connected components below `min_fraction` of the mesh's faces.
+
+    Quadric decimation is per-component: a big reduction ratio tears a single
+    surface into thousands of islands, and every island becomes its own
+    parametrisation problem for AutoRemesher. Proportional (not absolute) because
+    the meaningful scale is "share of this model", and returns the mesh untouched
+    on any failure — cleanup must never break a retopo.
+    """
+    if min_fraction <= 0:
+        return mesh
+    try:
+        parts = mesh.split(only_watertight=False)
+    except Exception:  # noqa: BLE001
+        return mesh
+    if len(parts) <= 1:
+        return mesh
+    import trimesh as _tm
+
+    total = max(1, len(mesh.faces))
+    keep = [p for p in parts if len(p.faces) >= total * min_fraction]
+    if not keep:
+        keep = [max(parts, key=lambda p: len(p.faces))]
+    if len(keep) == len(parts):
+        return mesh
+    merged = _tm.util.concatenate(keep)
+    say(
+        f"Dropped {len(parts) - len(keep):,} fragments created by decimation "
+        f"({len(parts):,} → {len(keep):,} components)"
+    )
+    return merged
+
+
+def run_remesher(cmd: list[str], timeout_s: int) -> subprocess.CompletedProcess:
+    """Run AutoRemesher so it can NEVER outlive this worker.
+
+    OBSERVED live: an AutoRemesher left over from a killed run was still burning
+    99% of a core **two hours later**, reparented to init (ppid=1) with nowhere
+    to send its output. `subprocess.run(timeout=…)` cannot prevent that — the
+    timeout only fires while THIS process is alive, so if the worker is killed
+    (app quit, crash, cancel-by-signal) the child is simply orphaned. macOS has
+    no PDEATHSIG, so we supervise explicitly: own process group, poll for both
+    the timeout and for our parent disappearing, and kill the whole group on the
+    way out. A remesh that no one is waiting for is pure waste.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,  # own group, so killpg reaps its TBB threads too
+    )
+
+    def reap() -> None:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            proc.kill()
+
+    deadline = time.time() + timeout_s
+    while True:
+        try:
+            out, err = proc.communicate(timeout=2)
+            return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+        except subprocess.TimeoutExpired:
+            pass
+        # Our parent died (jobs.py went away) → nobody will ever read this.
+        if os.getppid() == 1:
+            reap()
+            return subprocess.CompletedProcess(cmd, 1, "", "parent exited; remesh abandoned")
+        if time.time() > deadline:
+            reap()
+            return subprocess.CompletedProcess(
+                cmd, 1, "", f"remesh exceeded {timeout_s}s and was stopped"
+            )
+
+
 def failure_reason(result: subprocess.CompletedProcess | None) -> str:
     """A short, human reason for a failed remesh — never a wall of solver logs."""
     if result is None:
@@ -119,6 +199,11 @@ def main() -> None:
     ap.add_argument("--edge-scaling", type=float, default=1.0)
     ap.add_argument("--sharp-edge", type=float, default=90.0)
     ap.add_argument("--max-input-faces", type=int, default=40_000)
+    # A remesh that has run this long is not going to finish usefully; the old
+    # 3600s cap meant an hour of 99% CPU before anyone found out.
+    ap.add_argument("--timeout", type=int, default=600)
+    # Components below this share of the faces are decimation debris.
+    ap.add_argument("--min-component-fraction", type=float, default=0.001)
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -148,6 +233,16 @@ def main() -> None:
     healed = decimate_to(
         healed, args.max_input_faces, lambda m: progress(STAGE, m, 2, TOTAL_STEPS)
     )
+    # Clean up AFTER decimating, not just before. MEASURED on a clean TRELLIS
+    # mesh (a single connected component!): decimating 1,067,132 → 40,000 faces
+    # SHATTERED it into 2,440 components, and AutoRemesher then parametrises
+    # every one — the reason a retopo jedd expected to take ~2 minutes was still
+    # running after 12. Dropping components under 0.1% of the faces takes that
+    # 2,440 → 10 while retaining 87.6% of the surface. The pre-decimation heal
+    # cannot do this: the fragments do not exist yet when it runs.
+    healed = drop_small_components(
+        healed, args.min_component_fraction, lambda m: progress(STAGE, m, 2, TOTAL_STEPS)
+    )
 
     in_obj = out_dir / "retopo-input.obj"
     export_geometry_obj(healed, str(in_obj))
@@ -171,7 +266,7 @@ def main() -> None:
     progress(STAGE, f"Remeshing to ~{args.target_quads:,} quads…", 3, TOTAL_STEPS)
     result = None
     for attempt in (1, 2):
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        result = run_remesher(cmd, args.timeout)
         if result.returncode == 0 and out_obj.exists():
             break
         if attempt == 1:

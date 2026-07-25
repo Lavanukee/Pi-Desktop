@@ -1,22 +1,26 @@
-"""FLUX.2 Klein image worker — MLX-native text→image, the fast image path.
+"""MLX image worker — Mage-Flow-Turbo on MLX, the fast image path.
 
-MEASURED against the Mage-Flow-Turbo worker on the same prompt/size/steps
-(1024px, 4 steps, M5 Pro 24 GB):
+MEASURED on the same prompt/size/steps (1024px, 4 steps, M5 Pro 24 GB), each
+output inspected VISUALLY rather than trusted from a timing:
 
-    Mage-Flow-Turbo (PyTorch MPS)   71 s
-    FLUX.2 Klein 4B (MLX, q4)       13 s   ← 5.5x faster
+    Mage-Flow-Turbo (PyTorch MPS)   71 s   coherent
+    FLUX.2 Klein 4B (MLX, q4)       13 s   coherent, 17.94 GB peak
+    Mage-Flow-Turbo (MLX, q8)       11 s   coherent, 14.69 GB peak   ← chosen
+    Mage-Flow-Turbo (MLX, q4)       11 s   *** BROKEN *** — blue noise, no subject
 
-The gap is the backend, not the model size: MLX targets the M5's GPU neural
-accelerators, which PyTorch's MPS backend largely does not.
+So Mage-Flow wins on all three axes (speed, memory, image quality) — but ONLY
+at 8-bit. The 4-bit path on the current mflux Mage-Flow branch produces pure
+noise while reporting a perfectly normal run, which is exactly why DEFAULT_QUANT
+is 8 and why a quantization change here must be re-checked by eye, not by
+whether the process exited 0.
 
-Runs `mflux-generate-flux2` (mflux, MIT) out of its own venv rather than
-importing it — mflux is a CLI-first project and shelling out keeps its heavy
-deps out of every other worker's environment. Emits the same NDJSON contract as
-the other workers so jobs.py needs no special case.
+Mage-Flow is a 4B NR-MMDiT (rectified flow, Qwen3-VL text encoder, Mage-VAE),
+MIT, and scores GenEval 0.90 vs FLUX.2-dev's 0.87 at 1/8 the parameters — which
+is why it is the target rather than a FLUX variant.
 
-MEMORY: the 4B at 1024² peaks at ~17.9 GB of a 24 GB machine. That fits, but it
-is why this worker pins the 4B and not the 9B — the larger variant does not fit
-at this resolution, and an OOM mid-generation is worse than a slower model.
+Runs the mflux CLI (MIT) from its own venv: mflux is CLI-first, and shelling out
+keeps its deps out of every other worker's environment. Emits the standard
+NDJSON contract so jobs.py needs no special case.
 """
 
 from __future__ import annotations
@@ -32,20 +36,21 @@ from _progress import artifact, emit, progress, stage_done  # noqa: E402
 
 STAGE = "image"
 
-# The 9B variant does not fit alongside 1024² activations in 24 GB (see above).
-KLEIN_MODEL = "flux2-klein-4b"
+DEFAULT_MODEL = "mage-flow-turbo"
+# 8, NOT 4 — see the module docstring: 4-bit Mage-Flow renders noise.
+DEFAULT_QUANT = 8
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--prompt", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--cli", required=True, help="path to mflux-generate-flux2")
-    ap.add_argument("--model", default=KLEIN_MODEL)
+    ap.add_argument("--cli", required=True, help="path to the mflux entrypoint")
+    ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--steps", type=int, default=4)
     ap.add_argument("--size", type=int, default=1024)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--quantize", type=int, default=4)
+    ap.add_argument("--quantize", type=int, default=DEFAULT_QUANT)
     ap.add_argument("--timeout", type=int, default=900)
     args = ap.parse_args()
 

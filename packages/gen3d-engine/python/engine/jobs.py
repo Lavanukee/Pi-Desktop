@@ -220,15 +220,17 @@ class JobManager:
     def _image_worker(self, prompt: str, out: Path) -> tuple[Path, Path, list[str], Path]:
         """(venv_python, script, args, cwd) for text→image — Klein first.
 
-        MEASURED, same prompt/size/steps at 1024px: Mage-Flow-Turbo on PyTorch
-        MPS 71s, FLUX.2 Klein 4B on MLX 13s — 5.5x. So Klein is the default and
-        Mage-Flow is the fallback for machines where mflux was never installed.
+        MEASURED at 1024px, same prompt/steps, every output checked by eye:
+        Mage-Flow-Turbo on PyTorch MPS 71s vs the same model on MLX at 8-bit
+        11s / 14.69 GB — 6.5x, and it also beat FLUX.2 Klein (13s / 17.94 GB).
+        So the MLX path is the default; the MPS worker stays as the fallback for
+        a machine where mflux was never installed.
         """
         klein = self.registry.mflux_cli()
         if klein.exists():
             return (
                 self.registry.venv_python("mflux"),
-                WORKERS_DIR / "klein_worker.py",
+                WORKERS_DIR / "mlx_image_worker.py",
                 ["--prompt", prompt, "--out", str(out), "--cli", str(klein)],
                 self.registry.tool_dir("mflux"),
             )

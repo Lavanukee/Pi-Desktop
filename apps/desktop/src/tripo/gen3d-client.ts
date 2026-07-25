@@ -27,6 +27,10 @@ interface Gen3dState {
   downloads: Readonly<Record<string, Gen3dDownloadUpdate>>;
   /** The active generation/stage job (one at a time in the UI). */
   job: Gen3dJobUpdate | null;
+  /** The job whose model is now ON SCREEN. Sticky for the life of the job: the
+   * artifact only rides ONE update, but the generating UI has to stay in its
+   * "model is visible, keep refining" phase for every update after it. */
+  modelReadyJobId: string | null;
   /** Show the engine-download panel (fills the left column). */
   downloadPromptOpen: boolean;
   /** A model to scroll to + highlight when the panel opens (from a stage CTA). */
@@ -69,6 +73,7 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
   resolutions: { low: 512, medium: 1024, high: 1536 },
   downloads: {},
   job: null,
+  modelReadyJobId: null,
   downloadPromptOpen: false,
   downloadFocus: null,
 
@@ -123,9 +128,9 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
     const job = get().job;
     if (job === null) return;
     await window.piDesktop.invoke('gen3d:cancel', { jobId: job.jobId }).catch(() => null);
-    set({ job: null });
+    set({ job: null, modelReadyJobId: null });
   },
-  clearJob: () => set({ job: null }),
+  clearJob: () => set({ job: null, modelReadyJobId: null }),
 }));
 
 /** Human size: 16.2 GB / 640 MB. */
@@ -159,6 +164,17 @@ const jobHumanoid = new Map<string, boolean>();
 /** Jobs dispatched as shape probes — the only ones that ASK the user. */
 const probeJobs = new Set<string>();
 
+/**
+ * The asset a GENERATE job already created, so its later artifacts extend that
+ * asset instead of piling up beside it.
+ *
+ * A textured run emits the untextured geometry first and the textured model
+ * minutes later. Both are `model-glb` on the same job, so both used to become
+ * separate top-level assets — the same clutter the version tree exists to kill,
+ * just on the generate path instead of the stage path.
+ */
+const jobRootAsset = new Map<string, { assetId: string; versionId: string }>();
+
 /** Pull a freshly-produced GLB artifact into the viewport — as a NODE on the
  * originating asset's history tree when the job was a stage op, or as a brand
  * new asset when it was a fresh generation. This is how generated geometry
@@ -168,11 +184,16 @@ async function ingestModelArtifact(
   label: string,
   origin: StageOrigin | undefined,
   humanoidVerdict: boolean,
+  jobId: string,
+  previewPath?: string,
 ): Promise<void> {
   if (importedArtifacts.has(path)) return;
   importedArtifacts.add(path);
   try {
-    const res = await fetch(pdFileUrl(path));
+    // Display the preview when the engine says the real mesh is too heavy; the
+    // asset still records `path`, so every downstream stage runs on the full
+    // mesh rather than on what we happened to draw.
+    const res = await fetch(pdFileUrl(previewPath ?? path));
     if (!res.ok) {
       importedArtifacts.delete(path);
       return;
@@ -180,6 +201,9 @@ async function ingestModelArtifact(
     const buffer = await res.arrayBuffer();
     const name = path.split('/').pop() ?? 'generated.glb';
     const io = await import('./viewer-io');
+    // The model is in the viewer from here on — the generating UI switches out
+    // of its full-viewport phase and into the slim bottom bar.
+    const markVisible = () => useGen3dStore.setState({ modelReadyJobId: jobId });
     if (origin !== undefined) {
       io.addStageVersion(origin.assetId, origin.versionId, name, 'glb', buffer, {
         op: origin.op,
@@ -187,13 +211,28 @@ async function ingestModelArtifact(
         diskPath: path,
         humanoid: humanoidVerdict,
       });
+      markVisible();
       return;
     }
-    io.importModelBuffer(name, 'glb', buffer, {
+    const priorRoot = jobRootAsset.get(jobId);
+    if (priorRoot !== undefined) {
+      // A later artifact from the SAME generate job (texture after geometry):
+      // a new version of what we already showed, not a second asset.
+      io.addStageVersion(priorRoot.assetId, priorRoot.versionId, name, 'glb', buffer, {
+        op: 'texture',
+        label,
+        diskPath: path,
+      });
+      markVisible();
+      return;
+    }
+    const newId = io.importModelBuffer(name, 'glb', buffer, {
       source: 'generated',
       created: label,
       diskPath: path,
     });
+    jobRootAsset.set(jobId, { assetId: newId, versionId: newId });
+    markVisible();
   } catch {
     importedArtifacts.delete(path); // retry on the next update
   }
@@ -232,12 +271,15 @@ export function ensureGen3dWired(): void {
         update.artifact.label,
         origin,
         jobHumanoid.get(update.jobId) === true,
+        update.jobId,
+        update.artifact.previewPath,
       );
     }
     if (update.done) {
       stageOrigins.delete(update.jobId);
       jobHumanoid.delete(update.jobId);
       probeJobs.delete(update.jobId);
+      jobRootAsset.delete(update.jobId);
     }
   });
   window.piDesktop.onEvent('gen3d:download', (update) => {

@@ -218,7 +218,10 @@ def main() -> None:
     remeshed.metadata["pd_topology"] = topology
 
     out_glb = out_dir / "retopo.glb"
-    remeshed.export(str(out_glb))
+    # WITH normals. AutoRemesher's OBJ carries none, and a GLB with POSITION as
+    # its only attribute renders BLACK under any standard PBR material — the
+    # viewer has nothing to light. (The viewer also computes them defensively.)
+    remeshed.export(str(out_glb), include_normals=True)
     (out_dir / "retopo-topology.json").write_text(json.dumps(topology_summary(topology), indent=2))
 
     quad_pct = round(100 * quads / total_polys)

@@ -363,6 +363,13 @@ class JobManager:
                         "kind": msg.get("kind", "model-glb"),
                         "path": msg.get("path", ""),
                         "label": msg.get("label", ""),
+                        # A viewer-sized stand-in when the real mesh is too
+                        # heavy to display (see trellis_worker).
+                        **(
+                            {"previewPath": msg["previewPath"]}
+                            if msg.get("previewPath")
+                            else {}
+                        ),
                     },
                 )
             elif event == "probe":

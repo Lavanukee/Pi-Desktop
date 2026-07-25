@@ -368,7 +368,60 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
     let importedId: string | null = null;
     /** Quad topology of the loaded asset (retopo results only). */
     let importedTopology: PdTopology | null = null;
+    /** Which asset the current wireframe belongs to (null = not built yet). */
+    let wireBuiltFor: string | null = null;
+    /**
+     * The asset whose load is IN FLIGHT.
+     *
+     * applyState runs on every store change and kicks off loadImported whenever
+     * `assetId !== importedId` — but importedId is only assigned after the
+     * await completes, so every store write during a slow parse started ANOTHER
+     * parse of the same file. On a large mesh that turns one slow load into an
+     * unbounded pile-up of them, which is what wedged the window.
+     */
+    let loadingId: string | null = null;
     const importedBodies: BodyRef[] = [];
+
+    /**
+     * Build the model's REAL edge wireframe, on first need only.
+     *
+     * When the asset carries quad topology we draw the POLYGON edges the
+     * remesher produced (a cheap buffer fill); otherwise three's
+     * WireframeGeometry, which de-duplicates every triangle edge and is the
+     * expensive path — hence "on demand", not "on load".
+     */
+    const buildWireOverlay = (id: string): void => {
+      if (wireBuiltFor === id || importedBodies.length === 0) return;
+      wireBuiltFor = id;
+      const wires = new THREE.Group();
+      const quadEdges = importedTopology?.wireEdges;
+      for (const { mesh } of importedBodies) {
+        const wireMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.85 });
+        let seg: InstanceType<typeof THREE.LineSegments>;
+        if (quadEdges !== undefined && quadEdges.length > 0 && importedBodies.length === 1) {
+          const pos = mesh.geometry.getAttribute('position');
+          const pts = new Float32Array(quadEdges.length * 3);
+          for (let i = 0; i < quadEdges.length; i++) {
+            const v = quadEdges[i] ?? 0;
+            if (v >= pos.count) continue;
+            pts[i * 3] = pos.getX(v);
+            pts[i * 3 + 1] = pos.getY(v);
+            pts[i * 3 + 2] = pos.getZ(v);
+          }
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+          seg = new THREE.LineSegments(geo, wireMat);
+        } else {
+          seg = new THREE.LineSegments(new THREE.WireframeGeometry(mesh.geometry), wireMat);
+        }
+        mesh.updateWorldMatrix(true, false);
+        seg.applyMatrix4(mesh.matrixWorld);
+        wires.add(seg);
+      }
+      importedWire = wires as unknown as InstanceType<typeof THREE.LineSegments>;
+      scene.add(importedWire);
+      applyPalette();
+    };
 
     // Thumbnail capture queue: asset ids whose real preview is still pending.
     let pendingThumb: string | null = null;
@@ -443,8 +496,10 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
 
     /** Load an imported (registry) asset into the scene, replacing the last. */
     const loadImported = async (id: string): Promise<void> => {
+      if (loadingId === id) return; // already parsing this one — see loadingId
       const entry = importedModel(id);
       if (entry === undefined) return;
+      loadingId = id;
       let group: InstanceType<typeof THREE.Group> | null = null;
       try {
         if (entry.format === 'glb' || entry.format === 'gltf') {
@@ -460,9 +515,13 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
           group.add(mesh);
         }
       } catch {
+        loadingId = null;
         return; // unreadable file — leave the current scene as-is
       }
-      if (disposed || group === null) return;
+      if (disposed || group === null) {
+        loadingId = null;
+        return;
+      }
       if (importedGroup !== null) scene.remove(importedGroup);
       if (importedWire !== null) scene.remove(importedWire);
       importedBodies.length = 0;
@@ -479,44 +538,29 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       group.position.y -= bb2.min.y - GROUND_Y;
 
       collectBodies(group, importedBodies);
+      // A mesh with no NORMAL attribute renders BLACK under a standard material
+      // — there is nothing to light. AutoRemesher's OBJ has none, and plenty of
+      // user files don't either, so compute them rather than trusting the file.
+      for (const { mesh } of importedBodies) {
+        if (mesh.geometry.getAttribute('normal') === undefined) {
+          mesh.geometry.computeVertexNormals();
+        }
+      }
       // Quad topology the retopo worker recorded on the GLB, if this asset is a
       // retopology result (glTF itself can only carry triangles).
       importedTopology = readPdTopology(group);
 
-      // The model's REAL edge wireframe. When the asset carries quad topology we
-      // draw the POLYGON edges the remesher produced; otherwise the triangle
-      // edges, which is genuinely what the geometry is.
-      const wires = new THREE.Group();
-      const quadEdges = importedTopology?.wireEdges;
-      for (const { mesh } of importedBodies) {
-        const wireMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.85 });
-        let seg: InstanceType<typeof THREE.LineSegments>;
-        if (quadEdges !== undefined && quadEdges.length > 0 && importedBodies.length === 1) {
-          const pos = mesh.geometry.getAttribute('position');
-          const pts = new Float32Array(quadEdges.length * 3);
-          for (let i = 0; i < quadEdges.length; i++) {
-            const v = quadEdges[i] ?? 0;
-            if (v >= pos.count) continue;
-            pts[i * 3] = pos.getX(v);
-            pts[i * 3 + 1] = pos.getY(v);
-            pts[i * 3 + 2] = pos.getZ(v);
-          }
-          const geo = new THREE.BufferGeometry();
-          geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-          seg = new THREE.LineSegments(geo, wireMat);
-        } else {
-          seg = new THREE.LineSegments(new THREE.WireframeGeometry(mesh.geometry), wireMat);
-        }
-        mesh.updateWorldMatrix(true, false);
-        seg.applyMatrix4(mesh.matrixWorld);
-        wires.add(seg);
-      }
-      importedWire = wires as unknown as InstanceType<typeof THREE.LineSegments>;
-      importedWire.visible = false;
+      // The edge wireframe is built LAZILY — see buildWireOverlay. Constructing
+      // it here blocked the renderer for a MEASURED 1,558 ms on a 20 MB / 190k
+      // triangle TRELLIS result, which is the freeze the user hits mid-run when
+      // geometry lands while texturing continues. It is only ever visible in
+      // the retopo view, so it must not sit between the model and the screen.
+      importedWire = null;
+      wireBuiltFor = null;
 
       importedGroup = group;
       importedId = id;
-      scene.add(group, wires);
+      scene.add(group);
 
       // Real counts → asset row + (via applyState) the stats readout.
       let faces = 0;
@@ -541,6 +585,7 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
             : 'Triangle',
         );
       pendingThumb = id;
+      loadingId = null;
       applyState();
     };
 
@@ -654,8 +699,11 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       // Only the real model is ever on screen; the hero objects stay hidden.
       const showImported = importedId === assetId;
       if (importedGroup !== null) importedGroup.visible = showImported && s.meshVisible;
-      if (importedWire !== null)
-        importedWire.visible = showImported && stage === 'retopo' && s.meshVisible;
+      // Only the retopo view shows the edge wireframe — build it the first time
+      // it is actually asked for, never on the model's critical path.
+      const wantWire = showImported && stage === 'retopo' && s.meshVisible;
+      if (wantWire && importedId !== null) buildWireOverlay(importedId);
+      if (importedWire !== null) importedWire.visible = wantWire;
       if (meshModel !== null) meshModel.visible = false;
       if (rigModel !== null) rigModel.visible = false;
       quadWire.visible = false;

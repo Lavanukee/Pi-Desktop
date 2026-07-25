@@ -66,6 +66,10 @@ export interface Gen3dJobUpdate {
     readonly path: string;
     /** Label, e.g. "Untextured geometry" / "Textured model" / "Input image". */
     readonly label: string;
+    /** A viewer-sized copy to DISPLAY when the real mesh is too heavy for the
+     * renderer (TRELLIS geometry has measured 14.2M triangles). `path` stays
+     * the full-resolution mesh that downstream stages consume. */
+    readonly previewPath?: string;
   };
   /** Rig stage only: what the shape probe measured. */
   readonly humanoid?: Gen3dHumanoidProbe;

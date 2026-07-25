@@ -55,6 +55,15 @@ WATCHDOG_HELP = (
 )
 
 
+# What the VIEWER is handed for the geometry-first push. The raw marching-cubes
+# mesh is not a preview: a measured 1024_cascade run produced 14,264,186
+# triangles / 256 MB, and pushing that at the renderer wedged the window for
+# minutes (the user's "the app freezes completely"). The full-resolution file is
+# still written and is still what downstream stages consume — only what gets
+# DISPLAYED is capped.
+PREVIEW_FACE_BUDGET = 240_000
+
+
 def export_untextured_glb(mesh_out, out_path: Path) -> tuple[int, int]:
     import trimesh
 
@@ -63,6 +72,31 @@ def export_untextured_glb(mesh_out, out_path: Path) -> tuple[int, int]:
     tm = trimesh.Trimesh(vertices=verts, faces=faces)
     tm.export(str(out_path))
     return int(verts.shape[0]), int(faces.shape[0])
+
+
+def export_preview_glb(mesh_out, out_path: Path, full_faces: int) -> Path | None:
+    """A viewer-sized copy of the geometry. Returns None when the full mesh is
+    already small enough to display directly."""
+    if full_faces <= PREVIEW_FACE_BUDGET:
+        return None
+    import trimesh
+
+    try:
+        tm = trimesh.Trimesh(
+            vertices=mesh_out.vertices.cpu().numpy(),
+            faces=mesh_out.faces.cpu().numpy(),
+            process=False,
+        )
+        reduced = tm.simplify_quadric_decimation(face_count=PREVIEW_FACE_BUDGET)
+        reduced.export(str(out_path))
+        progress(
+            "geometry",
+            f"Preview ready — {len(reduced.faces):,} of {full_faces:,} triangles",
+        )
+        return out_path
+    except Exception as err:  # noqa: BLE001 — a preview must never fail the run
+        progress("geometry", f"preview simplification unavailable ({err})")
+        return None
 
 
 def bake_textures(mesh_out, out_path: Path, texture_size: int) -> None:
@@ -239,7 +273,17 @@ def main() -> None:
     if n_verts == 0 or n_faces == 0:
         emit(event="error", message=WATCHDOG_HELP)
         sys.exit(2)
-    artifact("geometry", "model-glb", str(geo_path), "Untextured geometry")
+    # The viewer gets the preview; `path` stays the full-resolution mesh so
+    # every downstream stage still runs on the real geometry.
+    preview = export_preview_glb(mesh_out, out_dir / "geometry-preview.glb", n_faces)
+    emit(
+        event="artifact",
+        stage="geometry",
+        kind="model-glb",
+        path=str(geo_path),
+        label="Untextured geometry",
+        **({"previewPath": str(preview)} if preview is not None else {}),
+    )
     stage_done(
         "geometry",
         f"Geometry done — {n_verts:,} vertices / {n_faces:,} triangles in {time.time() - t_gen:.0f}s",

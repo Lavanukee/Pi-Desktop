@@ -72,6 +72,10 @@ export interface SidecarJobEvent {
     readonly kind: 'image' | 'model-glb' | 'model-obj';
     readonly path: string;
     readonly label: string;
+    /** A viewer-sized copy to DISPLAY when the real mesh is too heavy for the
+     * renderer (TRELLIS geometry has measured 14.2M triangles). `path` stays
+     * the full-resolution mesh that downstream stages consume. */
+    readonly previewPath?: string;
   };
   /** Humanoid measurements from the rig stage's shape probe. */
   readonly humanoid?: HumanoidProbe;

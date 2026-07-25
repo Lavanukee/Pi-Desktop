@@ -71,6 +71,7 @@ interface Gen3dState {
       readonly adaptivity?: number;
       readonly probeOnly?: boolean;
       readonly requireHumanoid?: boolean;
+      readonly sourcePath?: string;
     },
   ) => Promise<string | null>;
   cancelJob: () => Promise<void>;
@@ -123,6 +124,13 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
     if (res === null || !res.ok) return res?.error ?? 'generation failed to start';
     if (res.jobId !== undefined) {
       set({ jobPlan: { jobId: res.jobId, stages: plannedStages(req) } });
+    }
+    // Clear the viewport: this job builds a NEW model, so the previous one must
+    // not sit there pretending to be it. jedd: "the plane stays in the
+    // background while we generate a completely new thing." A stage op is the
+    // opposite case — it transforms what is on screen, which stays put.
+    if (req.imageOnly !== true) {
+      useTripoStore.setState({ loadedAssetId: null, previewVersionId: null });
     }
     return null;
   },

@@ -69,6 +69,9 @@ const RADIAL = 16;
 const Y_TAIL = -1.35;
 const Y_NECK = 1.15;
 const GROUND_Y = -1.42;
+/** Asset-tile preview: rendered at 2x, stored at 1x (see captureThumb). */
+const THUMB_SIDE = 144;
+const THUMB_RENDER = 288;
 const radiusAt = (t: number): number => 0.14 + 0.5 * Math.exp(-(((t - 0.4) / 0.34) ** 2));
 const yAt = (t: number): number => Y_TAIL + (Y_NECK - Y_TAIL) * t;
 
@@ -131,6 +134,34 @@ function paintSegmentColors(geo: InstanceType<typeof THREE.BufferGeometry>): num
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   return parts;
+}
+
+/**
+ * Turn OFF mipmapping on a baked material's maps.
+ *
+ * A TRELLIS surface is stair-stepped voxel faces, so xatlas splits the atlas at
+ * nearly every edge: MEASURED on a 199,999-face helicopter, the exported GLB has
+ * 197,309 vertices — i.e. a chart per triangle. The atlas itself is correct
+ * (extracted and inspected; the charts are cleanly coloured, and sampling the
+ * voxel volume at each vertex agrees with the texture at its UV). But charts
+ * that small are destroyed by mip generation: each triangle is around a pixel
+ * on screen, the GPU drops to a high mip level, and every mip texel is an
+ * average of hundreds of UNRELATED charts. That is the coloured static jedd saw
+ * — "texturing is completely messed up" — and it is why raising the atlas from
+ * 1024 to 4096 did not help: a bigger base level still collapses the same way.
+ *
+ * Linear filtering with no mip chain samples the base level, which is the one
+ * that actually corresponds to the surface.
+ */
+function disableMipmaps(mat: InstanceType<typeof THREE.Material>): void {
+  const m = mat as unknown as Record<string, unknown>;
+  for (const key of ['map', 'metalnessMap', 'roughnessMap', 'emissiveMap', 'aoMap']) {
+    const tex = m[key] as InstanceType<typeof THREE.Texture> | null | undefined;
+    if (tex == null) continue;
+    tex.generateMipmaps = false;
+    tex.minFilter = THREE.LinearFilter;
+    tex.needsUpdate = true;
+  }
 }
 
 /** Does this material carry real baked maps (rather than a flat colour)? */
@@ -297,6 +328,10 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
     const grid = new THREE.GridHelper(10, 20);
     grid.position.y = GROUND_Y;
     scene.add(grid);
+
+    // Off-screen rig for asset-tile previews — see captureThumb.
+    const thumbTarget = new THREE.WebGLRenderTarget(THUMB_RENDER, THUMB_RENDER);
+    const thumbCam = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
 
     // Retopo quad-wire overlay for the SAMPLE (bind pose).
     const quadWire = buildQuadWire();
@@ -652,6 +687,7 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
         const own = mesh.material;
         if (!Array.isArray(own)) {
           own.side = THREE.DoubleSide;
+          disableMipmaps(own);
           originalMaterials.set(mesh, own);
         }
       }
@@ -957,18 +993,70 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       }
     };
 
-    /** Downscaled capture of the just-rendered frame → the asset's preview. */
+    /**
+     * The asset's preview: a framed three-quarter isometric of the model,
+     * rendered off-screen with its own camera.
+     *
+     * It used to be a centre-crop of whatever the user's camera happened to be
+     * pointing at when the model landed, so a tile could be a close-up of a
+     * wingtip, or the model half out of frame, and two assets shot from
+     * different angles were hard to tell apart. jedd: "it would be nice if the
+     * thumbnails were full in frame isometric views."
+     *
+     * Rendering to a target rather than reading the canvas keeps this off the
+     * visible frame entirely — the user's view never flinches when a capture
+     * happens. The ground disc and grid are hidden for the shot so the framing
+     * is the MODEL's bounding sphere and not a 14-unit floor.
+     */
     const captureThumb = (assetId: string) => {
-      const src = renderer.domElement;
-      const side = 144;
-      const canvas = document.createElement('canvas');
-      canvas.width = side;
-      canvas.height = side;
-      const ctx = canvas.getContext('2d');
-      if (ctx === null) return;
-      const s = Math.min(src.width, src.height);
-      ctx.drawImage(src, (src.width - s) / 2, (src.height - s) / 2, s, s, 0, 0, side, side);
-      useTripoStore.getState().setAssetThumb(assetId, canvas.toDataURL('image/jpeg', 0.82));
+      if (importedGroup === null) return;
+      const box = new THREE.Box3().setFromObject(importedGroup);
+      if (box.isEmpty()) return;
+      const sphere = box.getBoundingSphere(new THREE.Sphere());
+      if (!Number.isFinite(sphere.radius) || sphere.radius <= 0) return;
+
+      const dir = new THREE.Vector3(1, 0.72, 1).normalize();
+      const dist = (sphere.radius / Math.sin((thumbCam.fov * Math.PI) / 360)) * 1.05;
+      thumbCam.position.copy(sphere.center).addScaledVector(dir, dist);
+      thumbCam.lookAt(sphere.center);
+      thumbCam.near = Math.max(0.01, dist - sphere.radius * 3);
+      thumbCam.far = dist + sphere.radius * 3;
+      thumbCam.updateProjectionMatrix();
+
+      const groundWas = ground.visible;
+      const gridWas = grid.visible;
+      ground.visible = false;
+      grid.visible = false;
+      const prevTarget = renderer.getRenderTarget();
+      renderer.setRenderTarget(thumbTarget);
+      renderer.render(scene, thumbCam);
+      const pixels = new Uint8Array(THUMB_RENDER * THUMB_RENDER * 4);
+      renderer.readRenderTargetPixels(thumbTarget, 0, 0, THUMB_RENDER, THUMB_RENDER, pixels);
+      renderer.setRenderTarget(prevTarget);
+      ground.visible = groundWas;
+      grid.visible = gridWas;
+
+      const full = document.createElement('canvas');
+      full.width = THUMB_RENDER;
+      full.height = THUMB_RENDER;
+      const fctx = full.getContext('2d');
+      if (fctx === null) return;
+      const img = fctx.createImageData(THUMB_RENDER, THUMB_RENDER);
+      // readRenderTargetPixels returns bottom-up; ImageData is top-down.
+      const rowBytes = THUMB_RENDER * 4;
+      for (let y = 0; y < THUMB_RENDER; y += 1) {
+        const from = (THUMB_RENDER - 1 - y) * rowBytes;
+        img.data.set(pixels.subarray(from, from + rowBytes), y * rowBytes);
+      }
+      fctx.putImageData(img, 0, 0);
+
+      const out = document.createElement('canvas');
+      out.width = THUMB_SIDE;
+      out.height = THUMB_SIDE;
+      const octx = out.getContext('2d');
+      if (octx === null) return;
+      octx.drawImage(full, 0, 0, THUMB_SIDE, THUMB_SIDE);
+      useTripoStore.getState().setAssetThumb(assetId, out.toDataURL('image/jpeg', 0.82));
     };
 
     // ── render loop + frame/fps instrumentation (probe hooks) ───────────────
@@ -1033,6 +1121,7 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       texMat.dispose();
       generatedTexture.dispose();
       envTexture.dispose();
+      thumbTarget.dispose();
       pmrem.dispose();
       renderer.dispose();
       renderer.domElement.remove();

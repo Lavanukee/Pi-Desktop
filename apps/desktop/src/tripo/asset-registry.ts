@@ -41,6 +41,29 @@ const paths = new Map<string, string>();
 let counter = 0;
 let heldBytes = 0;
 
+/**
+ * A per-LAUNCH prefix, so ids from different sessions can never collide.
+ *
+ * `counter` is module state and resets to 0 every time the app starts, while
+ * the asset tree is persisted in localStorage — so the first asset of session 2
+ * was minted as `imported-1`, the id session 1 had already given to a different
+ * model. Everything downstream keys off that id, so a collision meant:
+ *
+ *   - two cards for one model, both matching `selectedAssetId` (jedd: "there's
+ *     2 images on a plane on the right even though they're the same, when I
+ *     click on one both highlight blue")
+ *   - a thumbnail capture landing on EVERY entry sharing the id ("generating
+ *     that new model finally will just replace all the images of every item in
+ *     the sidebar")
+ *   - `assets.find(a => a.id === loadedAssetId)` resolving to the OLD entry, so
+ *     the viewport kept showing the previous model and the new card sat blank.
+ *
+ * A launch-unique prefix fixes all three at the source. It is deliberately NOT
+ * a persisted counter: nothing may depend on ids being sequential, and a value
+ * derived from the launch cannot be corrupted by a half-written settings file.
+ */
+const SESSION = Math.random().toString(36).slice(2, 8);
+
 /** The imported-model format for a filename, or null when unsupported. */
 export function importedFormatOf(fileName: string): ImportedFormat | null {
   const ext = fileName.toLowerCase().split('.').pop() ?? '';
@@ -67,7 +90,7 @@ export function registerImportedModel(
   diskPath?: string,
 ): string {
   counter += 1;
-  const id = `imported-${counter}`;
+  const id = `imported-${SESSION}-${counter}`;
   registry.set(id, {
     name,
     format,

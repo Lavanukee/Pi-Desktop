@@ -225,7 +225,14 @@ export function loadAssetTree(): void {
         Array.isArray((a as StudioAsset).versions) &&
         (a as StudioAsset).versions.length > 0,
     );
-    if (assets.length > 0) useTripoStore.setState({ assets });
+    // Trees written before ids were launch-unique can contain the SAME id
+    // twice, which renders as two cards that select and re-thumbnail together.
+    // Keep the newest of each — the tree is stored newest-first — so an install
+    // that already has the collision heals on its next launch instead of
+    // needing the library cleared by hand.
+    const seen = new Set<string>();
+    const deduped = assets.filter((a) => (seen.has(a.id) ? false : (seen.add(a.id), true)));
+    if (deduped.length > 0) useTripoStore.setState({ assets: deduped });
   } catch {
     // Corrupt payload — start clean rather than crash the studio.
   }

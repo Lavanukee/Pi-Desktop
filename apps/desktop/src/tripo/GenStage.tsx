@@ -210,29 +210,48 @@ function Chunk({
   );
 }
 
-/** The whole bar: one chunk per stage this job will actually run. */
+/**
+ * The whole bar: one chunk per stage this job will actually run.
+ *
+ * The percentage is derived FROM the chunks — (finished chunks + how far into
+ * the active one) / total — rather than taken from the engine's own overall
+ * figure. jedd: "that progressbar makes no sense", and it didn't: the engine's
+ * overall is weighted by expected stage cost, so the hero showed a Modeling
+ * chunk filled to its last tick sitting next to "65%". One of those had to go,
+ * and the chunks are the thing the user is actually looking at.
+ *
+ * `onPercent` hands the derived number back up so the readouts agree with the
+ * bar by construction instead of by coincidence.
+ */
 function ChunkedProgress({
   stages,
   current,
   percent,
   indeterminate,
   size,
-  overall,
+  onPercent,
 }: {
   readonly stages: readonly Gen3dRole[];
   readonly current: Gen3dRole;
   readonly percent: number;
   readonly indeterminate: boolean;
   readonly size: 'hero' | 'slim';
-  readonly overall: number;
+  readonly onPercent?: (value: number) => void;
 }): JSX.Element {
   // A plan that does not contain the running stage cannot describe this job
   // (a restored window, or an engine that inserted a stage) — show what is
   // actually running rather than a chain with nothing highlighted.
   const plan = stages.includes(current) ? stages : [current];
   const at = plan.indexOf(current);
-  const eased = useEased(percent, !indeterminate);
+  // A RUNNING stage never fills its last tick. A full row of blue next to a
+  // label still in the present tense reads as stuck; full means green means
+  // done, with no exceptions, so the chunk can only complete by advancing.
+  const eased = Math.min(useEased(percent, !indeterminate), 94);
   const stalled = useStalled(percent, !indeterminate);
+  const derived = ((at + eased / 100) / plan.length) * 100;
+  useEffect(() => {
+    onPercent?.(derived);
+  }, [derived, onPercent]);
   return (
     <div
       className={`tp-chunks tp-chunks-${size}`}
@@ -241,7 +260,7 @@ function ChunkedProgress({
       aria-valuemin={0}
       aria-valuemax={100}
       aria-label={`${STAGE_WORD[current].doing}, stage ${at + 1} of ${plan.length}`}
-      {...(indeterminate ? {} : { 'aria-valuenow': Math.round(overall) })}
+      {...(indeterminate ? {} : { 'aria-valuenow': Math.round(derived) })}
     >
       {plan.map((role, i) => (
         <Chunk
@@ -268,6 +287,8 @@ export function GenStage(): JSX.Element | null {
   const clearJob = useGen3dStore((s) => s.clearJob);
   const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
   const elapsed = useElapsed(job?.jobId ?? null, job?.done ?? true);
+  // The bar owns the number; the readouts follow it. See ChunkedProgress.
+  const [shownPercent, setShownPercent] = useState(0);
 
   // A finished job's bar should not sit over the result forever — but it must
   // stay long enough to actually read. Failures and cancellations never
@@ -287,13 +308,19 @@ export function GenStage(): JSX.Element | null {
   // already loaded (every downstream stage).
   const showingModel = loadedAssetId !== null && (modelReadyJobId === job.jobId || !isBuildJob(job));
   const indeterminate = !job.done && job.stagePercent === 0 && job.overallPercent === 0;
+  // The heading is about the JOB; the chunks say which stage. Naming the stage
+  // here too gave "Building geometry" as a title over a chunk labelled
+  // "Modeling" — the same fact twice, in two vocabularies. A failure still has
+  // to name what failed, so that case keeps the stage.
   const title = failed
     ? `${STAGE_TITLE[job.stage]} failed`
     : cancelled
       ? 'Cancelled'
       : job.done
         ? 'Done'
-        : STAGE_TITLE[job.stage];
+        : isBuildJob(job) || job.stage === 'texture'
+          ? 'Building your model'
+          : STAGE_TITLE[job.stage];
   // The worker's last line is often just "Done", which would read as
   // "Done · Done" beside the title. Don't echo the title back.
   const rawDetail = job.message.length > 0 ? job.message : STAGE_HINT[job.stage];
@@ -304,9 +331,9 @@ export function GenStage(): JSX.Element | null {
       stages={stages}
       current={job.stage}
       percent={job.stagePercent > 0 ? job.stagePercent : job.overallPercent}
-      overall={job.overallPercent}
       indeterminate={indeterminate}
       size={size}
+      onPercent={setShownPercent}
     />
   );
 
@@ -326,7 +353,7 @@ export function GenStage(): JSX.Element | null {
             {elapsed !== null && !job.done ? <span className="tp-genfoot-dim"> · {elapsed}</span> : null}
           </span>
           {!job.done && !failed && !cancelled && !indeterminate ? (
-            <span className="tp-genfoot-pct">{Math.round(job.overallPercent)}%</span>
+            <span className="tp-genfoot-pct">{Math.round(shownPercent)}%</span>
           ) : null}
           {job.done || failed || cancelled ? (
             <button
@@ -364,7 +391,7 @@ export function GenStage(): JSX.Element | null {
         {bar('hero')}
         <div className="tp-genhero-meta">
           {!indeterminate ? (
-            <span className="tp-genhero-pct">{Math.round(job.overallPercent)}%</span>
+            <span className="tp-genhero-pct">{Math.round(shownPercent)}%</span>
           ) : (
             <span className="tp-genhero-pct tp-genfoot-dim">working…</span>
           )}

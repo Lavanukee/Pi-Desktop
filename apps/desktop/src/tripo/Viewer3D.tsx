@@ -42,7 +42,7 @@ import {
 } from '@pi-desktop/canvas/three';
 import type { JSX } from 'react';
 import { useEffect, useRef } from 'react';
-import { importedModel } from './asset-registry';
+import { ensureModelBytes } from './asset-registry';
 import { HERO_MESH_GLB_B64, HERO_RIG_GLB_B64 } from './assets/hero-glb';
 import { useTripoStore } from './store';
 import { setViewerExportHandler, type ViewerExportRequest } from './viewer-io';
@@ -383,6 +383,39 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
     const importedBodies: BodyRef[] = [];
 
     /**
+     * Release everything an object tree owns on the GPU.
+     *
+     * Swapping models only ever did scene.remove(), so every asset and every
+     * version switch leaked its geometries, materials and textures for the life
+     * of the session — unbounded growth in both the renderer heap and GPU
+     * memory, and a dead renderer looks exactly like the blank window the user
+     * hit. three.js never does this for you.
+     */
+    const disposeTree = (root: InstanceType<typeof THREE.Object3D> | null): void => {
+      if (root === null) return;
+      root.traverse((obj) => {
+        const mesh = obj as InstanceType<typeof THREE.Mesh>;
+        mesh.geometry?.dispose?.();
+        const mat = mesh.material;
+        // Shared studio materials (clay/normal/seg/tex) are disposed at unmount
+        // — only dispose the ones that came in with the file.
+        const owned = (m: InstanceType<typeof THREE.Material>) => {
+          if (m === clayMat || m === normalMat || m === segMat || m === texMat) return;
+          if (m === wireOverlayMat) return;
+          for (const key of Object.keys(m) as (keyof typeof m)[]) {
+            const value = m[key] as unknown;
+            if (value !== null && typeof value === 'object' && 'isTexture' in value) {
+              (value as InstanceType<typeof THREE.Texture>).dispose();
+            }
+          }
+          m.dispose();
+        };
+        if (Array.isArray(mat)) for (const m of mat) owned(m);
+        else if (mat != null) owned(mat as InstanceType<typeof THREE.Material>);
+      });
+    };
+
+    /**
      * Build the model's REAL edge wireframe, on first need only.
      *
      * When the asset carries quad topology we draw the POLYGON edges the
@@ -497,9 +530,16 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
     /** Load an imported (registry) asset into the scene, replacing the last. */
     const loadImported = async (id: string): Promise<void> => {
       if (loadingId === id) return; // already parsing this one — see loadingId
-      const entry = importedModel(id);
-      if (entry === undefined) return;
       loadingId = id;
+      // May be a re-read: the registry is bounded, and a tree restored from a
+      // previous session never had these bytes in the first place.
+      const s0 = useTripoStore.getState();
+      const meta = s0.assets.flatMap((a) => a.versions).find((v) => v.id === id);
+      const entry = await ensureModelBytes(id, meta?.diskPath);
+      if (entry === undefined || disposed) {
+        loadingId = null;
+        return;
+      }
       let group: InstanceType<typeof THREE.Group> | null = null;
       try {
         if (entry.format === 'glb' || entry.format === 'gltf') {
@@ -522,8 +562,18 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
         loadingId = null;
         return;
       }
-      if (importedGroup !== null) scene.remove(importedGroup);
-      if (importedWire !== null) scene.remove(importedWire);
+      if (importedGroup !== null) {
+        scene.remove(importedGroup);
+        disposeTree(importedGroup);
+      }
+      if (importedWire !== null) {
+        scene.remove(importedWire);
+        disposeTree(importedWire);
+      }
+      // The wireframe-overlay clones share the outgoing geometry, so they must
+      // go with it rather than linger pointing at disposed buffers.
+      for (const [, overlay] of wireOverlays) scene.remove(overlay);
+      wireOverlays.clear();
       importedBodies.length = 0;
 
       // Normalize: fit to a ~2.6-unit height, feet on the ground plane.

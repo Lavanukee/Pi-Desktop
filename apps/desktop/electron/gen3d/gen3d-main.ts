@@ -45,6 +45,11 @@ import {
 import { app, BrowserWindow, type IpcMain, type WebContents } from 'electron';
 import type { AppEventMap } from '../ipc-contract';
 import type { Gen3dInvokeMap, Gen3dModelId, Gen3dModelInfo } from './gen3d-contract';
+import {
+  installRendererHealth,
+  startMemorySampling,
+  stopMemorySampling,
+} from './renderer-health';
 
 const log = createLogger('desktop:gen3d');
 const events = createIpcEventSender<AppEventMap>();
@@ -202,7 +207,10 @@ function handleSidecarEvent(value: unknown): void {
     const jobId = String(event.jobId);
     const plan = jobPlans.get(jobId) ?? planGenerate('image', true);
     const update: JobUpdate = mapJobEvent(plan, event as unknown as SidecarJobEvent);
-    if (update.done) jobPlans.delete(jobId);
+    if (update.done) {
+      jobPlans.delete(jobId);
+      stopMemorySampling();
+    }
     broadcast('gen3d:job', {
       jobId: update.jobId,
       stage: update.stage,
@@ -321,6 +329,7 @@ const handlers: IpcHandlers<Gen3dInvokeMap> = {
     return res ?? { ok: false };
   },
   'gen3d:generate': async (req) => {
+    startMemorySampling(`generate:${req.kind}:${req.resolution}`);
     const res = await sidecarPost<{ ok: boolean; jobId?: string; error?: string }>(
       '/generate',
       req,
@@ -332,6 +341,7 @@ const handlers: IpcHandlers<Gen3dInvokeMap> = {
     return res;
   },
   'gen3d:stage': async (req) => {
+    startMemorySampling(`stage:${req.op}`);
     const res = await sidecarPost<{ ok: boolean; jobId?: string; error?: string }>('/stage', req);
     if (res === null) return { ok: false, error: ENGINE_DOWN };
     if (res.ok && res.jobId !== undefined) {
@@ -351,7 +361,11 @@ export function registerGen3dIpc(
   _getWebContents: () => WebContents | null,
 ): void {
   registerIpcHandlers<Gen3dInvokeMap>(ipcMain, handlers, { allowSender });
+  // Record HOW the renderer dies if it does. A blank window that ignores Cmd+R
+  // is a dead render process, and only the main process can say why.
+  installRendererHealth();
   app.on('before-quit', () => {
+    stopMemorySampling();
     eventsAbort.abort();
     sidecar?.dispose();
   });

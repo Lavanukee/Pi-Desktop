@@ -119,7 +119,7 @@ export function importModelBuffer(
     readonly diskPath?: string;
   },
 ): string {
-  const id = registerImportedModel(fileName, format, buffer);
+  const id = registerImportedModel(fileName, format, buffer, opts.diskPath);
   const s = useTripoStore.getState();
   s.addAsset({
     id,
@@ -165,7 +165,7 @@ export function addStageVersion(
     readonly humanoid?: boolean;
   },
 ): string {
-  const id = registerImportedModel(fileName, format, buffer);
+  const id = registerImportedModel(fileName, format, buffer, opts.diskPath);
   useTripoStore.getState().addVersion(assetId, parentVersionId, {
     id,
     parentId: parentVersionId,

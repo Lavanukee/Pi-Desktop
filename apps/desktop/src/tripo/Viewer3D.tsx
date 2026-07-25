@@ -133,6 +133,19 @@ function paintSegmentColors(geo: InstanceType<typeof THREE.BufferGeometry>): num
   return parts;
 }
 
+/** Does this material carry real baked maps (rather than a flat colour)? */
+function hasTextureMaps(mat: InstanceType<typeof THREE.Material>): boolean {
+  const m = mat as {
+    map?: unknown;
+    metalnessMap?: unknown;
+    roughnessMap?: unknown;
+    emissiveMap?: unknown;
+  };
+  return (
+    m.map != null || m.metalnessMap != null || m.roughnessMap != null || m.emissiveMap != null
+  );
+}
+
 /** Generate the procedural "generated texture": muted painterly bands +
  * speckle. Returns an sRGB CanvasTexture (the Hunyuan-Paint stage's demo). */
 function buildGeneratedTexture(): InstanceType<typeof THREE.CanvasTexture> {
@@ -291,13 +304,24 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
     scene.add(quadWire);
 
     // ── shared materials for the render modes ───────────────────────────────
-    const normalMat = new THREE.MeshNormalMaterial();
+    // EVERY studio material is DOUBLE-SIDED.
+    //
+    // three.js culls back faces by default, and generated meshes always carry
+    // some inconsistently-wound triangles (marching cubes emits them, and
+    // quadric decimation flips more). Each one then renders as a hole onto the
+    // dark background, so the model looks shot through with black specks — what
+    // jedd has been calling the debris issue. It is NOT debris: the same preview
+    // file measured 99.7% one connected component and renders perfectly clean in
+    // an offline double-sided renderer. Showing the back of a triangle is the
+    // right call for a modelling viewport anyway; showing the void is not.
+    const normalMat = new THREE.MeshNormalMaterial({ side: THREE.DoubleSide });
     // Clay is a FIXED warm white/grey (jedd) — never theme-resolved, so it can't
     // go dark in dark mode.
     const clayMat = new THREE.MeshStandardMaterial({
       color: '#d9d9de',
       metalness: 0.02,
       roughness: 0.85,
+      side: THREE.DoubleSide,
     });
     // The wireframe TOGGLE overlay: edge lines drawn ON TOP of the active mode
     // (a second skinned/static pass per mesh — see ensureWireOverlay).
@@ -309,9 +333,17 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1,
     });
-    const segMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
+    const segMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.6,
+      side: THREE.DoubleSide,
+    });
     const generatedTexture = buildGeneratedTexture();
-    const texMat = new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0.05 });
+    const texMat = new THREE.MeshStandardMaterial({
+      roughness: 0.55,
+      metalness: 0.05,
+      side: THREE.DoubleSide,
+    });
     // Assets whose texture stage has run — Textured mode maps only those.
     const texturedAssets = new Set<string>();
     // Geometries already painted with segment colors.
@@ -350,6 +382,21 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
     interface BodyRef {
       readonly mesh: InstanceType<typeof THREE.Mesh>;
     }
+    /**
+     * The material a loaded file brought with it, per mesh.
+     *
+     * TRELLIS bakes real PBR — baseColorTexture, metallicRoughnessTexture (with
+     * roughness in G and metallic in B) and alphaMode BLEND, i.e. jedd's four
+     * channels: "Base Color, Roughness, Metallic, and Opacity". Textured mode
+     * used to throw all of that away and paint a procedural stand-in left over
+     * from the demo build, so the bake was invisible no matter how well it ran.
+     * Keep the originals so Textured mode can show what was actually baked, and
+     * fall back to the stand-in only for models that carry no maps at all.
+     */
+    const originalMaterials = new WeakMap<
+      InstanceType<typeof THREE.Mesh>,
+      InstanceType<typeof THREE.Material>
+    >();
     let meshModel: InstanceType<typeof THREE.Group> | null = null;
     let rigModel: InstanceType<typeof THREE.Group> | null = null;
     let skinned: InstanceType<typeof THREE.SkinnedMesh> | null = null;
@@ -412,6 +459,11 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
         };
         if (Array.isArray(mat)) for (const m of mat) owned(m);
         else if (mat != null) owned(mat as InstanceType<typeof THREE.Material>);
+        // The file's own material is only ON the mesh in Textured mode; in every
+        // other mode a shared studio material has replaced it and the original —
+        // which owns the baked texture images — would go unreleased.
+        const original = originalMaterials.get(mesh);
+        if (original !== undefined && original !== mat) owned(original);
       });
     };
 
@@ -595,6 +647,13 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
         if (mesh.geometry.getAttribute('normal') === undefined) {
           mesh.geometry.computeVertexNormals();
         }
+        // Stash the file's own material before the render mode overwrites it,
+        // and make it double-sided for the same reason the studio materials are.
+        const own = mesh.material;
+        if (!Array.isArray(own)) {
+          own.side = THREE.DoubleSide;
+          originalMaterials.set(mesh, own);
+        }
       }
       // Quad topology the retopo worker recorded on the GLB, if this asset is a
       // retopology result (glTF itself can only carry triangles).
@@ -774,6 +833,14 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
         const parts = ['Top', 'Middle', 'Base'];
         if (s.segmentParts.length !== parts.length) {
           useTripoStore.getState().set('segmentParts', parts);
+        }
+      } else if (s.renderMode === 'textured') {
+        // Show the maps the file actually carries; only models with none fall
+        // back to the procedural stand-in.
+        const fallback = modeMaterial(assetId);
+        for (const { mesh } of activeBodies) {
+          const own = originalMaterials.get(mesh);
+          mesh.material = own !== undefined && hasTextureMaps(own) ? own : fallback;
         }
       } else {
         const mat = modeMaterial(assetId);

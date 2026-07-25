@@ -37,21 +37,33 @@ Output is a structurally complete rig: a skin with inverseBindMatrices, the mesh
 carrying JOINTS_0 + WEIGHTS_0, and a real bone hierarchy (85 joints at 10 beams
 over 14,807 vertices).
 
-*** NOT WIRED INTO THE STUDIO YET — ONE OPEN BUG. ***
+*** NOT WIRED INTO THE STUDIO YET — THE RIG IS WRONG. ***
 
-The predicted skeleton does not line up with the exported mesh. The predictions
-themselves are GOOD: the joints come out in a per-axis normalised frame (each
-axis independently scaled to [-1, 1]) and scaling them back by the mesh's
-per-axis half-extents puts **100% of them inside the mesh**, versus 40% as
-written. So this is a coordinate-frame bug in the hand-off, not a bad model and
-not MPS numerics — worth stating plainly, because "the rig looks wrong" would
-otherwise read as the port having failed when the hard part demonstrably works.
+The predicted skeleton does not correspond to the mesh, and the environment is
+NOT the remaining problem — the model runs, it is the OUTPUT that is bad.
 
-Upstream's `transfer` endpoint (map the rig back onto the source file) does not
-reconcile it either — it fixes the MESH's frame, not the joints'. The remaining
-work is to find where the model's normalisation is meant to be inverted and
-apply it to the joints before export. Until then this worker is reachable only
-from the command line.
+I first measured this by asking how many joints fall inside the mesh's bounding
+box, got it up from 40% to 100% with a per-axis rescale (fit_joints_to_mesh
+below), and concluded the predictions were fine and only their frame was wrong.
+That conclusion was WRONG: a bounding box is mostly empty space, so containment
+proves almost nothing. The test that means something is whether each joint sits
+near the vertices it actually drives — take the vertices weighted >0.3 to a
+joint, and measure the distance from the joint to their weighted centroid:
+
+    before the rescale   median 36.6% of the model diagonal
+    after  the rescale   median 39.9%
+
+A usable rig is a few percent. The joints and the skinning weights simply do not
+agree with each other, which no coordinate transform can fix.
+
+Still open: whether this is MPS numerics or something wrong in how this worker
+drives the pipeline. Ruled out so far — beam count (10 beams, the upstream
+default, is no better than 3) and the export path (upstream's `transfer`
+endpoint changes the mesh's frame, not the joints'). The CPU/fp32 control is the
+next experiment and has not completed yet.
+
+`--fit-joints` is left ON because it is strictly better than nothing, but it is
+cosmetic: it puts the skeleton in the right neighbourhood, not the right place.
 
 Mesh I/O goes through upstream's own bpy server (Blender as a Python module),
 spawned here and shut down with the job. It takes no dock tile (verified via
@@ -124,6 +136,45 @@ def wait_for_bpy(timeout: float) -> None:
     msg = "the Blender mesh loader did not start"
     emit(event="error", message=msg)
     raise RigFailure(msg)
+
+
+def fit_joints_to_mesh(asset) -> None:
+    """Map the predicted joints out of the unit cube and onto the mesh.
+
+    MEASURED on the giraffe, straight off the model (asset level, before any
+    export):
+
+        vertices   X ±0.170   Y ±0.786   Z ±1.000     (uniformly normalised —
+                                                       longest axis hits 1)
+        joints     X ±~0.86   Y ±~0.82   Z ±~0.78     (near-isotropic)
+
+    The mesh is very anisotropic and the joints are not, because the joints come
+    back in a cube normalised PER AXIS. Rescaling each axis by the mesh's own
+    half-extent puts 100% of the joints inside the mesh's bounding box, against
+    40% left alone.
+
+    That is worth doing but it is NOT a fix, and the bounding-box number should
+    not be read as one: a giraffe's box is mostly air. Measured against the
+    vertices each joint actually drives, the rescale changes nothing (36.6% →
+    39.9% of the model diagonal, where a usable rig is a few percent). See the
+    module docstring — the rig itself is wrong, and this only tidies where it
+    sits.
+
+    Joints live in `matrix_local[:, :3, 3]` (Asset.joints is a read-only view of
+    it), so the translation columns are what get rewritten. This is a rigid
+    per-axis scale: it moves joints, never the mesh, and leaves the skinning
+    weights — which are per-vertex-per-joint and frame-independent — untouched.
+    """
+    import numpy as np
+
+    if asset.matrix_local is None or asset.vertices is None:
+        return
+    v = np.asarray(asset.vertices)
+    lo, hi = v.min(axis=0), v.max(axis=0)
+    half = (hi - lo) / 2.0
+    centre = (hi + lo) / 2.0
+    for axis in range(3):
+        asset.matrix_local[:, axis, 3] = asset.matrix_local[:, axis, 3] * half[axis] + centre[axis]
 
 
 def run(args) -> None:
@@ -204,6 +255,9 @@ def run(args) -> None:
             10,
         )
 
+        if args.fit_joints:
+            fit_joints_to_mesh(asset)
+
         out_path = out_dir / "rigged.glb"
         import requests
 
@@ -280,8 +334,10 @@ def main() -> None:
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--repetition-penalty", type=float, default=2.0)
     # Map the rig back onto the source mesh (see the export block).
-    ap.add_argument("--no-transfer", dest="transfer", action="store_false")
-    ap.set_defaults(transfer=True)
+    ap.add_argument("--transfer", action="store_true",
+                    help="map the rig onto the SOURCE file instead of exporting the asset")
+    ap.add_argument("--no-fit-joints", dest="fit_joints", action="store_false")
+    ap.set_defaults(transfer=False, fit_joints=True)
     ap.add_argument("--bpy-timeout", type=float, default=180.0)
     args = ap.parse_args()
 

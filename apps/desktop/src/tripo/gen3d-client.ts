@@ -9,7 +9,6 @@
  * prompt instead of dead buttons.
  */
 import { create } from 'zustand';
-import { type TripoOp, useTripoStore } from './store';
 import type {
   Gen3dDownloadUpdate,
   Gen3dJobUpdate,
@@ -17,6 +16,7 @@ import type {
   Gen3dModelInfo,
   Gen3dResolution,
 } from '../../electron/gen3d/gen3d-contract';
+import { type TripoOp, useTripoStore } from './store';
 
 interface Gen3dState {
   loaded: boolean;
@@ -175,6 +175,23 @@ const probeJobs = new Set<string>();
  */
 const jobRootAsset = new Map<string, { assetId: string; versionId: string }>();
 
+/**
+ * Serialises artifact ingestion PER JOB.
+ *
+ * `ingestModelArtifact` is async and fire-and-forget, but it only records
+ * `jobRootAsset` after several awaits (fetch → arrayBuffer → dynamic import).
+ * Two artifacts from one job therefore raced: the textured model could start
+ * ingesting while the geometry was still awaiting, read an empty `jobRootAsset`,
+ * and become a SECOND top-level asset — jedd: "multiple generated models are
+ * added to the right sidebar … we should only have one entry per model". The
+ * same race let `done` (which clears the job maps synchronously) land before a
+ * late artifact had read them.
+ *
+ * Chaining each job's ingests means artifact N+1 always sees what N registered,
+ * and cleanup below waits on the chain instead of cutting in front of it.
+ */
+const jobIngestChain = new Map<string, Promise<void>>();
+
 /** Pull a freshly-produced GLB artifact into the viewport — as a NODE on the
  * originating asset's history tree when the job was a stage op, or as a brand
  * new asset when it was a fresh generation. This is how generated geometry
@@ -266,20 +283,37 @@ export function ensureGen3dWired(): void {
       });
     }
     if (update.artifact?.kind === 'model-glb') {
-      void ingestModelArtifact(
-        update.artifact.path,
-        update.artifact.label,
-        origin,
-        jobHumanoid.get(update.jobId) === true,
-        update.jobId,
-        update.artifact.previewPath,
-      );
+      const artifact = update.artifact;
+      const jobId = update.jobId;
+      const humanoid = jobHumanoid.get(jobId) === true;
+      // Queue behind this job's previous artifact so the geometry has registered
+      // its asset before the textured model looks for it (see jobIngestChain).
+      const chain = (jobIngestChain.get(jobId) ?? Promise.resolve())
+        .then(() =>
+          ingestModelArtifact(
+            artifact.path,
+            artifact.label,
+            origin,
+            humanoid,
+            jobId,
+            artifact.previewPath,
+          ),
+        )
+        .catch(() => {});
+      jobIngestChain.set(jobId, chain);
     }
     if (update.done) {
-      stageOrigins.delete(update.jobId);
-      jobHumanoid.delete(update.jobId);
-      probeJobs.delete(update.jobId);
-      jobRootAsset.delete(update.jobId);
+      const jobId = update.jobId;
+      // Clear only once every ingest for this job has settled — clearing early
+      // is what let a late artifact miss `jobRootAsset` and split into its own
+      // asset.
+      void (jobIngestChain.get(jobId) ?? Promise.resolve()).finally(() => {
+        stageOrigins.delete(jobId);
+        jobHumanoid.delete(jobId);
+        probeJobs.delete(jobId);
+        jobRootAsset.delete(jobId);
+        jobIngestChain.delete(jobId);
+      });
     }
   });
   window.piDesktop.onEvent('gen3d:download', (update) => {

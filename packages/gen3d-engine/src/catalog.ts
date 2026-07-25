@@ -25,7 +25,6 @@ import * as path from 'node:path';
 export type Gen3dModelId =
   | 'trellis2'
   | 'mageflow'
-  | 'hunyuan-paint'
   | 'cubepart'
   | 'autoremesher'
   | 'humanoid-rig';
@@ -127,27 +126,6 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
         repo: 'microsoft/Mage-Flow-Turbo',
         allowPatterns: ['transformer/*', 'text_encoder/*', 'vae/*', 'scheduler/*', '*.json'],
         bytes: 17_463_920_534,
-      },
-    ],
-  },
-  {
-    id: 'hunyuan-paint',
-    label: 'Hunyuan Paint',
-    role: 'texture',
-    note: 'PBR texture painting for existing meshes (tencent/Hunyuan3D-2.1 paintpbr subset)',
-    env: 'paint',
-    repos: [
-      {
-        repo: 'tencent/Hunyuan3D-2.1',
-        allowPatterns: ['hunyuan3d-paintpbr-v2-1/*', 'hy3dpaint/*'],
-        bytes: 6_887_601_302,
-      },
-      // The paint pipeline's view conditioner (textureGenPipeline.py
-      // dino_ckpt_path) — not gated; safetensors + configs only.
-      {
-        repo: 'facebook/dinov2-giant',
-        allowPatterns: ['*.json', 'model.safetensors'],
-        bytes: 4_546_006_416,
       },
     ],
   },

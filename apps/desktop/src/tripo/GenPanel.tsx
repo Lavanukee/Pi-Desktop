@@ -8,7 +8,7 @@
  *    Image input takes one-or-more UNLABELED images (TRELLIS-2 pools them —
  *    more improve accuracy).
  *  - Image: text → image (Mage-Flow), then Export / Make 3D on the result.
- *  - Segment (CubePart) / Retopo (AutoRemesher) / Texture (Hunyuan Paint):
+ *  - Segment (CubePart) / Retopo (QuadriFlow) / Texture (TRELLIS-2 re-bake):
  *    run on the loaded model; each prompts its own model download when missing.
  *  - Animate (SkinTokens rig / ARDY motion): AnimatePanel.
  */
@@ -751,7 +751,14 @@ function StagePanel({
             op,
             version.diskPath,
             { assetId: loaded.id, versionId: version.id, op },
-            op === 'retopo' ? { targetQuads: targetQuads * 1000 } : undefined,
+            op === 'retopo'
+              ? { targetQuads: targetQuads * 1000 }
+              : // Texturing re-bakes from the colours the GENERATION saved, so
+                // point the engine at this asset's root version — a mesh that
+                // has since been retopologised sits in a different job dir.
+                op === 'texture'
+                ? { sourcePath: loaded.versions[0]?.diskPath }
+                : undefined,
           );
         }}
       />
@@ -849,7 +856,7 @@ function TexturePanel(): JSX.Element {
       icon={<IcTexture size={17} />}
       title="Texture"
       engine={TEXTURE_MODEL}
-      engineId="hunyuan-paint"
+      engineId="trellis2"
       capability="texture"
       runLabel="Generate Texture"
       runTestid="tp-texture-btn"

@@ -23,7 +23,6 @@ describe('catalog', () => {
       'autoremesher',
       'cubepart',
       'humanoid-rig',
-      'hunyuan-paint',
       'mageflow',
       'trellis2',
     ]);
@@ -39,11 +38,12 @@ describe('catalog', () => {
     );
   });
 
-  it('hunyuan-paint downloads the paint subset + dinov2 conditioner (11.4 GB, not 14.9 GB repo)', () => {
-    const paint = GEN3D_MODEL_SPECS.find((s) => s.id === 'hunyuan-paint');
-    expect(paint?.repos[0]?.allowPatterns).toEqual(['hunyuan3d-paintpbr-v2-1/*', 'hy3dpaint/*']);
-    expect(paint?.repos[1]?.repo).toBe('facebook/dinov2-giant');
-    expect(specTotalBytes(paint as NonNullable<typeof paint>)).toBe(6_887_601_302 + 4_546_006_416);
+  it('ships NO separate texture model — TRELLIS re-bakes its own colours', () => {
+    // Texturing used to pull Hunyuan Paint: the paintpbr subset (6.89 GB) plus
+    // dinov2-giant (4.55 GB) = 11.4 GB of weights for something TRELLIS already
+    // produces. The generation now saves its voxel colour field beside the mesh
+    // and the Texture stage re-bakes from that, so nothing here backs 'texture'.
+    expect(GEN3D_MODEL_SPECS.filter((s) => s.role === 'texture')).toEqual([]);
   });
 
   it('autoremesher has no weights — its size is the release dmg', () => {
@@ -74,7 +74,7 @@ describe('catalog', () => {
 
   it('sidecar registry carries repos, mirrors and pipeline types', () => {
     const registry = toSidecarRegistry();
-    expect(registry.models).toHaveLength(6);
+    expect(registry.models).toHaveLength(5);
     expect(registry.gatedMirrors['facebook/dinov3-vitl16-pretrain-lvd1689m']).toContain(
       'camenduru',
     );

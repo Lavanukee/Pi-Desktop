@@ -31,10 +31,6 @@ TOOL_REPOS = {
         "https://github.com/Roblox/cube.git",
         "3c6d06ddbef3160a1e1950cb13ab63dd12a61e50",
     ),
-    "Hunyuan3D-2.1-mac": (
-        "https://github.com/Brainkeys/Hunyuan3D-2.1-mac.git",
-        "8ce5756a665b24485e5597acce4ac587fac29ce7",
-    ),
 }
 
 

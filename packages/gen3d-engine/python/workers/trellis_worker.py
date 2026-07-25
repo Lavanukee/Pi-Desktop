@@ -20,6 +20,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 # --- backend env BEFORE torch/trellis imports (mirrors trellis-mac) ---------
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -187,6 +188,45 @@ def to_gltf_up(verts):
     return np.column_stack([v[:, 0], v[:, 2], -v[:, 1]])
 
 
+def from_gltf_up(verts):
+    """Inverse of to_gltf_up: (x, y, z) → (x, -z, y).
+
+    A mesh read back from one of our GLBs is Y-up, but the voxel volume the
+    colours are sampled from is in TRELLIS's original frame, so a standalone
+    bake has to go back before it can sample.
+    """
+    import numpy as np
+
+    v = np.asarray(verts)
+    return np.column_stack([v[:, 0], -v[:, 2], v[:, 1]])
+
+
+def save_voxels(mesh_out, out_path: Path) -> None:
+    """Persist the voxel colour volume beside the mesh.
+
+    This is what lets the Texture stage run on its own — re-baking an edited or
+    retopologised mesh without regenerating it, and without a second 11.4 GB
+    texture model on disk (jedd: "if trellis bundles a texturing model that can
+    do good pbr and such, can you just utilize that instead of a separate
+    hunyuan paint please"). The baker samples by POSITION, so any mesh in the
+    same frame can be textured from this — which is exactly what retopo → texture
+    needs. Stored as fp16: it is a colour field, and half the bytes.
+    """
+    import numpy as np
+
+    try:
+        np.savez_compressed(
+            out_path,
+            coords=mesh_out.coords.cpu().numpy().astype(np.int32),
+            attrs=mesh_out.attrs.cpu().numpy().astype(np.float16),
+            origin=mesh_out.origin.cpu().numpy().astype(np.float32),
+            voxel_size=np.asarray(mesh_out.voxel_size, dtype=np.float32),
+            layout=np.asarray(str(mesh_out.layout)),
+        )
+    except Exception as err:  # noqa: BLE001 — a missing sidecar is not a failed run
+        progress("texture", f"could not save voxel colours for re-texturing ({err})")
+
+
 def export_untextured_glb(verts, faces, out_path: Path) -> tuple[int, int]:
     """Write the full-resolution geometry, rotated into glTF's Y-up."""
     import trimesh
@@ -233,19 +273,104 @@ def export_preview_glb(verts, faces, out_path: Path, full_faces: int) -> Path | 
         return None
 
 
-def bake_textures(mesh_out, verts, faces, out_path: Path, texture_size: int) -> None:
+# A TRELLIS surface is stair-stepped voxel faces, so adjacent triangles differ
+# by ~90° and xatlas splits a chart at nearly every edge — the atlas ends up as
+# tens of thousands of tiny islands rather than a few big ones. Each island then
+# needs its own padding, so the texel budget has to be counted PER FACE.
+#
+# MEASURED at 1024px on a 200k-face helicopter: 1,048,576 texels / 200,000 faces
+# = 5 texels per face, i.e. ~2x2 including padding. The extracted atlas was
+# almost entirely seam bleed, which is what jedd saw as "texturing is completely
+# messed up" — the bake was right, the sheet was far too small to hold it.
+MIN_TEXELS_PER_FACE = 64
+
+# Triangles handed to the baker. 2048² / 64 texels = 65,536 faces, so this is
+# exactly the largest mesh a 2048 atlas can hold at full quality — measured to
+# bake in well under a minute and render cleanly, against ~4 minutes and a 30 MB
+# GLB for the old 200k/4096 pair. The untextured geometry.glb keeps every
+# triangle; this budget only governs what the COLOURS are painted onto.
+BAKE_FACE_BUDGET = 65_000
+
+# The Metal baker (o_voxel + mtldiffrast) does not survive real volumes on this
+# machine: MEASURED three times on a 1.28M-voxel helicopter it failed every
+# time — twice with an allocation error ("Invalid buffer size: 14.75 GiB", then
+# "MPS backend out of memory … tried to allocate 6.69 GiB") and once by dying
+# outright at 4096px, leaving no file and no error. The KDTree baker produces
+# the same channels, is verified correct, and cannot take the process with it,
+# so it is the default. Set PI_GEN3D_METAL_BAKE=1 to try Metal first.
+METAL_BAKE = os.environ.get("PI_GEN3D_METAL_BAKE", "0") == "1"
+
+
+def atlas_size_for(n_faces: int, requested: int) -> int:
+    """The smallest power-of-two atlas that gives each face room to breathe."""
+    import math
+
+    need = math.sqrt(max(1, n_faces) * MIN_TEXELS_PER_FACE)
+    size = 1 << math.ceil(math.log2(max(need, 1024.0)))
+    # Never go BELOW what was asked for, and never past 4096 — beyond that the
+    # PNGs cost more than the detail is worth at these mesh densities.
+    return int(min(4096, max(requested, size)))
+
+
+class VoxelVolume(NamedTuple):
+    """The colour field a bake samples — from a live generation or from disk."""
+
+    coords: object
+    attrs: object
+    origin: object
+    voxel_size: float
+    layout: object
+
+
+def volume_of(mesh_out) -> VoxelVolume:
+    return VoxelVolume(
+        coords=mesh_out.coords.cpu(),
+        attrs=mesh_out.attrs.cpu(),
+        origin=mesh_out.origin.cpu(),
+        voxel_size=mesh_out.voxel_size,
+        layout=mesh_out.layout,
+    )
+
+
+def load_voxels(path: Path) -> VoxelVolume:
+    """Read back a volume saved by save_voxels (see the Texture stage)."""
+    import numpy as np
+    import torch
+
+    z = np.load(path, allow_pickle=False)
+    return VoxelVolume(
+        coords=torch.from_numpy(z["coords"]),
+        attrs=torch.from_numpy(z["attrs"].astype(np.float32)),
+        origin=torch.from_numpy(z["origin"]),
+        voxel_size=float(z["voxel_size"]),
+        layout=str(z["layout"]),
+    )
+
+
+def bake_textures(
+    volume: VoxelVolume,
+    verts,
+    faces,
+    out_path: Path,
+    texture_size: int,
+    face_budget: int = 0,
+) -> None:
     """Metal bake via o_voxel/mtldiffrast, KDTree fallback — adapted from
     trellis-mac generate.py (incl. its _grid_sample_3d transpose fix).
 
-    `verts`/`faces` are the welded, de-specked surface (weld_and_clean);
-    `mesh_out` is still needed for the voxel volume the colours are sampled
-    from — which is why the surface must stay in TRELLIS's original frame here.
+    `verts`/`faces` are the welded, de-specked surface (weld_and_clean), in
+    TRELLIS's original frame — the colours are sampled by POSITION out of
+    `volume`, so the two have to agree before the Y-up rotation is applied.
+    Taking the volume as an argument rather than reaching into a live pipeline
+    result is what lets the Texture stage re-bake a mesh on its own.
     """
     import torch
     from PIL import Image as PILImage
 
     use_metal = False
     try:
+        if not METAL_BAKE:
+            raise ImportError  # opt-in only — see METAL_BAKE
         import o_voxel.postprocess
 
         backend = getattr(o_voxel.postprocess, "_BACKEND", None)
@@ -281,14 +406,18 @@ def bake_textures(mesh_out, verts, faces, out_path: Path, texture_size: int) -> 
     except (ImportError, AttributeError):
         use_metal = False
 
+    coords, attrs, layout = volume.coords, volume.attrs, volume.layout
+    voxel_size = volume.voxel_size
+    target_faces = min(face_budget or BAKE_FACE_BUDGET, len(faces))
+    size = atlas_size_for(target_faces, texture_size)
+
     if use_metal:
         try:
-            progress("texture", f"Baking PBR textures via Metal ({texture_size}px)…")
+            progress("texture", f"Baking PBR textures via Metal ({size}px)…")
             import fast_simplification
             import o_voxel
 
             verts_np, faces_np = verts, faces
-            target_faces = min(200_000, len(faces_np))
             if len(faces_np) > target_faces:
                 ratio = 1.0 - (target_faces / len(faces_np))
                 simp_verts, simp_faces = fast_simplification.simplify(verts_np, faces_np, ratio)
@@ -300,13 +429,13 @@ def bake_textures(mesh_out, verts, faces, out_path: Path, texture_size: int) -> 
             glb = o_voxel.postprocess.to_glb(
                 vertices=simp_verts_t.cpu(),
                 faces=simp_faces_t.cpu(),
-                attr_volume=mesh_out.attrs.cpu(),
-                coords=mesh_out.coords.cpu(),
-                attr_layout=mesh_out.layout,
-                voxel_size=mesh_out.voxel_size,
+                attr_volume=attrs,
+                coords=coords,
+                attr_layout=layout,
+                voxel_size=voxel_size,
                 aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
                 decimation_target=target_faces,
-                texture_size=texture_size,
+                texture_size=size,
                 verbose=True,
             )
             glb.export(str(out_path))
@@ -314,11 +443,10 @@ def bake_textures(mesh_out, verts, faces, out_path: Path, texture_size: int) -> 
         except RuntimeError as err:
             progress("texture", f"Metal bake failed ({err}); falling back to KDTree baker…")
 
-    progress("texture", f"Baking PBR textures via KDTree ({texture_size}px)…")
+    progress("texture", f"Baking PBR textures via KDTree ({size}px)…")
     from backends.texture_baker import bake_texture, export_glb_with_texture, uv_unwrap
 
     bake_verts, bake_faces = verts, faces
-    target_faces = min(200_000, len(faces))
     if len(faces) > target_faces:
         try:
             import fast_simplification
@@ -332,19 +460,35 @@ def bake_textures(mesh_out, verts, faces, out_path: Path, texture_size: int) -> 
         new_verts,
         new_faces,
         uvs,
-        mesh_out.coords.cpu().float().numpy(),
-        mesh_out.attrs.cpu().float().numpy(),
-        mesh_out.origin.cpu().float().numpy(),
-        mesh_out.voxel_size,
-        texture_size=texture_size,
+        coords.float().numpy(),
+        attrs.float().numpy(),
+        volume.origin.float().numpy(),
+        voxel_size,
+        texture_size=size,
     )
     PILImage.fromarray(base_color_img)  # touch to validate
+    # FLIP V FOR EXPORT — this is the bug behind "texturing is completely messed
+    # up". The baker rasterizes into an image array, so its v runs DOWNWARD with
+    # the rows; trimesh's TextureVisuals takes UVs in the OBJ/OpenGL convention
+    # where v runs UPWARD, and flips them itself when it writes the GLB. The two
+    # flips do not cancel — they compose into an upside-down lookup, and because
+    # the atlas is thousands of small charts, "upside down" does not read as a
+    # mirrored texture but as coloured static.
+    #
+    # PROVEN by rewriting the UVs of an already-exported model.glb and reloading
+    # it: identical bytes otherwise, and the helicopter went from static to a
+    # correctly painted light-blue airframe with grey rotors and yellow trim.
+    # Only the EXPORT is flipped; bake_texture above must keep the baker's own
+    # convention or the atlas it produces would be wrong too.
+    import numpy as np
+
+    export_uvs = np.column_stack([uvs[:, 0], 1.0 - uvs[:, 1]])
     # Rotate to glTF's Y-up ONLY at export: the bake above samples voxel-space
     # coords/attrs/origin, which must stay in TRELLIS's original frame or the
     # texture lands on the wrong faces. A rigid rotation leaves UVs and face
     # indices untouched, so converting the positions here is safe.
     export_glb_with_texture(
-        to_gltf_up(new_verts), new_faces, uvs, base_color_img, mr_img, str(out_path)
+        to_gltf_up(new_verts), new_faces, export_uvs, base_color_img, mr_img, str(out_path)
     )
 
 
@@ -385,6 +529,48 @@ def load_pipeline():
         pipeline.to(torch.device("mps"))
     progress("geometry", f"Pipeline loaded in {time.time() - t0:.0f}s — generating…")
     return pipeline
+
+
+def run_bake_only(args) -> None:
+    """Re-bake an EXISTING mesh from a saved colour volume — the Texture stage.
+
+    This is what replaced Hunyuan Paint (11.4 GB of weights: the paintpbr subset
+    plus dinov2-giant) for texturing. TRELLIS already produces PBR for the model
+    it generates, and the volume it sampled is small enough to keep, so
+    texturing a mesh again — after a retopo, say — needs no second model at all.
+    jedd: "if trellis bundles a texturing model that can do good pbr and such,
+    can you just utilize that instead of a separate hunyuan paint please (shaves
+    off a bit of disk space too)".
+
+    It only works on a mesh this app generated: the volume is the generation's
+    own output. An imported mesh has no colours to sample and says so, rather
+    than emitting an untextured GLB and calling it done.
+    """
+    import trimesh
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ROUTER.default_stage = "texture"
+
+    voxels = Path(args.voxels) if args.voxels else Path(args.mesh).with_name("voxels.npz")
+    if not voxels.exists():
+        msg = (
+            "This model has no colour data to texture from — the Texture stage "
+            "re-bakes models generated here, and this one was imported."
+        )
+        emit(event="error", message=msg)
+        raise WorkerFailure(msg)
+
+    progress("texture", "Loading colours…")
+    volume = load_voxels(voxels)
+    tm = trimesh.load(args.mesh, force="mesh", process=False)
+    tm.merge_vertices()
+    # The GLB on disk is Y-up; the volume is in TRELLIS's frame.
+    verts = from_gltf_up(tm.vertices)
+    model_path = out_dir / "model.glb"
+    bake_textures(volume, verts, tm.faces, model_path, args.texture_size, args.bake_faces)
+    artifact("texture", "model-glb", str(model_path), "Textured model")
+    stage_done("texture", "Texturing done")
 
 
 def run_one(pipeline, args) -> None:
@@ -461,7 +647,13 @@ def run_one(pipeline, args) -> None:
         # overallPercent never jumps back to the geometry band.
         ROUTER.default_stage = "texture"
         model_path = out_dir / "model.glb"
-        bake_textures(mesh_out, clean_verts, clean_faces, model_path, args.texture_size)
+        # Keep the colour field beside the result so the Texture stage can
+        # re-bake this asset later without regenerating it.
+        save_voxels(mesh_out, out_dir / "voxels.npz")
+        bake_textures(
+            volume_of(mesh_out), clean_verts, clean_faces, model_path,
+            args.texture_size, args.bake_faces,
+        )
         artifact("texture", "model-glb", str(model_path), "Textured model")
         stage_done("texture", "Texturing done")
 
@@ -485,6 +677,11 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--prompt", default="")
     # Persistent mode: load the pipeline once, then take one job per stdin line.
     ap.add_argument("--serve", action="store_true")
+    # Texture stage: re-bake an existing mesh, no pipeline load at all.
+    ap.add_argument("--bake-only", action="store_true")
+    ap.add_argument("--mesh")
+    ap.add_argument("--voxels")
+    ap.add_argument("--bake-faces", type=int, default=0)
     return ap
 
 
@@ -523,6 +720,14 @@ def main() -> None:
     args = ap.parse_args()
     if args.serve:
         _serve(ap)
+        return
+    if args.bake_only:
+        if not args.mesh or not args.out_dir:
+            ap.error("--bake-only needs --mesh and --out-dir")
+        try:
+            run_bake_only(args)
+        except WorkerFailure:
+            sys.exit(2)
         return
     if not args.image or not args.out_dir:
         ap.error("--image and --out-dir are required")

@@ -44,8 +44,6 @@ def provision(registry: Registry, model: dict, log, cancelled: threading.Event) 
         _provision_mageflow(registry, log)
     elif env_kind == "cubepart":
         _provision_cubepart(registry, log)
-    elif env_kind == "paint":
-        _provision_paint(registry, log)
     elif env_kind == "binary":
         _provision_autoremesher(registry, model, log)
     elif env_kind == "meshtools":
@@ -153,32 +151,6 @@ def _provision_cubepart(registry: Registry, log) -> None:
         # ("got multiple values for argument 'device'" — reproduced here).
         # 0.38.0 matches the hijack's calling convention.
         _run([uv, "pip", "install", "--python", py, "diffusers==0.38.0"], tool, log)
-
-
-def _provision_paint(registry: Registry, log) -> None:
-    tool = registry.ensure_tool_clone("Hunyuan3D-2.1-mac", log)
-    if not registry.venv_python("Hunyuan3D-2.1-mac").exists():
-        uv = registry.uv_path
-        log("Creating Hunyuan Paint venv (macOS requirements)…")
-        _run([uv, "venv", str(tool / ".venv"), "--python", "3.11"], tool, log)
-        py = str(registry.venv_python("Hunyuan3D-2.1-mac"))
-        reqs = tool / "requirements-macos.txt"
-        if not reqs.exists():
-            reqs = tool / "requirements.txt"
-        _run([uv, "pip", "install", "--python", py, "-r", str(reqs)], tool, log)
-        # Not in the fork's macOS requirements but imported by its texture
-        # pipeline (verified missing here): mesh processing + UV unwrap.
-        _run([uv, "pip", "install", "--python", py, "pymeshlab", "xatlas"], tool, log)
-    # RealESRGAN upsampler checkpoint (the fork's install-macos.sh does the
-    # same curl from the official Real-ESRGAN release).
-    esrgan = tool / "hy3dpaint" / "ckpt" / "RealESRGAN_x4plus.pth"
-    if not esrgan.exists():
-        esrgan.parent.mkdir(parents=True, exist_ok=True)
-        log("Downloading RealESRGAN_x4plus.pth (67 MB)…")
-        urllib.request.urlretrieve(
-            "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
-            esrgan,
-        )
 
 
 def _provision_autoremesher(registry: Registry, model: dict, log) -> None:

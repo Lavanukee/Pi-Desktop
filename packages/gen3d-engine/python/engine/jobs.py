@@ -60,6 +60,25 @@ def _worker_env(registry: Registry) -> dict:
     return env
 
 
+def _find_voxels(mesh_path: Path, source_path: str | None) -> Path | None:
+    """The colour volume to re-texture `mesh_path` from, or None.
+
+    Texturing samples the volume saved by the GENERATION, so a mesh that has
+    since been retopologised or segmented lives in a different job dir than its
+    colours. The caller passes `sourcePath` — the asset's root version — and the
+    volume is looked for next to whichever of the two has it. Returning None is
+    a real answer: an imported mesh has no colours, and the worker says so
+    rather than quietly emitting an untextured GLB.
+    """
+    for candidate in (mesh_path, Path(source_path) if source_path else None):
+        if candidate is None:
+            continue
+        voxels = candidate.parent / "voxels.npz"
+        if voxels.exists():
+            return voxels
+    return None
+
+
 class Job:
     def __init__(self, job_id: str, plan: list[str]) -> None:
         self.job_id = job_id
@@ -187,7 +206,7 @@ class JobManager:
         required = {
             "segment": "cubepart",
             "retopo": "autoremesher",
-            "texture": "hunyuan-paint",
+            "texture": "trellis2",
             "rig": "humanoid-rig",
         }[op]
         if not self.registry.is_installed(required):
@@ -365,22 +384,23 @@ class JobManager:
                 if options.get("requireHumanoid"):
                     args.append("--require-humanoid")
                 cwd = self.registry.tool_dir("meshtools")
-            else:  # texture (Hunyuan Paint)
-                venv = self.registry.venv_python("Hunyuan3D-2.1-mac")
-                script = WORKERS_DIR / "paint_worker.py"
-                # Paint is image-conditioned. The stage contract carries only a
-                # prompt string, so a prompt that IS a path to an existing image
-                # becomes the reference image (documented for the UI).
-                image_arg: list[str] = []
-                if prompt and Path(prompt).is_file():
-                    image_arg = ["--image", prompt]
+            else:  # texture — TRELLIS re-bakes from the colours it already made
+                # No separate texture model: the generation saved its voxel
+                # colour field next to the mesh, so this re-bakes from that.
+                # Costs no weights and no load — the pipeline is never touched.
+                venv = self.registry.geometry_python()
+                script = WORKERS_DIR / "trellis_worker.py"
                 args = [
+                    "--bake-only",
                     "--mesh", model_path,
                     "--out-dir", str(job_dir),
-                    "--tool-dir", str(self.registry.tool_dir("Hunyuan3D-2.1-mac")),
-                    *image_arg,
                 ]
-                cwd = self.registry.tool_dir("Hunyuan3D-2.1-mac")
+                # A retopo/segment result lives in its own job dir; the colours
+                # stay with the generation that produced them.
+                voxels = _find_voxels(Path(model_path), options.get("sourcePath"))
+                if voxels is not None:
+                    args += ["--voxels", str(voxels)]
+                cwd = self.registry.geometry_tool_dir()
 
             self._publish(job, op, message=f"Starting {op}…")
             self._run_worker(job, venv, script, args, cwd=cwd, default_stage=op)

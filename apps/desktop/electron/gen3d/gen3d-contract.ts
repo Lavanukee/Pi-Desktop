@@ -5,7 +5,7 @@
  * download, run by a uv/Python sidecar on Metal/MPS):
  *   geometry  → microsoft/TRELLIS.2-4B (image → 3D structured latents)
  *   image     → microsoft/Mage-Flow-Turbo (text → image, the text→3D first hop)
- *   texture   → tencent/Hunyuan3D-2.1 (the Hunyuan Paint component)
+ *   texture   → TRELLIS.2 re-bakes from the colour volume it already made
  *   segment   → Roblox/cubepart
  *   retopo    → AutoRemesher (huxingyi, MIT — compiled CLI, no download weight)
  *
@@ -21,7 +21,6 @@
 export type Gen3dModelId =
   | 'trellis2'
   | 'mageflow'
-  | 'hunyuan-paint'
   | 'cubepart'
   | 'autoremesher'
   | 'humanoid-rig';
@@ -140,6 +139,14 @@ export type Gen3dInvokeMap = {
       readonly modelPath: string;
       /** Optional image/prompt context for texturing. */
       readonly prompt?: string;
+      /**
+       * Texture: the asset's ROOT version on disk.
+       *
+       * Texturing re-bakes from the colour volume the GENERATION saved, so a
+       * mesh that has since been retopologised lives in a different job dir
+       * than its colours. This points the engine back at them.
+       */
+      readonly sourcePath?: string;
       /** Retopo tuning (AutoRemesher target density / curvature adaptivity). */
       readonly targetQuads?: number;
       readonly adaptivity?: number;

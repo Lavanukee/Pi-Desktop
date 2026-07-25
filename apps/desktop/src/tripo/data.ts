@@ -38,7 +38,7 @@ export const GEN_MODELS: readonly ModelVersion[] = [
 /** One engine per downstream stage (shown as the stage's Model row). */
 export const SEGMENT_MODEL = 'CubePart';
 export const RETOPO_MODEL = 'AutoRemesher';
-export const TEXTURE_MODEL = 'Hunyuan Paint';
+export const TEXTURE_MODEL = 'TRELLIS-2';
 export const RIG_MODEL = 'Humanoid Auto-Rig (local)';
 export const ANIM_MODEL = 'ARDY';
 

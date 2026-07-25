@@ -26,11 +26,22 @@ os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 os.environ.setdefault("ATTN_BACKEND", "sdpa")
 os.environ.setdefault("SPARSE_ATTN_BACKEND", "sdpa")
 
-TRELLIS_ROOT = Path.cwd()  # jobs.py sets cwd to the trellis-mac checkout
+TRELLIS_ROOT = Path.cwd()  # jobs.py sets cwd to the geometry checkout
 sys.path.insert(0, str(TRELLIS_ROOT / "TRELLIS.2"))
 sys.path.insert(0, str(TRELLIS_ROOT))  # backends/ package (texture baker)
 sys.path.append(str(TRELLIS_ROOT / "stubs"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# The TEXTURE baker lives in the trellis-mac checkout (`backends/`), which the
+# MLX checkout does not carry. When geometry runs from the MLX tree the cwd is
+# trellis2-apple, so `from backends.texture_baker import …` failed with
+# "No module named 'backends'" and texturing died AFTER the mesh was built.
+# Add the sibling checkout so both trees' modules resolve regardless of which
+# one geometry came from.
+_SIBLING_TRELLIS = TRELLIS_ROOT.parent / "trellis-mac"
+if _SIBLING_TRELLIS != TRELLIS_ROOT and (_SIBLING_TRELLIS / "backends").is_dir():
+    sys.path.append(str(_SIBLING_TRELLIS))
+    sys.path.append(str(_SIBLING_TRELLIS / "stubs"))
 
 from _progress import ROUTER, artifact, emit, patch_tqdm, progress, stage_done  # noqa: E402
 
@@ -118,10 +129,27 @@ def drop_debris(tm, label: str):
     return merged
 
 
+def to_gltf_up(verts):
+    """TRELLIS emits Z-up; glTF is Y-up by spec. Convert (x,y,z) → (x, z, -y).
+
+    jedd: "why is the plane on its nose… it seems suspiciously perfect 90
+    degrees… are you sure it generates Y up as opposed to z up". He was right,
+    and it is not model-side. MEASURED on a tank, identical on BOTH backends
+    (so it is TRELLIS's convention, not ours): extents X=0.516 Y=1.000 Z=0.603
+    — the vehicle's LENGTH lay along Y, and a Y-up viewer therefore stood it on
+    its nose. After the conversion: X=0.516 Y=0.603 Z=1.000, i.e. length along
+    Z and height along Y, and the render sits flat on its tracks.
+    """
+    import numpy as np
+
+    v = np.asarray(verts)
+    return np.column_stack([v[:, 0], v[:, 2], -v[:, 1]])
+
+
 def export_untextured_glb(mesh_out, out_path: Path) -> tuple[int, int]:
     import trimesh
 
-    verts = mesh_out.vertices.cpu().numpy()
+    verts = to_gltf_up(mesh_out.vertices.cpu().numpy())
     faces = mesh_out.faces.cpu().numpy()
     # Default process=True, so trimesh MERGES the render-duplicated vertices the
     # raw mesh carries — this file is welded and intact (unlike the preview,
@@ -143,7 +171,7 @@ def export_preview_glb(mesh_out, out_path: Path, full_faces: int) -> Path | None
 
     try:
         tm = trimesh.Trimesh(
-            vertices=mesh_out.vertices.cpu().numpy(),
+            vertices=to_gltf_up(mesh_out.vertices.cpu().numpy()),
             faces=mesh_out.faces.cpu().numpy(),
             process=False,
         )
@@ -281,7 +309,13 @@ def bake_textures(mesh_out, out_path: Path, texture_size: int) -> None:
         texture_size=texture_size,
     )
     PILImage.fromarray(base_color_img)  # touch to validate
-    export_glb_with_texture(new_verts, new_faces, uvs, base_color_img, mr_img, str(out_path))
+    # Rotate to glTF's Y-up ONLY at export: the bake above samples voxel-space
+    # coords/attrs/origin, which must stay in TRELLIS's original frame or the
+    # texture lands on the wrong faces. A rigid rotation leaves UVs and face
+    # indices untouched, so converting the positions here is safe.
+    export_glb_with_texture(
+        to_gltf_up(new_verts), new_faces, uvs, base_color_img, mr_img, str(out_path)
+    )
 
 
 def load_pipeline():

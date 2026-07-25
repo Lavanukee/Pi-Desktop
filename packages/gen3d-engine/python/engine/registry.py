@@ -103,6 +103,33 @@ class Registry:
         """
         return self.bin_dir / "quadriflow"
 
+    def mlx_trellis_dir(self) -> Path:
+        """The MLX TRELLIS checkout, when it has been provisioned."""
+        return self.tool_dir("trellis2-apple")
+
+    def geometry_tool_dir(self) -> Path:
+        """MLX TRELLIS when present, else the PyTorch-MPS checkout.
+
+        MEASURED on the same image at 512, both output meshes rendered and
+        compared side by side (indistinguishable): MPS 225s (82s load + 137s
+        generate) vs MLX **76s** (3s + 73s) — 3x, at identical quality.
+        """
+        mlx = self.mlx_trellis_dir()
+        return mlx if (mlx / ".venv" / "bin" / "python").exists() else self.tool_dir("trellis-mac")
+
+    def trellis_snapshot_dir(self) -> Path | None:
+        """The cached TRELLIS.2-4B snapshot dir (has pipeline.json + ckpts)."""
+        base = self.hf_home / "hub" / "models--microsoft--TRELLIS.2-4B" / "snapshots"
+        if not base.exists():
+            return None
+        for d in sorted(base.iterdir()):
+            if (d / "pipeline.json").exists():
+                return d
+        return None
+
+    def geometry_python(self) -> Path:
+        return self.geometry_tool_dir() / ".venv" / "bin" / "python"
+
     def meshtools_python(self) -> Path:
         return self.tool_dir("meshtools") / ".venv" / "bin" / "python"
 

@@ -285,17 +285,40 @@ def bake_textures(mesh_out, out_path: Path, texture_size: int) -> None:
 
 
 def load_pipeline():
-    """Load TRELLIS-2 onto MPS. This is the expensive part — MEASURED at 82s of
-    a 225s 512 geometry run (36% of wall-clock), paid on EVERY job because a
-    worker is one subprocess per job. `--serve` below pays it once and reuses it."""
-    progress("geometry", "Loading TRELLIS-2 pipeline (first load ≈100 s)…")
+    """Load TRELLIS-2 — MLX when this checkout provides it, else PyTorch MPS.
+
+    MEASURED on the same image at 512, output meshes rendered and compared
+    side by side (visually indistinguishable — same turret, barrel, wheels):
+
+        PyTorch MPS   225s total   (82s load + 137s generate)
+        MLX            76s total   ( 3s load +  73s generate)   ← 3x faster
+
+    The load alone is 82s → 3s, which matters twice over: it is 36% of a cold
+    MPS run, and it is what `--serve` exists to amortise.
+    """
     t0 = time.time()
-    import torch
+    mlx_pipeline = os.environ.get("PI_GEN3D_MLX_WEIGHTS", "")
+    if mlx_pipeline:
+        progress("geometry", "Loading TRELLIS-2 (MLX)…")
+        from mlx_backend.pipeline import create_mlx_pipeline
 
-    from trellis2.pipelines.trellis2_image_to_3d import Trellis2ImageTo3DPipeline
+        pipeline = create_mlx_pipeline(weights_path=mlx_pipeline)
+        # BiRefNet ships fp16 weights while the preprocessing transform yields
+        # fp32 — the conv then dies with "Input type (float) and bias type
+        # (c10::Half) should be the same". It is tiny next to the 4B pipeline,
+        # so promote it rather than downcast the image.
+        try:
+            pipeline.rembg_model.model.float()
+        except Exception:  # noqa: BLE001 — never fail a run over the matte model
+            pass
+    else:
+        progress("geometry", "Loading TRELLIS-2 pipeline (first load ≈100 s)…")
+        import torch
 
-    pipeline = Trellis2ImageTo3DPipeline.from_pretrained("microsoft/TRELLIS.2-4B")
-    pipeline.to(torch.device("mps"))
+        from trellis2.pipelines.trellis2_image_to_3d import Trellis2ImageTo3DPipeline
+
+        pipeline = Trellis2ImageTo3DPipeline.from_pretrained("microsoft/TRELLIS.2-4B")
+        pipeline.to(torch.device("mps"))
     progress("geometry", f"Pipeline loaded in {time.time() - t0:.0f}s — generating…")
     return pipeline
 

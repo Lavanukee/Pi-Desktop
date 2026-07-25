@@ -43,6 +43,20 @@ def _worker_env(registry: Registry) -> dict:
     # flash_attention_2 on machines without flash-attn (i.e. every Mac).
     env["VF_HF_ATTN_IMPL"] = "sdpa"
     env["PYTHONUNBUFFERED"] = "1"
+    # MLX TRELLIS: tell the worker where the (already-cached) TRELLIS.2-4B
+    # snapshot lives — its MLX pipeline loads from a directory, not a repo id.
+    # Set ONLY when the MLX checkout is provisioned, so the MPS worker is
+    # untouched on machines without it.
+    if (registry.mlx_trellis_dir() / ".venv" / "bin" / "python").exists():
+        snap = registry.trellis_snapshot_dir()
+        if snap is not None:
+            env["PI_GEN3D_MLX_WEIGHTS"] = str(snap)
+        # The Metal kernels are compiled by `xcrun metal`, which CommandLineTools
+        # does not ship. Point at Xcode for this process only when it is present
+        # — a per-process override, no sudo and no change to xcode-select.
+        xcode = Path("/Applications/Xcode.app/Contents/Developer")
+        if "DEVELOPER_DIR" not in env and xcode.exists():
+            env["DEVELOPER_DIR"] = str(xcode)
     return env
 
 
@@ -288,7 +302,7 @@ class JobManager:
             image_args = [a for p in image_paths for a in ("--image", p)]
             self._run_worker(
                 job,
-                self.registry.venv_python("trellis-mac"),
+                self.registry.geometry_python(),
                 WORKERS_DIR / "trellis_worker.py",
                 [
                     *image_args,
@@ -297,7 +311,7 @@ class JobManager:
                     "--texture" if texture else "--no-texture",
                     *((["--prompt", prompt]) if prompt else []),
                 ],
-                cwd=self.registry.tool_dir("trellis-mac"),
+                cwd=self.registry.geometry_tool_dir(),
                 default_stage="geometry",
                 # The 82s pipeline load is the single biggest slice of a 512 run;
                 # park this worker so a re-generate skips it entirely.

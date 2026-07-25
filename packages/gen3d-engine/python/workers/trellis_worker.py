@@ -54,10 +54,14 @@ except (ImportError, RuntimeError):
 
 patch_tqdm()
 ROUTER.default_stage = "geometry"
+# All three samplers run BEFORE any mesh exists, so all three are the geometry
+# stage — routing "texture slat" to the texture stage lit the Modeled chunk
+# green ~7s before the model appeared in the viewport. The spans lay the loops
+# end to end so the geometry bar climbs 0→100 once instead of three times.
 ROUTER.desc_map = {
-    "sparse structure": ("geometry", "Sampling sparse structure"),
-    "shape slat": ("geometry", "Sampling shape latents"),
-    "texture slat": ("texture", "Sampling texture latents"),
+    "sparse structure": ("geometry", "Sampling sparse structure", (0.0, 0.34)),
+    "shape slat": ("geometry", "Sampling shape latents", (0.34, 0.67)),
+    "texture slat": ("geometry", "Sampling texture latents", (0.67, 1.0)),
 }
 
 class WorkerFailure(Exception):
@@ -121,12 +125,49 @@ def drop_debris(tm, label: str):
     if len(keep) == len(comps):
         return tm
     merged = _tm.util.concatenate(keep)
+    # Report under whatever stage is running — hardcoding "geometry" pulled the
+    # UI back to the Modeling chunk for the whole texture bake.
     progress(
-        "geometry",
+        ROUTER.default_stage,
         f"Cleaned {label} — dropped {len(comps) - len(keep):,} stray fragments "
         f"({len(tm.faces) - len(merged.faces):,} faces)",
     )
     return merged
+
+
+def weld_and_clean(mesh_out, label: str):
+    """Weld the raw TRELLIS mesh and strip its debris, ONCE per generation.
+
+    Everything downstream needs this first, for two reasons that share one fix:
+
+      * The raw mesh carries render-duplicated vertices, so its triangles do not
+        share vertices and quadric decimation cannot collapse an edge between
+        them — it shreds the surface into islands instead of simplifying it.
+      * Even welded, the mesh arrives with thousands of stray specks that eat
+        the decimator's face budget and speckle the result.
+
+    MEASURED on an F-22 through the real UI, counting components by POSITION
+    (a textured mesh is duplicated at every UV seam, so trimesh's default merge
+    reports the atlas charts rather than the geometry): the textured model went
+    from **5,033 components / largest 92.3%** to **817 / 98.0%** once the bake
+    ran on a welded, de-specked mesh — that 7.7% of loose faces is the black
+    speckle over the wings.
+
+    Returns arrays in TRELLIS's ORIGINAL frame: the texture bake samples
+    voxel-space coords/attrs and must not see the Y-up rotation, which each
+    exporter applies for itself.
+    """
+    import numpy as np
+    import trimesh
+
+    tm = trimesh.Trimesh(
+        vertices=mesh_out.vertices.cpu().numpy(),
+        faces=mesh_out.faces.cpu().numpy(),
+        process=False,
+    )
+    tm.merge_vertices()
+    tm = drop_debris(tm, label)
+    return np.asarray(tm.vertices), np.asarray(tm.faces)
 
 
 def to_gltf_up(verts):
@@ -146,54 +187,41 @@ def to_gltf_up(verts):
     return np.column_stack([v[:, 0], v[:, 2], -v[:, 1]])
 
 
-def export_untextured_glb(mesh_out, out_path: Path) -> tuple[int, int]:
+def export_untextured_glb(verts, faces, out_path: Path) -> tuple[int, int]:
+    """Write the full-resolution geometry, rotated into glTF's Y-up."""
     import trimesh
 
-    verts = to_gltf_up(mesh_out.vertices.cpu().numpy())
-    faces = mesh_out.faces.cpu().numpy()
-    # Default process=True, so trimesh MERGES the render-duplicated vertices the
-    # raw mesh carries — this file is welded and intact (unlike the preview,
-    # which used to skip that; see export_preview_glb).
-    tm = trimesh.Trimesh(vertices=verts, faces=faces)
-    tm = drop_debris(tm, "geometry")
+    tm = trimesh.Trimesh(vertices=to_gltf_up(verts), faces=faces, process=False)
     tm.export(str(out_path))
     # Report what was actually WRITTEN, not the pre-weld input: the raw vertex
-    # count is inflated by the duplicates trimesh just merged away.
+    # count is inflated by the duplicates weld_and_clean merged away.
     return int(len(tm.vertices)), int(len(tm.faces))
 
 
-def export_preview_glb(mesh_out, out_path: Path, full_faces: int) -> Path | None:
+def export_preview_glb(verts, faces, out_path: Path, full_faces: int) -> Path | None:
     """A viewer-sized copy of the geometry. Returns None when the full mesh is
-    already small enough to display directly."""
+    already small enough to display directly.
+
+    Takes the ALREADY welded + de-specked mesh, which is what makes decimation
+    work at all: on a raw mesh the triangles do not share vertices, so quadric
+    decimation cannot collapse an edge between two of them and shreds the
+    surface into islands instead of simplifying it (measured on an icosphere
+    re-emitted unwelded: 1,029 disconnected bodies at 2,048 faces, versus 1
+    welded — the same face count, but confetti instead of a model). That
+    confetti is what the viewer used to show, and jedd read it as the model
+    itself: "the model is capable of much higher quality results, something is
+    going wrong at inference" — it was the preview, not inference.
+    """
     if full_faces <= PREVIEW_FACE_BUDGET:
         return None
     import trimesh
 
     try:
-        tm = trimesh.Trimesh(
-            vertices=to_gltf_up(mesh_out.vertices.cpu().numpy()),
-            faces=mesh_out.faces.cpu().numpy(),
-            process=False,
-        )
-        # WELD BEFORE DECIMATING. The raw mesh carries render-duplicated
-        # vertices (a marching-cubes/GLB export repeats positions per face), so
-        # with `process=False` its triangles do not SHARE vertices — quadric
-        # decimation cannot collapse an edge between two triangles that have no
-        # common vertex, so instead of simplifying the surface it shreds it into
-        # islands. MEASURED on an icosphere re-emitted unwelded: decimating to
-        # 2,048 faces gave 1,029 disconnected bodies and watertight=False,
-        # versus 1 body / watertight=True after merge_vertices() — the same face
-        # count, but confetti instead of a model. That confetti is what the
-        # viewer was showing (jedd: "the model is capable of much higher quality
-        # results, something is going wrong at inference" — it was the PREVIEW,
-        # not inference). Same root cause the retopo path already fixes by
-        # welding before AutoRemesher.
-        tm.merge_vertices()
-        # Strip debris BEFORE decimating: quadric decimation spends its budget
-        # per-component, so ~11k specks starve the real surface — measured, the
-        # preview's largest component fell to 27.7% of the mesh.
-        tm = drop_debris(tm, "preview")
+        tm = trimesh.Trimesh(vertices=to_gltf_up(verts), faces=faces, process=False)
         reduced = tm.simplify_quadric_decimation(face_count=PREVIEW_FACE_BUDGET)
+        # Decimation detaches a few new slivers of its own (measured: 660
+        # components / 1.7% of faces on an already-clean input) — sweep again.
+        reduced = drop_debris(reduced, "preview")
         reduced.export(str(out_path))
         progress(
             "geometry",
@@ -205,9 +233,14 @@ def export_preview_glb(mesh_out, out_path: Path, full_faces: int) -> Path | None
         return None
 
 
-def bake_textures(mesh_out, out_path: Path, texture_size: int) -> None:
+def bake_textures(mesh_out, verts, faces, out_path: Path, texture_size: int) -> None:
     """Metal bake via o_voxel/mtldiffrast, KDTree fallback — adapted from
-    trellis-mac generate.py (incl. its _grid_sample_3d transpose fix)."""
+    trellis-mac generate.py (incl. its _grid_sample_3d transpose fix).
+
+    `verts`/`faces` are the welded, de-specked surface (weld_and_clean);
+    `mesh_out` is still needed for the voxel volume the colours are sampled
+    from — which is why the surface must stay in TRELLIS's original frame here.
+    """
     import torch
     from PIL import Image as PILImage
 
@@ -254,8 +287,7 @@ def bake_textures(mesh_out, out_path: Path, texture_size: int) -> None:
             import fast_simplification
             import o_voxel
 
-            verts_np = mesh_out.vertices.cpu().numpy()
-            faces_np = mesh_out.faces.cpu().numpy()
+            verts_np, faces_np = verts, faces
             target_faces = min(200_000, len(faces_np))
             if len(faces_np) > target_faces:
                 ratio = 1.0 - (target_faces / len(faces_np))
@@ -263,8 +295,8 @@ def bake_textures(mesh_out, out_path: Path, texture_size: int) -> None:
                 simp_verts_t = torch.from_numpy(simp_verts).float()
                 simp_faces_t = torch.from_numpy(simp_faces.astype("int32"))
             else:
-                simp_verts_t = mesh_out.vertices
-                simp_faces_t = mesh_out.faces
+                simp_verts_t = torch.from_numpy(verts_np).float()
+                simp_faces_t = torch.from_numpy(faces_np.astype("int32"))
             glb = o_voxel.postprocess.to_glb(
                 vertices=simp_verts_t.cpu(),
                 faces=simp_faces_t.cpu(),
@@ -285,8 +317,6 @@ def bake_textures(mesh_out, out_path: Path, texture_size: int) -> None:
     progress("texture", f"Baking PBR textures via KDTree ({texture_size}px)…")
     from backends.texture_baker import bake_texture, export_glb_with_texture, uv_unwrap
 
-    verts = mesh_out.vertices.cpu().numpy()
-    faces = mesh_out.faces.cpu().numpy()
     bake_verts, bake_faces = verts, faces
     target_faces = min(200_000, len(faces))
     if len(faces) > target_faces:
@@ -397,14 +427,21 @@ def run_one(pipeline, args) -> None:
         raise
     mesh_out = outputs[0] if isinstance(outputs, list) else outputs
 
+    # Weld + de-speck ONCE, then hand the same surface to every consumer. Doing
+    # it per-export cost a MEASURED 87s on a 512 run (206s vs 119s) for three
+    # identical passes over a 1.5M-face mesh.
+    clean_verts, clean_faces = weld_and_clean(mesh_out, "geometry")
+
     geo_path = out_dir / "geometry.glb"
-    n_verts, n_faces = export_untextured_glb(mesh_out, geo_path)
+    n_verts, n_faces = export_untextured_glb(clean_verts, clean_faces, geo_path)
     if n_verts == 0 or n_faces == 0:
         emit(event="error", message=WATCHDOG_HELP)
         raise WorkerFailure(WATCHDOG_HELP)
     # The viewer gets the preview; `path` stays the full-resolution mesh so
     # every downstream stage still runs on the real geometry.
-    preview = export_preview_glb(mesh_out, out_dir / "geometry-preview.glb", n_faces)
+    preview = export_preview_glb(
+        clean_verts, clean_faces, out_dir / "geometry-preview.glb", n_faces
+    )
     emit(
         event="artifact",
         stage="geometry",
@@ -424,7 +461,7 @@ def run_one(pipeline, args) -> None:
         # overallPercent never jumps back to the geometry band.
         ROUTER.default_stage = "texture"
         model_path = out_dir / "model.glb"
-        bake_textures(mesh_out, model_path, args.texture_size)
+        bake_textures(mesh_out, clean_verts, clean_faces, model_path, args.texture_size)
         artifact("texture", "model-glb", str(model_path), "Textured model")
         stage_done("texture", "Texturing done")
 

@@ -38,18 +38,27 @@ def error(message: str) -> None:
 
 
 class _StageRouter:
-    """Maps tqdm desc strings to (stage, human message); mutable so a worker
-    can flip the default stage as its pipeline advances."""
+    """Maps tqdm desc strings to (stage, human message, span); mutable so a
+    worker can flip the default stage as its pipeline advances.
+
+    `span` is where that loop sits INSIDE its stage, as (lo, hi) fractions. One
+    stage is often several back-to-back tqdm loops — TRELLIS runs three 12-step
+    samplers before it exports anything — and reporting each one as its own
+    0→100%% made the bar rewind twice per generation. Declaring the spans lets
+    the shim rescale every loop into one monotonic climb across the stage.
+    """
 
     def __init__(self) -> None:
         self.default_stage = "geometry"
-        self.desc_map: dict[str, tuple[str, str]] = {}
+        self.desc_map: dict[str, tuple[str, str] | tuple[str, str, tuple[float, float]]] = {}
 
-    def resolve(self, desc: str) -> tuple[str, str]:
+    def resolve(self, desc: str) -> tuple[str, str, tuple[float, float]]:
         for needle, mapped in self.desc_map.items():
             if needle.lower() in (desc or "").lower():
-                return mapped
-        return self.default_stage, desc or "Working…"
+                if len(mapped) == 3:
+                    return mapped  # type: ignore[return-value]
+                return mapped[0], mapped[1], (0.0, 1.0)
+        return self.default_stage, desc or "Working…", (0.0, 1.0)
 
 
 ROUTER = _StageRouter()
@@ -70,14 +79,23 @@ def patch_tqdm() -> None:
             result = super().update(n)
             try:
                 total = int(self.total) if self.total else None
-                stage, message = ROUTER.resolve(self.desc or "")
+                stage, message, (lo, hi) = ROUTER.resolve(self.desc or "")
                 if total is not None and total > 1:
                     # Rate-limit: fast loops (e.g. "Loading weights", 415 items)
                     # would flood the event stream; always emit the final tick.
                     now = time.monotonic()
                     if int(self.n) >= total or now - last_emit[0] >= 0.25:
                         last_emit[0] = now
-                        progress(stage, f"{message} ({int(self.n)}/{total})", int(self.n), total)
+                        # The step counter shown stays this loop's own (n/total
+                        # is what the user can verify); the reported position is
+                        # rescaled into the stage so the bar only ever climbs.
+                        pos = lo + (int(self.n) / total) * (hi - lo)
+                        progress(
+                            stage,
+                            f"{message} ({int(self.n)}/{total})",
+                            round(pos * 1000),
+                            1000,
+                        )
             except Exception:  # noqa: BLE001 — progress must never break the run
                 pass
             return result

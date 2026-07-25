@@ -12,8 +12,12 @@
  *
  * HONEST STATUS of the two named engines:
  *  - Rigging is a GEOMETRIC fit to NVIDIA ARDY's 27-joint skeleton, not
- *    SkinTokens. SkinTokens needs a >=14 GB NVIDIA GPU and hardcodes CUDA — it
- *    cannot run on this machine at all.
+ *    SkinTokens. NOTE (2026-07-24): this used to say SkinTokens "needs a >=14 GB
+ *    NVIDIA GPU … cannot run on this machine at all" — that was WRONG (it
+ *    described the upstream CUDA repo, from unexecuted web research).
+ *    `mlx-community/SkinTokens-bf16` runs natively on Apple Silicon; wiring it
+ *    is tracked work, and it emits a VRoid hierarchy so it needs retargeting to
+ *    reach cskel27.
  *  - ARDY motion generation is NOT wired. ARDY is Linux + NVIDIA only. The rig
  *    it produces is ARDY-COMPATIBLE (same joint hierarchy), so clips generated
  *    elsewhere retarget onto it, but nothing here generates motion locally.
@@ -23,16 +27,7 @@ import type { JSX } from 'react';
 import { ANIM_PREVIEWS } from './assets/anim-previews';
 import { ANIM_MODEL, RIG_MODEL } from './data';
 import { useGen3dStore } from './gen3d-client';
-import {
-  IcAnimate,
-  IcBolt,
-  IcInfo,
-  IcPlus,
-  IcRig,
-  IcSearch,
-  IcSparkles,
-  IcTrash,
-} from './icons';
+import { IcAnimate, IcBolt, IcInfo, IcPlus, IcRig, IcSearch, IcSparkles, IcTrash } from './icons';
 import { Segmented } from './primitives';
 import { currentVersion, useTripoStore } from './store';
 
@@ -137,7 +132,11 @@ function HumanoidPrompt({
   };
 
   return (
-    <div className="tp-humanoid-ask" data-testid="tp-humanoid-ask" data-humanoid={prompt.isHumanoid}>
+    <div
+      className="tp-humanoid-ask"
+      data-testid="tp-humanoid-ask"
+      data-humanoid={prompt.isHumanoid}
+    >
       <div className="tp-humanoid-ask-title">
         {prompt.isHumanoid ? 'This looks humanoid.' : "This doesn't look humanoid."}
       </div>
@@ -150,8 +149,8 @@ function HumanoidPrompt({
         ) : (
           <>
             {prompt.reasons.length > 0 ? prompt.reasons.join('; ') : 'no humanoid structure found'}.
-            A humanoid rig fitted to a non-humanoid mesh puts bones where there is no body — and
-            the animation presets will stay hidden either way.
+            A humanoid rig fitted to a non-humanoid mesh puts bones where there is no body — and the
+            animation presets will stay hidden either way.
           </>
         )}
       </p>
@@ -238,8 +237,8 @@ export function AnimatePanel(): JSX.Element {
           <>
             {!rigInstalled ? (
               <p className="tp-stage-warn" data-testid="tp-rig-unavailable">
-                The 3D engine runtime isn't ready yet, so rigging can't run. Open the download
-                panel to finish engine setup.
+                The 3D engine runtime isn't ready yet, so rigging can't run. Open the download panel
+                to finish engine setup.
               </p>
             ) : null}
             <button

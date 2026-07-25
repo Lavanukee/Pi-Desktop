@@ -22,6 +22,7 @@ import os
 import signal
 import subprocess
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -53,6 +54,54 @@ class Job:
         self.proc: subprocess.Popen | None = None
 
 
+# How long a warm worker may sit idle holding its weights before we release
+# them. Long enough to cover "look at the result, tweak, regenerate" (the loop
+# that pays for warmth); short enough that an abandoned session gives the RAM
+# back. Set PI_GEN3D_WARM=0 to disable warm workers entirely.
+WARM_IDLE_SECONDS = float(os.environ.get("PI_GEN3D_WARM_IDLE", "300"))
+
+
+class _WarmWorker:
+    """A worker process kept ALIVE between jobs so its model stays resident.
+
+    Loading TRELLIS-2 costs a MEASURED 82s of a 225s 512 geometry run — 36% of
+    wall-clock, paid on every job because a worker is normally one subprocess per
+    job. This keeps one such process parked on `--serve`, feeding it a JSON line
+    per job and reading the same NDJSON back, so repeat generations skip the load.
+
+    ONE at a time, deliberately: this module's contract is that on a 24 GB
+    machine the previous stage's weights must be out of RAM before the next
+    stage loads, so a warm worker is released before any DIFFERENT worker runs.
+    """
+
+    def __init__(self, key: str, proc: subprocess.Popen) -> None:
+        self.key = key
+        self.proc = proc
+        # Seed with "now": a 0.0 here would read as infinitely idle and let the
+        # reaper kill the worker DURING its very first job.
+        self.last_used = time.time()
+        # True while a job is streaming through it — never reap a running job.
+        self.busy = False
+
+    @property
+    def alive(self) -> bool:
+        return self.proc.poll() is None
+
+    def submit(self, args: list[str]) -> None:
+        assert self.proc.stdin is not None
+        self.proc.stdin.write(json.dumps(args) + "\n")
+        self.proc.stdin.flush()
+
+    def kill(self) -> None:
+        try:
+            os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                self.proc.terminate()
+            except OSError:
+                pass
+
+
 class JobManager:
     def __init__(self, registry: Registry, bus: EventBus, sandbox_dir: Path) -> None:
         self.registry = registry
@@ -60,6 +109,13 @@ class JobManager:
         self.sandbox_dir = sandbox_dir
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+        # At most ONE parked worker (see _WarmWorker): holding two models would
+        # break this module's "previous stage's weights out of RAM first" rule.
+        self._warm: _WarmWorker | None = None
+        self._warm_lock = threading.Lock()
+        self._warm_enabled = os.environ.get("PI_GEN3D_WARM", "1") != "0"
+        if self._warm_enabled:
+            threading.Thread(target=self._warm_reaper, daemon=True).start()
 
     # ---- public -------------------------------------------------------------
     def start_generate(self, body: dict) -> dict:
@@ -226,6 +282,9 @@ class JobManager:
                 ],
                 cwd=self.registry.tool_dir("trellis-mac"),
                 default_stage="geometry",
+                # The 82s pipeline load is the single biggest slice of a 512 run;
+                # park this worker so a re-generate skips it entirely.
+                warm=True,
             )
             if job.cancelled.is_set():
                 raise InterruptedError
@@ -309,9 +368,25 @@ class JobManager:
         args: list[str],
         cwd: Path,
         default_stage: str,
+        warm: bool = False,
     ) -> None:
         if job.cancelled.is_set():
             raise InterruptedError
+        if warm and self._warm_enabled:
+            try:
+                self._run_warm(job, venv_python, script, args, cwd, default_stage)
+                return
+            except (InterruptedError, RuntimeError):
+                raise  # a real job failure/cancel — not a warmth problem
+            except Exception:
+                # Anything else (broken pipe, dead process, protocol desync) is a
+                # WARMTH failure: drop the parked worker and run cold below, so
+                # this optimisation can never turn into a broken generation.
+                self.release_warm("warm path failed")
+        else:
+            # A cold run of a DIFFERENT worker must not coexist with parked
+            # weights on a 24 GB machine.
+            self.release_warm("cold run")
         proc = subprocess.Popen(
             [str(venv_python), str(script), *args],
             cwd=str(cwd),
@@ -333,7 +408,23 @@ class JobManager:
 
         threading.Thread(target=drain_stderr, daemon=True).start()
         assert proc.stdout is not None
-        for line in proc.stdout:
+        self._pump(job, proc.stdout, default_stage)
+        code = proc.wait()
+        job.proc = None
+        if job.cancelled.is_set():
+            raise InterruptedError
+        if code != 0:
+            tail = "".join(stderr_tail).strip()[-1500:]
+            raise RuntimeError(f"worker exited {code}: {tail or 'no stderr'}")
+
+    def _pump(self, job: Job, stdout, default_stage: str) -> None:
+        """Forward one job's NDJSON onto the bus.
+
+        Returns when the stream ends (one-shot worker) or on `job-done` (a
+        served worker, which stays alive for the next job). An `error` event
+        raises, exactly as before.
+        """
+        for line in stdout:
             line = line.strip()
             if not line:
                 continue
@@ -380,10 +471,77 @@ class JobManager:
                 self._publish(job, stage, message=msg.get("message", ""), stageDone=True)
             elif event == "error":
                 raise RuntimeError(msg.get("message", "worker error"))
-        code = proc.wait()
-        job.proc = None
+            elif event == "job-done":
+                return  # served worker: this job is finished, process stays alive
+
+    # ---- warm workers ---------------------------------------------------------
+    def release_warm(self, reason: str = "") -> None:
+        """Drop the parked worker so its weights leave RAM. Safe to call anytime."""
+        with self._warm_lock:
+            warm, self._warm = self._warm, None
+        if warm is not None:
+            warm.kill()
+
+    def _warm_reaper(self) -> None:
+        """Release a warm worker that has been idle too long (gives the RAM back)."""
+        while True:
+            time.sleep(15)
+            with self._warm_lock:
+                warm = self._warm
+                idle = (
+                    warm is not None
+                    and not warm.busy
+                    and (time.time() - warm.last_used) > WARM_IDLE_SECONDS
+                )
+            if idle:
+                self.release_warm("idle")
+
+    def _run_warm(
+        self,
+        job: Job,
+        venv_python: Path,
+        script: Path,
+        args: list[str],
+        cwd: Path,
+        default_stage: str,
+    ) -> None:
+        """Run `args` on a parked `--serve` worker, starting one if needed.
+
+        Raises like `_run_worker` so the caller's error handling is unchanged. If
+        the parked process is missing/dead the caller falls back to a cold run,
+        so warmth is an optimisation that can never block a job.
+        """
+        key = str(script)
+        with self._warm_lock:
+            # The 24 GB invariant: never hold two models. A different worker
+            # means the parked one must go first.
+            if self._warm is not None and (self._warm.key != key or not self._warm.alive):
+                self._warm.kill()
+                self._warm = None
+            if self._warm is None:
+                proc = subprocess.Popen(
+                    [str(venv_python), str(script), "--serve"],
+                    cwd=str(cwd),
+                    env=_worker_env(self.registry),
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    start_new_session=True,
+                )
+                self._warm = _WarmWorker(key, proc)
+            warm = self._warm
+            warm.busy = True  # inside the lock: the reaper must never see it idle
+        job.proc = warm.proc  # cancel() kills it; the next job starts cold
+        try:
+            warm.submit(args)
+            assert warm.proc.stdout is not None
+            self._pump(job, warm.proc.stdout, default_stage)
+        finally:
+            job.proc = None
+            warm.busy = False
+            warm.last_used = time.time()
         if job.cancelled.is_set():
+            # The process was signalled mid-job — it is no longer trustworthy.
+            self.release_warm("cancelled")
             raise InterruptedError
-        if code != 0:
-            tail = "".join(stderr_tail).strip()[-1500:]
-            raise RuntimeError(f"worker exited {code}: {tail or 'no stderr'}")

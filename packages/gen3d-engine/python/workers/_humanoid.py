@@ -7,11 +7,21 @@ fits a standard humanoid skeleton to it, then paints skin weights from bone
 distance. It is deterministic, offline, runs in ~1 s with no weights to
 download, and produces a real skinned GLB.
 
-It is NOT SkinTokens. SkinTokens (VAST-AI-Research, MIT, 1.6 GB) is a real
-learned rigger, but it requires a >=14 GB NVIDIA GPU, builds flash-attn, and
-hardcodes `.to("cuda")` — it cannot run on Apple Silicon. It also predicts
-arbitrary topology and exports joints named `bone_0…bone_N`, so it would not
-produce the hierarchy ARDY needs without a retargeting step anyway.
+It is NOT SkinTokens — it is a geometric placeholder, and SkinTokens is the
+intended replacement.
+
+CORRECTION (2026-07-24): an earlier version of this comment claimed SkinTokens
+"requires a >=14 GB NVIDIA GPU … it cannot run on Apple Silicon". That is
+WRONG. It described the upstream CUDA repo, and it came from web research that
+was never executed. `mlx-community/SkinTokens-bf16` is a real MLX port (1.68 GB
+bf16, Qwen3-0.6B backbone + SkinVAE decoder) that runs natively on Apple
+Silicon via the Swift `mlx-skintokens-swift` package, with `auto` (skeleton +
+skin) and `skinOnly` modes.
+
+What IS still true: it emits a VRoid-template hierarchy with per-vertex
+`JOINTS_0`/`WEIGHTS_0`, so feeding a consumer that expects a different skeleton
+(e.g. ARDY's cskel27) needs a RETARGETING step — a mapping problem, not a
+hardware one.
 
 WHY THIS EXACT SKELETON
 -----------------------

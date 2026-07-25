@@ -15,6 +15,7 @@ then 'texture' for tex sampling + baking.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -47,6 +48,15 @@ ROUTER.desc_map = {
     "shape slat": ("geometry", "Sampling shape latents"),
     "texture slat": ("texture", "Sampling texture latents"),
 }
+
+class WorkerFailure(Exception):
+    """A failure whose `error` event has ALREADY been emitted.
+
+    Lets `run_one` fail without deciding how the process should end: the
+    one-shot path exits non-zero (jobs.py turns that into a job error), while a
+    `--serve` worker stays alive so the next job doesn't re-pay the model load.
+    """
+
 
 WATCHDOG_SIGNATURES = ("non-zero size", "BVH needs at least 8 triangles")
 WATCHDOG_HELP = (
@@ -206,38 +216,32 @@ def bake_textures(mesh_out, out_path: Path, texture_size: int) -> None:
     export_glb_with_texture(new_verts, new_faces, uvs, base_color_img, mr_img, str(out_path))
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    # One-or-more unlabeled input images (repeat --image). TRELLIS.2 pools
-    # multiple views; a single image is the common case.
-    ap.add_argument("--image", action="append", required=True, dest="image")
-    ap.add_argument("--out-dir", required=True)
-    ap.add_argument(
-        "--pipeline-type",
-        default="512",
-        choices=["512", "1024", "1024_cascade", "1536_cascade"],
-    )
-    tex = ap.add_mutually_exclusive_group()
-    tex.add_argument("--texture", action="store_true", default=True)
-    tex.add_argument("--no-texture", dest="texture", action="store_false")
-    ap.add_argument("--texture-size", type=int, default=1024)
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--prompt", default="")
-    args = ap.parse_args()
-
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
+def load_pipeline():
+    """Load TRELLIS-2 onto MPS. This is the expensive part — MEASURED at 82s of
+    a 225s 512 geometry run (36% of wall-clock), paid on EVERY job because a
+    worker is one subprocess per job. `--serve` below pays it once and reuses it."""
     progress("geometry", "Loading TRELLIS-2 pipeline (first load ≈100 s)…")
     t0 = time.time()
     import torch
-    from PIL import Image as PILImage
 
     from trellis2.pipelines.trellis2_image_to_3d import Trellis2ImageTo3DPipeline
 
     pipeline = Trellis2ImageTo3DPipeline.from_pretrained("microsoft/TRELLIS.2-4B")
     pipeline.to(torch.device("mps"))
     progress("geometry", f"Pipeline loaded in {time.time() - t0:.0f}s — generating…")
+    return pipeline
+
+
+def run_one(pipeline, args) -> None:
+    """One generation against an already-loaded pipeline."""
+    from PIL import Image as PILImage
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Per-request reset: a served worker survives across jobs, and the texture
+    # branch below mutates the router's default stage. Without this, job N+1's
+    # early progress would be misrouted to 'texture'.
+    ROUTER.default_stage = "geometry"
 
     imgs = [PILImage.open(p) for p in args.image]
     if len(imgs) > 1:
@@ -264,7 +268,7 @@ def main() -> None:
     except (IndexError, AssertionError) as err:
         if any(sig in str(err) for sig in WATCHDOG_SIGNATURES):
             emit(event="error", message=WATCHDOG_HELP)
-            sys.exit(2)
+            raise WorkerFailure(WATCHDOG_HELP) from err
         raise
     mesh_out = outputs[0] if isinstance(outputs, list) else outputs
 
@@ -272,7 +276,7 @@ def main() -> None:
     n_verts, n_faces = export_untextured_glb(mesh_out, geo_path)
     if n_verts == 0 or n_faces == 0:
         emit(event="error", message=WATCHDOG_HELP)
-        sys.exit(2)
+        raise WorkerFailure(WATCHDOG_HELP)
     # The viewer gets the preview; `path` stays the full-resolution mesh so
     # every downstream stage still runs on the real geometry.
     preview = export_preview_glb(mesh_out, out_dir / "geometry-preview.glb", n_faces)
@@ -298,6 +302,72 @@ def main() -> None:
         bake_textures(mesh_out, model_path, args.texture_size)
         artifact("texture", "model-glb", str(model_path), "Textured model")
         stage_done("texture", "Texturing done")
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser()
+    # One-or-more unlabeled input images (repeat --image). TRELLIS.2 pools
+    # multiple views; a single image is the common case.
+    ap.add_argument("--image", action="append", dest="image")
+    ap.add_argument("--out-dir")
+    ap.add_argument(
+        "--pipeline-type",
+        default="512",
+        choices=["512", "1024", "1024_cascade", "1536_cascade"],
+    )
+    tex = ap.add_mutually_exclusive_group()
+    tex.add_argument("--texture", action="store_true", default=True)
+    tex.add_argument("--no-texture", dest="texture", action="store_false")
+    ap.add_argument("--texture-size", type=int, default=1024)
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--prompt", default="")
+    # Persistent mode: load the pipeline once, then take one job per stdin line.
+    ap.add_argument("--serve", action="store_true")
+    return ap
+
+
+def _serve(ap: argparse.ArgumentParser) -> None:
+    """Read one job per line on stdin, reusing the loaded pipeline.
+
+    Each line is a JSON array of the SAME CLI args a one-shot run would take, so
+    the request shape has exactly one definition. After each job we emit
+    `{"event":"job-done"}` — the manager's terminator — and a failure is reported
+    as an `error` event WITHOUT exiting, so one bad job never costs the 82s
+    reload for the next.
+    """
+    pipeline = load_pipeline()
+    emit(event="ready")
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            args = ap.parse_args(json.loads(line))
+        except Exception as err:  # malformed request — report, stay alive
+            emit(event="error", message=f"bad request: {err}")
+            emit(event="job-done")
+            continue
+        try:
+            run_one(pipeline, args)
+        except WorkerFailure:
+            pass  # already reported by run_one
+        except Exception as err:
+            emit(event="error", message=str(err))
+        emit(event="job-done")
+
+
+def main() -> None:
+    ap = _build_parser()
+    args = ap.parse_args()
+    if args.serve:
+        _serve(ap)
+        return
+    if not args.image or not args.out_dir:
+        ap.error("--image and --out-dir are required")
+    try:
+        run_one(load_pipeline(), args)
+    except WorkerFailure:
+        sys.exit(2)  # error already emitted; jobs.py surfaces the non-zero exit
 
 
 if __name__ == "__main__":

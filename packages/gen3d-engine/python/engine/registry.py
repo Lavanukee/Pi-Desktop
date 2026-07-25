@@ -80,6 +80,15 @@ class Registry:
     def autoremesher_cli(self) -> Path:
         return self.bin_dir / "autoremesher.app" / "Contents" / "MacOS" / "autoremesher"
 
+    def mflux_cli(self) -> Path:
+        """FLUX.2 Klein via mflux (MIT) — the FAST image path.
+
+        MEASURED on the same prompt/size/steps: Mage-Flow-Turbo on PyTorch MPS
+        71s vs FLUX.2 Klein 4B on MLX 13s (5.5x). MLX reaches the M5's GPU
+        neural accelerators that MPS largely does not.
+        """
+        return self.tool_dir("mflux") / ".venv" / "bin" / "mflux-generate-flux2"
+
     def quadriflow_cli(self) -> Path:
         """QuadriFlow (MIT) — the PRIMARY quad remesher.
 

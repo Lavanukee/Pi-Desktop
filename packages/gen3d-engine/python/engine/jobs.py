@@ -217,6 +217,28 @@ class JobManager:
     def _job_dir(self, job: Job) -> Path:
         return self.sandbox_dir / job.job_id
 
+    def _image_worker(self, prompt: str, out: Path) -> tuple[Path, Path, list[str], Path]:
+        """(venv_python, script, args, cwd) for text→image — Klein first.
+
+        MEASURED, same prompt/size/steps at 1024px: Mage-Flow-Turbo on PyTorch
+        MPS 71s, FLUX.2 Klein 4B on MLX 13s — 5.5x. So Klein is the default and
+        Mage-Flow is the fallback for machines where mflux was never installed.
+        """
+        klein = self.registry.mflux_cli()
+        if klein.exists():
+            return (
+                self.registry.venv_python("mflux"),
+                WORKERS_DIR / "klein_worker.py",
+                ["--prompt", prompt, "--out", str(out), "--cli", str(klein)],
+                self.registry.tool_dir("mflux"),
+            )
+        return (
+            self.registry.venv_python("Mage"),
+            WORKERS_DIR / "mageflow_worker.py",
+            ["--prompt", prompt, "--out", str(out), "--model", "microsoft/Mage-Flow-Turbo"],
+            self.registry.tool_dir("Mage"),
+        )
+
     def _publish(self, job: Job, stage: str, **fields) -> None:
         stage_index = job.plan.index(stage) if stage in job.plan else 0
         event = {
@@ -243,18 +265,11 @@ class JobManager:
         job_dir = self._job_dir(job)
         try:
             if kind == "text":
-                self._publish(job, "image", message="Loading Mage-Flow Turbo…")
+                self._publish(job, "image", message="Loading the image model…")
                 image_out = job_dir / "prompt-image.png"
                 self._run_worker(
                     job,
-                    self.registry.venv_python("Mage"),
-                    WORKERS_DIR / "mageflow_worker.py",
-                    [
-                        "--prompt", prompt,
-                        "--out", str(image_out),
-                        "--model", "microsoft/Mage-Flow-Turbo",
-                    ],
-                    cwd=self.registry.tool_dir("Mage"),
+                    *self._image_worker(prompt, image_out),
                     default_stage="image",
                 )
                 if job.cancelled.is_set():

@@ -12,6 +12,7 @@ import {
   type MenuItemConstructorOptions,
   type NativeImage,
   nativeImage,
+  type WebContents,
   type WebPreferences,
 } from 'electron';
 import { registerAfmIpc } from './afm/afm-main';
@@ -29,13 +30,14 @@ import { registerConnectorsIpc } from './connectors/connectors-main';
 import { registerCorpIpc } from './corp/corp-main';
 import { fsHandlers } from './fs-handlers';
 import { disposeGen, registerGenCatalogIpc, registerGenIpc } from './gen/gen-manager';
+import { registerGen3dIpc } from './gen3d/gen3d-main';
 import { registerImportIpc } from './import/import-main';
 import { registerLlmIpc, shutdownInference } from './inference/llm-main';
 import type { AppEventMap, CoreInvokeMap, FsInvokeMap } from './ipc-contract';
 import { disposeMacAgent, registerMacAgentIpc } from './mac/mac-agent';
 import { registerPiIpc } from './pi/pi-main';
-import { registerGen3dIpc } from './gen3d/gen3d-main';
 import { registerProjectIpc } from './project/project-main';
+import { createRendererRecovery } from './renderer-recovery';
 import {
   applySettingsEnvFromDisk,
   generationExperimentEnabled,
@@ -150,6 +152,28 @@ function loadRenderer(win: BrowserWindow, extraQuery?: Record<string, string>): 
   }
 }
 
+/**
+ * Bind {@link createRendererRecovery} to a WebContents so a dead renderer
+ * reloads itself instead of leaving a blank, unreloadable window. Also logs the
+ * exact `reason`/`exitCode` — that is the signal that tells an OOM apart from a
+ * GPU reset or a native crash when diagnosing what killed it.
+ */
+function attachRendererRecovery(contents: WebContents, label: string): void {
+  const recovery = createRendererRecovery({
+    reload: () => contents.reload(),
+    isDestroyed: () => contents.isDestroyed(),
+    now: () => Date.now(),
+    log: (message, meta) => log.warn(message, { window: label, ...meta }),
+  });
+  contents.on('render-process-gone', (_event, details) => {
+    recovery.onRenderProcessGone({ reason: details.reason, exitCode: details.exitCode });
+  });
+  // A hung (not dead) renderer is a different failure — don't reload it out from
+  // under the user, but do surface it so a freeze is never silent.
+  contents.on('unresponsive', () => log.warn('renderer unresponsive', { window: label }));
+  contents.on('responsive', () => log.info('renderer responsive again', { window: label }));
+}
+
 function createMainWindow(): BrowserWindow {
   const icon = appIconImage();
   const win = new BrowserWindow({
@@ -186,6 +210,11 @@ function createMainWindow(): BrowserWindow {
   // The renderer never opens windows or navigates; deny both outright.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event) => event.preventDefault());
+
+  // The app must never need a force quit: a dead renderer leaves the window
+  // painting `backgroundColor` forever with Cmd+R inert (the process that would
+  // service it is gone), so recovery has to come from here. See renderer-recovery.
+  attachRendererRecovery(win.webContents, 'main-window');
 
   win.webContents.on('did-finish-load', () => {
     // Sent before React mounts; delivery relies on the preload pre-mount buffer.
@@ -254,6 +283,7 @@ function openCanvasPopoutWindow(): { webContents: BrowserWindow['webContents']; 
   registerTrustedSender(win.webContents);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event) => event.preventDefault());
+  attachRendererRecovery(win.webContents, 'canvas-popout');
   loadRenderer(win, { canvasPopout: '1' });
   canvasPopoutWindow = win;
   win.on('closed', () => {

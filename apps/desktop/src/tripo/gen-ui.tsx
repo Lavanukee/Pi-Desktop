@@ -9,7 +9,8 @@
  *    plain-language line of what it unlocks, the real size, and its own Download
  *    button — plus one "Download all" at the foot. A model is never presented as
  *    usable before it's installed; this panel is the one way in.
- *  - GenProgressCard: the live generation readout in the viewport — staged
+ *  - (the live generating readout moved to GenStage.tsx — it is now a
+ *    two-phase, whole-viewport experience rather than a floating card)
  *    pipeline chips (Image → Geometry → Texture), an overall bar, the engine's
  *    live message ("Geometry done — texturing (step 12/30)…"), the input-image
  *    thumbnail, and Cancel. Geometry lands in the viewer the moment it exists.
@@ -274,134 +275,5 @@ export function DownloadPanel(): JSX.Element {
         </button>
       </div>
     </section>
-  );
-}
-
-// ── live generation progress ──────────────────────────────────────────────
-
-const STAGE_CHIP: Record<Gen3dRole, string> = {
-  image: 'Image',
-  geometry: 'Geometry',
-  texture: 'Texture',
-  segment: 'Segment',
-  retopo: 'Retopo',
-  rig: 'Rig',
-};
-
-/** The chips shown for a job: the full generate pipeline shows its chain; a
- * single stage op shows just itself. */
-function chipsFor(stage: Gen3dRole): readonly Gen3dRole[] {
-  if (stage === 'segment' || stage === 'retopo' || stage === 'rig') return [stage];
-  return ['image', 'geometry', 'texture'];
-}
-
-/** mm:ss for a running stage — long stages must not look hung. */
-function useElapsed(jobId: string | null, done: boolean): string | null {
-  const [now, setNow] = useState(() => Date.now());
-  const startRef = useRef<{ id: string; at: number } | null>(null);
-  if (jobId !== null && startRef.current?.id !== jobId) {
-    startRef.current = { id: jobId, at: Date.now() };
-  }
-  useEffect(() => {
-    if (jobId === null || done) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [jobId, done]);
-  const start = startRef.current;
-  if (start === null || jobId === null) return null;
-  const secs = Math.max(0, Math.floor((now - start.at) / 1000));
-  if (secs < 3) return null;
-  return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, '0')}s`;
-}
-
-export function GenProgressCard(): JSX.Element | null {
-  const job = useGen3dStore((s) => s.job);
-  const cancelJob = useGen3dStore((s) => s.cancelJob);
-  const clearJob = useGen3dStore((s) => s.clearJob);
-  const elapsed = useElapsed(job?.jobId ?? null, job?.done ?? true);
-  if (job === null) return null;
-
-  const chips = chipsFor(job.stage);
-  const activeIdx = chips.indexOf(job.stage);
-  const failed = job.error !== undefined;
-  const cancelled = job.error === 'cancelled';
-  const indeterminate = !job.done && job.stagePercent === 0 && job.overallPercent === 0;
-
-  return (
-    <div className="tp-genprogress" data-testid="tp-genprogress" data-done={job.done}>
-      <div className="tp-genprogress-head">
-        <div className="tp-genprogress-chips">
-          {chips.map((c, i) => (
-            <span
-              key={c}
-              className="tp-genprogress-chip"
-              data-state={i < activeIdx ? 'done' : i === activeIdx ? 'active' : 'todo'}
-            >
-              {STAGE_CHIP[c]}
-            </span>
-          ))}
-        </div>
-        {job.done ? (
-          <button
-            type="button"
-            className="tp-iconbtn"
-            aria-label="Dismiss"
-            data-testid="tp-genprogress-dismiss"
-            onClick={clearJob}
-          >
-            <IcClose size={14} />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="tp-linklike"
-            data-testid="tp-genprogress-cancel"
-            onClick={() => void cancelJob()}
-          >
-            Cancel
-          </button>
-        )}
-      </div>
-      {failed ? (
-        <div className="tp-genprogress-error" data-testid="tp-genprogress-error">
-          <div className="tp-genprogress-error-title">
-            {cancelled ? 'Cancelled' : `${STAGE_CHIP[job.stage]} failed`}
-          </div>
-          {!cancelled ? <div className="tp-genprogress-error-body">{job.error}</div> : null}
-        </div>
-      ) : (
-        <>
-          {/* Honest progress: a real bar only where the worker reports steps.
-              Before the first step lands there is genuinely nothing to measure,
-              so show an indeterminate sweep rather than a fake 0%. */}
-          <div
-            className="tp-progress tp-genprogress-bar"
-            data-indeterminate={indeterminate}
-            data-testid="tp-genprogress-bar"
-          >
-            <div
-              className="tp-progress-bar"
-              style={indeterminate ? undefined : { width: `${job.overallPercent}%` }}
-            />
-            {!indeterminate ? (
-              <span className="tp-progress-num">{Math.round(job.overallPercent)}%</span>
-            ) : null}
-          </div>
-          <div className="tp-genprogress-msg" data-testid="tp-genprogress-msg">
-            {job.message}
-            {elapsed !== null && !job.done ? (
-              <span className="tp-genprogress-elapsed"> · {elapsed}</span>
-            ) : null}
-          </div>
-        </>
-      )}
-      {job.artifact?.kind === 'image' ? (
-        <img
-          className="tp-genprogress-thumb"
-          src={`pd-file://f${job.artifact.path.split('/').map(encodeURIComponent).join('/')}`}
-          alt={job.artifact.label}
-        />
-      ) : null}
-    </div>
   );
 }

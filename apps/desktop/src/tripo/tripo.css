@@ -2858,64 +2858,6 @@
   color: var(--pd-status-danger-fg);
 }
 
-.tp-genprogress {
-  position: absolute;
-  left: 50%;
-  bottom: 118px;
-  transform: translateX(-50%);
-  width: 440px;
-  max-width: calc(100% - 48px);
-  background: var(--pd-bg-raised);
-  border: 1px solid var(--pd-border-subtle);
-  border-radius: var(--pd-radius-lg);
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  z-index: 40;
-  box-shadow: var(--pd-shadow-lg, 0 8px 28px rgba(0, 0, 0, 0.35));
-}
-.tp-genprogress-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.tp-genprogress-chips {
-  display: flex;
-  gap: 6px;
-}
-.tp-genprogress-chip {
-  font-size: 11px;
-  font-weight: 650;
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--pd-border-subtle);
-  color: var(--pd-text-muted);
-}
-.tp-genprogress-chip[data-state="active"] {
-  background: var(--pd-accent-primary);
-  border-color: var(--pd-accent-primary);
-  color: var(--pd-accent-primary-fg, #fff);
-}
-.tp-genprogress-chip[data-state="done"] {
-  color: var(--pd-status-success-fg);
-  border-color: var(--pd-status-success-fg);
-}
-.tp-genprogress-msg {
-  font-size: 12px;
-  color: var(--pd-text-muted);
-}
-.tp-genprogress-error {
-  font-size: 12px;
-  color: var(--pd-status-danger-fg);
-}
-.tp-genprogress-thumb {
-  width: 84px;
-  height: 84px;
-  object-fit: cover;
-  border-radius: var(--pd-radius-md);
-  border: 1px solid var(--pd-border-subtle);
-}
 .tp-sample-link {
   align-self: center;
   margin-top: 6px;
@@ -4036,19 +3978,205 @@
     opacity: 0.35;
   }
 }
-.tp-genprogress-elapsed {
-  color: var(--pd-text-muted);
+
+/* ── the generating experience ───────────────────────────────────────────────
+   Two phases. While there is nothing to look at, the generating state OWNS the
+   viewport (a wide bar across the middle). The instant the model lands it is
+   shown, and progress collapses to a slim bar along the bottom so the model
+   stays the subject. Replaces a 440px card floating near one edge over an
+   otherwise-empty viewport. */
+.tp-genhero {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  z-index: 45;
+  pointer-events: none;
 }
-.tp-genprogress-error-title {
+.tp-genhero-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(560px, 100%);
+  pointer-events: auto;
+  text-align: center;
+}
+.tp-genhero-title {
   color: var(--pd-text-primary);
-  font-size: 12px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.tp-genhero-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.tp-genhero-pct {
+  color: var(--pd-text-primary);
+  font-size: 22px;
   font-weight: 600;
 }
-.tp-genprogress-error-body {
-  margin-top: 3px;
-  max-height: 88px;
-  overflow-y: auto;
+.tp-genhero-msg {
+  max-width: 460px;
+  min-height: 32px;
+  color: var(--pd-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.tp-genhero-cancel {
+  margin-top: 2px;
+  padding: 6px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--pd-border-subtle);
+  background: var(--pd-bg-raised);
+  color: var(--pd-text-secondary);
+  font-size: 12px;
+  font-weight: 550;
+}
+.tp-genhero-cancel:hover {
+  color: var(--pd-text-primary);
+  border-color: var(--pd-border-strong);
+}
+
+/* Phase 2: slim, full-width, pinned to the bottom of the viewport. */
+.tp-genfoot {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px 10px;
+  background: linear-gradient(to top, var(--pd-bg-raised) 55%, transparent);
+  z-index: 45;
+}
+.tp-genfoot-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.tp-genfoot-title {
+  flex: none;
+  color: var(--pd-text-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.tp-genfoot-msg {
+  flex: 1;
+  overflow: hidden;
   color: var(--pd-text-secondary);
   font-size: 11.5px;
-  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tp-genfoot-dim {
+  color: var(--pd-text-muted);
+}
+.tp-genfoot-pct {
+  flex: none;
+  color: var(--pd-text-primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.tp-genfoot-cancel {
+  flex: none;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--pd-border-subtle);
+  background: var(--pd-bg-elevated);
+  color: var(--pd-text-secondary);
+  font-size: 11.5px;
+  font-weight: 550;
+}
+.tp-genfoot-cancel:hover {
+  color: var(--pd-text-primary);
+  border-color: var(--pd-border-strong);
+}
+.tp-genfoot[data-failed="true"] .tp-genfoot-title {
+  color: var(--pd-text-danger, var(--pd-text-primary));
+}
+
+/* The bar itself, both sizes. */
+.tp-genbar {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--pd-bg-elevated);
+  border: 1px solid var(--pd-border-subtle);
+}
+.tp-genbar-hero {
+  height: 10px;
+}
+.tp-genbar-slim {
+  height: 4px;
+  border: none;
+}
+.tp-genbar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--pd-accent-primary);
+  transition: width var(--pd-duration-normal, 260ms) var(--pd-easing-standard);
+}
+.tp-genbar[data-indeterminate="true"] .tp-genbar-fill {
+  width: 34%;
+  transition: none;
+  animation: tp-genbar-sweep 1.3s var(--pd-easing-standard) infinite;
+}
+@keyframes tp-genbar-sweep {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(330%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tp-genbar[data-indeterminate="true"] .tp-genbar-fill {
+    animation: none;
+    width: 100%;
+    opacity: 0.3;
+  }
+}
+.tp-genhero-chips {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+.tp-genhero-chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--pd-border-subtle);
+  color: var(--pd-text-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.tp-genhero-chip[data-state="active"] {
+  border-color: var(--pd-accent-primary);
+  background: var(--pd-bg-elevated);
+  color: var(--pd-text-primary);
+}
+.tp-genhero-chip[data-state="done"] {
+  color: var(--pd-text-secondary);
+}
+
+/* While the generating bottom bar is up, lift the floating viewport controls
+   clear of it rather than letting the bar sit on top of Export/render modes.
+   Both are centred with translateX(-50%), so the lift must keep that. */
+.tp-viewport .tp-actionbar,
+.tp-viewport .tp-material-strip {
+  transition: transform var(--pd-duration-normal, 260ms) var(--pd-easing-standard);
+}
+.tp-viewport[data-genfoot="true"] .tp-actionbar,
+.tp-viewport[data-genfoot="true"] .tp-material-strip {
+  transform: translate(-50%, -56px);
 }

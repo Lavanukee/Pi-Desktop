@@ -12,7 +12,8 @@ import type { JSX, ReactNode } from 'react';
 import { lazy, Suspense, useRef, useState } from 'react';
 import { BlendGraph } from './BlendGraph';
 import { EXPORT_FORMATS, type ExportFormat } from './data';
-import { GenProgressCard } from './gen-ui';
+import { useGen3dStore } from './gen3d-client';
+import { GenStage } from './GenStage';
 import {
   IcCamera,
   IcCaretSmall,
@@ -476,17 +477,24 @@ export function Viewport(): JSX.Element {
   const graphOpen = useTripoStore((s) => s.graphOpen);
   const gizmoRef = useRef<HTMLDivElement>(null);
   const [flash, setFlash] = useState(0);
+  const job = useGen3dStore((s) => s.job);
+  const generating = job !== null && !job.done;
 
   // The animation state machine editor takes over the whole viewport.
   const showGraph = tool === 'animate' && graphOpen;
 
   return (
-    <div className="tp-viewport" data-testid="tp-viewport">
+    <div
+      className="tp-viewport"
+      data-testid="tp-viewport"
+      // The bottom progress bar occupies the strip the floating controls sit in.
+      data-genfoot={job !== null && loadedAssetId !== null}
+    >
       {loadedAssetId !== null ? (
         <Suspense fallback={<div className="tp-canvas-loading">Preparing viewer…</div>}>
           <Viewer3D gizmoRef={gizmoRef} />
         </Suspense>
-      ) : (
+      ) : generating ? null : (
         <div className="tp-empty" data-testid="tp-empty-state">
           <LogoMark size={54} />
           <h1>Ready For A New 3D Model?</h1>
@@ -522,8 +530,9 @@ export function Viewport(): JSX.Element {
         </>
       ) : null}
 
-      {/* Live engine-generation readout (staged chips + progress + message). */}
-      <GenProgressCard />
+      {/* The generating experience: full-viewport while there is nothing to
+          look at, a slim bottom bar once the model is on screen. */}
+      <GenStage />
 
       {/* The animation state machine editor overlays the whole viewport. */}
       {showGraph ? <BlendGraph /> : null}

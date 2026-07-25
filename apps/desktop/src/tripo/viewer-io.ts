@@ -191,10 +191,20 @@ export function addStageVersion(
 
 const STORE_KEY = 'bobble3d.assetTree.v1';
 
+/** localStorage is a few MB; captured thumbnails are the only heavy field, so
+ * they are the first thing dropped rather than losing the tree itself. */
+const MAX_PERSISTED_BYTES = 3_500_000;
+
 export function saveAssetTree(): void {
   try {
     const { assets } = useTripoStore.getState();
-    localStorage.setItem(STORE_KEY, JSON.stringify(assets));
+    let payload = JSON.stringify(assets);
+    if (payload.length > MAX_PERSISTED_BYTES) {
+      payload = JSON.stringify(
+        assets.map((a) => ({ ...a, versions: a.versions.map((v) => ({ ...v, thumb: null })) })),
+      );
+    }
+    localStorage.setItem(STORE_KEY, payload);
   } catch {
     // Quota or a disabled store — persistence is a convenience, never a gate.
   }

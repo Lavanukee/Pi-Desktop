@@ -98,8 +98,8 @@ await retopoBtn.click();
 // Wait for the job to finish (the engine emits done).
 await win.waitForFunction(
   () => {
-    const el = document.querySelector('[data-testid="tp-genprogress"]');
-    return el !== null && el.getAttribute('data-done') === 'true';
+    const el = document.querySelector('[data-testid="tp-genstage"]');
+    return el !== null && el.getAttribute('data-phase') === 'end';
   },
   undefined,
   { timeout: 300_000 },
@@ -162,6 +162,77 @@ const nodesAfterRig = await win.evaluate(
 );
 assert(nodesAfterRig === 3, `history tree should have 3 nodes after rig (got ${nodesAfterRig})`);
 await shot('08-history-after-rig');
+
+// ── branch switching: make an OLDER node current, then re-run an op from it ──
+await win.click('[data-testid="tp-tab-history"]');
+await win.waitForSelector('[data-testid="tp-ver-tree"]', { timeout: 10_000 });
+const rootId = await win.evaluate(() => {
+  const first = document.querySelector('[data-testid="tp-ver-tree"] .tp-ver-row');
+  return first?.getAttribute('data-testid')?.replace('tp-ver-', '') ?? null;
+});
+if (rootId === null) throw new Error('could not find the root version row');
+await win.click(`[data-testid="tp-ver-make-${rootId}"]`);
+await win.waitForTimeout(600);
+const currentIsRoot = await win.evaluate(
+  (id) => document.querySelector(`[data-testid="tp-ver-${id}"]`)?.getAttribute('data-current') === 'true',
+  rootId,
+);
+assert(currentIsRoot, 'switching the working version back to the root must stick');
+await shot('09-switched-to-root');
+
+// Re-run retopo FROM the root — that must BRANCH, not overwrite the first result.
+// The PREVIOUS job's completion bar lingers for a few seconds, so wait for it to
+// clear before starting: otherwise the "job finished" check below matches the
+// old bar and we measure the tree before the new job has even run.
+await win.waitForFunction(
+  () => document.querySelector('[data-testid="tp-genstage"]') === null,
+  undefined,
+  { timeout: 30_000 },
+);
+await win.click('[data-testid="tp-rail-retopo"]');
+await win.click('[data-testid="tp-retopo-btn"]');
+await win.waitForFunction(
+  () => document.querySelector('[data-testid="tp-genstage"]') !== null,
+  undefined,
+  { timeout: 30_000 },
+);
+await win.waitForFunction(
+  () => {
+    const el = document.querySelector('[data-testid="tp-genstage"]');
+    return el !== null && el.getAttribute('data-phase') === 'end';
+  },
+  undefined,
+  { timeout: 300_000 },
+);
+const stillOne = await assetCount();
+assert(stillOne === 1, `branching must not spawn an asset (got ${stillOne})`);
+await win.click('[data-testid="tp-tab-history"]');
+await win.waitForSelector('[data-testid="tp-ver-tree"]', { timeout: 10_000 });
+const branched = await win.evaluate(() => ({
+  nodes: document.querySelectorAll('[data-testid="tp-ver-tree"] .tp-ver-row').length,
+  branchTags: document.querySelectorAll('.tp-ver-branch-tag').length,
+}));
+console.log('after branching:', JSON.stringify(branched));
+assert(branched.nodes === 4, `tree should have 4 nodes after branching (got ${branched.nodes})`);
+assert(branched.branchTags >= 2, `siblings must be tagged as a branch (got ${branched.branchTags})`);
+await shot('10-branched');
+
+// ── persistence: the tree must survive a reload ──────────────────────────────
+const beforeReload = await win.evaluate(() => localStorage.getItem('bobble3d.assetTree.v1'));
+assert(beforeReload !== null && beforeReload.length > 10, 'tree persisted to localStorage');
+await win.reload();
+await win.waitForSelector('[data-testid="tp-rightpanel"]', { timeout: 60_000 });
+const afterReload = await assetCount();
+assert(afterReload === 1, `the asset must survive a reload (got ${afterReload})`);
+await win.click('[data-testid="tp-asset-grid"] .tp-asset-card');
+await win.click('[data-testid="tp-tab-history"]');
+await win.waitForSelector('[data-testid="tp-ver-tree"]', { timeout: 10_000 });
+const restored = await win.evaluate(
+  () => document.querySelectorAll('[data-testid="tp-ver-tree"] .tp-ver-row').length,
+);
+assert(restored === 4, `the whole tree must survive a reload (got ${restored})`);
+console.log('tree restored after reload:', restored, 'nodes');
+await shot('11-after-reload');
 
 console.log(`\ntripo-versions-probe PASSED — shots in ${OUT_DIR}`);
 await app.close();

@@ -238,6 +238,15 @@ def main() -> None:
 
         pipe.system.base_model = _DedupEncoder(pipe.system.base_model)
 
+    # Extraction is the largest phase left (~169s of a 335s run at 10 steps),
+    # and it looked like the one place Metal was safe: it runs once, after the
+    # last denoise step, so there is no trajectory left for its error to
+    # compound along. TRIED IT — decode_shape on MPS made the whole run SLOWER,
+    # 399s against 335s, and moved the fuselage extent 0.56 -> 0.59. Marching
+    # cubes is the bulk of it and cannot move: use_warp needs CUDA, so it falls
+    # back to skimage on the CPU on either path, leaving only the field
+    # evaluation on-device to pay for shuttling the shape model across.
+
     # Phase timings, because the shape of this run is not what it looks like:
     # once the DiT is fast, the encode and the extraction are the bill.
     marks: list[tuple[str, float]] = [("load", time.time())]

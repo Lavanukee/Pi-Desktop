@@ -44,7 +44,12 @@ def _retopo_module():
 
 
 def test_make_manifold_preserves_world_scale() -> None:
-    import trimesh
+    try:
+        import trimesh
+    except ModuleNotFoundError as err:  # not the system interpreter's job
+        from _skip import Skip
+
+        raise Skip("needs trimesh — run from the meshtools or cube venv") from err
 
     # A shape with the proportions of a real generation (tall, off-square) and
     # a deliberately non-unit size, so an index-space result cannot coincide.

@@ -15,6 +15,8 @@ import sys
 import traceback
 from pathlib import Path
 
+from _skip import Skip
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
@@ -22,6 +24,7 @@ sys.path.insert(0, str(HERE))
 
 def main() -> int:
     failed = 0
+    skipped = 0
     total = 0
     for path in sorted(HERE.glob("test_*.py")):
         mod = importlib.import_module(path.stem)
@@ -30,11 +33,15 @@ def main() -> int:
             try:
                 getattr(mod, name)()
                 print(f"  PASS {path.stem}::{name}")
+            except Skip as why:
+                skipped += 1
+                print(f"  SKIP {path.stem}::{name} — {why}")
             except Exception:  # noqa: BLE001 — a runner reports, it does not judge
                 failed += 1
                 print(f"  FAIL {path.stem}::{name}")
                 traceback.print_exc()
-    print(f"\n{total - failed}/{total} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{total - failed - skipped}/{total - skipped} passed{tail}")
     return 1 if failed else 0
 
 

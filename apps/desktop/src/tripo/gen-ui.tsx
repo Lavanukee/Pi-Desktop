@@ -16,7 +16,7 @@
  *    thumbnail, and Cancel. Geometry lands in the viewer the moment it exists.
  */
 import type { CSSProperties, JSX } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import type { Gen3dModelId, Gen3dRole } from '../../electron/gen3d/gen3d-contract';
 import { formatGb, useGen3dStore } from './gen3d-client';
 import { IcCaretSmall, IcCheck, IcClose, IcDownload } from './icons';

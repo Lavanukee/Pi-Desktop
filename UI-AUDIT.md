@@ -202,6 +202,12 @@ Fixed, including rewriting the animate block to assert **the gate** (nothing abo
 offered before a real rig) rather than the behaviour the gate replaced. The rigged path is
 covered end to end, on real engines, by the pipeline probe. `tripo-ui-probe` now passes.
 
+`round14-composer-probe.mjs` is red for the same reason and I did **not** fix it — it waits on
+`[data-testid="thread-status"]`, which `grep -rn thread-status apps/desktop/src` shows no longer
+exists anywhere. That is outside the studio and outside this audit; flagging it so the `pnpm e2e`
+chain does not look green-except-for-3D when it is not. `chat-ui-probe` and `settings-probe` both
+pass, so the chat-side CSS changes here are clear.
+
 ---
 
 ## What still needs a design decision — NOT fixed

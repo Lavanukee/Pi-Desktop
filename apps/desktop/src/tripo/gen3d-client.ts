@@ -91,6 +91,11 @@ interface Gen3dState {
       readonly probeOnly?: boolean;
       readonly requireHumanoid?: boolean;
       readonly sourcePath?: string;
+      /**
+       * The humanoid verdict the user already confirmed, carried onto the
+       * version this job produces. UI-only — stripped before the IPC call.
+       */
+      readonly knownHumanoid?: boolean;
     },
   ) => Promise<string | null>;
   cancelJob: () => Promise<void>;
@@ -166,8 +171,11 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
   },
   runStage: async (op, modelPath, origin, extra) => {
     set({ startError: null });
+    // `knownHumanoid` is a UI-side carry-over, NOT part of the engine request —
+    // keep it out of the IPC payload (gen3d:stage's contract does not have it).
+    const { knownHumanoid, ...engineOptions } = extra ?? {};
     const res = await window.piDesktop
-      .invoke('gen3d:stage', { op, modelPath, ...(extra ?? {}) })
+      .invoke('gen3d:stage', { op, modelPath, ...engineOptions })
       .catch(() => null);
     if (res === null || !res.ok) {
       const why = res?.error ?? `${op} failed to start`;
@@ -180,6 +188,17 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
       // Only a probe run should raise the "humanoid?" question — the rig run
       // that follows emits the same measurement and must not re-ask.
       if (extra?.probeOnly === true) probeJobs.add(res.jobId);
+      /*
+       * Carry the verdict the user just CONFIRMED into the rig job.
+       *
+       * The shape probe (rig_worker --probe-only) measures humanoid-ness and
+       * the panel asks about it; the rig that FOLLOWS is a different job, and
+       * when SkinTokens is installed jobs.py routes it to skintokens_worker —
+       * which emits `isHumanoid: false` as a placeholder (see confirmedHumanoid
+       * for why that is a non-answer). Kept in its own map so that emission
+       * cannot overwrite it.
+       */
+      if (knownHumanoid !== undefined) confirmedHumanoid.set(res.jobId, knownHumanoid);
     }
     return null;
   },
@@ -237,6 +256,24 @@ const stageOrigins = new Map<string, StageOrigin>();
 
 /** jobId → the rig stage's humanoid verdict, so the produced version records it. */
 const jobHumanoid = new Map<string, boolean>();
+
+/**
+ * jobId → the humanoid verdict the USER confirmed, which outranks the engine's.
+ *
+ * `skintokens_worker.py` emits `humanoid: { isHumanoid: false, reasons: ["14
+ * joints predicted by SkinTokens"] }` — and its own comment says why: "SkinTokens
+ * predicts an arbitrary skeleton rather than fitting a humanoid template, so
+ * there is no humanoid/non-humanoid verdict to make". It is a NON-ANSWER shaped
+ * like an answer, and because it arrives on the same channel as the real
+ * measurement it silently overwrote what the shape probe measured and the user
+ * then confirmed. MEASURED: `shape probe said humanoid=true` and `motion library
+ * hidden: the rig did not read as humanoid` in the same run, twice.
+ *
+ * A confirmed answer therefore lives in its own map and wins. Only the SHAPE
+ * PROBE (rig_worker --probe-only) produces a verdict worth overriding it, and
+ * that is a different job.
+ */
+const confirmedHumanoid = new Map<string, boolean>();
 
 /** Jobs dispatched as shape probes — the only ones that ASK the user. */
 const probeJobs = new Set<string>();
@@ -305,6 +342,26 @@ async function ingestModelArtifact(
         diskPath: path,
         humanoid: humanoidVerdict,
       });
+      /*
+       * Tell the STUDIO which pipeline stage it is now showing.
+       *
+       * `useTripoStore.runStage` is the only writer of `pipelineStage`, of the
+       * History list, and of the texture stage's switch to Textured mode — and
+       * nothing called it. Verified: `grep -rn runStage apps/desktop/src` finds
+       * only the gen3d ENGINE dispatch of the same name. So `pipelineStage`
+       * never left 'mesh', every `stage === 'segment' | 'retopo' | 'rig'`
+       * branch in Viewer3D was dead on the real engine path, and the History
+       * tab stayed empty after five real jobs.
+       *
+       * MEASURED consequence: a 13.5-minute CubePart run finished, produced
+       * five named part meshes with per-part colours, and changed NOTHING on
+       * screen — same white model, empty Parts list (pipeline probe:
+       * "segmentation (CubePart) — 0 part(s) listed in the panel (808s)").
+       *
+       * 'source' is the only TripoOp that is not a TripoStage, and a stage job
+       * never produces one.
+       */
+      if (origin.op !== 'source') useTripoStore.getState().runStage(origin.op);
       markVisible();
       return;
     }
@@ -372,7 +429,8 @@ export function ensureGen3dWired(): void {
     if (update.artifact?.kind === 'model-glb') {
       const artifact = update.artifact;
       const jobId = update.jobId;
-      const humanoid = jobHumanoid.get(jobId) === true;
+      // A verdict the user confirmed outranks anything the rig job emitted.
+      const humanoid = confirmedHumanoid.get(jobId) ?? jobHumanoid.get(jobId) === true;
       // Queue behind this job's previous artifact so the geometry has registered
       // its asset before the textured model looks for it (see jobIngestChain).
       const chain = (jobIngestChain.get(jobId) ?? Promise.resolve())
@@ -397,6 +455,7 @@ export function ensureGen3dWired(): void {
       void (jobIngestChain.get(jobId) ?? Promise.resolve()).finally(() => {
         stageOrigins.delete(jobId);
         jobHumanoid.delete(jobId);
+        confirmedHumanoid.delete(jobId);
         probeJobs.delete(jobId);
         jobRootAsset.delete(jobId);
         jobIngestChain.delete(jobId);

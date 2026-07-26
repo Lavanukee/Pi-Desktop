@@ -31,8 +31,9 @@ export function TripoWorkspace(): JSX.Element {
   }, []);
 
   // One global dismiss layer for every popover/dropdown: any pointerdown
-  // outside a menu anchor closes the open menu; Escape closes menus first,
-  // then the open modal.
+  // outside a menu anchor closes the open menu; Escape peels the layers back
+  // in stacking order — menu, then modal, then the full-viewport state-machine
+  // editor.
   useEffect(() => {
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target;
@@ -46,6 +47,13 @@ export function TripoWorkspace(): JSX.Element {
         s.closeMenus();
       } else if (s.modal !== null) {
         s.set('modal', null);
+      } else if (s.graphOpen) {
+        // The state-machine editor is an opaque, full-viewport overlay
+        // (.tp-graph: position absolute, inset 0, z-index 100) but it lives in
+        // its own `graphOpen` flag rather than in `modal`, so it was the one
+        // dismissable layer in the studio that Escape did not reach — you had
+        // to find the ✕. Every other overlay in the app closes on Escape.
+        s.set('graphOpen', false);
       }
     };
     document.addEventListener('pointerdown', onPointerDown);

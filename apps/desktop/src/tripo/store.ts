@@ -310,12 +310,7 @@ interface TripoState {
   previewVersion: (versionId: string | null) => void;
   /** The viewer captured a real rendered preview for a version. */
   setAssetThumb: (versionId: string, thumb: string) => void;
-  setAssetCounts: (
-    versionId: string,
-    faces: number,
-    vertices: number,
-    topology?: string,
-  ) => void;
+  setAssetCounts: (versionId: string, faces: number, vertices: number, topology?: string) => void;
   /** The version the viewer should render right now. */
   activeVersionId: () => string | null;
   toggleList: (key: 'checkedAssets' | 'hierarchyCollapsed' | 'hiddenNodes', id: string) => void;
@@ -347,10 +342,21 @@ const toggled = (list: readonly string[], id: string): readonly string[] =>
 let seq = 0;
 const nextId = (prefix: string): string => `${prefix}-${++seq}`;
 
+/**
+ * Preset ids are asset filenames ("angry_01", "sad_01", "dance_01"). They were
+ * being used verbatim as the card labels, so raw snake_case filenames were the
+ * only place in the app where storage naming leaked into the UI. The id stays
+ * the id (testids and previewId still key off it); only the label is humanized.
+ */
+const motionLabel = (id: string): string => {
+  const words = id.replace(/_0*(\d+)$/, ' $1').replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
 /** The starter motion library — every bundled preset, previewing on the dummy. */
 const SEED_MOTIONS: readonly MotionClip[] = TRIPO_ANIMS.map((a) => ({
   id: `m-${a.id}`,
-  name: a.id,
+  name: motionLabel(a.id),
   kind: 'preset',
   previewId: a.id,
 }));

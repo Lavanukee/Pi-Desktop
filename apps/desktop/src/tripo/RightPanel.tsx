@@ -12,8 +12,8 @@ import { useRef } from 'react';
 import {
   IcArmature,
   IcBoxNode,
-  IcCheck,
   IcCaretSmall,
+  IcCheck,
   IcCube,
   IcDots,
   IcEye,
@@ -619,7 +619,10 @@ export function RightPanel(): JSX.Element {
           onClick={() => set('rightTab', 'property')}
         >
           <IcLayers size={15} />
-          Property
+          {/* The tab shows a hierarchy of many nodes — "Properties", like the
+              store key's sibling label. Kept the 'property' store value and
+              testid so nothing functional moves. */}
+          Properties
         </button>
       </div>
       <div className="tp-right-body">

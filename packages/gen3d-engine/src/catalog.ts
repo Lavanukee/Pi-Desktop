@@ -49,8 +49,19 @@ export interface Gen3dModelSpec {
   readonly role: Gen3dRole;
   readonly note: string;
   readonly repos: readonly Gen3dRepoSpec[];
-  /** Which runtime environment the sidecar must provision for this model. */
-  readonly env: 'trellis' | 'mageflow' | 'cubepart' | 'paint' | 'binary' | 'meshtools';
+  /**
+   * Which runtime environment the sidecar must provision for this model.
+   * MUST stay in step with `_provision_env`'s `env_kind` branches in
+   * python/engine/envs.py — that is the code that has to recognise the string.
+   */
+  readonly env:
+    | 'trellis'
+    | 'mageflow'
+    | 'cubepart'
+    | 'paint'
+    | 'binary'
+    | 'meshtools'
+    | 'skintokens';
 }
 
 /**

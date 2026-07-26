@@ -59,8 +59,23 @@ function resolveColor(expr: string): string {
   return out === '' ? 'rgb(128,128,128)' : out;
 }
 
-/** Segment-part palette (kept in sync with .tp-part-swatch in tripo.css). */
-const PART_COLORS = ['#e8863a', '#4a90d9', '#58b368', '#d9b44a'] as const;
+/**
+ * Segment-part palette — ONE list, mirrored by `.tp-part-swatch` in tripo.css
+ * (the panel legend) and by PART_PALETTE in
+ * packages/gen3d-engine/python/workers/cubepart_worker.py (the colours the
+ * engine bakes into the exported GLB). All three used to disagree, and the
+ * Python one shipped a purple. No hue here lands in 255-320deg.
+ */
+const PART_COLORS = [
+  '#e8863a',
+  '#4a90d9',
+  '#58b368',
+  '#d9b44a',
+  '#d9605a',
+  '#3fb3ac',
+  '#9ac05f',
+  '#97a3ad',
+] as const;
 
 // ── shared creature profile (mirrors build-hero-glb.mjs) — used to draw the
 // clean QUAD wireframe that reveals the retopology topology. ─────────────────
@@ -172,9 +187,7 @@ function hasTextureMaps(mat: InstanceType<typeof THREE.Material>): boolean {
     roughnessMap?: unknown;
     emissiveMap?: unknown;
   };
-  return (
-    m.map != null || m.metalnessMap != null || m.roughnessMap != null || m.emissiveMap != null
-  );
+  return m.map != null || m.metalnessMap != null || m.roughnessMap != null || m.emissiveMap != null;
 }
 
 /** Generate the procedural "generated texture": muted painterly bands +
@@ -896,15 +909,36 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       // the render mode. All on the real loaded bodies.
       const activeBodies = importedBodies;
       if (stage === 'segment') {
+        /*
+         * A REAL CubePart result is one named mesh per part, each carrying its
+         * own COLOR_0 (verified on a run's parts.glb: nodes
+         * part_00_main_body … part_04_right_part, every primitive
+         * [POSITION, COLOR_0], no materials). Use those.
+         *
+         * The demo path below — three height bands and a hardcoded
+         * ['Top','Middle','Base'] — is the bundled-sample behaviour, and
+         * repainting it over a genuine five-part segmentation would throw the
+         * engine's answer away and then mislabel it.
+         */
+        const engineParts = activeBodies
+          .map(({ mesh }) => /^part_(\d+)_(.+)$/.exec(mesh.name))
+          .filter((m): m is RegExpExecArray => m !== null);
+        const fromEngine = engineParts.length > 0 && engineParts.length === activeBodies.length;
         for (const { mesh } of activeBodies) {
-          if (!segPainted.has(mesh.geometry)) {
+          if (!fromEngine && !segPainted.has(mesh.geometry)) {
             paintSegmentColors(mesh.geometry);
             segPainted.add(mesh.geometry);
           }
-          mesh.material = segMat;
+          mesh.material = segMat; // vertexColors: true — reads COLOR_0 as-is
         }
-        const parts = ['Top', 'Middle', 'Base'];
-        if (s.segmentParts.length !== parts.length) {
+        const parts = fromEngine
+          ? engineParts.map((m) =>
+              (m[2] ?? '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()),
+            )
+          : ['Top', 'Middle', 'Base'];
+        // Compared by VALUE: the old length check could not see one 3-part list
+        // replaced by a different 3-part list.
+        if (s.segmentParts.join('|') !== parts.join('|')) {
           useTripoStore.getState().set('segmentParts', parts);
         }
       } else if (s.renderMode === 'textured') {
@@ -1093,7 +1127,18 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       const octx = out.getContext('2d');
       if (octx === null) return;
       octx.drawImage(full, 0, 0, THUMB_SIDE, THUMB_SIDE);
-      useTripoStore.getState().setAssetThumb(assetId, out.toDataURL('image/jpeg', 0.82));
+      /*
+       * PNG, not JPEG. The renderer is `alpha: true` with no clear colour, so
+       * the capture's background is genuinely TRANSPARENT — but JPEG has no
+       * alpha channel and Chromium flattens it onto BLACK. Every asset card in
+       * the grid was therefore a black slab, which is invisible in dark mode
+       * and glaring under bobble-light / codex-light (a black square in an
+       * otherwise white panel). PNG keeps the alpha so the card's own surface
+       * shows through and the thumbnail re-tints with the theme for free.
+       * Size is not a concern: thumbnails are session-only — viewer-io writes
+       * `thumb: null` into localStorage precisely because they are heavy.
+       */
+      useTripoStore.getState().setAssetThumb(assetId, out.toDataURL('image/png'));
     };
 
     // ── render loop + frame/fps instrumentation (probe hooks) ───────────────

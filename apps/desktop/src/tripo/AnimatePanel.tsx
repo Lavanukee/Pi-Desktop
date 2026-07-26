@@ -53,6 +53,12 @@ function AnimPreviewCard({ preset }: { readonly preset: string | undefined }): J
       playsInline
       preload="none"
       onMouseEnter={(e) => {
+        // CSS cannot stop a <video>, so the reduced-motion contract has to be
+        // honoured here: under `reduce` the card stays on its poster frame,
+        // which is a mid-motion still and still says what the clip is. Every
+        // other animation in the studio opts out via the media query in
+        // tripo.css; this was the one that could not.
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
         void e.currentTarget.play().catch(() => {});
       }}
       onMouseLeave={(e) => {
@@ -128,7 +134,19 @@ function HumanoidPrompt({
   const dismiss = () => useTripoStore.setState({ humanoidPrompt: null });
   const rig = () => {
     dismiss();
-    void runStage('rig', diskPath, { assetId, versionId, op: 'rig' });
+    // Pass the verdict the user just answered. The rig job itself may not
+    // measure humanoid-ness (SkinTokens predicts a skeleton for any mesh and
+    // reports none), and without this the produced version recorded
+    // humanoid:false — hiding every motion control behind a rig that had just
+    // succeeded and been confirmed humanoid.
+    void runStage(
+      'rig',
+      diskPath,
+      { assetId, versionId, op: 'rig' },
+      {
+        knownHumanoid: prompt.isHumanoid,
+      },
+    );
   };
 
   return (
@@ -220,7 +238,7 @@ export function AnimatePanel(): JSX.Element {
         </span>
         Rigging &amp; Animation
       </div>
-      <div className="tp-panel-scroll">
+      <div className="tp-panel-scroll pd-scroll">
         <div className="tp-engine-row" data-testid="tp-rig-engine-row">
           <span className="tp-field-label">Rigging</span>
           <span className="tp-engine-name">{RIG_MODEL}</span>

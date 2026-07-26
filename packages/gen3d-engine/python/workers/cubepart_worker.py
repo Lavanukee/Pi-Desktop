@@ -25,6 +25,35 @@ from _progress import ROUTER, artifact, patch_tqdm, progress, stage_done  # noqa
 STAGE = "segment"
 DEFAULT_PARTS = ["main body", "top part", "bottom part", "left part", "right part"]
 
+# Per-part face colours, baked into the exported GLB — so this palette IS UI:
+# it is what the user looks at in the viewport after a segment run.
+#
+# Two things were wrong with the old list.
+#   1. Entry 4 was (155, 89, 182) = #9b59b6, hue 283deg — PURPLE, against the
+#      standing no-purple brief. Not an edge case either: DEFAULT_PARTS has
+#      exactly five entries, so every default segmentation painted a purple
+#      part. A DOM hue scan can never catch it because the colour lives in
+#      vertex data inside a GLB, which is why it survived the last audit's
+#      clean "0 purple hits".
+#   2. It shared nothing with .tp-part-swatch in tripo.css, which is the LEGEND
+#      for these very colours — the panel drew "Head" with an orange dot while
+#      the head in the viewport was red, and had no rule at all past part 3.
+#
+# These eight are now the single palette, mirrored verbatim by .tp-part-swatch
+# and by PART_COLORS in Viewer3D.tsx. Hues: 3, 26, 44, 84, 131, 176, 207, 211 —
+# nothing in the 255-320 purple band. Guarded by
+# python/tests/test_part_palette.py.
+PART_PALETTE = [
+    (232, 134, 58),   # #e8863a orange
+    (74, 144, 217),   # #4a90d9 blue
+    (88, 179, 104),   # #58b368 green
+    (217, 180, 74),   # #d9b44a yellow
+    (217, 96, 90),    # #d9605a red      (was purple)
+    (63, 179, 172),   # #3fb3ac teal
+    (154, 192, 95),   # #9ac05f lime
+    (151, 163, 173),  # #97a3ad slate
+]
+
 patch_tqdm()
 ROUTER.default_stage = STAGE
 # CubePart's diffusion loop has no tqdm description, and on CPU it runs for
@@ -282,10 +311,7 @@ def main() -> None:
 
     scene = trimesh.Scene()
     saved = 0
-    palette = [
-        (231, 76, 60), (46, 204, 113), (52, 152, 219), (241, 196, 15),
-        (155, 89, 182), (26, 188, 156), (230, 126, 34), (149, 165, 166),
-    ]
+    palette = PART_PALETTE
     for i, (verts, faces) in enumerate(part_meshes):
         if verts is None:
             continue

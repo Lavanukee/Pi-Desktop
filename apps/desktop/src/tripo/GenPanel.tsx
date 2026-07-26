@@ -473,6 +473,7 @@ function ModelPanel(): JSX.Element {
   const geometryReady = engineReady && (useCube ? installed('cube3d') : installed('trellis2'));
   const canRunReal = geometryReady && (useCube || inputMode !== 'text' || installed('mageflow'));
   const busy = job !== null && !job.done;
+  const startError = useGen3dStore((s) => s.startError);
   /** The first model this run needs and does not have. */
   const missingModel: Gen3dModelId = useCube
     ? 'cube3d'
@@ -604,9 +605,18 @@ function ModelPanel(): JSX.Element {
           </>
         )}
         <GeoAccordion />
-        <AiModelSelect />
+        {/* The AI Model card names the geometry engine. With Cube 3D selected it
+            would sit there claiming "TRELLIS-2 — image or text to 3D", which is
+            simply the wrong model; the Shape model control above is the truth. */}
+        {useCube ? null : <AiModelSelect />}
       </div>
       <div className="tp-panel-foot">
+        {/* A refused request has no job, so nothing else would ever mention it. */}
+        {startError !== null ? (
+          <p className="tp-stage-warn" data-testid="tp-start-error">
+            {startError}
+          </p>
+        ) : null}
         {canRunReal ? (
           <GenerateButton
             label={busy ? 'Generating…' : 'Generate Model'}
@@ -659,6 +669,7 @@ function ImagePanel(): JSX.Element {
   const editReady = engineReady && models.find((m) => m.id === 'mageflow-edit')?.installed === true;
   const trellisInstalled = models.find((m) => m.id === 'trellis2')?.installed === true;
   const busy = job !== null && !job.done;
+  const startError = useGen3dStore((s) => s.startError);
   const current = imageVersions[Math.min(imageIndex, imageVersions.length - 1)] ?? null;
   const resultImage = current?.path ?? null;
   const pdUrl = (p: string): string => `pd-file://f${p.split('/').map(encodeURIComponent).join('/')}`;
@@ -828,6 +839,11 @@ function ImagePanel(): JSX.Element {
         ) : null}
       </div>
       <div className="tp-panel-foot">
+        {startError !== null ? (
+          <p className="tp-stage-warn" data-testid="tp-start-error">
+            {startError}
+          </p>
+        ) : null}
         {mageReady ? (
           <GenerateButton
             label={busy ? 'Generating…' : 'Generate Image'}

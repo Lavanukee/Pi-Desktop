@@ -46,6 +46,15 @@ interface Gen3dState {
   downloadPromptOpen: boolean;
   /** A model to scroll to + highlight when the panel opens (from a stage CTA). */
   downloadFocus: Gen3dModelId | null;
+  /**
+   * Why the last generate/stage request was REFUSED before any job existed.
+   *
+   * The engine can reject a request outright — a model not installed, no input
+   * image — and until now every caller did `void generate(...)` and dropped the
+   * reason on the floor. Pressing Generate then did visibly nothing at all,
+   * which is the worst possible answer.
+   */
+  startError: string | null;
 
   refresh: () => Promise<void>;
   setDownloadPromptOpen: (open: boolean, focus?: Gen3dModelId | null) => void;
@@ -97,6 +106,7 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
   jobPlan: null,
   downloadPromptOpen: false,
   downloadFocus: null,
+  startError: null,
 
   refresh: async () => {
     const res = await window.piDesktop.invoke('gen3d:catalog', undefined).catch(() => null);
@@ -119,6 +129,7 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
     return null;
   },
   generate: async (req) => {
+    set({ startError: null });
     const res = await window.piDesktop
       .invoke('gen3d:generate', {
         kind: req.kind,
@@ -133,7 +144,11 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
         ...(req.editFrom !== undefined ? { editFrom: req.editFrom } : {}),
       })
       .catch(() => null);
-    if (res === null || !res.ok) return res?.error ?? 'generation failed to start';
+    if (res === null || !res.ok) {
+      const why = res?.error ?? 'generation failed to start';
+      set({ startError: why });
+      return why;
+    }
     if (res.jobId !== undefined) {
       set({ jobPlan: { jobId: res.jobId, stages: plannedStages(req) } });
     }
@@ -147,10 +162,15 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
     return null;
   },
   runStage: async (op, modelPath, origin, extra) => {
+    set({ startError: null });
     const res = await window.piDesktop
       .invoke('gen3d:stage', { op, modelPath, ...(extra ?? {}) })
       .catch(() => null);
-    if (res === null || !res.ok) return res?.error ?? `${op} failed to start`;
+    if (res === null || !res.ok) {
+      const why = res?.error ?? `${op} failed to start`;
+      set({ startError: why });
+      return why;
+    }
     if (res.jobId !== undefined) {
       set({ jobPlan: { jobId: res.jobId, stages: [op] } });
       if (origin !== undefined) stageOrigins.set(res.jobId, origin);

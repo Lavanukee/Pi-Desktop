@@ -222,7 +222,7 @@ class JobManager:
             target=self._run_generate,
             args=(
                 job, kind, prompt, image_paths, resolution, texture,
-                image_only, texture_size, edit_from,
+                image_only, texture_size, edit_from, face_budget,
             ),
             daemon=True,
         ).start()
@@ -374,6 +374,7 @@ class JobManager:
         image_only: bool = False,
         texture_size: int = 0,
         edit_from: str = "",
+        face_budget: int = 0,
     ) -> None:
         job_dir = self._job_dir(job)
         try:
@@ -504,6 +505,13 @@ class JobManager:
                     "--bake-only",
                     "--mesh", model_path,
                     "--out-dir", str(job_dir),
+                    # Same Face limit the generate path honours, so re-baking a
+                    # model does not silently change its density.
+                    *(
+                        ["--bake-faces", str(int(options.get("faceBudget") or 0))]
+                        if int(options.get("faceBudget") or 0) > 0
+                        else []
+                    ),
                 ]
                 # A retopo/segment result lives in its own job dir; the colours
                 # stay with the generation that produced them.

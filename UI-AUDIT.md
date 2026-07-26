@@ -23,6 +23,11 @@ node apps/desktop/tests/e2e/tripo-parity-audit4.mjs
 TRIPO_E2E_OUT=/tmp/pipe node apps/desktop/tests/e2e/tripo-e2e-pipeline-probe.mjs   # ~25 min
 ```
 
+Screenshot filenames below (`before/…`, `after/…`, `pipeline/…`) are the probes' own outputs
+under `AUDIT_OUT` / `TRIPO_E2E_OUT`. They are not committed — the commands above regenerate
+them, which is the point: every claim here is a re-runnable measurement rather than an
+attachment you have to take on trust.
+
 ---
 
 ## Summary
@@ -73,7 +78,7 @@ red claim, fixed by `3b91d09`; `tripo-pipeline-probe.mjs`, which no longer exist
 | 7 | **Title Case marketing voice.** empty state read "Ready For A New 3D Model?" at 30px | "No model yet" at `--pd-font-size-title` |
 | 8 | **Studio scrollers used the UA scrollbar** (`.tp-panel-scroll`, `scrollbar-width: auto`) | carries `.pd-scroll` |
 | 9 | **Phantom token.** `var(--pd-accent-primary-fg, #fff)` — 0 occurrences in `themes.css`, so it silently always used the fallback | `--pd-text-on-accent`; 0 occurrences remain |
-| 10 | **Off-token status colors + hardcoded letterbox.** `#e0705a` ×6, `#3ea55f` ×3, `#26262c` behind every motion video (a dark slab under both light modes) | status tokens; `--pd-bg-inset`. Hex literals **25 → 24**, and every remaining one is a `#fff`/`#000` mix endpoint, a DCC brand logo, or the part palette — all deliberately theme-invariant |
+| 10 | **Off-token status colors + hardcoded letterbox.** `#e0705a` ×6, `#3ea55f` ×3, `#26262c` behind every motion video (a dark slab under both light modes) | status tokens; `--pd-bg-inset`. Live hex literals **25 → 20**, and every remaining one is deliberately theme-invariant: `#fff`/`#000` as `color-mix` endpoints (7), the capability-loop illustration palette (6, `.cl-img-sky` etc — it depicts a sky and a hill), and the 8 segment part colours that must match what the engine bakes into the mesh. Three more `#…` strings survive only inside explanatory comments |
 | 11 | **Export dialog occluded a control it sat on.** `position: absolute; right: 22px; bottom: 66px`, no scrim, parked over the render-mode bar — Wireframe was unreachable while it was open | centered, scrimmed, `role="dialog" aria-modal`, dismisses on scrim click and Escape |
 | 12 | **Wireframe lied about its affordance.** it sat in the exclusive Clay/Textured/Normal strip wearing the same `.tp-mode-btn`, advertising a fourth mode that is an independent overlay | `role="switch"` + state dot, same strip, same testid (`pipeline/06b-retopo-wireframe.png`) |
 | 13 | **Storage names leaked into the UI.** motion labels rendered `angry_01`, `sad_01`, `dance_01` (`store.ts` did `name: a.id`) | humanised |
@@ -312,6 +317,10 @@ reads it, so `buildWireOverlay` draws those polygon edges instead of `WireframeG
 `Topology: Quad · Faces 27,724 · Vertices 27,803`. The two agree.
 
 ## P0 — functional defects the run exposed, all fixed on this branch
+
+*Verification status is stated per item. P0-3 and P0-4 are confirmed by a re-run on the fixed
+build; P0-1 and P0-2 are fixed and typecheck/build/test-green, and the re-run that confirms them
+is noted where it stands.*
 
 **P0-1. The pipeline-stage state machine was never connected to the engine.**
 `useTripoStore.runStage` is the only writer of `pipelineStage`, of the History list, and of the

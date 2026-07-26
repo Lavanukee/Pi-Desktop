@@ -26,6 +26,7 @@ export type Gen3dModelId =
   | 'trellis2'
   | 'cube3d'
   | 'mageflow'
+  | 'mageflow-edit'
   | 'cubepart'
   | 'autoremesher'
   | 'humanoid-rig';
@@ -127,6 +128,22 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
         repo: 'microsoft/Mage-Flow-Turbo',
         allowPatterns: ['transformer/*', 'text_encoder/*', 'vae/*', 'scheduler/*', '*.json'],
         bytes: 17_463_920_534,
+      },
+    ],
+  },
+  {
+    id: 'mageflow-edit',
+    label: 'Mage-Flow Edit',
+    role: 'image',
+    note: 'Edit a generated image from an instruction before turning it into 3D (9s per edit on MLX)',
+    env: 'mageflow',
+    repos: [
+      {
+        repo: 'microsoft/Mage-Flow-Edit-Turbo',
+        allowPatterns: ['transformer/*', 'text_encoder/*', 'vae/*', 'scheduler/*', '*.json'],
+        // Measured on disk for exactly these patterns, not copied from the
+        // generator's entry.
+        bytes: 17_463_884_035,
       },
     ],
   },

@@ -203,6 +203,14 @@ interface TripoState {
   /** Which shape model text→3D uses. TRELLIS goes via an image; Cube3D does
    * not, and produces no texture. Image→3D is always TRELLIS. */
   genEngine: 'trellis2' | 'cube3d';
+  /**
+   * Every image this session produced, oldest first: a generation followed by
+   * whatever edits were made from it. The user picks which one becomes 3D, so
+   * an edit must not throw away what it started from.
+   */
+  imageVersions: readonly { readonly path: string; readonly label: string }[];
+  /** Index into imageVersions the panel is showing / will act on. */
+  imageIndex: number;
   /** Draw the rig's bones over the model. Only meaningful when hasSkeleton. */
   showSkeleton: boolean;
   /** The loaded model actually carries a skin — set by the viewer on load, so
@@ -369,6 +377,8 @@ export const useTripoStore = create<TripoState>((set, get) => ({
   genModel: 'trellis-2',
   genResolution: 'medium',
   genEngine: 'trellis2',
+  imageVersions: [],
+  imageIndex: 0,
   showSkeleton: false,
   hasSkeleton: false,
   genTextureSize: 2048,

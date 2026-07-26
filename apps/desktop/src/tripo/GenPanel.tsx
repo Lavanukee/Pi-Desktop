@@ -638,8 +638,17 @@ function ModelPanel(): JSX.Element {
 function ImagePanel(): JSX.Element {
   const [ratio, setRatio] = useState<'1:1' | '16:9' | '9:16'>('1:1');
   const [prompt, setPrompt] = useState('');
+  const [editPrompt, setEditPrompt] = useState('');
   const genResolution = useTripoStore((s) => s.genResolution);
   const genAutoTexture = useTripoStore((s) => s.genAutoTexture);
+  const set = useTripoStore((s) => s.set);
+  // Every image this session made, so an EDIT can be compared against what it
+  // came from and Make 3D acts on whichever one the user settled on. Reading
+  // the live job's artifact instead (what this panel used to do) meant the
+  // image vanished the moment another job started, and an edit would have
+  // silently replaced the only copy.
+  const imageVersions = useTripoStore((s) => s.imageVersions);
+  const imageIndex = useTripoStore((s) => s.imageIndex);
   const engineReady = useGen3dStore((s) => s.engineReady);
   const models = useGen3dStore((s) => s.models);
   const job = useGen3dStore((s) => s.job);
@@ -647,18 +656,35 @@ function ImagePanel(): JSX.Element {
   const openDownload = useGen3dStore((s) => s.setDownloadPromptOpen);
 
   const mageReady = engineReady && models.find((m) => m.id === 'mageflow')?.installed === true;
+  const editReady = engineReady && models.find((m) => m.id === 'mageflow-edit')?.installed === true;
   const trellisInstalled = models.find((m) => m.id === 'trellis2')?.installed === true;
   const busy = job !== null && !job.done;
-  // A finished image sitting in the viewport readout is the one we act on.
-  const resultImage =
-    job?.done === true && job.artifact?.kind === 'image' ? job.artifact.path : null;
+  const current = imageVersions[Math.min(imageIndex, imageVersions.length - 1)] ?? null;
+  const resultImage = current?.path ?? null;
+  const pdUrl = (p: string): string => `pd-file://f${p.split('/').map(encodeURIComponent).join('/')}`;
 
   const exportImage = () => {
     if (resultImage === null) return;
     const a = document.createElement('a');
-    a.href = `pd-file://f${resultImage.split('/').map(encodeURIComponent).join('/')}`;
+    a.href = pdUrl(resultImage);
     a.download = resultImage.split('/').pop() ?? 'image.png';
     a.click();
+  };
+
+  const runEdit = () => {
+    if (resultImage === null || editPrompt.trim().length === 0) return;
+    if (!editReady) {
+      openDownload(true, 'mageflow-edit');
+      return;
+    }
+    void generate({
+      kind: 'text',
+      prompt: editPrompt.trim(),
+      resolution: genResolution,
+      texture: genAutoTexture,
+      imageOnly: true,
+      editFrom: resultImage,
+    });
   };
 
   const mageSize = models.find((m) => m.id === 'mageflow')?.sizeBytes ?? 0;
@@ -695,12 +721,77 @@ function ImagePanel(): JSX.Element {
         </div>
         {resultImage !== null ? (
           <div className="tp-image-result" data-testid="tp-image-result">
-            <div className="tp-section-title">Generated image</div>
+            <div className="tp-section-title">
+              {current?.label ?? 'Generated image'}
+              {imageVersions.length > 1 ? (
+                <span className="tp-image-count">
+                  {' '}
+                  {imageIndex + 1}/{imageVersions.length}
+                </span>
+              ) : null}
+            </div>
+            {/* Full-width, not a thumbnail: this is the image the user has to
+                judge before spending minutes turning it into geometry. */}
             <img
-              className="tp-image-result-thumb"
-              src={`pd-file://f${resultImage.split('/').map(encodeURIComponent).join('/')}`}
-              alt="Generated"
+              className="tp-image-result-full"
+              data-testid="tp-image-preview"
+              src={pdUrl(resultImage)}
+              alt={current?.label ?? 'Generated'}
             />
+            {imageVersions.length > 1 ? (
+              <div className="tp-image-steps" data-testid="tp-image-steps">
+                <button
+                  type="button"
+                  className="tp-upload-btn"
+                  data-testid="tp-image-prev"
+                  disabled={imageIndex === 0}
+                  onClick={() => set('imageIndex', Math.max(0, imageIndex - 1))}
+                >
+                  ‹ Previous
+                </button>
+                <button
+                  type="button"
+                  className="tp-upload-btn"
+                  data-testid="tp-image-next"
+                  disabled={imageIndex >= imageVersions.length - 1}
+                  onClick={() =>
+                    set('imageIndex', Math.min(imageVersions.length - 1, imageIndex + 1))
+                  }
+                >
+                  Next ›
+                </button>
+              </div>
+            ) : null}
+
+            {/* EDIT before committing to 3D. */}
+            <div className="tp-field-col">
+              <span className="tp-field-label">Edit this image</span>
+              <input
+                className="tp-text-input"
+                data-testid="tp-image-edit-prompt"
+                placeholder="e.g. make the dinosaur bright blue"
+                value={editPrompt}
+                onChange={(e) => setEditPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !busy) runEdit();
+                }}
+              />
+              <button
+                type="button"
+                className="tp-upload-btn"
+                data-testid="tp-image-edit-btn"
+                disabled={busy || editPrompt.trim().length === 0}
+                onClick={runEdit}
+              >
+                <IcPencil size={14} />
+                {busy ? 'Working…' : editReady ? 'Apply edit' : 'Get the edit model'}
+              </button>
+              <span className="tp-field-hint">
+                Edits land beside the original — step back with Previous and turn
+                whichever one you like into 3D.
+              </span>
+            </div>
+
             <div className="tp-image-result-actions">
               <button
                 type="button"

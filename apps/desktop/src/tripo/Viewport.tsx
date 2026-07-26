@@ -487,6 +487,22 @@ function HelpModal(): JSX.Element {
 
 // ── the viewport ──────────────────────────────────────────────────────────
 export function Viewport(): JSX.Element {
+  // The Image stage shows its result HERE rather than in the side panel.
+  const imageTool = useTripoStore((s) => s.tool);
+  const imageVersions = useTripoStore((s) => s.imageVersions);
+  const imageIndex = useTripoStore((s) => s.imageIndex);
+  const imageStageView = (() => {
+    if (imageTool !== 'image' || imageVersions.length === 0) return null;
+    const i = Math.min(imageIndex, imageVersions.length - 1);
+    const v = imageVersions[i];
+    if (v === undefined) return null;
+    return {
+      url: `pd-file://f${v.path.split('/').map(encodeURIComponent).join('/')}`,
+      label: v.label,
+      index: i,
+      count: imageVersions.length,
+    };
+  })();
   const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
   const modal = useTripoStore((s) => s.modal);
   const pipelineStage = useTripoStore((s) => s.pipelineStage);
@@ -512,7 +528,24 @@ export function Viewport(): JSX.Element {
         <Suspense fallback={<div className="tp-canvas-loading">Preparing viewer…</div>}>
           <Viewer3D gizmoRef={gizmoRef} />
         </Suspense>
-      ) : generating ? null : (
+      ) : generating ? null : imageStageView !== null ? (
+        /* The Image stage's picture belongs HERE, not squeezed into a 370px
+           panel: it is the thing the user has to judge before spending minutes
+           turning it into geometry, and this space was otherwise showing an
+           empty-state headline while they tried to squint at a sidebar. */
+        <div className="tp-image-stage" data-testid="tp-image-stage">
+          <img
+            className="tp-image-stage-img"
+            data-testid="tp-image-stage-img"
+            src={imageStageView.url}
+            alt={imageStageView.label}
+          />
+          <div className="tp-image-stage-cap">
+            {imageStageView.label}
+            {imageStageView.count > 1 ? ` · ${imageStageView.index + 1}/${imageStageView.count}` : ''}
+          </div>
+        </div>
+      ) : (
         <div className="tp-empty" data-testid="tp-empty-state">
           <LogoMark size={54} />
           <h1>Ready For A New 3D Model?</h1>

@@ -86,6 +86,15 @@ class Registry:
         """
         return self.tool_dir("mflux") / ".venv" / "bin" / "mflux-generate-mage-flow"
 
+    def mflux_edit_cli(self) -> Path:
+        """Mage-Flow-Edit-Turbo — edit an existing image from a text instruction.
+
+        MEASURED: 9s for a 1024px edit at 4 steps, 14.76 GB peak, on the same
+        mflux venv as generation. Its weights are a SEPARATE download
+        (microsoft/Mage-Flow-Edit-Turbo) from the generator's.
+        """
+        return self.tool_dir("mflux") / ".venv" / "bin" / "mflux-generate-mage-flow-edit"
+
     def quadriflow_cli(self) -> Path:
         """QuadriFlow (MIT) — the PRIMARY quad remesher.
 

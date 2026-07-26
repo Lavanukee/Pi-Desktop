@@ -171,6 +171,7 @@ class JobManager:
         engine = body.get("engine") or "trellis2"
         texture_size = int(body.get("textureSize") or 0)
         parts = [str(p).strip() for p in (body.get("parts") or []) if str(p).strip()]
+        edit_from = str(body.get("editFrom") or "")
         # Cube3D is TEXT→SHAPE. It needs no image model, produces no texture,
         # and can hand straight to CubePart — so it skips most of what follows.
         cube3d = engine == "cube3d" and kind == "text" and not image_only
@@ -216,7 +217,10 @@ class JobManager:
         job = self._new_job(plan)
         threading.Thread(
             target=self._run_generate,
-            args=(job, kind, prompt, image_paths, resolution, texture, image_only, texture_size),
+            args=(
+                job, kind, prompt, image_paths, resolution, texture,
+                image_only, texture_size, edit_from,
+            ),
             daemon=True,
         ).start()
         return {"ok": True, "jobId": job.job_id}
@@ -305,7 +309,9 @@ class JobManager:
     def _job_dir(self, job: Job) -> Path:
         return self.sandbox_dir / job.job_id
 
-    def _image_worker(self, prompt: str, out: Path) -> tuple[Path, Path, list[str], Path]:
+    def _image_worker(
+        self, prompt: str, out: Path, edit_from: str = ""
+    ) -> tuple[Path, Path, list[str], Path]:
         """(venv_python, script, args, cwd) for text→image — Klein first.
 
         MEASURED at 1024px, same prompt/steps, every output checked by eye:
@@ -316,12 +322,24 @@ class JobManager:
         """
         klein = self.registry.mflux_cli()
         if klein.exists():
+            args = ["--prompt", prompt, "--out", str(out), "--cli", str(klein)]
+            # EDIT: change an image the user already has rather than making a new
+            # one. Only the MLX path can do this — the MPS fallback below has no
+            # edit entrypoint — so an edit request without mflux is a hard no
+            # rather than a silent re-generate that throws their image away.
+            if edit_from:
+                args += [
+                    "--edit-from", edit_from,
+                    "--edit-cli", str(self.registry.mflux_edit_cli()),
+                ]
             return (
                 self.registry.venv_python("mflux"),
                 WORKERS_DIR / "mlx_image_worker.py",
-                ["--prompt", prompt, "--out", str(out), "--cli", str(klein)],
+                args,
                 self.registry.tool_dir("mflux"),
             )
+        if edit_from:
+            raise RuntimeError("editing an image needs the MLX image model (mflux)")
         return (
             self.registry.venv_python("Mage"),
             WORKERS_DIR / "mageflow_worker.py",
@@ -352,15 +370,22 @@ class JobManager:
         texture: bool,
         image_only: bool = False,
         texture_size: int = 0,
+        edit_from: str = "",
     ) -> None:
         job_dir = self._job_dir(job)
         try:
             if kind == "text":
-                self._publish(job, "image", message="Loading the image model…")
-                image_out = job_dir / "prompt-image.png"
+                self._publish(
+                    job,
+                    "image",
+                    message="Loading the edit model…" if edit_from else "Loading the image model…",
+                )
+                # An edit lands beside its source rather than overwriting it, so
+                # the user can step back through what they tried.
+                image_out = job_dir / ("edited-image.png" if edit_from else "prompt-image.png")
                 self._run_worker(
                     job,
-                    *self._image_worker(prompt, image_out),
+                    *self._image_worker(prompt, image_out, edit_from),
                     default_stage="image",
                 )
                 if job.cancelled.is_set():

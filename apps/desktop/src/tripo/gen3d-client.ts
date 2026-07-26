@@ -59,6 +59,14 @@ interface Gen3dState {
     texture: boolean;
     /** Stop after the text→image hop (for the Image panel's "Generate image"). */
     imageOnly?: boolean;
+    /** Shape model for text→3D: TRELLIS (via an image) or Cube3D (direct). */
+    engine?: 'trellis2' | 'cube3d';
+    /** TRELLIS bake resolution in texels. */
+    textureSize?: number;
+    /** Cube3D: split the result into these named parts. */
+    parts?: readonly string[];
+    /** Edit this image instead of generating (Mage-Flow-Edit; imageOnly). */
+    editFrom?: string;
   }) => Promise<string | null>;
   runStage: (
     op: 'segment' | 'retopo' | 'texture' | 'rig',
@@ -119,6 +127,10 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
         resolution: req.resolution,
         texture: req.texture,
         ...(req.imageOnly === true ? { imageOnly: true } : {}),
+        ...(req.engine !== undefined ? { engine: req.engine } : {}),
+        ...(req.textureSize !== undefined ? { textureSize: req.textureSize } : {}),
+        ...(req.parts !== undefined ? { parts: req.parts } : {}),
+        ...(req.editFrom !== undefined ? { editFrom: req.editFrom } : {}),
       })
       .catch(() => null);
     if (res === null || !res.ok) return res?.error ?? 'generation failed to start';
@@ -162,8 +174,14 @@ function plannedStages(req: {
   readonly kind: 'text' | 'image';
   readonly texture: boolean;
   readonly imageOnly?: boolean;
+  readonly engine?: 'trellis2' | 'cube3d';
+  readonly parts?: readonly string[];
 }): readonly Gen3dRole[] {
   if (req.imageOnly === true) return ['image'];
+  // Cube3D is text→shape: no image stage, no texture, and an optional split.
+  if (req.engine === 'cube3d' && req.kind === 'text') {
+    return (req.parts?.length ?? 0) > 0 ? ['geometry', 'segment'] : ['geometry'];
+  }
   const stages: Gen3dRole[] = req.kind === 'text' ? ['image', 'geometry'] : ['geometry'];
   if (req.texture) stages.push('texture');
   return stages;
@@ -316,6 +334,16 @@ export function ensureGen3dWired(): void {
           confidence: update.humanoid.confidence,
           reasons: update.humanoid.reasons,
         },
+      });
+    }
+    // Image artifacts build up a history so an edit can be compared against
+    // what it came from, and so Make 3D acts on whichever one the user chose.
+    if (update.artifact?.kind === 'image') {
+      const { path, label } = update.artifact;
+      useTripoStore.setState((s) => {
+        if (s.imageVersions.some((v) => v.path === path)) return {};
+        const imageVersions = [...s.imageVersions, { path, label }];
+        return { imageVersions, imageIndex: imageVersions.length - 1 };
       });
     }
     if (update.artifact?.kind === 'model-glb') {

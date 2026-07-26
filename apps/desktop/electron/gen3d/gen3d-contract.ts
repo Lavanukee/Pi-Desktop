@@ -22,6 +22,7 @@ export type Gen3dModelId =
   | 'trellis2'
   | 'cube3d'
   | 'mageflow'
+  | 'mageflow-edit'
   | 'cubepart'
   | 'autoremesher'
   | 'humanoid-rig';
@@ -140,6 +141,14 @@ export type Gen3dInvokeMap = {
       readonly textureSize?: number;
       /** Cube3D only: split the result into these named parts (CubePart). */
       readonly parts?: readonly string[];
+      /**
+       * EDIT this image instead of generating a new one (Mage-Flow-Edit).
+       * `prompt` becomes the instruction — "make the dinosaur bright blue" —
+       * and the result lands beside the source rather than replacing it, so a
+       * user can step back through what they tried before committing to 3D.
+       * Only meaningful with `imageOnly`.
+       */
+      readonly editFrom?: string;
     };
     response: { readonly ok: boolean; readonly jobId?: string; readonly error?: string };
   };

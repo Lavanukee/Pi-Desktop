@@ -62,6 +62,13 @@ def main() -> None:
     ap.add_argument("--prompt", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--cli", required=True, help="path to the mflux entrypoint")
+    # EDIT mode: change an image the user already has, from an instruction
+    # ("make the dinosaur bright blue"), instead of generating a new one. The
+    # edit model is a different checkpoint AND a different entrypoint, so both
+    # arrive together or not at all.
+    ap.add_argument("--edit-from", default="")
+    ap.add_argument("--edit-cli", default="")
+    ap.add_argument("--edit-model", default="mage-flow-edit-turbo")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--steps", type=int, default=4)
     ap.add_argument("--size", type=int, default=1024)
@@ -73,12 +80,30 @@ def main() -> None:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
+    editing = bool(args.edit_from) and bool(args.edit_cli)
+
     def render(prompt: str) -> subprocess.CompletedProcess:
         # mflux does NOT overwrite: with out.png present it writes out_1.png
         # instead. On the retry below that meant the good image landed beside
         # the blank one and every check afterwards read the stale blank —
         # making a retry that actually worked look like it had failed.
         out.unlink(missing_ok=True)
+        if editing:
+            return subprocess.run(
+                [
+                    args.edit_cli,
+                    "--model", args.edit_model,
+                    "-q", str(args.quantize),
+                    "--steps", str(args.steps),
+                    "--seed", str(args.seed),
+                    "--image-paths", args.edit_from,
+                    "--prompt", prompt,
+                    "--output", str(out),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=args.timeout,
+            )
         cmd = [
             args.cli,
             "--model", args.model,
@@ -92,7 +117,14 @@ def main() -> None:
         ]
         return subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout)
 
-    progress(STAGE, f"Generating image with {args.model} ({args.steps} steps)…", 1, 2)
+    progress(
+        STAGE,
+        f"Editing the image with {args.edit_model} ({args.steps} steps)…"
+        if editing
+        else f"Generating image with {args.model} ({args.steps} steps)…",
+        1,
+        2,
+    )
     try:
         proc = render(args.prompt)
         # SOME PROMPTS RENDER PURE WHITE while the process exits 0. Left alone
@@ -121,7 +153,7 @@ def main() -> None:
         # to this model's text embedding rather than a rule worth theorising
         # about, so the retry uses the suffix that is MEASURED to work and the
         # error below tells the user what to do when it does not.
-        if proc.returncode == 0 and out.exists() and is_blank(out):
+        if not editing and proc.returncode == 0 and out.exists() and is_blank(out):
             enriched = f"{args.prompt.strip().rstrip('.,')} full body"
             progress(
                 STAGE,
@@ -141,7 +173,7 @@ def main() -> None:
         emit(event="error", message=f"image generation failed — {reason}")
         sys.exit(1)
 
-    if is_blank(out):
+    if not editing and is_blank(out):
         emit(
             event="error",
             message=(
@@ -152,8 +184,8 @@ def main() -> None:
         )
         sys.exit(1)
 
-    artifact(STAGE, "image", str(out), "Prompt image")
-    stage_done(STAGE, "Image generated")
+    artifact(STAGE, "image", str(out), "Edited image" if editing else "Prompt image")
+    stage_done(STAGE, "Image edited" if editing else "Image generated")
 
 
 if __name__ == "__main__":

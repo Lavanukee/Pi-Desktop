@@ -26,6 +26,10 @@ DEFAULT_PARTS = ["main body", "top part", "bottom part", "left part", "right par
 
 patch_tqdm()
 ROUTER.default_stage = STAGE
+# CubePart's diffusion loop has no tqdm description, and on CPU it runs for
+# ~20 minutes — "Working… (12/30)" for that long tells the user nothing.
+ROUTER.fallback_message = "Deciding which surface belongs to which part"
+
 
 
 def main() -> None:

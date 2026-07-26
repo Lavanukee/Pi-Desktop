@@ -51,6 +51,10 @@ class _StageRouter:
     def __init__(self) -> None:
         self.default_stage = "geometry"
         self.desc_map: dict[str, tuple[str, str] | tuple[str, str, tuple[float, float]]] = {}
+        # Shown when a tqdm loop carries no recognisable description. "Working…"
+        # is true but says nothing, and some of these loops run for twenty
+        # minutes — long enough that the user deserves to know what for.
+        self.fallback_message = "Working…"
 
     def resolve(self, desc: str) -> tuple[str, str, tuple[float, float]]:
         for needle, mapped in self.desc_map.items():
@@ -58,7 +62,7 @@ class _StageRouter:
                 if len(mapped) == 3:
                     return mapped  # type: ignore[return-value]
                 return mapped[0], mapped[1], (0.0, 1.0)
-        return self.default_stage, desc or "Working…", (0.0, 1.0)
+        return self.default_stage, desc or self.fallback_message, (0.0, 1.0)
 
 
 ROUTER = _StageRouter()

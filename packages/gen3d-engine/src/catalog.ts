@@ -183,9 +183,14 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
   },
   {
     id: 'autoremesher',
-    label: 'AutoRemesher',
+    // The id stays for settings/stamp compatibility, but the TOOL is QuadriFlow:
+    // AutoRemesher could not remesh TRELLIS output at any size on this machine
+    // (it dies on an assertion inside its vendored geogram, even on a mesh made
+    // watertight first), where QuadriFlow does it in seconds at 100% quads.
+    // Calling it AutoRemesher in the UI was simply naming the wrong program.
+    label: 'QuadriFlow',
     role: 'retopo',
-    note: 'Quad retopology CLI (huxingyi/autoremesher 1.0.0, MIT, native arm64)',
+    note: 'Quad retopology (hjwdzh/QuadriFlow, MIT — compiled CLI, nothing to download)',
     env: 'binary',
     repos: [],
   },
@@ -193,10 +198,12 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
     id: 'humanoid-rig',
     label: 'Humanoid Auto-Rig',
     role: 'rig',
-    // Deliberately explicit: this is a geometric fit, not SkinTokens (which is
-    // CUDA-only and cannot run here). It produces ARDY's exact 27-joint
-    // hierarchy so ARDY-authored motion retargets onto the result.
-    note: "Geometric humanoid rig — fits ARDY's 27-joint skeleton + skin weights. Local, nothing to download.",
+    // A geometric fit, and now the FALLBACK: SkinTokens runs here after all
+    // (fp32 on MPS, ~76s) and jobs.py prefers it when its checkout is present.
+    // The earlier "CUDA-only, cannot run here" claim in this comment was wrong.
+    // This still matters for the shape PROBE, which SkinTokens has no
+    // equivalent for, and on machines without that checkout.
+    note: "Geometric humanoid rig — fits a 27-joint skeleton + skin weights by measuring the mesh. Local, nothing to download.",
     env: 'meshtools',
     repos: [],
   },

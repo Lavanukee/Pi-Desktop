@@ -1,8 +1,21 @@
+import { execSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { _electron as electron } from 'playwright-core';
-const GLB = process.env.SKEL_GLB;
+// Default to the newest rig the engine actually produced, so this does not
+// depend on a scratch path that a reboot can clear (it did — the probe then
+// failed with a raw ENOENT that read like a product bug).
+const GLB =
+  process.env.SKEL_GLB ??
+  execSync(
+    'ls -t "$HOME"/.pi/desktop/sandbox/gen3d/*/rigged.glb 2>/dev/null | head -1',
+    { shell: '/bin/zsh', encoding: 'utf8' },
+  ).trim();
+if (GLB.length === 0) {
+  console.log('SKIP: no rigged .glb found — run the rig stage first, or set SKEL_GLB');
+  process.exit(0);
+}
 const OUT = '/tmp/skel-ui'; mkdirSync(OUT, { recursive: true });
 const app = await electron.launch({
   executablePath: '/Users/jedd/Desktop/OSS-harness/apps/desktop/release/mac-arm64/Bobble.app/Contents/MacOS/Bobble',

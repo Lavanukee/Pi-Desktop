@@ -163,6 +163,18 @@ def make_manifold(mesh, grid: int, say):
     say(f"Rebuilding a closed surface at {grid}³ to make it remeshable…")
     vox = mesh.voxelized(pitch=pitch).fill()
     solid = vox.marching_cubes
+    # PUT IT BACK IN WORLD SPACE. VoxelGrid.marching_cubes returns vertices in
+    # GRID INDEX space — 0..grid on each axis — not the coordinates that went
+    # in. Without this the remesh came back scaled by 1/pitch and parked in the
+    # positive octant: a model measuring 0.479 x 0.478 x 1.0 about the origin
+    # returned as 185 x 188 x 388 centred on (92, 94, 175), i.e. 384x too big.
+    #
+    # It was invisible in isolation because the viewer frames whatever it is
+    # given, and it only happens to meshes that NEED repair — a clean import
+    # skips this function entirely and keeps its scale. That is exactly why
+    # retopology looked fine on one mesh and destroyed another: it was never
+    # about the remesher, it was about whether this path ran.
+    solid.apply_transform(vox.transform)
     solid.merge_vertices()
     _tm.repair.fix_normals(solid)
     return solid

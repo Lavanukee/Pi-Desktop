@@ -396,7 +396,12 @@ def main() -> None:
         "boundaryEdges": holes,
         "nonManifoldEdges": open_edges,
         "watertight": bool(holes == 0),
-        "source": "autoremesher",
+        # The remesher that ACTUALLY ran, not a hardcoded guess. This said
+        # "autoremesher" on every run, including the ones QuadriFlow did — and
+        # QuadriFlow has been the primary since it handled a model AutoRemesher
+        # could not, so the field was wrong essentially always. It is the only
+        # record of which engine produced a given mesh.
+        "source": engine.lower(),
         "prep": prep.as_dict(),
     }
     if len(wire) // 2 <= MAX_WIRE_EDGES:

@@ -91,6 +91,11 @@ interface Gen3dState {
       readonly probeOnly?: boolean;
       readonly requireHumanoid?: boolean;
       readonly sourcePath?: string;
+      /**
+       * The humanoid verdict the user already confirmed, carried onto the
+       * version this job produces. UI-only — stripped before the IPC call.
+       */
+      readonly knownHumanoid?: boolean;
     },
   ) => Promise<string | null>;
   cancelJob: () => Promise<void>;
@@ -166,8 +171,11 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
   },
   runStage: async (op, modelPath, origin, extra) => {
     set({ startError: null });
+    // `knownHumanoid` is a UI-side carry-over, NOT part of the engine request —
+    // keep it out of the IPC payload (gen3d:stage's contract does not have it).
+    const { knownHumanoid, ...engineOptions } = extra ?? {};
     const res = await window.piDesktop
-      .invoke('gen3d:stage', { op, modelPath, ...(extra ?? {}) })
+      .invoke('gen3d:stage', { op, modelPath, ...engineOptions })
       .catch(() => null);
     if (res === null || !res.ok) {
       const why = res?.error ?? `${op} failed to start`;
@@ -180,6 +188,23 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
       // Only a probe run should raise the "humanoid?" question — the rig run
       // that follows emits the same measurement and must not re-ask.
       if (extra?.probeOnly === true) probeJobs.add(res.jobId);
+      /*
+       * Carry the verdict the user just CONFIRMED into the rig job.
+       *
+       * The shape probe (rig_worker --probe-only) measures humanoid-ness and
+       * the panel asks about it; the rig that follows is a different job. When
+       * SkinTokens is installed jobs.py routes that job to skintokens_worker,
+       * which predicts a skeleton for an arbitrary mesh and therefore emits NO
+       * humanoid measurement at all — so `jobHumanoid` stayed empty, the
+       * produced version recorded humanoid:false, and the Animate panel replied
+       * "Animation presets are hidden, this model isn't humanoid" to a user who
+       * had just been told "This looks humanoid (96% confidence)" and pressed
+       * "Rig as humanoid". MEASURED end to end: the pipeline probe recorded
+       * `shape probe said humanoid=true` and then `motion library hidden: the
+       * rig did not read as humanoid` in the same run. That contradiction hid
+       * the whole motion half of the studio behind a rig that had succeeded.
+       */
+      if (knownHumanoid !== undefined) jobHumanoid.set(res.jobId, knownHumanoid);
     }
     return null;
   },
@@ -305,6 +330,26 @@ async function ingestModelArtifact(
         diskPath: path,
         humanoid: humanoidVerdict,
       });
+      /*
+       * Tell the STUDIO which pipeline stage it is now showing.
+       *
+       * `useTripoStore.runStage` is the only writer of `pipelineStage`, of the
+       * History list, and of the texture stage's switch to Textured mode — and
+       * nothing called it. Verified: `grep -rn runStage apps/desktop/src` finds
+       * only the gen3d ENGINE dispatch of the same name. So `pipelineStage`
+       * never left 'mesh', every `stage === 'segment' | 'retopo' | 'rig'`
+       * branch in Viewer3D was dead on the real engine path, and the History
+       * tab stayed empty after five real jobs.
+       *
+       * MEASURED consequence: a 13.5-minute CubePart run finished, produced
+       * five named part meshes with per-part colours, and changed NOTHING on
+       * screen — same white model, empty Parts list (pipeline probe:
+       * "segmentation (CubePart) — 0 part(s) listed in the panel (808s)").
+       *
+       * 'source' is the only TripoOp that is not a TripoStage, and a stage job
+       * never produces one.
+       */
+      if (origin.op !== 'source') useTripoStore.getState().runStage(origin.op);
       markVisible();
       return;
     }

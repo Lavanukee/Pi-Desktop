@@ -134,7 +134,19 @@ function HumanoidPrompt({
   const dismiss = () => useTripoStore.setState({ humanoidPrompt: null });
   const rig = () => {
     dismiss();
-    void runStage('rig', diskPath, { assetId, versionId, op: 'rig' });
+    // Pass the verdict the user just answered. The rig job itself may not
+    // measure humanoid-ness (SkinTokens predicts a skeleton for any mesh and
+    // reports none), and without this the produced version recorded
+    // humanoid:false — hiding every motion control behind a rig that had just
+    // succeeded and been confirmed humanoid.
+    void runStage(
+      'rig',
+      diskPath,
+      { assetId, versionId, op: 'rig' },
+      {
+        knownHumanoid: prompt.isHumanoid,
+      },
+    );
   };
 
   return (

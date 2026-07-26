@@ -115,11 +115,23 @@
  * packages/ui does not gain knowledge of the desktop app's studio classes; the
  * mechanism and the 1.5 exponent are copied verbatim so the two cannot drift
  * in value, only in membership.
+ *
+ * Membership, mapped to the .pd-* primitive each one stands in for:
+ *   .pd-btn / .pd-segmented  buttons, segments, rail items, mode buttons
+ *   .pd-menu / .pd-tooltip   popovers, menu items, hint bubbles
+ *   .pd-dialog               export dialog, help card
+ *   .pd-input / .pd-textarea text inputs, prompt, select, search
+ *   .pd-activity-card/.pd-chip  cards, dropzone, accordion, asset + download
+ *                            cards, soft badges
+ *   .pd-float-pill           the viewport action bar
+ * Deliberately EXCLUDED: .tp-float-group / .tp-float-btn are --pd-radius-full
+ * circles and rails, and a superellipse on a true circle is a no-op at best.
+ * (Selector comments live up here rather than inside :is() — lightningcss
+ * rejects a comment between the `:` and `is(`, which fails `vite build`.)
  */
 @supports (corner-shape: superellipse(1.5)) {
   :root[data-flavor="codex"]
-    :/* buttons + segmented controls (.pd-btn) */
-    is(
+    :is(
       .tp-generate-btn,
       .tp-retry-btn,
       .tp-upload-btn,
@@ -134,20 +146,16 @@
       .tp-mode-btn,
       .tp-rail-item,
       .tp-dl-btn,
-      /* menus + tooltips (.pd-menu / .pd-tooltip) */
       .tp-popover,
       .tp-menu-item,
       .tp-hint-bubble,
-      /* dialogs (.pd-dialog) */
       .tp-export-dialog,
       .tp-help-card,
-      /* fields (.pd-input / .pd-textarea) */
       .tp-textinput,
       .tp-text-input,
       .tp-prompt,
       .tp-select,
       .tp-search,
-      /* cards + chips (.pd-activity-card / .pd-chip) */
       .tp-card,
       .tp-input-card,
       .tp-dropzone,
@@ -156,9 +164,6 @@
       .tp-dlcard,
       .tp-needs-model,
       .tp-badge-soft,
-      /* floating viewport chrome (.pd-float-pill). Deliberately NOT
-         .tp-float-group / .tp-float-btn: those are --pd-radius-full circles and
-         rails, and a superellipse on a true circle is a no-op at best. */
       .tp-actionbar
     ) {
     corner-shape: superellipse(1.5);
@@ -2791,6 +2796,17 @@
   border-radius: 4px;
   flex: none;
 }
+/*
+ * The Parts list is the LEGEND for the colours CubePart bakes into the mesh, so
+ * these must be that palette, in that order. They were a different four-colour
+ * palette entirely — the row for "Head" drew an orange dot next to a head the
+ * viewport painted red — and there was no rule past part 3, so a default
+ * segmentation (DEFAULT_PARTS is five long) left the fifth swatch blank.
+ * Mirrored from PART_PALETTE in packages/gen3d-engine/python/workers/
+ * cubepart_worker.py, which is where the exported colours come from; the
+ * no-purple guard lives beside it in python/tests/test_part_palette.py.
+ * Theme-invariant on purpose: they identify geometry, not chrome.
+ */
 .tp-part-swatch[data-part="0"] {
   background: #e8863a;
 }
@@ -2802,6 +2818,18 @@
 }
 .tp-part-swatch[data-part="3"] {
   background: #d9b44a;
+}
+.tp-part-swatch[data-part="4"] {
+  background: #d9605a;
+}
+.tp-part-swatch[data-part="5"] {
+  background: #3fb3ac;
+}
+.tp-part-swatch[data-part="6"] {
+  background: #9ac05f;
+}
+.tp-part-swatch[data-part="7"] {
+  background: #97a3ad;
 }
 
 /* Assets: real rendered previews (viewer captures), neutral pending state. */

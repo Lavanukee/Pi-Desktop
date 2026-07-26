@@ -276,6 +276,72 @@ try {
     };
   });
 
+  // ── 7. TEXT CONTRAST + TYPE SCALE across all six themes ────────────────
+  // WCAG 1.4.3: 4.5:1 for body text, 3:1 for >=18.66px bold or >=24px. The
+  // studio renders type below the app's 12px caption floor, and small + faint
+  // is where contrast actually bites.
+  const contrast = {};
+  for (const [f, m] of [
+    ['bobble', 'dark'],
+    ['bobble', 'light'],
+    ['claude', 'dark'],
+    ['claude', 'light'],
+    ['codex', 'dark'],
+    ['codex', 'light'],
+  ]) {
+    await setTheme(f, m);
+    await page.waitForTimeout(180);
+    contrast[`${f}-${m}`] = await page.evaluate(() => {
+      const lum = (rgb) => {
+        const m2 = rgb.match(/rgba?\(([^)]+)\)/);
+        if (m2 === null) return null;
+        const [r, g, b] = m2[1].split(',').map(Number.parseFloat);
+        const ch = (v) => {
+          const s = v / 255;
+          return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+        };
+        return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+      };
+      /** Nearest ancestor with a non-transparent background. */
+      const bgOf = (el) => {
+        for (let n = el; n !== null; n = n.parentElement) {
+          const bg = getComputedStyle(n).backgroundColor;
+          if (bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return bg;
+        }
+        return getComputedStyle(document.body).backgroundColor;
+      };
+      const rows = [];
+      const seen = new Set();
+      for (const el of document.querySelectorAll('[class*="tp-"]')) {
+        const txt = (el.textContent ?? '').trim();
+        if (txt.length === 0 || el.children.length > 0) continue;
+        const cls = typeof el.className === 'string' ? el.className : '';
+        if (cls === '' || seen.has(cls)) continue;
+        seen.add(cls);
+        const cs = getComputedStyle(el);
+        const lf = lum(cs.color);
+        const lb = lum(bgOf(el));
+        if (lf === null || lb === null) continue;
+        const ratio = (Math.max(lf, lb) + 0.05) / (Math.min(lf, lb) + 0.05);
+        const px = Number.parseFloat(cs.fontSize);
+        const large = px >= 24 || (px >= 18.66 && Number.parseInt(cs.fontWeight, 10) >= 700);
+        rows.push({
+          cls: cls.slice(0, 34),
+          text: txt.slice(0, 22),
+          px,
+          ratio: Math.round(ratio * 100) / 100,
+          need: large ? 3 : 4.5,
+        });
+      }
+      return {
+        belowFloor: rows.filter((r) => r.px < 12).length,
+        failing: rows.filter((r) => r.ratio < r.need).sort((a, b) => a.ratio - b.ratio),
+        sampled: rows.length,
+      };
+    });
+  }
+  out.contrast = contrast;
+
   // ── PURPLE HUNT across all six theme combinations ──────────────────────
   const purple = {};
   for (const [f, m] of [
@@ -319,7 +385,16 @@ try {
   console.log(`escape: ${JSON.stringify(out.escape)}`);
   console.log(`reduced-motion: ${out.reducedMotion.count} still animating`);
   console.log(`accent on Image panel: ${out.accentImagePanel.count}`);
-  console.log(`purple hits: ${Object.entries(purple).map(([k, v]) => `${k}=${v.length}`).join(' ')}`);
+  console.log(
+    `purple hits: ${Object.entries(purple)
+      .map(([k, v]) => `${k}=${v.length}`)
+      .join(' ')}`,
+  );
+  console.log(
+    `contrast failures: ${Object.entries(contrast)
+      .map(([k, v]) => `${k}=${v.failing.length}/${v.sampled}`)
+      .join(' ')}  (sub-12px labels: ${contrast['bobble-dark']?.belowFloor})`,
+  );
 } catch (e) {
   console.error('audit4 ERROR', e.stack ?? e.message);
   writeFileSync(path.join(OUT, 'audit4.json'), JSON.stringify(out, null, 2));

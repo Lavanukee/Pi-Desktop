@@ -157,6 +157,26 @@ const ROLE_BLURB: Record<Gen3dRole, string> = {
   rig: 'Fit a humanoid skeleton and skin weights so the model can be animated.',
 };
 
+/**
+ * Headline overrides for models whose ROLE does not describe them.
+ *
+ * A role blurb describes a role, so every model sharing a role got the same
+ * headline — and three of them were then flatly wrong, each sitting directly
+ * above a `note` from the catalog that said the opposite:
+ *   Mage-Flow Edit  headline "Generate images from text"  note "Edit a generated image…"
+ *   Cube 3D         headline "an image or a text prompt"  note "Text → 3D … no image step"
+ *   SkinTokens      headline "Fit a HUMANOID skeleton"    note "predicts a skeleton … for any mesh"
+ * A download card is the one place a 17 GB commitment gets explained, so it is
+ * the worst place to describe the wrong model. The proper home for this is a
+ * per-model `blurb` on Gen3dModelSpec; that crosses the IPC contract, so the
+ * override lives here until someone widens it.
+ */
+const MODEL_BLURB: Partial<Record<Gen3dModelId, string>> = {
+  'mageflow-edit': 'Change a generated image with an instruction, before it becomes 3D.',
+  cube3d: 'Turn a text prompt straight into a shape — no image in between.',
+  skintokens: 'Predict a skeleton and skin weights for any mesh, humanoid or not.',
+};
+
 function ModelCard({ id }: { readonly id: Gen3dModelId }): JSX.Element | null {
   const model = useGen3dStore((s) => s.models.find((m) => m.id === id));
   const dl = useGen3dStore((s) => s.downloads[id]);
@@ -189,7 +209,7 @@ function ModelCard({ id }: { readonly id: Gen3dModelId }): JSX.Element | null {
           <span className="tp-dlcard-name">{model.label}</span>
           <em className="tp-dlcard-role">{ROLE_LABEL[model.role]}</em>
         </div>
-        <p className="tp-dlcard-blurb">{ROLE_BLURB[model.role]}</p>
+        <p className="tp-dlcard-blurb">{MODEL_BLURB[model.id] ?? ROLE_BLURB[model.role]}</p>
         <p className="tp-dlcard-note">{model.note}</p>
         <div className="tp-dlcard-foot">
           {model.installed ? (

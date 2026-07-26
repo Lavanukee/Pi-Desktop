@@ -32,14 +32,19 @@ const electronBinary = require('electron');
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = process.env.TRIPO_E2E_OUT ?? path.join(tmpdir(), 'tripo-e2e-pipeline');
 const RES = process.env.TRIPO_E2E_RES ?? 'low';
+// Order matters and is the pipeline's own: texture BEFORE segment/retopo, so it
+// runs on the generation's own output. Texturing re-bakes from the colour
+// volume the generation saved, and a retopologised or segmented mesh lives in a
+// different job dir than those colours — running it last therefore tests the
+// path-plumbing, not the texture bake.
 const ALL_STAGES = [
   'image',
   'imageedit',
   'img3d',
   'text3d',
+  'texture',
   'segment',
   'retopo',
-  'texture',
   'rig',
   'skeleton',
   'animate',
@@ -284,7 +289,29 @@ try {
     return true;
   };
 
-  // ── 5. SEGMENTATION (CubePart) ────────────────────────────────────────
+  // ── 5. TEXTURING (TRELLIS re-bake from the generation's colour volume) ──
+  if (STAGES.includes('texture')) {
+    await loadFirstAsset();
+    await win.click('[data-testid="tp-rail-texture"]');
+    const runnable = (await win.locator('[data-testid="tp-texture-btn"]:not([disabled])').count()) > 0;
+    if (!runnable) {
+      record('texturing', 'SKIP', 'run button disabled — nothing runnable loaded', [], 0);
+    } else {
+      const r = await runJob('texture', () => win.click('[data-testid="tp-texture-btn"]'), 60 * 60_000);
+      await win.click('[data-testid="tp-rmode-textured"]').catch(() => {});
+      const s = await shot('07-textured');
+      record(
+        'texturing',
+        r.ok ? 'PASS' : 'FAIL',
+        r.ok ? `textured version produced (${r.seconds}s)` : r.why,
+        [s],
+        r.seconds,
+      );
+      await dismiss();
+    }
+  }
+
+  // ── 6. SEGMENTATION (CubePart) ────────────────────────────────────────
   if (STAGES.includes('segment')) {
     const have = await loadFirstAsset();
     if (!have) {
@@ -305,7 +332,7 @@ try {
     }
   }
 
-  // ── 6. RETOPOLOGY (QuadriFlow) ────────────────────────────────────────
+  // ── 7. RETOPOLOGY (QuadriFlow) ────────────────────────────────────────
   if (STAGES.includes('retopo')) {
     await win.click('[data-testid="tp-rail-retopo"]');
     const runnable = (await win.locator('[data-testid="tp-retopo-btn"]:not([disabled])').count()) > 0;
@@ -330,19 +357,6 @@ try {
     }
   }
 
-  // ── 7. TEXTURING ──────────────────────────────────────────────────────
-  if (STAGES.includes('texture')) {
-    await win.click('[data-testid="tp-rail-texture"]');
-    const runnable = (await win.locator('[data-testid="tp-texture-btn"]:not([disabled])').count()) > 0;
-    if (!runnable) {
-      record('texturing', 'SKIP', 'run button disabled — nothing runnable loaded', [], 0);
-    } else {
-      const r = await runJob('texture', () => win.click('[data-testid="tp-texture-btn"]'), 60 * 60_000);
-      const s = await shot('07-textured');
-      record('texturing', r.ok ? 'PASS' : 'FAIL', r.ok ? `textured version produced (${r.seconds}s)` : r.why, [s], r.seconds);
-      await dismiss();
-    }
-  }
 
   // ── 8. RIGGING (SkinTokens) ───────────────────────────────────────────
   if (STAGES.includes('rig')) {

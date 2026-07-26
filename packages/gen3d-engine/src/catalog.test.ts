@@ -21,6 +21,7 @@ describe('catalog', () => {
   it('covers every contract model id exactly once', () => {
     expect(GEN3D_MODEL_SPECS.map((s) => s.id).sort()).toEqual([
       'autoremesher',
+      'cube3d',
       'cubepart',
       'humanoid-rig',
       'mageflow',
@@ -36,6 +37,16 @@ describe('catalog', () => {
     expect(specTotalBytes(trellis)).toBe(
       16_237_485_044 + 147_592_217 + 1_212_584_680 + 444_566_195,
     );
+  });
+
+  it('cube3d is a TEXT-to-shape geometry model sharing the CubePart checkout', () => {
+    // Two models in one repo: cube3d generates from text with no image hop,
+    // cubepart decomposes an existing shape. They share the 'cubepart' env
+    // because they share the checkout and its venv.
+    const cube = GEN3D_MODEL_SPECS.find((s) => s.id === 'cube3d');
+    expect(cube?.role).toBe('geometry');
+    expect(cube?.env).toBe('cubepart');
+    expect(cube?.repos[0]?.repo).toBe('Roblox/cube3d-v0.5');
   });
 
   it('ships NO separate texture model — TRELLIS re-bakes its own colours', () => {
@@ -74,7 +85,7 @@ describe('catalog', () => {
 
   it('sidecar registry carries repos, mirrors and pipeline types', () => {
     const registry = toSidecarRegistry();
-    expect(registry.models).toHaveLength(5);
+    expect(registry.models).toHaveLength(6);
     expect(registry.gatedMirrors['facebook/dinov3-vitl16-pretrain-lvd1689m']).toContain(
       'camenduru',
     );

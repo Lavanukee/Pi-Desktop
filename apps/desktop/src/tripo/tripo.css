@@ -4247,3 +4247,34 @@
 .tp-viewport[data-genfoot="true"] .tp-material-strip {
   transform: translate(-50%, -56px);
 }
+
+/* Stacked field (label above a full-width control) — the Cube 3D parts box.
+   The inline .tp-field-row puts label and control side by side, which leaves a
+   free-text input far too narrow to read a comma list in. */
+.tp-field-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+}
+.tp-text-input {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--pd-border-subtle);
+  background: var(--pd-bg-elevated);
+  color: var(--pd-text-primary);
+  font-size: 12.5px;
+}
+.tp-text-input:focus {
+  outline: none;
+  border-color: var(--pd-accent-primary);
+}
+.tp-text-input::placeholder {
+  color: var(--pd-text-muted);
+}
+.tp-field-hint {
+  color: var(--pd-text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}

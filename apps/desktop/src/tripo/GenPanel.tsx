@@ -451,6 +451,9 @@ function ModelPanel(): JSX.Element {
   const genImages = useTripoStore((s) => s.genImages);
   const genResolution = useTripoStore((s) => s.genResolution);
   const genAutoTexture = useTripoStore((s) => s.genAutoTexture);
+  const genEngine = useTripoStore((s) => s.genEngine);
+  const genTextureSize = useTripoStore((s) => s.genTextureSize);
+  const genParts = useTripoStore((s) => s.genParts);
   const set = useTripoStore((s) => s.set);
 
   const engineReady = useGen3dStore((s) => s.engineReady);
@@ -462,10 +465,20 @@ function ModelPanel(): JSX.Element {
 
   const installed = (id: Gen3dModelId): boolean =>
     models.find((m) => m.id === id)?.installed === true;
-  // Text→3D needs Mage-Flow for the first hop; image→3D just TRELLIS.
-  const geometryReady = engineReady && installed('trellis2');
-  const canRunReal = geometryReady && (inputMode !== 'text' || installed('mageflow'));
+  // Which model actually runs. Cube3D is text-only: it IS a text→shape model,
+  // so it never applies to an image input.
+  const useCube = inputMode === 'text' && genEngine === 'cube3d';
+  // Text→3D via TRELLIS needs Mage-Flow for the image hop; Cube3D needs
+  // neither Mage-Flow nor TRELLIS.
+  const geometryReady = engineReady && (useCube ? installed('cube3d') : installed('trellis2'));
+  const canRunReal = geometryReady && (useCube || inputMode !== 'text' || installed('mageflow'));
   const busy = job !== null && !job.done;
+  /** The first model this run needs and does not have. */
+  const missingModel: Gen3dModelId = useCube
+    ? 'cube3d'
+    : !geometryReady
+      ? 'trellis2'
+      : 'mageflow';
   const missingInput =
     (inputMode === 'text' && prompt.trim().length === 0) ||
     (inputMode === 'image' && genImages.length === 0);
@@ -474,11 +487,19 @@ function ModelPanel(): JSX.Element {
     // Without the models, Generate is the DOWNLOAD path — never a fake run. Aim
     // the download panel at the first missing model for this input.
     if (!geometryReady) {
-      openDownload(true, 'trellis2');
+      openDownload(true, useCube ? 'cube3d' : 'trellis2');
       return;
     }
-    if (inputMode === 'text' && !installed('mageflow')) {
+    if (!useCube && inputMode === 'text' && !installed('mageflow')) {
       openDownload(true, 'mageflow');
+      return;
+    }
+    const parts = genParts
+      .split(',')
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+    if (useCube && parts.length > 0 && !installed('cubepart')) {
+      openDownload(true, 'cubepart');
       return;
     }
     if (missingInput) return;
@@ -487,7 +508,11 @@ function ModelPanel(): JSX.Element {
       ...(inputMode === 'text' ? { prompt: prompt.trim() } : {}),
       ...(inputMode === 'image' ? { imagePaths: genImages.map((i) => i.path) } : {}),
       resolution: genResolution,
-      texture: genAutoTexture,
+      // Cube3D emits geometry only, so auto-texture is not a thing it can do.
+      texture: useCube ? false : genAutoTexture,
+      ...(useCube ? { engine: 'cube3d' as const } : {}),
+      ...(!useCube && genAutoTexture ? { textureSize: genTextureSize } : {}),
+      ...(useCube && parts.length > 0 ? { parts } : {}),
     });
   };
 
@@ -497,28 +522,87 @@ function ModelPanel(): JSX.Element {
       <div className="tp-panel-scroll">
         <UploadZone />
         <div className="tp-section-title">Settings</div>
-        <div className="tp-field-row">
-          <span className="tp-field-label">Resolution</span>
-          <Segmented
-            size="sm"
-            testid="tp-resolution"
-            options={[
-              { id: 'low', label: String(resolutions.low) },
-              { id: 'medium', label: String(resolutions.medium) },
-              { id: 'high', label: String(resolutions.high) },
-            ]}
-            value={genResolution}
-            onChange={(v) => set('genResolution', v)}
-          />
-        </div>
-        <div className="tp-field-row">
-          <span className="tp-field-label">Auto-texture</span>
-          <Toggle
-            on={genAutoTexture}
-            onChange={(v) => set('genAutoTexture', v)}
-            testid="tp-autotexture-toggle"
-          />
-        </div>
+        {/* Shape model — TEXT ONLY. Cube3D is itself a text→shape model, so it
+            has nothing to do with an image input; offering it there would be a
+            control that silently does nothing. */}
+        {inputMode === 'text' ? (
+          <div className="tp-field-row">
+            <span className="tp-field-label">Shape model</span>
+            <Segmented
+              size="sm"
+              testid="tp-engine"
+              options={[
+                { id: 'trellis2', label: 'TRELLIS' },
+                { id: 'cube3d', label: 'Cube 3D' },
+              ]}
+              value={genEngine}
+              onChange={(v) => set('genEngine', v)}
+            />
+          </div>
+        ) : null}
+
+        {useCube ? (
+          <>
+            <p className="tp-select-copy" data-testid="tp-cube-note">
+              Cube 3D builds the shape straight from your words — no image in
+              between. Geometry only, so there is no texture to bake.
+            </p>
+            <div className="tp-field-col">
+              <span className="tp-field-label">Parts (optional)</span>
+              <input
+                className="tp-text-input"
+                data-testid="tp-parts-input"
+                placeholder="e.g. seat, backrest, legs"
+                value={genParts}
+                onChange={(e) => set('genParts', e.target.value)}
+              />
+              <span className="tp-field-hint">
+                Names it into separate meshes after generating. Leave empty for one mesh.
+              </span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="tp-field-row">
+              <span className="tp-field-label">Resolution</span>
+              <Segmented
+                size="sm"
+                testid="tp-resolution"
+                options={[
+                  { id: 'low', label: String(resolutions.low) },
+                  { id: 'medium', label: String(resolutions.medium) },
+                  { id: 'high', label: String(resolutions.high) },
+                ]}
+                value={genResolution}
+                onChange={(v) => set('genResolution', v)}
+              />
+            </div>
+            <div className="tp-field-row">
+              <span className="tp-field-label">Auto-texture</span>
+              <Toggle
+                on={genAutoTexture}
+                onChange={(v) => set('genAutoTexture', v)}
+                testid="tp-autotexture-toggle"
+              />
+            </div>
+            {genAutoTexture ? (
+              <div className="tp-field-row">
+                <span className="tp-field-label">Texture size</span>
+                <Segmented
+                  size="sm"
+                  testid="tp-texture-size"
+                  options={[
+                    { id: '1024', label: '1K' },
+                    { id: '2048', label: '2K' },
+                    { id: '4096', label: '4K' },
+                  ]}
+                  value={String(genTextureSize)}
+                  onChange={(v) => set('genTextureSize', Number(v) as 1024 | 2048 | 4096)}
+                />
+              </div>
+            ) : null}
+          </>
+        )}
         <GeoAccordion />
         <AiModelSelect />
       </div>
@@ -532,13 +616,15 @@ function ModelPanel(): JSX.Element {
           />
         ) : (
           <DownloadCta
-            modelId={inputMode === 'text' && geometryReady ? 'mageflow' : 'trellis2'}
-            label={inputMode === 'text' && geometryReady ? 'Mage-Flow' : 'TRELLIS-2'}
-            sizeBytes={
-              models.find(
-                (m) => m.id === (inputMode === 'text' && geometryReady ? 'mageflow' : 'trellis2'),
-              )?.sizeBytes ?? 0
+            modelId={missingModel}
+            label={
+              missingModel === 'cube3d'
+                ? 'Cube 3D'
+                : missingModel === 'mageflow'
+                  ? 'Mage-Flow'
+                  : 'TRELLIS-2'
             }
+            sizeBytes={models.find((m) => m.id === missingModel)?.sizeBytes ?? 0}
             testid="tp-generate-btn"
           />
         )}

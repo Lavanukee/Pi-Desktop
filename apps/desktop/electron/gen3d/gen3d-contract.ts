@@ -20,6 +20,7 @@
 /** Engine model ids (stable — used in settings, downloads, and the catalog). */
 export type Gen3dModelId =
   | 'trellis2'
+  | 'cube3d'
   | 'mageflow'
   | 'cubepart'
   | 'autoremesher'
@@ -129,6 +130,16 @@ export type Gen3dInvokeMap = {
       readonly resolution: Gen3dResolution;
       readonly texture: boolean;
       readonly imageOnly?: boolean;
+      /**
+       * Which shape model. 'trellis2' is IMAGE→3D, so a text prompt goes
+       * through Mage-Flow first; 'cube3d' is natively text→shape and skips that
+       * hop entirely (and produces no texture — it emits geometry only).
+       */
+      readonly engine?: 'trellis2' | 'cube3d';
+      /** TRELLIS bake resolution in texels (1024/2048/4096). */
+      readonly textureSize?: number;
+      /** Cube3D only: split the result into these named parts (CubePart). */
+      readonly parts?: readonly string[];
     };
     response: { readonly ok: boolean; readonly jobId?: string; readonly error?: string };
   };

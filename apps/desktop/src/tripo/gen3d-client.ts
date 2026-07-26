@@ -72,6 +72,8 @@ interface Gen3dState {
     engine?: 'trellis2' | 'cube3d';
     /** TRELLIS bake resolution in texels. */
     textureSize?: number;
+    /** Triangle cap for the textured mesh; 0/undefined = Adaptive. */
+    faceBudget?: number;
     /** Cube3D: split the result into these named parts. */
     parts?: readonly string[];
     /** Edit this image instead of generating (Mage-Flow-Edit; imageOnly). */
@@ -140,6 +142,7 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
         ...(req.imageOnly === true ? { imageOnly: true } : {}),
         ...(req.engine !== undefined ? { engine: req.engine } : {}),
         ...(req.textureSize !== undefined ? { textureSize: req.textureSize } : {}),
+        ...(req.faceBudget !== undefined ? { faceBudget: req.faceBudget } : {}),
         ...(req.parts !== undefined ? { parts: req.parts } : {}),
         ...(req.editFrom !== undefined ? { editFrom: req.editFrom } : {}),
       })

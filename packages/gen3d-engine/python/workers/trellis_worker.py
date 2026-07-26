@@ -284,12 +284,23 @@ def export_preview_glb(verts, faces, out_path: Path, full_faces: int) -> Path | 
 # messed up" — the bake was right, the sheet was far too small to hold it.
 MIN_TEXELS_PER_FACE = 64
 
-# Triangles handed to the baker. 2048² / 64 texels = 65,536 faces, so this is
-# exactly the largest mesh a 2048 atlas can hold at full quality — measured to
-# bake in well under a minute and render cleanly, against ~4 minutes and a 30 MB
-# GLB for the old 200k/4096 pair. The untextured geometry.glb keeps every
-# triangle; this budget only governs what the COLOURS are painted onto.
-BAKE_FACE_BUDGET = 65_000
+# Triangles handed to the baker, when the caller does not say.
+#
+# This was 65,000, chosen as "exactly what a 2048 atlas holds at 64 texels per
+# face" — which optimised the atlas and quietly capped the MODEL. jedd hit it
+# from the other end: every generation came back at exactly 65,000 faces and
+# visibly softer than the HF demo, whose decimation target defaults to 300,000
+# and which returned 288,000 for the same input image. A budget that is always
+# the binding constraint is not a budget, it is a hidden resolution setting.
+#
+# 300,000 matches the reference. At 4096² that is ~56 texels/face, just under
+# the 64 target, so atlas_size_for lands on 4096 and the extra detail is real
+# rather than smeared. The cost is what the old comment recorded for 200k/4096:
+# minutes rather than seconds, and a GLB in the tens of MB. That is the right
+# default for a tool whose output is the deliverable, and the UI's Face limit
+# control now actually reaches this (it did not before — see jobs.py), so the
+# cheap-and-soft end of the trade is one click away instead of mandatory.
+BAKE_FACE_BUDGET = 300_000
 
 # The Metal baker (o_voxel + mtldiffrast) does not survive real volumes on this
 # machine: MEASURED three times on a 1.28M-voxel helicopter it failed every
@@ -299,6 +310,31 @@ BAKE_FACE_BUDGET = 65_000
 # the same channels, is verified correct, and cannot take the process with it,
 # so it is the default. Set PI_GEN3D_METAL_BAKE=1 to try Metal first.
 METAL_BAKE = os.environ.get("PI_GEN3D_METAL_BAKE", "0") == "1"
+
+
+def undo_baker_gamma(base_color_img):
+    """Cancel the linear->sRGB conversion the KDTree baker applies.
+
+    TRELLIS's voxel base_color attribute is ALREADY display-referred. The
+    reference pipeline — o_voxel.postprocess.to_glb, which is what the HF demo
+    runs — writes it straight out:
+
+        base_color = np.clip(attrs[..., base_color] * 255, 0, 255).astype(uint8)
+
+    trellis-mac's KDTree baker instead does `np.power(base_color, 1/2.2)` before
+    quantising (backends/texture_baker.py). That is a second gamma on top of the
+    one already baked in, and it only lifts values — 0.20 -> 0.48, 0.50 -> 0.73 —
+    so every colour drifts toward white and loses saturation. It is why our
+    output looked washed out beside the demo's saturated blues and golds.
+
+    The baker is upstream (a git checkout we provision, not our file), so this
+    inverts it here rather than editing a dependency that re-provisioning would
+    overwrite. Exact inverse, applied to the uint8 the baker hands back.
+    """
+    import numpy as np
+
+    linear = (base_color_img.astype(np.float32) / 255.0) ** 2.2
+    return np.clip(linear * 255.0 + 0.5, 0, 255).astype(np.uint8)
 
 
 def atlas_size_for(n_faces: int, requested: int) -> int:
@@ -466,6 +502,7 @@ def bake_textures(
         voxel_size,
         texture_size=size,
     )
+    base_color_img = undo_baker_gamma(base_color_img)
     PILImage.fromarray(base_color_img)  # touch to validate
     # FLIP V FOR EXPORT — this is the bug behind "texturing is completely messed
     # up". The baker rasterizes into an image array, so its v runs DOWNWARD with

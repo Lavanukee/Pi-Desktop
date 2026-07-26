@@ -170,6 +170,9 @@ class JobManager:
         image_only = bool(body.get("imageOnly"))
         engine = body.get("engine") or "trellis2"
         texture_size = int(body.get("textureSize") or 0)
+        # 0 = Adaptive (let the worker size it); anything else caps the mesh the
+        # textures are painted onto.
+        face_budget = int(body.get("faceBudget") or 0)
         parts = [str(p).strip() for p in (body.get("parts") or []) if str(p).strip()]
         edit_from = str(body.get("editFrom") or "")
         # Cube3D is TEXT→SHAPE. It needs no image model, produces no texture,
@@ -410,6 +413,12 @@ class JobManager:
                     "--pipeline-type", self.registry.pipeline_type(resolution),
                     "--texture" if texture else "--no-texture",
                     *(["--texture-size", str(texture_size)] if texture_size > 0 else []),
+                    # The UI's Face limit control. Without this the worker fell
+                    # back to its own default for EVERY generation, so the
+                    # setting looked live and did nothing: every model came back
+                    # at exactly the built-in budget regardless of what was
+                    # picked. 0 means "no cap from the UI" (Adaptive).
+                    *(["--bake-faces", str(face_budget)] if face_budget > 0 else []),
                     *((["--prompt", prompt]) if prompt else []),
                 ],
                 cwd=self.registry.geometry_tool_dir(),

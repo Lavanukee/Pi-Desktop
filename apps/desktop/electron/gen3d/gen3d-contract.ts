@@ -140,6 +140,14 @@ export type Gen3dInvokeMap = {
       readonly engine?: 'trellis2' | 'cube3d';
       /** TRELLIS bake resolution in texels (1024/2048/4096). */
       readonly textureSize?: number;
+      /**
+       * Cap on the triangles the textures are painted onto. Omit or 0 for
+       * Adaptive, which lets the worker pick (it targets the same 300k the
+       * reference pipeline defaults to). This was missing, so the UI's Face
+       * limit control never reached generation and every model came back at
+       * the worker's built-in budget.
+       */
+      readonly faceBudget?: number;
       /** Cube3D only: split the result into these named parts (CubePart). */
       readonly parts?: readonly string[];
       /**

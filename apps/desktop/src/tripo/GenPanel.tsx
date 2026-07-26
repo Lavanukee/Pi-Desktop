@@ -453,6 +453,7 @@ function ModelPanel(): JSX.Element {
   const genAutoTexture = useTripoStore((s) => s.genAutoTexture);
   const genEngine = useTripoStore((s) => s.genEngine);
   const genTextureSize = useTripoStore((s) => s.genTextureSize);
+  const faceLimit = useTripoStore((s) => s.faceLimit);
   const genParts = useTripoStore((s) => s.genParts);
   const set = useTripoStore((s) => s.set);
 
@@ -513,6 +514,10 @@ function ModelPanel(): JSX.Element {
       texture: useCube ? false : genAutoTexture,
       ...(useCube ? { engine: 'cube3d' as const } : {}),
       ...(!useCube && genAutoTexture ? { textureSize: genTextureSize } : {}),
+      // Face limit, in thousands; the top of the slider means Adaptive, which
+      // sends 0 and lets the worker use the reference default. This was read by
+      // the panel and never sent, so the control moved and nothing changed.
+      ...(!useCube ? { faceBudget: faceLimit >= 100 ? 0 : faceLimit * 1000 } : {}),
       ...(useCube && parts.length > 0 ? { parts } : {}),
     });
   };

@@ -324,9 +324,15 @@ reads it, so `buildWireOverlay` draws those polygon edges instead of `WireframeG
 
 ## P0 — functional defects the run exposed, all fixed on this branch
 
-*Verification status is stated per item. P0-3 and P0-4 are confirmed by a re-run on the fixed
-build; P0-1 and P0-2 are fixed and typecheck/build/test-green, and the re-run that confirms them
-is noted where it stands.*
+*Verification status, stated plainly per item, because "fixed" and "verified" are different
+claims:*
+
+| | fixed | verified by re-running the real pipeline |
+|---|---|---|
+| P0-1 pipeline stage never connected | yes | partially — the rig re-run exercises the same `runStage` call; the segment case was still running when this was written |
+| P0-2 segment view painted over the real answer | yes | not yet — needs another ~13-minute CubePart run |
+| P0-3 humanoid verdict overwritten | yes | **yes** — failed, re-fixed, re-ran, passed |
+| P0-4 purple in the baked palette | yes | **yes** — 3 guard tests, `6/6 passed` |
 
 **P0-1. The pipeline-stage state machine was never connected to the engine.**
 `useTripoStore.runStage` is the only writer of `pipelineStage`, of the History list, and of the

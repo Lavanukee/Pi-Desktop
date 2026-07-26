@@ -50,6 +50,34 @@ the studio's pipeline-stage state machine was never wired to the engine, that a 
 humanoid rig was recorded as non-humanoid, and that a purple was shipping in a place no DOM
 scan can look. None of these are visible from the code alone or from a screenshot alone.
 
+## The opinionated version, ranked by impact
+
+If I were choosing what to spend the next day on, in this order:
+
+1. **Make long stages account for themselves.** The single worst moment in the product is
+   watching a 13-minute segmentation sit on the same sentence for five of them. Everything else
+   here is a papercut by comparison, and it is one `progress()` call plus a decision about what
+   to say (D1). The same instinct covers the ~90-second silent stretches inside TRELLIS.
+2. **Decide what the studio is allowed to shout.** Accent density is fixed by measurement now
+   (2 per panel), but the *rule* is mine, not the product's. The download panel still makes an
+   84 GB action the loudest thing on screen (D5), and the Image panel has two primaries (D4).
+   Write the rule down once and the rest follows.
+3. **Raise the type floor or say why not.** 27 declarations below the app's 12px caption, two of
+   them failing WCAG AA (D2). A tool surface can justify density — but "we chose 10px here" and
+   "nobody noticed this drifted" look identical in the CSS, and only one of them is a decision.
+4. **Let the studio show what it just did.** With the stage machine reconnected, the panels can
+   finally reflect real results. That opens obvious follow-ups nobody could take before: switch
+   to a render mode that shows the part colours after a segment, put the real quad/tri split in
+   the History row, show the rig's joint count next to the skeleton toggle.
+5. **Delete the vestigial chrome.** "3D Workspace" beside "Bobble 3D" (D3), the capability-loop
+   thumbnails that read as broken images (D6), the info-as-clickable-cards (D9). Small, and each
+   one is a thing a new user has to work out and then ignore.
+
+What I would *not* change: the density of the menus and rails (D8), the split of the workspace
+into rail / panel / viewport / assets, and the honesty of the engine-download flow. Those are the
+parts that read as a real tool, and the temptation to "make them match chat" would cost more than
+it returns.
+
 ---
 
 # PART 1 — UI/UX parity

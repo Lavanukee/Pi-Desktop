@@ -43,6 +43,41 @@
   font-family: inherit;
 }
 
+/*
+ * Focus grammar — adopt the app's, don't inherit Chromium's. MEASURED before
+ * this rule: every studio control reported `outline: auto 1px rgb(153,200,255)`
+ * at offset 0 (the UA default) while the chat side reported
+ * `outline: solid 2px rgb(41,151,255)` at offset 2px — i.e. the studio was the
+ * only surface in the app that drew the browser's focus ring. Rather than tag
+ * ~100 call sites with .pd-focusable, apply the same mechanism from
+ * packages/ui/src/styles/base.css to every focusable .tp- control at once: a
+ * always-present transparent outline that colors in via transition, gated on
+ * :focus-visible so mouse clicks stay ring-free.
+ */
+.tp :where(button, input, textarea, [role='switch'], [role='tab'], [role='menuitem']) {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color var(--pd-duration-base) var(--pd-easing-standard);
+}
+.tp :where(button, input, textarea, [role='switch'], [role='tab'], [role='menuitem']):focus-visible {
+  outline-color: var(--pd-border-focus);
+}
+
+/*
+ * Shape language. The app derives control roundness from --pd-radius-button so
+ * that "how round is a button" stays a FLAVOR decision (see .pd-segmented in
+ * packages/ui/src/styles/controls.css: "Radius derives from --pd-radius-button
+ * so codex goes full-pill"). This studio originally hardcoded --pd-radius-full
+ * on 57 rules, including every text button — which is why it read as a
+ * different product next to the 10px .pd-btn. These two aliases restore the
+ * app's rule: text buttons follow the flavor, and only genuinely circular
+ * things (icon buttons, switch tracks, dots, chips) stay fully round.
+ */
+.tp {
+  --tp-radius-control: min(var(--pd-radius-button), 24px);
+  --tp-radius-control-outer: calc(min(var(--pd-radius-button), 24px) + 3px);
+}
+
 /* ═══ top bar ═══════════════════════════════════════════════════════════ */
 
 .tp-topbar {

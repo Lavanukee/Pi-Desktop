@@ -326,7 +326,7 @@ it bakes from the generation's own output.
 | Image → 3D | TRELLIS-2 | **WORKS** — 104s / 98s at 512 | `03-image-to-3d.png` — 300,000 faces / 267,610 verts, recognisably the robot, arms/legs/head/antennae intact |
 | Text → 3D | Cube3D | **WORKS** — 95s | `04-text-to-3d.png` — "a simple wooden stool with three legs" → 314,048 faces, a correct three-legged stool |
 | Texturing | TRELLIS-2 re-bake | **WORKS on the generation's own mesh** — 26s. **FAILS after a retopo** | `pipeline-after/07-textured.png` — full PBR orange robot. See P1-1 |
-| Segmentation | CubePart | **ENGINE WORKS** (808s, five named part meshes) — **UI SHOWED NOTHING** on `main`; fixed here | see P0-1 |
+| Segmentation | CubePart | **WORKS** — 807s. The engine always did; on `main` the **UI showed nothing at all**. Fixed and re-verified: 5 named parts listed and painted | `05-segmented.png` (before: same file, run A) |
 | Retopology | QuadriFlow | **WORKS** — 17s, 300,000 tris → 27,724 quads. **The "melted blob" does NOT reproduce** | `06-retopo.png`, `06b-retopo-wireframe.png` |
 | Skeleton overlay | — | **WORKS** | `10-skeleton-overlay.png` |
 | Rigging | SkinTokens | **WORKS** — 73s / 76s, 14 joints over 265,779 vertices, shape probe humanoid=true. The result was recorded as NON-humanoid on `main`; fixed | `09-rigged.png`, P0-3 |
@@ -352,15 +352,14 @@ reads it, so `buildWireOverlay` draws those polygon edges instead of `WireframeG
 
 ## P0 — functional defects the run exposed, all fixed on this branch
 
-*Verification status, stated plainly per item, because "fixed" and "verified" are different
-claims:*
+*All four are fixed AND confirmed by re-running the real pipeline on the fixed build:*
 
-| | fixed | verified by re-running the real pipeline |
-|---|---|---|
-| P0-1 pipeline stage never connected | yes | partially — the rig re-run exercises the same `runStage` call; the segment case was still running when this was written |
-| P0-2 segment view painted over the real answer | yes | not yet — needs another ~13-minute CubePart run |
-| P0-3 humanoid verdict overwritten | yes | **yes** — failed, re-fixed, re-ran, passed |
-| P0-4 purple in the baked palette | yes | **yes** — 3 guard tests, `6/6 passed` |
+| | verified by |
+|---|---|
+| P0-1 pipeline stage never connected | `segmentation (CubePart) — 5 part(s) listed in the panel (807s)`, against `0 part(s) (808s)` before |
+| P0-2 segment view painted over the real answer | the same run's `05-segmented.png`: five rows reading **Main body / Top part / Bottom part / Left part / Right part** — the engine's own names, not `Top/Middle/Base` — with swatches matching a mesh painted in the engine's own per-part colours |
+| P0-3 humanoid verdict overwritten | failed, re-diagnosed, re-fixed, re-ran: `animation — 16 bundled sample clips, state machine built 2 node(s)` |
+| P0-4 purple in the baked palette | 3 guard tests (`6/6 passed`), and the segmented mesh above shows no purple part |
 
 **P0-1. The pipeline-stage state machine was never connected to the engine.**
 `useTripoStore.runStage` is the only writer of `pipelineStage`, of the History list, and of the
@@ -375,6 +374,10 @@ with per-part colours, and **changed nothing on screen**. Probe line:
 `segmentation (CubePart) — 0 part(s) listed in the panel (808s)`; `05-segmented.png` is the same
 white model it started with, next to an empty Parts list.
 
+Same probe, same model, on the fixed build: `segmentation (CubePart) — 5 part(s) listed in the
+panel (807s)`. Identical engine time; the difference is entirely that the result now arrives on
+screen.
+
 **P0-2. The segment view would have painted over the real answer.** With P0-1 fixed, the segment
 branch would have run its bundled-sample path — three height bands and a hardcoded
 `['Top','Middle','Base']` — on top of a genuine five-part result. A real `parts.glb` is one named
@@ -383,6 +386,11 @@ mesh per part carrying its own `COLOR_0` (verified on the run's output: nodes `p
 uses the engine's own colours and names and keeps the demo path only for the bundled sample. The
 part-list comparison also moved from length to value — the old check could not see one 3-part list
 replaced by another.
+
+Re-verified on a fresh CubePart run: the Parts list reads **Main body · Top part · Bottom part ·
+Left part · Right part** — CubePart's own `DEFAULT_PARTS`, not the demo's `Top/Middle/Base` — with
+each swatch matching the colour that part is actually painted in the viewport. Three things that
+disagreed now agree: the mesh, the legend, and the engine.
 
 **P0-3. A confirmed humanoid rig was recorded as non-humanoid.** One run produced both of these:
 

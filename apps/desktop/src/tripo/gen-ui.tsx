@@ -257,7 +257,7 @@ export function DownloadPanel(): JSX.Element {
         Everything runs locally on this Mac after download. Grab just what a stage needs, or the
         whole engine.
       </p>
-      <div className="tp-dlpanel-scroll">
+      <div className="tp-dlpanel-scroll pd-scroll">
         {models.map((m) => (
           <ModelCard key={m.id} id={m.id} />
         ))}

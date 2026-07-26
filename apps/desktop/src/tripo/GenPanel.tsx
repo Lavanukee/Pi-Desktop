@@ -525,7 +525,7 @@ function ModelPanel(): JSX.Element {
   return (
     <>
       <PanelHeader icon={<IcSparkles size={17} />} title="Generate Model" />
-      <div className="tp-panel-scroll">
+      <div className="tp-panel-scroll pd-scroll">
         <UploadZone />
         <div className="tp-section-title">Settings</div>
         {/* Shape model — TEXT ONLY. Cube3D is itself a text→shape model, so it
@@ -708,7 +708,7 @@ function ImagePanel(): JSX.Element {
   return (
     <>
       <PanelHeader icon={<IcImage size={17} />} title="Image for 3D" />
-      <div className="tp-panel-scroll">
+      <div className="tp-panel-scroll pd-scroll">
         <div className="tp-card tp-card-pad">
           <textarea
             className="tp-prompt"
@@ -966,7 +966,7 @@ function StagePanel({
   return (
     <>
       <PanelHeader icon={icon} title={title} />
-      <div className="tp-panel-scroll">
+      <div className="tp-panel-scroll pd-scroll">
         <EngineRow name={engine} />
         {!engineInstalled ? <StageNeedsModel capability={capability} modelId={engineId} /> : null}
         {loaded !== undefined ? (

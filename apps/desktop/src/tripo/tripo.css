@@ -3,7 +3,15 @@
  * TripoWorkspace.tsx (never global.css). EVERY color resolves from the pd
  * token set (var(--pd-*) directly, or color-mix() derivations of those
  * tokens), so the workspace re-skins with data-flavor / data-mode like the
- * rest of the app. No hardcoded colors anywhere.
+ * rest of the app.
+ *
+ * The only literal colors left are deliberately theme-invariant: #fff/#000 used
+ * as color-mix() endpoints and for the iOS-convention switch thumb, and the
+ * fixed illustration/brand palette for the DCC vendor logos and the capability-
+ * loop artwork (a Blender orange that re-tints per flavor is just wrong). An
+ * earlier version of this header claimed "no hardcoded colors anywhere" while
+ * carrying 26 hex literals, including status colors that missed every flavor's
+ * --pd-status-* token; those are gone.
  */
 
 .tp {
@@ -54,12 +62,13 @@
  * always-present transparent outline that colors in via transition, gated on
  * :focus-visible so mouse clicks stay ring-free.
  */
-.tp :where(button, input, textarea, [role='switch'], [role='tab'], [role='menuitem']) {
+.tp :where(button, input, textarea, [role="switch"], [role="tab"], [role="menuitem"]) {
   outline: 2px solid transparent;
   outline-offset: 2px;
   transition: outline-color var(--pd-duration-base) var(--pd-easing-standard);
 }
-.tp :where(button, input, textarea, [role='switch'], [role='tab'], [role='menuitem']):focus-visible {
+.tp
+  :where(button, input, textarea, [role="switch"], [role="tab"], [role="menuitem"]):focus-visible {
   outline-color: var(--pd-border-focus);
 }
 
@@ -84,11 +93,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 52px;
+  /* MEASURED: this was a hardcoded 52px over --pd-bg-raised while the chat
+   * top bar is 48px (--pd-height-topbar) over --pd-bg-base — so crossing
+   * Chat -> 3D Studio stepped the window chrome 4px taller AND one surface
+   * lighter. Both now ride the same tokens as .pd-topbar. */
+  height: var(--pd-height-topbar);
   /* Left padding clears the macOS traffic lights (hiddenInset window, lights
    * at x:19 in a ~46px strip) so the Chat button never sits under them. */
   padding: 0 14px 0 84px;
-  background: var(--pd-bg-raised);
+  background: var(--pd-bg-base);
   border-bottom: 1px solid var(--pd-border-subtle);
   flex-shrink: 0;
   gap: 12px;
@@ -112,7 +125,7 @@
   height: 30px;
   padding: 0 10px 0 6px;
   border: 0;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   background: transparent;
   color: var(--pd-text-secondary);
   font: inherit;
@@ -154,7 +167,7 @@
   gap: 6px;
   height: 32px;
   padding: 0 12px;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   background: var(--pd-bg-inset);
   border: 1px solid var(--pd-border-subtle);
   font-weight: var(--pd-font-weight-medium);
@@ -198,7 +211,7 @@
   gap: 6px;
   height: 32px;
   padding: 0 12px;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   background: var(--pd-bg-inset);
   border: 1px solid var(--pd-border-subtle);
   font-size: var(--pd-font-size-caption);
@@ -216,30 +229,6 @@
   border-radius: var(--pd-radius-xs);
   padding: 1px 4px;
 }
-.tp-credits .tp-bolt,
-.tp-credits-big .tp-bolt {
-  display: inline-flex;
-  color: var(--pd-accent-primary);
-}
-.tp-upgrade-pill {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 14px;
-  border-radius: var(--pd-radius-full);
-  background: linear-gradient(
-    100deg,
-    var(--pd-accent-primary),
-    color-mix(in srgb, var(--pd-accent-primary) 40%, var(--pd-status-info-fg))
-  );
-  color: var(--pd-text-on-accent);
-  font-size: var(--pd-font-size-caption);
-  font-weight: var(--pd-font-weight-semibold);
-}
-.tp-upgrade-pill:hover {
-  filter: brightness(1.08);
-}
 .tp-iconbtn {
   position: relative;
   display: inline-flex;
@@ -253,22 +242,6 @@
 .tp-iconbtn:hover {
   background: var(--pd-bg-hover);
   color: var(--pd-text-primary);
-}
-.tp-bell-count {
-  position: absolute;
-  top: -1px;
-  right: -3px;
-  min-width: 15px;
-  height: 15px;
-  border-radius: var(--pd-radius-full);
-  background: var(--pd-status-danger-fg);
-  color: var(--pd-bg-base);
-  font-size: 9px;
-  font-weight: var(--pd-font-weight-bold);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 3px;
 }
 .tp-avatar {
   display: inline-flex;
@@ -425,11 +398,6 @@
 
 /* top-bar specific menus */
 .tp-dcc-menu,
-.tp-credits-menu,
-.tp-bell-menu,
-.tp-account-menu {
-  min-width: 250px;
-}
 .tp-dcc-status {
   display: flex;
   align-items: center;
@@ -445,27 +413,6 @@
 }
 .tp-dot-idle {
   background: var(--pd-status-warning-fg);
-}
-.tp-credits-big {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 10px 10px 2px;
-  font-size: var(--pd-font-size-heading);
-  font-weight: var(--pd-font-weight-semibold);
-}
-.tp-credits-sub {
-  padding: 2px 10px 8px;
-  font-size: var(--pd-font-size-footnote);
-  color: var(--pd-text-muted);
-}
-.tp-bell-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  font-weight: var(--pd-font-weight-semibold);
-  font-size: var(--pd-font-size-caption);
 }
 .tp-notif {
   display: flex;
@@ -494,20 +441,6 @@
   font-size: var(--pd-font-size-footnote);
   color: var(--pd-text-muted);
   margin-top: 2px;
-}
-.tp-account-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px;
-}
-.tp-account-name {
-  font-weight: var(--pd-font-weight-semibold);
-  font-size: var(--pd-font-size-caption);
-}
-.tp-account-plan {
-  font-size: var(--pd-font-size-footnote);
-  color: var(--pd-text-muted);
 }
 
 /* ═══ hint tooltips ═════════════════════════════════════════════════════ */
@@ -589,8 +522,11 @@
 .tp-rail-icon {
   display: inline-flex;
 }
+/* --pd-font-size-caption (12px) is the app's smallest type token; the rail was
+ * at 10px, i.e. below anything the rest of the app ever renders. 11px is the
+ * compromise that clears the 72px rail without going sub-caption by a step. */
 .tp-rail-label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: var(--pd-font-weight-medium);
   line-height: 1;
 }
@@ -673,7 +609,7 @@
 .tp-segmented {
   display: flex;
   background: var(--pd-bg-inset);
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control-outer);
   padding: 3px;
   gap: 2px;
 }
@@ -684,7 +620,7 @@
   justify-content: center;
   gap: 4px;
   padding: 7px 8px;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   font-size: var(--pd-font-size-caption);
   font-weight: var(--pd-font-weight-medium);
   color: var(--pd-text-secondary);
@@ -721,7 +657,7 @@
 .tp-input-tabs {
   display: flex;
   background: var(--pd-bg-inset);
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control-outer);
   padding: 3px;
   gap: 2px;
 }
@@ -735,7 +671,7 @@
   align-items: center;
   justify-content: center;
   padding: 7px 0;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   color: var(--pd-text-secondary);
 }
 .tp-input-tab[data-active="true"] {
@@ -960,18 +896,6 @@
   font-size: var(--pd-font-size-footnote);
   color: var(--pd-text-link);
 }
-.tp-badge-new {
-  font-size: 8.5px;
-  font-weight: var(--pd-font-weight-bold);
-  background: linear-gradient(
-    100deg,
-    var(--pd-status-danger-fg),
-    color-mix(in srgb, var(--pd-status-danger-fg) 55%, var(--pd-accent-primary))
-  );
-  color: var(--pd-bg-base);
-  padding: 2px 5px;
-  border-radius: var(--pd-radius-full);
-}
 .tp-q {
   display: inline-flex;
   color: var(--pd-text-muted);
@@ -1008,12 +932,20 @@
   font-size: var(--pd-font-size-caption);
   font-weight: var(--pd-font-weight-medium);
 }
+/*
+ * This is a CONTENTS SUMMARY ("Face limit · topology · symmetry"), not a set of
+ * links — the whole accordion head is the one click target. It was painted with
+ * --pd-text-link, which had two costs: it made three non-links look clickable,
+ * and because the link token stays blue in every flavor (claude #74abe2, codex
+ * #339cff) it was the one element that stayed BLUE when the rest of the studio
+ * went terracotta/mono. --pd-text-muted is what a summary should be.
+ */
 .tp-accordion-sub {
   display: flex;
   align-items: center;
   gap: 4px;
   font-size: var(--pd-font-size-footnote);
-  color: var(--pd-text-link);
+  color: var(--pd-text-muted);
 }
 .tp-accordion-caret {
   display: inline-flex;
@@ -1077,35 +1009,47 @@
 }
 
 /* toggle */
+/*
+ * Switch geometry is documented to the pixel in packages/ui/src/styles/
+ * controls.css (36x20 track, 16px thumb, travel = width - height = 16px) and
+ * this one had drifted: 21px tall, 15px travel, and — the visible part — an
+ * --pd-accent-primary fill where .pd-switch deliberately uses --pd-text-link
+ * ("both apps color checked switches with their accent blue ... NOT the
+ * inverted mono"). Under claude that made the studio's switches terracotta
+ * while every switch in settings stayed blue. Now identical to .pd-switch.
+ */
 .tp-toggle {
   position: relative;
   width: 36px;
-  height: 21px;
+  height: 20px;
   border-radius: var(--pd-radius-full);
-  background: var(--pd-bg-track);
-  transition: background var(--pd-duration-fast) var(--pd-easing-standard);
+  background: var(--pd-bg-active);
+  box-shadow: inset 0 0 0 0.5px var(--pd-border-default);
+  transition: background-color var(--pd-duration-base) var(--pd-easing-standard);
   flex-shrink: 0;
 }
 .tp-toggle[data-on="true"] {
-  background: var(--pd-accent-primary);
+  background: var(--pd-text-link);
+  box-shadow: none;
 }
 .tp-toggle:disabled {
   opacity: 0.5;
 }
 .tp-toggle-knob {
   position: absolute;
-  top: 2.5px;
-  left: 2.5px;
+  top: 2px;
+  left: 0;
   width: 16px;
   height: 16px;
   border-radius: var(--pd-radius-full);
-  background: var(--pd-bg-raised);
+  /* Theme-invariant white thumb, like .pd-switch-thumb (iOS convention). */
+  background: #fff;
   box-shadow: var(--pd-shadow-sm);
-  transition: transform var(--pd-duration-fast) var(--pd-easing-standard);
+  transform: translateX(2px);
+  transition: transform var(--pd-duration-base) var(--pd-easing-standard);
 }
 .tp-toggle[data-on="true"] .tp-toggle-knob {
-  transform: translateX(15px);
-  background: var(--pd-text-on-accent);
+  transform: translateX(18px);
 }
 
 /* slider */
@@ -1286,7 +1230,7 @@
   gap: 8px;
   width: 100%;
   height: 46px;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   background: var(--pd-accent-primary);
   color: var(--pd-text-on-accent);
   font-size: var(--pd-font-size-body);
@@ -1303,37 +1247,38 @@
   background: var(--pd-bg-track);
   color: var(--pd-text-muted);
 }
-.tp-cost {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: var(--pd-font-size-caption);
-  font-weight: var(--pd-font-weight-medium);
-  opacity: 0.9;
-}
-.tp-cost s {
-  opacity: 0.65;
-}
+/*
+ * TONAL secondary. MEASURED on the Animate panel before this change: 22 elements
+ * painted with --pd-accent-primary, four of them large CTAs competing head-on
+ * ("Open State Machine" 12558px^2, "Add parameter" 5998, "Auto-Rig with
+ * SkinTokens" 5320, "Export" 3160) — nothing told you what the panel wanted you
+ * to do. The chat side gets by with essentially no large accent fills at all.
+ * The rule now is one accent-FILLED primary per panel (the sticky footer CTA,
+ * which is the committing action and is always visible); step-level actions
+ * like Auto-Rig become tonal — accent-tinted, clearly actionable, not shouting.
+ * The 22px accent glow went with it: nothing else in the app glows.
+ */
 .tp-retry-btn {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   width: 100%;
-  height: 44px;
-  border-radius: var(--pd-radius-full);
-  background: var(--pd-accent-primary);
-  color: var(--pd-text-on-accent);
+  height: 40px;
+  border-radius: var(--tp-radius-control);
+  background: var(--pd-accent-subtle);
+  color: var(--pd-accent-primary);
   font-weight: var(--pd-font-weight-semibold);
-  box-shadow:
-    0 0 0 3px var(--pd-accent-subtle),
-    0 0 22px var(--tp-accent-glow);
+  box-shadow: inset 0 0 0 1px var(--pd-accent-subtle);
+  transition: background-color var(--pd-duration-base) var(--pd-easing-standard);
 }
-.tp-retry-btn:hover {
-  background: var(--pd-accent-hover);
+.tp-retry-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--pd-accent-primary) 18%, transparent);
 }
-.tp-cost-dark {
-  opacity: 1;
+.tp-retry-btn:disabled {
+  background: var(--pd-bg-track);
+  color: var(--pd-text-muted);
+  box-shadow: none;
 }
 
 /* search */
@@ -1343,7 +1288,7 @@
   gap: 8px;
   height: 34px;
   padding: 0 11px;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   background: var(--pd-bg-inset);
   border: 1px solid var(--pd-border-subtle);
   color: var(--pd-text-muted);
@@ -1436,20 +1381,25 @@
   color: var(--pd-accent-primary);
   font-weight: var(--pd-font-weight-semibold);
 }
+/* QUIET tertiary — "Add parameter" and friends are row-level add actions, not
+ * the point of the panel; they were accent-filled at 5998px^2, out-shouting the
+ * actual primary. Height rides --pd-control-md so it matches .pd-btn. */
 .tp-upload-btn {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 40px;
-  padding: 0 20px;
-  border-radius: var(--pd-radius-full);
-  background: var(--pd-accent-primary);
-  color: var(--pd-text-on-accent);
-  font-weight: var(--pd-font-weight-semibold);
+  height: var(--pd-control-md);
+  padding: 0 14px;
+  border-radius: var(--tp-radius-control);
+  background: var(--pd-bg-inset);
+  border: 1px solid var(--pd-border-default);
+  color: var(--pd-text-primary);
+  font-weight: var(--pd-font-weight-medium);
   font-size: var(--pd-font-size-caption);
+  transition: background-color var(--pd-duration-base) var(--pd-easing-standard);
 }
 .tp-upload-btn:hover {
-  background: var(--pd-accent-hover);
+  background: var(--pd-bg-hover);
 }
 .tp-unavail {
   margin-top: 10px;
@@ -1542,11 +1492,15 @@
   color: color-mix(in srgb, var(--pd-text-primary) 45%, transparent);
   margin-bottom: 10px;
 }
+/* --pd-font-size-title (22px) is the top of the app's scale; this was 30px,
+ * off the scale entirely and reading like a marketing hero rather than an
+ * empty state. */
 .tp-empty h1 {
   margin: 0;
-  font-size: 30px;
-  font-weight: var(--pd-font-weight-bold);
-  color: color-mix(in srgb, var(--pd-text-primary) 42%, transparent);
+  font-size: var(--pd-font-size-title);
+  line-height: var(--pd-leading-title);
+  font-weight: var(--pd-font-weight-semibold);
+  color: color-mix(in srgb, var(--pd-text-primary) 55%, transparent);
 }
 .tp-empty p {
   margin: 0;
@@ -1555,6 +1509,14 @@
 }
 
 /* stats overlay */
+/*
+ * Mesh stats read out over the LIVE 3D canvas, so they need a surface of their
+ * own — as bare text they were legible only by luck of what the camera framed
+ * (a white clay model behind --pd-text-secondary is effectively invisible).
+ * Every other floating viewport control (.tp-actionbar, .tp-float-group) already
+ * sits on a blurred pill; this matches them instead of inventing a third
+ * treatment.
+ */
 .tp-stats {
   position: absolute;
   top: 14px;
@@ -1562,6 +1524,12 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding: 8px 12px;
+  border-radius: var(--pd-radius-md);
+  background: color-mix(in srgb, var(--pd-bg-overlay) 88%, transparent);
+  border: 1px solid var(--pd-border-subtle);
+  -webkit-backdrop-filter: blur(var(--pd-blur-overlay));
+  backdrop-filter: blur(var(--pd-blur-overlay));
   pointer-events: none;
 }
 .tp-stat {
@@ -1855,7 +1823,7 @@
   justify-content: center;
   width: 30px;
   height: 30px;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   color: var(--pd-text-secondary);
 }
 .tp-strip-btn:hover {
@@ -1972,14 +1940,6 @@
 .tp-share-btn {
   position: relative;
 }
-.tp-share-plus {
-  position: absolute;
-  top: -9px;
-  right: -2px;
-  font-size: 9px;
-  font-weight: var(--pd-font-weight-bold);
-  color: var(--pd-accent-primary);
-}
 .tp-export-cta {
   display: flex;
   align-items: center;
@@ -1987,7 +1947,7 @@
   height: 34px;
   padding: 0 16px;
   margin-left: 5px;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   background: var(--pd-accent-primary);
   color: var(--pd-text-on-accent);
   font-weight: var(--pd-font-weight-semibold);
@@ -1995,6 +1955,16 @@
 }
 .tp-export-cta:hover {
   background: var(--pd-accent-hover);
+}
+/* Quiet twin of the top-bar Export (see Viewport.tsx): same affordance, one
+ * rank down, so the eye lands on a single primary. */
+.tp-export-cta-quiet {
+  background: transparent;
+  color: var(--pd-text-primary);
+  font-weight: var(--pd-font-weight-medium);
+}
+.tp-export-cta-quiet:hover {
+  background: var(--pd-bg-hover);
 }
 
 /* snapshot flash */
@@ -2015,10 +1985,29 @@
 }
 
 /* export dialog */
-.tp-export-dialog {
+/*
+ * Export is a modal task (title, close, a committing primary action), but it was
+ * built as a corner popover: absolutely positioned at right:22px/bottom:66px
+ * with no scrim and a MENU enter animation. Two consequences I hit while
+ * driving it — it parked itself on top of the render-mode bar and hid the
+ * Wireframe control, and it was the only "dialog" in the app you could not tell
+ * was modal. The sibling help modal in this same file already does it properly
+ * via .tp-modal-backdrop; this now uses the same scrim and the app's dialog
+ * motion tokens (--pd-duration-dialog-in / --pd-dialog-enter-*) rather than
+ * menu ones.
+ */
+.tp-export-scrim {
   position: absolute;
-  right: 22px;
-  bottom: 66px;
+  inset: 0;
+  z-index: 90;
+  background: var(--pd-bg-backdrop);
+  -webkit-backdrop-filter: blur(var(--pd-blur-backdrop));
+  backdrop-filter: blur(var(--pd-blur-backdrop));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tp-export-dialog {
   width: 330px;
   padding: 14px;
   border-radius: var(--pd-radius-surface);
@@ -2028,8 +2017,15 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  backdrop-filter: blur(14px);
-  animation: tp-menu-in var(--pd-duration-menu, 140ms) var(--pd-easing-enter, ease-out);
+  -webkit-backdrop-filter: blur(var(--pd-blur-overlay));
+  backdrop-filter: blur(var(--pd-blur-overlay));
+  animation: tp-dialog-in var(--pd-duration-dialog-in) var(--pd-easing-enter);
+}
+@keyframes tp-dialog-in {
+  from {
+    opacity: 0;
+    transform: scale(var(--pd-dialog-enter-scale)) translateY(var(--pd-dialog-enter-translate));
+  }
 }
 .tp-export-head {
   display: flex;
@@ -2054,7 +2050,7 @@
   justify-content: center;
   gap: 7px;
   height: 40px;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   border: 1.5px solid var(--pd-accent-primary);
   color: var(--pd-accent-primary);
   font-weight: var(--pd-font-weight-semibold);
@@ -2071,7 +2067,7 @@
   justify-content: center;
   gap: 7px;
   height: 40px;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   background: var(--pd-accent-primary);
   color: var(--pd-text-on-accent);
   font-weight: var(--pd-font-weight-semibold);
@@ -2206,7 +2202,7 @@
 }
 .tp-help-ok {
   height: 40px;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   background: var(--pd-text-primary);
   color: var(--pd-bg-base);
   font-weight: var(--pd-font-weight-semibold);
@@ -2257,39 +2253,6 @@
   position: relative;
 }
 
-.tp-upgrade-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
-  background: linear-gradient(
-    95deg,
-    color-mix(in srgb, var(--pd-status-warning-fg) 26%, var(--pd-bg-raised)),
-    color-mix(in srgb, var(--pd-status-danger-fg) 20%, var(--pd-bg-raised)) 55%,
-    color-mix(in srgb, var(--pd-accent-primary) 24%, var(--pd-bg-raised))
-  );
-  flex-shrink: 0;
-}
-.tp-upgrade-banner p {
-  margin: 0;
-  font-size: var(--pd-font-size-footnote);
-  line-height: 1.45;
-  color: var(--pd-text-primary);
-}
-.tp-upgrade-cta {
-  flex-shrink: 0;
-  height: 30px;
-  padding: 0 14px;
-  border-radius: var(--pd-radius-full);
-  background: var(--pd-accent-primary);
-  color: var(--pd-text-on-accent);
-  font-size: var(--pd-font-size-caption);
-  font-weight: var(--pd-font-weight-semibold);
-}
-.tp-upgrade-cta:hover {
-  background: var(--pd-accent-hover);
-}
-
 .tp-assets-toolbar {
   display: flex;
   align-items: center;
@@ -2326,7 +2289,7 @@
   gap: 6px;
   height: 32px;
   padding: 0 13px;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   background: var(--pd-bg-inset);
   border: 1px solid var(--pd-border-subtle);
   font-size: var(--pd-font-size-caption);
@@ -2537,7 +2500,7 @@
   gap: 6px;
   height: 30px;
   padding: 0 12px;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   background: var(--pd-bg-inset);
   border: 1px solid var(--pd-border-subtle);
   font-size: var(--pd-font-size-caption);
@@ -2648,8 +2611,9 @@
    Send To logos. */
 
 .tp-workspace-label {
-  font-size: 12.5px;
-  font-weight: 600;
+  /* was a fractional 12.5px / literal 600 — both off-token */
+  font-size: var(--pd-font-size-caption);
+  font-weight: var(--pd-font-weight-semibold);
   color: var(--pd-text-muted);
   padding: 5px 10px;
   border-left: 1px solid var(--pd-border-subtle);
@@ -2682,18 +2646,49 @@
   border: 0;
   background: transparent;
   color: var(--pd-text-muted);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--pd-font-size-caption);
+  font-weight: var(--pd-font-weight-semibold);
   padding: 5px 12px;
-  border-radius: 999px;
+  border-radius: var(--tp-radius-control);
   cursor: pointer;
 }
 .tp-mode-btn:hover {
   color: var(--pd-text-primary);
 }
+/*
+ * Selected render mode reads like the app's segmented control: a raised pill on
+ * the recessed track (.pd-segment in packages/ui/src/styles/controls.css), not
+ * an accent flood — this strip lives over the 3D canvas and a saturated fill
+ * there was competing with the model itself.
+ */
 .tp-mode-btn[data-active="true"] {
-  background: var(--pd-accent-primary);
-  color: var(--pd-accent-primary-fg, #fff);
+  background: var(--pd-bg-raised);
+  color: var(--pd-text-primary);
+  box-shadow:
+    inset 0 0 0 0.5px var(--pd-border-default),
+    var(--pd-shadow-sm);
+}
+/*
+ * Wireframe is a TOGGLE sharing the strip with three exclusive modes, so it
+ * gets a switch dot: on/off state is legible without reading the label, and it
+ * no longer impersonates a fourth render mode.
+ */
+.tp-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tp-mode-toggle-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--pd-radius-full);
+  background: var(--pd-text-ghost);
+  box-shadow: inset 0 0 0 1px var(--pd-border-strong);
+  transition: background-color var(--pd-duration-base) var(--pd-easing-standard);
+}
+.tp-mode-toggle[data-active="true"] .tp-mode-toggle-dot {
+  background: var(--pd-text-link);
+  box-shadow: none;
 }
 
 /* Segment parts list (panel) — swatches match Viewer3D's PART_COLORS. */
@@ -2869,7 +2864,7 @@
   font-weight: 600;
   color: var(--pd-text-muted);
   border: 1px solid var(--pd-border-subtle);
-  border-radius: 999px;
+  border-radius: var(--pd-radius-full);
   padding: 1px 7px;
 }
 .tp-download-note {
@@ -2911,7 +2906,10 @@
   object-fit: cover;
   border-radius: var(--pd-radius-sm);
   display: block;
-  background: #26262c;
+  /* Letterbox behind the video. Was a hardcoded #26262c, which stayed dark-grey
+   * under the light modes and framed every preview in a slab that matched no
+   * surface in the app; --pd-bg-inset tracks the theme. */
+  background: var(--pd-bg-inset);
 }
 
 /* ═══ capability loops (animated "what this model does") ═════════════════ */
@@ -3043,7 +3041,7 @@
   transform-origin: center;
 }
 .cl-seg-a {
-  fill: #e0705a;
+  fill: var(--pd-status-danger-fg);
   animation: cl-seg-a 2.6s ease-in-out infinite;
 }
 .cl-seg-b {
@@ -3082,7 +3080,7 @@
 /* retopo — messy triangles crossfading to clean quads */
 .cl-retopo-tri path {
   fill: none;
-  stroke: #e0705a;
+  stroke: var(--pd-status-danger-fg);
   stroke-width: 1.4;
   animation: cl-retopo-tri 2.8s ease-in-out infinite;
 }
@@ -3137,6 +3135,26 @@
   .cl-img-noise rect {
     opacity: 0;
   }
+  /*
+   * The block above only ever covered the .cl-* capability-loop artwork, so the
+   * studio's OWN motion kept running under reduce while ten files in
+   * packages/ui/src/styles honour it. These are the entrance animations and the
+   * one transform the studio actually plays; named individually rather than
+   * blanket-!important because the repo bans !important (biome
+   * lint/complexity/noImportantStyles) and the shared styles all opt out
+   * per-rule the same way.
+   */
+  .tp-popover,
+  .tp-hint-bubble,
+  .tp-export-dialog,
+  .tp-help-card,
+  .tp-flash,
+  .tp-drop-card {
+    animation: none;
+  }
+  .tp-generate-btn:active:not(:disabled) {
+    transform: none;
+  }
 }
 
 /* ═══ download panel (full-height left module) ══════════════════════════ */
@@ -3159,7 +3177,7 @@
   align-items: center;
   gap: 3px;
   padding: 4px 8px 4px 4px;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   background: transparent;
   color: var(--pd-text-secondary);
   font-size: var(--pd-font-size-footnote);
@@ -3253,7 +3271,7 @@
   gap: 7px;
   height: 34px;
   padding: 0 14px;
-  border-radius: var(--pd-radius-full);
+  border-radius: var(--tp-radius-control);
   background: var(--pd-accent-primary);
   color: var(--pd-text-on-accent);
   font-size: var(--pd-font-size-footnote);
@@ -3267,7 +3285,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: color-mix(in srgb, #3ea55f 82%, var(--pd-text-primary));
+  color: color-mix(in srgb, var(--pd-status-success-fg) 82%, var(--pd-text-primary));
   font-size: var(--pd-font-size-footnote);
   font-weight: var(--pd-font-weight-semibold);
 }
@@ -3535,7 +3553,7 @@
   box-shadow: 0 0 0 2px var(--tp-accent-glow);
 }
 .tp-node[data-entry="true"] {
-  border-color: color-mix(in srgb, #3ea55f 70%, var(--pd-border-strong));
+  border-color: color-mix(in srgb, var(--pd-status-success-fg) 70%, var(--pd-border-strong));
 }
 .tp-node-entry {
   position: absolute;
@@ -3543,7 +3561,7 @@
   left: 8px;
   padding: 1px 6px;
   border-radius: var(--pd-radius-full);
-  background: color-mix(in srgb, #3ea55f 88%, var(--pd-text-primary));
+  background: color-mix(in srgb, var(--pd-status-success-fg) 88%, var(--pd-text-primary));
   color: #fff;
   font-size: 10px;
   font-weight: var(--pd-font-weight-semibold);
@@ -3628,8 +3646,8 @@
   border-color: var(--pd-accent-primary);
 }
 .tp-node-tool-del:hover {
-  color: #e0705a;
-  border-color: #e0705a;
+  color: var(--pd-status-danger-fg);
+  border-color: var(--pd-status-danger-fg);
 }
 
 .tp-graph-empty {
@@ -3691,7 +3709,7 @@
   align-items: center;
   gap: 5px;
   font-size: var(--pd-font-size-caption);
-  color: #e0705a;
+  color: var(--pd-status-danger-fg);
   background: transparent;
   cursor: pointer;
 }
@@ -3723,7 +3741,7 @@
   cursor: pointer;
 }
 .tp-param-del:hover {
-  color: #e0705a;
+  color: var(--pd-status-danger-fg);
 }
 
 /* motion library card affordances */

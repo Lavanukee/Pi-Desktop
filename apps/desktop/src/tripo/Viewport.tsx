@@ -274,14 +274,22 @@ function RenderModeStrip(): JSX.Element {
           </button>
         ))}
         <span className="tp-strip-sep" />
-        {/* Wireframe is an ON/OFF overlay drawn on top of the active mode. */}
+        {/* Wireframe is an ON/OFF overlay on top of the active mode, but it sat
+            inside the same segmented strip as Clay/Textured/Normal wearing the
+            same .tp-mode-btn — so an exclusive-choice control was advertising a
+            fourth mode that is actually a toggle. Same strip (it belongs with
+            them), distinct class + role=switch + aria-checked so the affordance
+            tells the truth. */}
         <button
           type="button"
-          className="tp-mode-btn"
+          role="switch"
+          aria-checked={wireframe}
+          className="tp-mode-btn tp-mode-toggle"
           data-active={wireframe}
           data-testid="tp-wire-toggle"
           onClick={() => set('wireframe', !wireframe)}
         >
+          <span className="tp-mode-toggle-dot" />
           Wireframe
         </button>
       </div>
@@ -307,9 +315,13 @@ function ActionBar(): JSX.Element {
           <IcPlanet size={16} />
         </button>
       </Hint>
+      {/* The top bar already owns the canonical Export CTA; this in-viewport
+          shortcut is the same action with the same label, so it renders quiet
+          rather than as a second identical accent pill (they measured 3160px^2
+          each, side by side, with nothing to distinguish them). */}
       <button
         type="button"
-        className="tp-export-cta"
+        className="tp-export-cta tp-export-cta-quiet"
         data-testid="tp-export-pill-btn"
         onClick={() => set('modal', 'export')}
       >
@@ -332,76 +344,92 @@ function ExportDialog(): JSX.Element {
   const [format, setFormat] = useState<ExportFormat>(EXPORT_FORMATS[0]);
 
   return (
-    <div className="tp-export-dialog" data-testid="tp-export-dialog">
-      <div className="tp-export-head">
-        Export Model
-        <button
-          type="button"
-          className="tp-iconbtn"
-          aria-label="Close"
-          data-testid="tp-export-close"
-          onClick={() => set('modal', null)}
-        >
-          <IcClose size={15} />
-        </button>
-      </div>
-      <label className="tp-export-field">
-        <span className="tp-field-label">File name</span>
-        <input
-          type="text"
-          className="tp-textinput"
-          value={name}
-          data-testid="tp-export-name"
-          onChange={(e) => setName(e.target.value)}
-        />
-      </label>
-      <div className="tp-field-row tp-field-row-wide">
-        <span className="tp-field-label">Format</span>
-        <MenuAnchor
-          id="exportformat"
-          placement="bottom-end"
-          trigger={
-            <button
-              type="button"
-              className="tp-select"
-              data-testid="tp-select-exportformat"
-              onClick={() => toggleMenu('exportformat')}
-            >
-              {format}
-              <IcCaretSmall size={12} />
-            </button>
-          }
-          menu={EXPORT_FORMATS.map((o) => (
-            <button
-              key={o}
-              type="button"
-              className="tp-menu-item"
-              data-testid={`tp-format-${o}`}
-              onClick={() => {
-                setFormat(o);
-                closeMenus();
-              }}
-            >
-              <span className="tp-menu-item-label">{o}</span>
-            </button>
-          ))}
-        />
-      </div>
-      <div className="tp-export-actions">
-        <button
-          type="button"
-          className="tp-export-confirm"
-          data-testid="tp-export-confirm"
-          onClick={() => {
-            // Real export: the viewer runs the matching three.js exporter and
-            // saves the file via a download anchor.
-            requestExport(format, name.trim().length > 0 ? name.trim() : 'model');
-            set('modal', null);
-          }}
-        >
-          <IcDownload size={14} />
-          Export {format}
-        </button>
+    // Scrim + centered card: export commits an action, so it reads as modal
+    // (and no longer parks itself over the render-mode bar). Clicking the
+    // scrim dismisses, matching the help modal and the app's .pd-dialog.
+    <div
+      className="tp-export-scrim"
+      data-testid="tp-export-scrim"
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget) set('modal', null);
+      }}
+    >
+      <div
+        className="tp-export-dialog"
+        data-testid="tp-export-dialog"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="tp-export-head">
+          Export Model
+          <button
+            type="button"
+            className="tp-iconbtn"
+            aria-label="Close"
+            data-testid="tp-export-close"
+            onClick={() => set('modal', null)}
+          >
+            <IcClose size={15} />
+          </button>
+        </div>
+        <label className="tp-export-field">
+          <span className="tp-field-label">File name</span>
+          <input
+            type="text"
+            className="tp-textinput"
+            value={name}
+            data-testid="tp-export-name"
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <div className="tp-field-row tp-field-row-wide">
+          <span className="tp-field-label">Format</span>
+          <MenuAnchor
+            id="exportformat"
+            placement="bottom-end"
+            trigger={
+              <button
+                type="button"
+                className="tp-select"
+                data-testid="tp-select-exportformat"
+                onClick={() => toggleMenu('exportformat')}
+              >
+                {format}
+                <IcCaretSmall size={12} />
+              </button>
+            }
+            menu={EXPORT_FORMATS.map((o) => (
+              <button
+                key={o}
+                type="button"
+                className="tp-menu-item"
+                data-testid={`tp-format-${o}`}
+                onClick={() => {
+                  setFormat(o);
+                  closeMenus();
+                }}
+              >
+                <span className="tp-menu-item-label">{o}</span>
+              </button>
+            ))}
+          />
+        </div>
+        <div className="tp-export-actions">
+          <button
+            type="button"
+            className="tp-export-confirm"
+            data-testid="tp-export-confirm"
+            onClick={() => {
+              // Real export: the viewer runs the matching three.js exporter and
+              // saves the file via a download anchor.
+              requestExport(format, name.trim().length > 0 ? name.trim() : 'model');
+              set('modal', null);
+            }}
+          >
+            <IcDownload size={14} />
+            Export {format}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -548,7 +576,10 @@ export function Viewport(): JSX.Element {
       ) : (
         <div className="tp-empty" data-testid="tp-empty-state">
           <LogoMark size={54} />
-          <h1>Ready For A New 3D Model?</h1>
+          {/* Sentence case, like every other empty state in the app ("No
+              projects yet.", "Ask anything…"). Title Case was the one piece of
+              marketing voice left over from the reference UI. */}
+          <h1>No model yet</h1>
           <p>Generate from image or text — or drop a .glb/.obj/.stl anywhere</p>
         </div>
       )}

@@ -220,7 +220,7 @@ export function AnimatePanel(): JSX.Element {
         </span>
         Rigging &amp; Animation
       </div>
-      <div className="tp-panel-scroll">
+      <div className="tp-panel-scroll pd-scroll">
         <div className="tp-engine-row" data-testid="tp-rig-engine-row">
           <span className="tp-field-label">Rigging</span>
           <span className="tp-engine-name">{RIG_MODEL}</span>

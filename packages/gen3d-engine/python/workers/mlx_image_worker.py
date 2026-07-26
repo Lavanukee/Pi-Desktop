@@ -41,6 +41,22 @@ DEFAULT_MODEL = "mage-flow-turbo"
 DEFAULT_QUANT = 8
 
 
+# A real render measures a per-channel standard deviation in the tens; a blank
+# sheet measures 0. Anything under this is not a picture of anything.
+BLANK_STD = 3.0
+
+
+def is_blank(path: Path) -> bool:
+    """Did the model return an empty sheet while reporting success?"""
+    try:
+        import numpy as np
+        from PIL import Image as PILImage
+
+        return float(np.asarray(PILImage.open(path).convert("RGB"), dtype="float32").std()) < BLANK_STD
+    except Exception:  # noqa: BLE001 — an unreadable file is caught elsewhere
+        return False
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--prompt", required=True)
@@ -57,20 +73,63 @@ def main() -> None:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
+    def render(prompt: str) -> subprocess.CompletedProcess:
+        # mflux does NOT overwrite: with out.png present it writes out_1.png
+        # instead. On the retry below that meant the good image landed beside
+        # the blank one and every check afterwards read the stale blank —
+        # making a retry that actually worked look like it had failed.
+        out.unlink(missing_ok=True)
+        cmd = [
+            args.cli,
+            "--model", args.model,
+            "-q", str(args.quantize),
+            "--steps", str(args.steps),
+            "--seed", str(args.seed),
+            "--height", str(args.size),
+            "--width", str(args.size),
+            "--prompt", prompt,
+            "--output", str(out),
+        ]
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout)
+
     progress(STAGE, f"Generating image with {args.model} ({args.steps} steps)…", 1, 2)
-    cmd = [
-        args.cli,
-        "--model", args.model,
-        "-q", str(args.quantize),
-        "--steps", str(args.steps),
-        "--seed", str(args.seed),
-        "--height", str(args.size),
-        "--width", str(args.size),
-        "--prompt", args.prompt,
-        "--output", str(out),
-    ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout)
+        proc = render(args.prompt)
+        # SOME PROMPTS RENDER PURE WHITE while the process exits 0. Left alone
+        # that blank sheet flows on: rembg finds no subject, geometry builds
+        # nothing, and the run dies ~76s later inside the texture bake with
+        # "zero-size array to reduction operation minimum" — an error naming a
+        # stage that had nothing to do with it. jedd hit exactly this with
+        # "T-Rex".
+        #
+        # MEASURED on Mage-Flow-Turbo (std of the RGB pixels; a real render is
+        # in the tens, a blank sheet is 0.00), seed varied 42/1/7 with no
+        # effect:
+        #
+        #     T-Rex · T Rex · TRex                      0.00   blank
+        #     T-Rex, a single object on a plain bg      0.00   blank
+        #     a detailed 3d model of T-Rex             0.00   blank
+        #     T-Rex 3d model · T-Rex object            0.00   blank
+        #     T-Rex full body                          60.4   fine
+        #     a T-Rex dinosaur                         65.0   fine
+        #     cat · a red sports car                   43-61  fine
+        #
+        # So it is not prompt length, not the hyphen, and not the seed — short
+        # prompts are mostly fine ("cat" renders). What rescues it is a word
+        # directly AFTER the subject, and not any word: " 3d model" and
+        # " object" stay blank where " full body" works. That is idiosyncratic
+        # to this model's text embedding rather than a rule worth theorising
+        # about, so the retry uses the suffix that is MEASURED to work and the
+        # error below tells the user what to do when it does not.
+        if proc.returncode == 0 and out.exists() and is_blank(out):
+            enriched = f"{args.prompt.strip().rstrip('.,')} full body"
+            progress(
+                STAGE,
+                f"That prompt rendered blank — retrying as “{enriched}”…",
+                1,
+                2,
+            )
+            proc = render(enriched)
     except subprocess.TimeoutExpired:
         emit(event="error", message=f"image generation exceeded {args.timeout}s")
         sys.exit(1)
@@ -80,6 +139,17 @@ def main() -> None:
         tail = [ln.strip() for ln in (proc.stderr or "").splitlines() if ln.strip()]
         reason = tail[-1][:200] if tail else f"exit {proc.returncode}"
         emit(event="error", message=f"image generation failed — {reason}")
+        sys.exit(1)
+
+    if is_blank(out):
+        emit(
+            event="error",
+            message=(
+                "the image model rendered a blank image for this prompt, even "
+                "after a retry — add a describing word after the subject "
+                "(“a T-Rex dinosaur” works where “T-Rex” does not)"
+            ),
+        )
         sys.exit(1)
 
     artifact(STAGE, "image", str(out), "Prompt image")

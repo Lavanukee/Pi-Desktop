@@ -29,6 +29,7 @@ export type Gen3dModelId =
   | 'mageflow-edit'
   | 'cubepart'
   | 'autoremesher'
+  | 'skintokens'
   | 'humanoid-rig';
 export type Gen3dRole = 'geometry' | 'image' | 'texture' | 'segment' | 'retopo' | 'rig';
 export type Gen3dResolution = 'low' | 'medium' | 'high';
@@ -193,6 +194,24 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
     note: 'Quad retopology (hjwdzh/QuadriFlow, MIT — compiled CLI, nothing to download)',
     env: 'binary',
     repos: [],
+  },
+  {
+    id: 'skintokens',
+    label: 'SkinTokens',
+    role: 'rig',
+    // A LEARNED rig: it predicts the skeleton AND the skin weights for an
+    // arbitrary mesh, where humanoid-rig fits a fixed 27-joint template by
+    // measuring the shape. Runs here in fp32 on MPS in ~76s — upstream's
+    // "NVIDIA GPU with 14 GB required" is about flash-attn and a capability
+    // probe, not the maths (see python/shims/skintokens/).
+    note: 'Learned rig — predicts a skeleton + skin weights for any mesh (VAST-AI SkinTokens, ~76s)',
+    env: 'skintokens',
+    repos: [
+      {
+        repo: 'VAST-AI/SkinTokens',
+        bytes: 3_900_000_000,
+      },
+    ],
   },
   {
     id: 'humanoid-rig',

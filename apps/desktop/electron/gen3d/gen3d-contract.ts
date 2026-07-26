@@ -25,6 +25,7 @@ export type Gen3dModelId =
   | 'mageflow-edit'
   | 'cubepart'
   | 'autoremesher'
+  | 'skintokens'
   | 'humanoid-rig';
 
 /** Which studio stage a model backs. */

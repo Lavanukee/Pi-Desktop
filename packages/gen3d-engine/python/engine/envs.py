@@ -11,6 +11,7 @@ import os
 import plistlib
 import subprocess
 import threading
+import shutil
 import urllib.request
 from pathlib import Path
 
@@ -44,6 +45,8 @@ def provision(registry: Registry, model: dict, log, cancelled: threading.Event) 
         _provision_mageflow(registry, log)
     elif env_kind == "cubepart":
         _provision_cubepart(registry, log)
+    elif env_kind == "skintokens":
+        _provision_skintokens(registry, log)
     elif env_kind == "binary":
         _provision_autoremesher(registry, model, log)
     elif env_kind == "meshtools":
@@ -151,6 +154,64 @@ def _provision_cubepart(registry: Registry, log) -> None:
         # ("got multiple values for argument 'device'" — reproduced here).
         # 0.38.0 matches the hijack's calling convention.
         _run([uv, "pip", "install", "--python", py, "diffusers==0.38.0"], tool, log)
+
+
+# A .pth line beginning with "import" is EXECUTED at interpreter startup, which
+# is the only hook early enough here: SkinTokens' autocast decorators bind when
+# src.model is imported, and its bpy subprocess imports the same modules
+# independently, so a flag parsed inside a worker would already be too late.
+_SKINTOKENS_PTH = (
+    "import os, sys; "
+    "_r = os.path.abspath(os.path.join(sys.prefix, os.pardir)); "
+    "sys.path.insert(0, _r); "
+    '__import__("apple_compat")\n'
+)
+
+
+def _provision_skintokens(registry: Registry, log) -> None:
+    """Clone SkinTokens, build its venv, and install the Apple Silicon shims.
+
+    Upstream states "An NVIDIA GPU with at least 14 GB of memory is required"
+    and installs flash-attn. None of that is load-bearing for inference: the
+    CUDA dependency is in HOW attention is computed and in a capability probe,
+    not in the maths. The shims live in python/shims/skintokens/ as real
+    reviewable files and are COPIED in — never patched over the checkout — so
+    the clone stays a clean `git clone` at a pinned commit.
+
+    MEASURED once they are in place: a rig in 76s at fp32 on MPS, against 1103s
+    on CPU. fp32 is not an optimisation but a correctness requirement — see the
+    shims' README.
+    """
+    tool = registry.ensure_tool_clone("SkinTokens", log)
+    py = registry.skintokens_python()
+    if not py.exists():
+        uv = registry.uv_path
+        log("Creating the SkinTokens venv…")
+        _run([uv, "venv", str(tool / ".venv"), "--python", "3.11"], tool, log)
+        _run([uv, "pip", "install", "--python", str(py), "torch", "torchvision"], tool, log)
+        _run(
+            [uv, "pip", "install", "--python", str(py), "-r", str(tool / "requirements.txt")],
+            tool,
+            log,
+        )
+
+    # Rewritten on every provision, so a checkout pulled forward can never end
+    # up running against stale shims.
+    log("Installing the Apple Silicon shims…")
+    shims = Path(__file__).resolve().parent.parent / "shims" / "skintokens"
+    for name in ("flash_attn_interface.py", "apple_compat.py"):
+        shutil.copyfile(shims / name, tool / name)
+    site = next((tool / ".venv" / "lib").glob("python*/site-packages"), None)
+    if site is None:
+        raise RuntimeError("the SkinTokens venv has no site-packages")
+    (site / "skintokens_apple_compat.pth").write_text(_SKINTOKENS_PTH)
+
+    ckpt = (
+        tool / "experiments" / "articulation_xl_quantization_256_token_4" / "grpo_1400.ckpt"
+    )
+    if not ckpt.exists():
+        log("Downloading the SkinTokens weights…")
+        _run([str(py), "download.py", "--model"], tool, log)
 
 
 def _provision_autoremesher(registry: Registry, model: dict, log) -> None:

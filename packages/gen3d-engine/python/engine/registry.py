@@ -23,6 +23,15 @@ TOOL_REPOS = {
         "https://github.com/shivampkumar/trellis-mac.git",
         "d58628f4f5b9c3de8274cb110074154f4b31cef2",
     ),
+    "SkinTokens": (
+        "https://github.com/VAST-AI-Research/SkinTokens.git",
+        # Pinned deliberately: the shims written by _provision_skintokens patch
+        # around specific upstream behaviour (an H100 probe that RAISES without
+        # CUDA, a hard-coded flash_attention_2, and `@torch.autocast('cuda')`
+        # decorators that bind at import time). An upstream change to any of
+        # those needs the shims re-checked, so this must not drift silently.
+        "273b691d35989d71cd17ff2895fdc735097b92d1",
+    ),
     "Mage": (
         "https://github.com/microsoft/Mage.git",
         "df7f84d9f8fc991d189d929f03cff623b430a4a2",
@@ -200,6 +209,8 @@ class Registry:
             return self.venv_python("Hunyuan3D-2.1-mac").exists()
         if env == "binary":
             return self.autoremesher_cli().exists() and self.meshtools_python().exists()
+        if env == "skintokens":
+            return self.has_skintokens()
         if env == "meshtools":
             # The humanoid rigger runs entirely inside the mesh-prep venv —
             # nothing to download, so "installed" == the venv is usable.

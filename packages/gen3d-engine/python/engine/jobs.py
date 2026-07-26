@@ -65,6 +65,24 @@ def _worker_env(registry: Registry) -> dict:
     return env
 
 
+#: Request fields `start_stage` forwards to `_run_stage` as `options`.
+#:
+#: EVERY key `_run_stage` reads out of `options` must be listed here, or the
+#: value is silently dropped between the two — they are different methods
+#: reached across a `threading.Thread` boundary, so nothing connects them but
+#: this tuple. `sourcePath` was missing, which is why texturing a retopologised
+#: mesh could not find the colours the generation had saved and reported the
+#: model as "imported". `test_stage_args.py` asserts this list stays complete.
+STAGE_OPTION_KEYS = (
+    "targetQuads",
+    "adaptivity",
+    "probeOnly",
+    "requireHumanoid",
+    "sourcePath",
+    "faceBudget",
+)
+
+
 def _find_voxels(mesh_path: Path, source_path: str | None) -> Path | None:
     """The colour volume to re-texture `mesh_path` from, or None.
 
@@ -275,11 +293,7 @@ class JobManager:
             return {"ok": False, "error": f"{required} is not installed yet"}
 
         # Stage tuning knobs travel as plain optional fields on the request.
-        options = {
-            k: body[k]
-            for k in ("targetQuads", "adaptivity", "probeOnly", "requireHumanoid")
-            if body.get(k) is not None
-        }
+        options = {k: body[k] for k in STAGE_OPTION_KEYS if body.get(k) is not None}
         job = self._new_job([op])
         threading.Thread(
             target=self._run_stage, args=(job, op, model_path, prompt, options), daemon=True

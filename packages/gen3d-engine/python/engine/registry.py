@@ -126,6 +126,28 @@ class Registry:
     def geometry_python(self) -> Path:
         return self.geometry_tool_dir() / ".venv" / "bin" / "python"
 
+    def skintokens_dir(self) -> Path:
+        """The SkinTokens checkout, when it has been provisioned."""
+        return self.tool_dir("SkinTokens")
+
+    def skintokens_python(self) -> Path:
+        return self.skintokens_dir() / ".venv" / "bin" / "python"
+
+    def has_skintokens(self) -> bool:
+        """True when the learned rigger is usable.
+
+        Needs the venv AND the checkpoint: a half-provisioned checkout would
+        otherwise take the rig stage and fail at load, when the geometric rigger
+        would have produced something.
+        """
+        ckpt = (
+            self.skintokens_dir()
+            / "experiments"
+            / "articulation_xl_quantization_256_token_4"
+            / "grpo_1400.ckpt"
+        )
+        return self.skintokens_python().exists() and ckpt.exists()
+
     def meshtools_python(self) -> Path:
         return self.tool_dir("meshtools") / ".venv" / "bin" / "python"
 

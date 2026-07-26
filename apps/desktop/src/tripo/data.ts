@@ -39,7 +39,7 @@ export const GEN_MODELS: readonly ModelVersion[] = [
 export const SEGMENT_MODEL = 'CubePart';
 export const RETOPO_MODEL = 'AutoRemesher';
 export const TEXTURE_MODEL = 'TRELLIS-2';
-export const RIG_MODEL = 'Humanoid Auto-Rig (local)';
+export const RIG_MODEL = 'SkinTokens';
 export const ANIM_MODEL = 'ARDY';
 
 /** Animation presets for the Animate panel grid (pose id → mannequin pose). */

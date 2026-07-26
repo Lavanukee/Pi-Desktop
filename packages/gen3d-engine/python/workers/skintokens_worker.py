@@ -117,6 +117,19 @@ def stop_bpy_server(proc) -> None:
             pass
 
 
+def bpy_alive() -> bool:
+    """Is a bpy server already listening on the fixed port?"""
+    try:
+        import requests
+
+        from src.server.spec import BPY_SERVER
+
+        requests.get(f"{BPY_SERVER}/ping", timeout=1)
+        return True
+    except Exception:  # noqa: BLE001 — anything at all means "not usable"
+        return False
+
+
 def wait_for_bpy(timeout: float) -> None:
     import requests
 
@@ -241,10 +254,37 @@ def run(args) -> None:
         )
         progress(STAGE, f"Predicting the skeleton and skin weights ({args.beams} beams)…", 4, 10)
         t1 = time.time()
-        preds = model.predict_step(batch, skeleton_tokens=None, make_asset=True)["results"]
-        asset = preds[0].asset
+
+        # RETRY: the decoder SAMPLES (do_sample=True), so the token sequence
+        # differs every run and occasionally decodes to something the tokenizer
+        # rejects — a bare `assert` or "unexpected token found: 23508". Observed
+        # on a mesh that then rigged cleanly on the very next attempt with no
+        # change but the draw, so this is the sampler's variance and not the
+        # mesh. Re-roll rather than failing the stage.
+        asset = None
+        last_err: Exception | None = None
+        for attempt in range(args.attempts):
+            if attempt > 0:
+                torch.manual_seed(args.seed + attempt)
+                progress(
+                    STAGE,
+                    f"That sample did not decode — re-rolling "
+                    f"({attempt + 1} of {args.attempts})…",
+                    5,
+                    10,
+                )
+            try:
+                preds = model.predict_step(
+                    batch, skeleton_tokens=None, make_asset=True
+                )["results"]
+                asset = preds[0].asset
+                if asset is not None:
+                    break
+            except (AssertionError, ValueError, IndexError, KeyError) as err:
+                last_err = err
         if asset is None:
-            msg = "the model produced no rig for this mesh"
+            detail = f" ({type(last_err).__name__}: {last_err})".rstrip(" ()") if last_err else ""
+            msg = f"the model produced no rig for this mesh after {args.attempts} attempts{detail}"
             emit(event="error", message=msg)
             raise RigFailure(msg)
         progress(
@@ -333,6 +373,9 @@ def main() -> None:
     ap.add_argument("--dtype", default="float32", choices=["float32", "bfloat16"])
     # The upstream default of 10 beams is what makes a run take minutes.
     ap.add_argument("--beams", type=int, default=10)
+    ap.add_argument("--seed", type=int, default=0)
+    # The decoder samples; a bad draw is retryable (see the loop).
+    ap.add_argument("--attempts", type=int, default=3)
     ap.add_argument("--top-k", type=int, default=5)
     ap.add_argument("--top-p", type=float, default=0.95)
     ap.add_argument("--temperature", type=float, default=1.0)
@@ -351,8 +394,16 @@ def main() -> None:
 
     server = None
     try:
-        server = start_bpy_server(root, sys.executable)
-        wait_for_bpy(args.bpy_timeout)
+        # Only spawn if nothing is already answering. The port is FIXED, so a
+        # server left over from an earlier job would still be listening: the new
+        # one would fail to bind, requests would go to the stale process, and
+        # this job's cleanup would then kill it mid-request — which surfaced as
+        # `ChunkedEncodingError: Connection broken` right at the export, after a
+        # successful 6-minute prediction. Reusing a live server also skips its
+        # ~15s Blender start-up.
+        if not bpy_alive():
+            server = start_bpy_server(root, sys.executable)
+            wait_for_bpy(args.bpy_timeout)
         run(args)
     except RigFailure:
         sys.exit(2)  # already reported

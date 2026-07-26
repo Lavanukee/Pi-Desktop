@@ -265,8 +265,12 @@ export function AnimatePanel(): JSX.Element {
           <div className="tp-rig-status" data-testid="tp-rig-status" data-humanoid={humanoid}>
             <IcRig size={15} />
             <span>
-              Rigged · 27-joint {ANIM_MODEL} humanoid skeleton
-              {humanoid ? '' : ' (shape did not measure as humanoid)'}
+              {/* No joint count and no "humanoid skeleton" claim: SkinTokens
+                  PREDICTS a skeleton per model rather than fitting a fixed
+                  template, so the old "27-joint ARDY humanoid" line was simply
+                  false over an 11-joint predicted rig. State what is known. */}
+              Rigged · {RIG_MODEL} skeleton
+              {humanoid ? ' · humanoid proportions' : ''}
             </span>
           </div>
         ) : null}

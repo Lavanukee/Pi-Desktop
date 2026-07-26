@@ -57,6 +57,11 @@ def _worker_env(registry: Registry) -> dict:
         xcode = Path("/Applications/Xcode.app/Contents/Developer")
         if "DEVELOPER_DIR" not in env and xcode.exists():
             env["DEVELOPER_DIR"] = str(xcode)
+    # SkinTokens: run the rigger in fp32. Its `@torch.autocast('cuda')`
+    # decorators bind at IMPORT time and the venv's .pth reads this at
+    # interpreter start, so it has to arrive as an environment variable —
+    # a flag parsed inside the worker would already be too late.
+    env.setdefault("PI_ST_AUTOCAST", "off")
     return env
 
 
@@ -376,14 +381,33 @@ class JobManager:
                 ]
                 cwd = self.registry.tool_dir("meshtools")
             elif op == "rig":
-                venv = self.registry.meshtools_python()
-                script = WORKERS_DIR / "rig_worker.py"
-                args = ["--mesh", model_path, "--out-dir", str(job_dir)]
-                if options.get("probeOnly"):
-                    args.append("--probe-only")
-                if options.get("requireHumanoid"):
-                    args.append("--require-humanoid")
-                cwd = self.registry.tool_dir("meshtools")
+                # SkinTokens when it is installed: it PREDICTS the skeleton and
+                # the skin weights for any mesh, where rig_worker.py fits a
+                # fixed 27-joint humanoid template by measuring the shape. The
+                # geometric rigger stays as the fallback so the stage still
+                # works on a machine without the checkout, and it is the only
+                # one that can answer the "is this humanoid?" probe.
+                if self.registry.has_skintokens() and not options.get("probeOnly"):
+                    venv = self.registry.skintokens_python()
+                    script = WORKERS_DIR / "skintokens_worker.py"
+                    args = [
+                        "--mesh", model_path,
+                        "--out-dir", str(job_dir),
+                        "--root", str(self.registry.skintokens_dir()),
+                        # fp32: bfloat16 on MPS returns a structurally valid rig
+                        # whose joints do not match its own skin weights.
+                        "--dtype", "float32",
+                    ]
+                    cwd = self.registry.skintokens_dir()
+                else:
+                    venv = self.registry.meshtools_python()
+                    script = WORKERS_DIR / "rig_worker.py"
+                    args = ["--mesh", model_path, "--out-dir", str(job_dir)]
+                    if options.get("probeOnly"):
+                        args.append("--probe-only")
+                    if options.get("requireHumanoid"):
+                        args.append("--require-humanoid")
+                    cwd = self.registry.tool_dir("meshtools")
             else:  # texture — TRELLIS re-bakes from the colours it already made
                 # No separate texture model: the generation saved its voxel
                 # colour field next to the mesh, so this re-bakes from that.

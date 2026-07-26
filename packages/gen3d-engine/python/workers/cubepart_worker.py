@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -46,8 +47,9 @@ def main() -> None:
     # extraction grid inside the MPS pool.
     ap.add_argument("--resolution-base", type=float, default=7.5)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--chunk-size", type=int, default=25_000)
-    ap.add_argument("--device", default="cpu", choices=["mps", "cpu"])
+    # None -> resolved by device below: the small chunks exist for the MPS pool.
+    ap.add_argument("--chunk-size", type=int, default=None)
+    ap.add_argument("--device", default="mlx", choices=["mlx", "mps", "cpu"])
     ap.add_argument(
         "--dtype",
         default="float32",
@@ -74,7 +76,27 @@ def main() -> None:
     from cube_part.pipelines import PartShapeDenoiserPipeline, ShapeInput
     from cube_part.utils.mesh import load_mesh, sample_surface
 
-    device = args.device if torch.backends.mps.is_available() else "cpu"
+    # "mlx" runs the DiT in MLX and keeps every torch tensor on CPU.
+    #
+    # Putting the torch side back on MPS once the DiT was in MLX looked free —
+    # the denoise is only 155s of a 529s run, the text encode (~148s) and the
+    # extraction (~169s) are the larger halves. TRIED IT: 30 steps completed and
+    # then "CubePart produced no part meshes". So the Metal problem was never
+    # the DiT alone. Measured against CPU on the real inputs, the MPS text
+    # encoder differs by 4.7e-3 and the shape VAE encode by 1.9e-4 — the same
+    # order as the timestep error that put 1.2e-2 through the DiT, and CFG at
+    # 7.5 amplifies a cond/uncond difference rather than cancelling it.
+    # MPS also made the denoise SLOWER (7.40 vs 4.26 s/step): every step drags
+    # the latents MPS -> CPU -> MLX -> CPU -> MPS with a sync at each hop.
+    use_mlx = args.device == "mlx"
+    has_mps = torch.backends.mps.is_available()
+    device = "cpu" if use_mlx or not has_mps else args.device
+    if args.chunk_size is None:
+        # 25k is a concession to the MPS pool (extraction, not the denoise, is
+        # the memory peak there), so raising it on CPU looked free. MEASURED: at
+        # 100k the extraction got SLOWER (~182s vs ~169s on the same mesh), so
+        # the small chunks are not costing anything worth reclaiming here.
+        args.chunk_size = 25_000
 
     # THIS STAGE RUNS ON CPU. Not because any single operation is wrong on MPS
     # — every one of them checks out — but because the error they each carry is
@@ -96,6 +118,13 @@ def main() -> None:
     #   scheduler step()     BIT-IDENTICAL (relative diff 0.000000)
     #   velocity conversion  identical
     #   VAE round trip · text encoder · decode_shape · timesteps   all fine
+    #
+    # "all fine" on that last line was a round-trip smoke test, and it was too
+    # generous. Compared NUMERICALLY against CPU on the real inputs, the MPS
+    # text encoder differs by 4.7e-3 and the shape encode by 1.9e-4 — so the
+    # Metal error is spread across the whole pipeline, not localised in the DiT.
+    # That is why the MLX port keeps the torch side on CPU (see above) instead
+    # of only replacing the denoiser and moving the rest back to Metal.
     #
     # Nothing is broken. But ~1% relative error is LARGE for fp32 — a
     # well-conditioned network should agree with CPU to ~1e-5 — which says the
@@ -158,6 +187,65 @@ def main() -> None:
 
         pipe.system._forward_diffusion_model = _fwd_lean
 
+    if use_mlx:
+        # The denoise is 27 transformer blocks run `steps` times; everything
+        # else in this pipeline runs once. Moving just that to MLX is what
+        # turns ~25 min of CPU into ~2 min, without touching the VAE, the text
+        # encoder, the scheduler or the extraction.
+        progress(STAGE, "Swapping the denoiser to MLX (Metal)…")
+        import _cubepart_mlx_bridge
+
+        _cubepart_mlx_bridge.install(pipe.system, weights / "multi_part_dit.safetensors")
+
+    if use_mlx:
+        # The text encoder is an 8.9 GB LLM run on CPU, and it is handed one
+        # sequence per part SLOT — 9 of them, doubled to 18 by classifier-free
+        # guidance. But CubePart pads to 8 parts with "", and the negative
+        # prompt is one string repeated, so a 3-part request asks it to encode
+        # the same handful of strings over and over. Encoding the distinct ones
+        # and reindexing is exact (eval mode, no dropout: same string in, same
+        # embedding out) and it was ~148s of a 529s run.
+        class _DedupEncoder(torch.nn.Module):
+            def __init__(self, inner: torch.nn.Module) -> None:
+                super().__init__()
+                self.inner = inner  # stays a child module, so .to() still works
+
+            def __getattr__(self, name):
+                # The pipeline reaches into the encoder for more than forward()
+                # (`.processor`, tokenizers, config). Without this the wrapper
+                # is a wall rather than a pass-through.
+                try:
+                    return super().__getattr__(name)
+                except AttributeError:
+                    inner = self.__dict__.get("_modules", {}).get("inner")
+                    if inner is None:
+                        raise
+                    return getattr(inner, name)
+
+            def forward(self, prompts, *a, **kw):
+                if not isinstance(prompts, (list, tuple)) or not all(
+                    isinstance(p, str) for p in prompts
+                ):
+                    return self.inner(prompts, *a, **kw)
+                uniq = list(dict.fromkeys(prompts))
+                if len(uniq) == len(prompts):
+                    return self.inner(prompts, *a, **kw)
+                progress(STAGE, f"Encoding {len(uniq)} distinct prompts (of {len(prompts)})…")
+                emb, mask = self.inner(uniq, *a, **kw)
+                order = {p: i for i, p in enumerate(uniq)}
+                idx = torch.tensor([order[p] for p in prompts], device=emb.device)
+                return emb[idx], mask[idx]
+
+        pipe.system.base_model = _DedupEncoder(pipe.system.base_model)
+
+    # Phase timings, because the shape of this run is not what it looks like:
+    # once the DiT is fast, the encode and the extraction are the bill.
+    marks: list[tuple[str, float]] = [("load", time.time())]
+
+    def mark(name: str) -> None:
+        marks.append((name, time.time()))
+        progress(STAGE, f"{name} took {marks[-1][1] - marks[-2][1]:.0f}s")
+
     progress(STAGE, "Encoding input mesh…")
     mesh, _, _ = load_mesh(args.mesh)
     surface = sample_surface(mesh, num_samples=128_000)
@@ -165,6 +253,7 @@ def main() -> None:
     # cannot receive float64 tensors (verified failure here).
     surface = torch.from_numpy(surface).float().unsqueeze(0).to(pipe.device)
     latents, _ = pipe.encode_shape(surface)
+    mark("mesh encode")
 
     progress(STAGE, f"Decomposing into {len(parts)} parts ({args.steps} steps)…")
     part_meshes = pipe.input_to_part_shape(
@@ -180,6 +269,7 @@ def main() -> None:
         seed=args.seed,
         output_mesh=True,
     )
+    mark("denoise + extract")
 
     scene = trimesh.Scene()
     saved = 0

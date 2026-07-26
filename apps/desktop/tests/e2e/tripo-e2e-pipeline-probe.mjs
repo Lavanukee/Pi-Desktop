@@ -15,7 +15,7 @@
  *
  * Usage (needs the models installed under ~/.cache/pi-desktop/gen3d):
  *   node apps/desktop/tests/e2e/tripo-e2e-pipeline-probe.mjs
- *   TRIPO_E2E_STAGES=image,imageedit,img3d node …    # subset, in this order
+ *   TRIPO_E2E_STAGES=image,imageedit,img3d node …    # subset, RUN in this order
  *   TRIPO_E2E_OUT=/tmp/shots TRIPO_E2E_RES=low node …
  *
  * `npm run build` first — it loads apps/desktop/dist.
@@ -32,11 +32,12 @@ const electronBinary = require('electron');
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT = process.env.TRIPO_E2E_OUT ?? path.join(tmpdir(), 'tripo-e2e-pipeline');
 const RES = process.env.TRIPO_E2E_RES ?? 'low';
-// Order matters and is the pipeline's own: texture BEFORE segment/retopo, so it
-// runs on the generation's own output. Texturing re-bakes from the colour
-// volume the generation saved, and a retopologised or segmented mesh lives in a
-// different job dir than those colours — running it last therefore tests the
-// path-plumbing, not the texture bake.
+// The DEFAULT order, used when TRIPO_E2E_STAGES is unset: texture before
+// segment/retopo, so a plain sweep bakes from the generation's own output.
+// Passing an explicit order runs that order instead — `…,retopo,texture` puts
+// texturing on a retopologised mesh, whose colours are in the generation's job
+// dir rather than its own, and so exercises the path-plumbing instead of the
+// bake. That chain is the one that used to fail; see the sourcePath fix.
 const ALL_STAGES = [
   'image',
   'imageedit',
@@ -210,8 +211,20 @@ try {
     .click()
     .catch(() => {});
 
+  /*
+   * Stages are REGISTERED here and run below in the order TRIPO_E2E_STAGES
+   * asks for. They used to run in the order they appear in this file, which
+   * made the ordering-sensitive chains unreachable: `…,retopo,texture` ran
+   * texture FIRST, on the generation's own output, which is the case that
+   * always worked. The one that failed — texture on a retopologised mesh,
+   * whose colours are in a different job dir — could not be reproduced by any
+   * invocation of this probe. Order is the variable those bugs live in, so it
+   * has to be the caller's to set.
+   */
+  const steps = {};
+
   // ── 1. IMAGE GENERATION (Mage-Flow) ───────────────────────────────────
-  if (STAGES.includes('image')) {
+  steps.image = async () => {
     await win.click('[data-testid="tp-rail-image"]');
     await win.fill('[data-testid="tp-image-prompt"]', IMAGE_PROMPT);
     const r = await runJob(
@@ -229,10 +242,10 @@ try {
       r.seconds,
     );
     await dismiss();
-  }
+  };
 
   // ── 2. IMAGE EDIT BEFORE 3D (Mage-Flow-Edit) ──────────────────────────
-  if (STAGES.includes('imageedit')) {
+  steps.imageedit = async () => {
     await win.click('[data-testid="tp-rail-image"]');
     const before = await win.locator('[data-testid="tp-image-preview"]').count();
     if (before === 0) {
@@ -257,10 +270,10 @@ try {
       );
       await dismiss();
     }
-  }
+  };
 
   // ── 3. IMAGE → 3D (TRELLIS-2), auto-texture ON ────────────────────────
-  if (STAGES.includes('img3d')) {
+  steps.img3d = async () => {
     await win.click('[data-testid="tp-rail-image"]');
     if ((await win.locator('[data-testid="tp-image-make3d"]').count()) === 0) {
       record('image→3D (TRELLIS-2)', 'SKIP', 'no image in the panel to convert', [], 0);
@@ -289,10 +302,10 @@ try {
       );
       await dismiss();
     }
-  }
+  };
 
   // ── 4. TEXT → 3D (Cube3D) ─────────────────────────────────────────────
-  if (STAGES.includes('text3d')) {
+  steps.text3d = async () => {
     await win.click('[data-testid="tp-rail-model"]');
     await win.click('[data-testid="tp-input-tab-text"]');
     await win.locator('[data-testid="tp-engine"] button', { hasText: 'Cube 3D' }).click();
@@ -312,7 +325,7 @@ try {
       r.seconds,
     );
     await dismiss();
-  }
+  };
 
   /** Re-select the TRELLIS asset (the humanoid one) for the downstream stages. */
   const loadFirstAsset = async () => {
@@ -330,7 +343,7 @@ try {
   };
 
   // ── 5. TEXTURING (TRELLIS re-bake from the generation's colour volume) ──
-  if (STAGES.includes('texture')) {
+  steps.texture = async () => {
     await loadFirstAsset();
     await win.click('[data-testid="tp-rail-texture"]');
     const runnable =
@@ -354,10 +367,10 @@ try {
       );
       await dismiss();
     }
-  }
+  };
 
   // ── 6. SEGMENTATION (CubePart) ────────────────────────────────────────
-  if (STAGES.includes('segment')) {
+  steps.segment = async () => {
     const have = await loadFirstAsset();
     if (!have) {
       record('segmentation (CubePart)', 'SKIP', 'no asset loaded to segment', [], 0);
@@ -379,10 +392,10 @@ try {
       );
       await dismiss();
     }
-  }
+  };
 
   // ── 7. RETOPOLOGY (QuadriFlow) ────────────────────────────────────────
-  if (STAGES.includes('retopo')) {
+  steps.retopo = async () => {
     await win.click('[data-testid="tp-rail-retopo"]');
     const runnable =
       (await win.locator('[data-testid="tp-retopo-btn"]:not([disabled])').count()) > 0;
@@ -417,10 +430,10 @@ try {
       );
       await dismiss();
     }
-  }
+  };
 
   // ── 8. RIGGING (SkinTokens) ───────────────────────────────────────────
-  if (STAGES.includes('rig')) {
+  steps.rig = async () => {
     await win.click('[data-testid="tp-rail-animate"]');
     const canRig = (await win.locator('[data-testid="tp-rig-btn"]:not([disabled])').count()) > 0;
     if (!canRig) {
@@ -473,10 +486,10 @@ try {
         await dismiss();
       }
     }
-  }
+  };
 
   // ── 9. SKELETON OVERLAY IN THE VIEWPORT ───────────────────────────────
-  if (STAGES.includes('skeleton')) {
+  steps.skeleton = async () => {
     const btn = win.locator('[data-testid="tp-skeleton-btn"]');
     if ((await btn.count()) === 0) {
       record(
@@ -499,10 +512,10 @@ try {
         0,
       );
     }
-  }
+  };
 
   // ── 10. ANIMATION ─────────────────────────────────────────────────────
-  if (STAGES.includes('animate')) {
+  steps.animate = async () => {
     await win.click('[data-testid="tp-rail-animate"]');
     await win.waitForTimeout(600);
     const grid = await win.locator('[data-testid="tp-anim-grid"] .tp-anim-card').count();
@@ -540,6 +553,17 @@ try {
         0,
       );
     }
+  };
+
+  // The run itself: the CALLER's order, one stage at a time. Serialising here
+  // is what keeps two model stages off a 24 GB machine at once.
+  for (const name of STAGES) {
+    const step = steps[name];
+    if (step === undefined) {
+      log(`unknown stage "${name}" — known: ${ALL_STAGES.join(', ')}`);
+      continue;
+    }
+    await step();
   }
 } catch (err) {
   log('PROBE ERROR', err?.stack ?? String(err));

@@ -591,9 +591,16 @@ def run_bake_only(args) -> None:
 
     voxels = Path(args.voxels) if args.voxels else Path(args.mesh).with_name("voxels.npz")
     if not voxels.exists():
+        # Say what was SEARCHED, not where the model came from. This message used
+        # to end "…and this one was imported" — a guess about provenance the
+        # worker has no way to make, and it was wrong for the case that actually
+        # shipped: a TRELLIS-generated model whose retopo result sits in its own
+        # job dir while the colours stay in the generation's.
         msg = (
-            "This model has no colour data to texture from — the Texture stage "
-            "re-bakes models generated here, and this one was imported."
+            "No colour data to texture from — the Texture stage re-bakes from the "
+            "voxel colour field the generation saved, and there is none in "
+            f"{voxels.parent}. A model imported from a file never has one; for a "
+            "generated model the colours stay in the job folder that produced it."
         )
         emit(event="error", message=msg)
         raise WorkerFailure(msg)

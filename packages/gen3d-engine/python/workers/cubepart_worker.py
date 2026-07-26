@@ -76,35 +76,44 @@ def main() -> None:
 
     device = args.device if torch.backends.mps.is_available() else "cpu"
 
-    # THE DENOISE IS BROKEN ON MPS AT EVERY DTYPE, SO THIS STAGE RUNS ON CPU.
+    # THIS STAGE RUNS ON CPU. Not because any single operation is wrong on MPS
+    # — every one of them checks out — but because the error they each carry is
+    # amplified by classifier-free guidance and compounds over 30 steps.
     #
-    #   MPS bfloat16   30 steps, then every part fails marching cubes with
-    #                  "Surface level must be within volume data range"
-    #   MPS float16    30 steps, same failure
-    #   MPS float32    30 steps, same failure
-    #   CPU  float32   4 parts, correct     ← default
+    #   MPS bfloat16 / float16 / float32   30 steps, then every part fails
+    #                                      marching cubes with "Surface level
+    #                                      must be within volume data range"
+    #   CPU  float32                       4 parts, correct         ← default
     #
-    # The CPU control settled it, exactly as it did for SkinTokens: same code,
-    # same weights, same prompts, only the backend differs. Unlike SkinTokens,
-    # dtype was NOT the cure here — all three fail on MPS — so this is an MPS
-    # kernel defect inside the DiT rather than a precision problem.
+    # I first wrote this off as "an MPS kernel defect inside the DiT". That was
+    # WRONG, and measuring it properly is what corrected it. One forward pass
+    # with identical inputs on each backend:
     #
-    # Everything AROUND the denoise is fine on MPS, verified individually so the
-    # blame lands in one place: the VAE round trip reconstructs a 1.57M-vertex
-    # mesh, the text encoder returns finite well-scaled embeddings, decode_shape
-    # (the very call the denoise feeds) produces a mesh from encoded latents,
-    # and the sampler timesteps are a clean descending 999 → 33.
+    #   DiT forward          relative max|diff| 0.005   (std 0.80533 vs 0.80510)
+    #   with the part mask   relative max|diff| 0.010, no NaN, no concentration
+    #                        in the padded slots
+    #   seeded init noise    std 1.0003 vs 1.0004, MPS reproducible
+    #   scheduler step()     BIT-IDENTICAL (relative diff 0.000000)
+    #   velocity conversion  identical
+    #   VAE round trip · text encoder · decode_shape · timesteps   all fine
     #
-    # The cost is real — ~21 minutes on CPU against ~8 on MPS — and it is paid by
-    # the one stage that has to. `--device mps` is kept so that confirming a
-    # future torch release fixes this takes a single run.
+    # Nothing is broken. But ~1% relative error is LARGE for fp32 — a
+    # well-conditioned network should agree with CPU to ~1e-5 — which says the
+    # MPS matmuls are not carrying true fp32 precision. Guidance 7.5 multiplies
+    # the gap between the conditional and unconditional predictions before it is
+    # applied, and thirty steps of that walks the trajectory off-distribution
+    # until the decoded field no longer crosses the iso-surface.
     #
-    # The autocast/eviction machinery below is what an MPS run NEEDS to get as
-    # far as a complete denoise, and is left in place for exactly that retry:
-    # the weights are already fp32 (measured: diffusion_model 8.58 GB,
-    # shape_model 1.32 GB), so bf16 came purely from the autocast wrapper, and
-    # disabling it OOM'd at 30.1 GiB until the 8.88 GB text encoder — larger
-    # than the DiT, and used once before the sampling loop — was evicted to CPU.
+    # PREDICTED AND CONFIRMED: at guidance 1.5 the MPS run survives — 3 parts,
+    # ~13 min. But it is useless. The parts each span 72-100% of the model on
+    # every axis (spread 0.075) because low guidance means the part names barely
+    # bite: "rotor blades" came out 1.09 x 1.82 x 1.59 where the correct CPU run
+    # gives 1.39 x 0.07 x 1.22 — flat, as blades are. Valid geometry, no
+    # decomposition. So there is no fast MPS mode worth shipping.
+    #
+    # CPU costs ~25 min against ~13. Getting to "seconds" needs an MLX port of
+    # the DiT, not a setting. `--device mps` is kept so a future torch release
+    # can be retested in one run.
 
     if args.dtype != "bfloat16":
         _orig_autocast = torch.autocast

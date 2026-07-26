@@ -645,8 +645,14 @@
 /* ═══ generation panel ══════════════════════════════════════════════════ */
 
 .tp-genpanel {
-  width: 302px;
-  flex-shrink: 0;
+  /* SHRINKS. The rail (74) + this (302) + the right panel (344) came to 720px
+   * that could not give, against a window whose minWidth is 640 — so the last
+   * column was pushed out of the window and clipped, with no scrollbar to say
+   * so. The viewport was the only flexible column and it bottoms out at 0.
+   * `flex: 0 1 302px` keeps the comfortable width and lets it compress to
+   * min-width when the window is genuinely narrow. */
+  flex: 0 1 302px;
+  min-width: 232px;
   display: flex;
   flex-direction: column;
   background: var(--pd-bg-raised);
@@ -1536,8 +1542,13 @@
 
 .tp-viewport {
   position: relative;
+  /* min-width, not 0: `flex: 1` means flex-basis 0, so when the row is
+   * over-constrained this column contributes nothing to shrink and ends up at
+   * 0px — the 3D view disappears entirely while the panels keep their width.
+   * A floor makes the panels give way instead, and the window's own minWidth
+   * (main.ts) is set so all four columns fit at their minimums. */
   flex: 1;
-  min-width: 0;
+  min-width: 200px;
   overflow: hidden;
   background: radial-gradient(
     ellipse 90% 75% at 50% 42%,
@@ -2297,8 +2308,10 @@
 /* ═══ right panel ═══════════════════════════════════════════════════════ */
 
 .tp-rightpanel {
-  width: 344px;
-  flex-shrink: 0;
+  /* Shrinks for the same reason as .tp-genpanel — this was the column that
+   * actually disappeared off the right edge. */
+  flex: 0 1 344px;
+  min-width: 240px;
   display: flex;
   flex-direction: column;
   background: var(--pd-bg-raised);

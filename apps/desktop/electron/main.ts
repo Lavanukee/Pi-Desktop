@@ -182,8 +182,13 @@ function createMainWindow(): BrowserWindow {
     // aren't squished side-by-side on first launch.
     width: 1440,
     height: 940,
-    minWidth: 640,
-    minHeight: 480,
+    // 640 was below what the 3D studio can physically lay out: its rail (74) +
+    // panel (232 min) + viewport (200 min) + assets panel (240 min) = 746, so
+    // dragging the window narrower pushed the Assets panel out past the right
+    // edge and clipped it silently (.tp is overflow:hidden, so nothing
+    // scrolled to reveal it). Covered by tests/e2e/tripo-resize-probe.mjs.
+    minWidth: 760,
+    minHeight: 560,
     // First run: adopt the user's Claude Desktop window size/position if present.
     ...firstRunClaudeBounds(),
     // macOS shows the dock image (set in whenReady); icon is used on win/linux.

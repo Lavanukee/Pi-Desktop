@@ -357,7 +357,13 @@ def main() -> None:
     except RigFailure:
         sys.exit(2)  # already reported
     except Exception as err:  # noqa: BLE001
-        emit(event="error", message=str(err))
+        # Some upstream errors carry no message at all (a bare assert), so a
+        # plain str(err) reports nothing and the failure looks like a silent
+        # one. Always name the type, and put the traceback on stderr.
+        import traceback
+
+        traceback.print_exc(file=sys.stderr)
+        emit(event="error", message=f"{type(err).__name__}: {err}".strip().rstrip(":"))
         sys.exit(2)
     finally:
         stop_bpy_server(server)

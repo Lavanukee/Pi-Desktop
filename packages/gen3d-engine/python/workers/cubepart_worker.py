@@ -1,8 +1,9 @@
 """CubePart worker — mesh + part names → per-part meshes (Roblox/cubepart).
 
 Runs inside the cube venv. The pipeline is pure PyTorch (adapted Qwen-Image /
-DINOv2 code, no custom CUDA kernels), so `--device mps` is attempted first
-with a CPU fallback. Checkpoints come from the HF cache snapshot (offline).
+DINOv2 code, no custom CUDA kernels) but its denoise is broken on MPS at every
+dtype, so this stage runs on CPU — see the note in main(). Checkpoints come from
+the HF cache snapshot (offline).
 
 Part names come from the UI's prompt field (comma-separated). Without names
 CubePart cannot segment (it is part-CONDITIONED decomposition, not automatic
@@ -42,8 +43,12 @@ def main() -> None:
     ap.add_argument("--resolution-base", type=float, default=7.5)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--chunk-size", type=int, default=25_000)
+    ap.add_argument("--device", default="cpu", choices=["mps", "cpu"])
     ap.add_argument(
-        "--dtype", default="float16", choices=["float16", "float32", "bfloat16"]
+        "--dtype",
+        default="float32",
+        choices=["float32", "bfloat16"],
+        help="bfloat16 is upstream's behaviour and is BROKEN on MPS (see above)",
     )
     args = ap.parse_args()
 
@@ -65,39 +70,38 @@ def main() -> None:
     from cube_part.pipelines import PartShapeDenoiserPipeline, ShapeInput
     from cube_part.utils.mesh import load_mesh, sample_surface
 
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    device = args.device if torch.backends.mps.is_available() else "cpu"
 
-    # NOT BFLOAT16. CubePart wraps its DiT denoise in
-    # `torch.autocast(self.device.type, dtype=torch.bfloat16)`, and bf16 on this
-    # backend produced an implicit field that never crosses the iso-surface —
-    # every part failed marching cubes with "Surface level must be within volume
-    # data range", i.e. no geometry at all, after a full 8-minute denoise.
+    # THE DENOISE IS BROKEN ON MPS AT EVERY DTYPE, SO THIS STAGE RUNS ON CPU.
     #
-    # Same failure mode as SkinTokens: bf16 on MPS runs without complaint and
-    # returns garbage. Isolating the stages proved the REST of the pipeline is
-    # fine on MPS — the VAE round trip reconstructed a 1.57M-vertex mesh and the
-    # text encoder produced finite, well-scaled embeddings — which left only the
-    # denoise.
+    #   MPS bfloat16   30 steps, then every part fails marching cubes with
+    #                  "Surface level must be within volume data range"
+    #   MPS float16    30 steps, same failure
+    #   MPS float32    30 steps, same failure
+    #   CPU  float32   4 parts, correct     ← default
     #
-    # STILL BROKEN — this is where the investigation stands, not a fix.
+    # The CPU control settled it, exactly as it did for SkinTokens: same code,
+    # same weights, same prompts, only the backend differs. Unlike SkinTokens,
+    # dtype was NOT the cure here — all three fail on MPS — so this is an MPS
+    # kernel defect inside the DiT rather than a precision problem.
     #
-    #   bfloat16   30 steps, then every part fails marching cubes
-    #   float16    30 steps, then every part fails marching cubes (10 mantissa
-    #              bits against bf16's 7 was not enough)
-    #   float32    cannot be tested here: the DiT is 8 GB, so fp32 makes it 16 GB
-    #              and the run OOMs at 30.1 GiB mid-denoise on 24 GB of unified
-    #              memory
+    # Everything AROUND the denoise is fine on MPS, verified individually so the
+    # blame lands in one place: the VAE round trip reconstructs a 1.57M-vertex
+    # mesh, the text encoder returns finite well-scaled embeddings, decode_shape
+    # (the very call the denoise feeds) produces a mesh from encoded latents,
+    # and the sampler timesteps are a clean descending 999 → 33.
     #
-    # So BOTH 16-bit formats give a degenerate field and the one that might work
-    # does not fit. The next thing to try is keeping the DiT in fp32 while
-    # evicting the text encoder and the VAE to CPU for the duration of the
-    # denoise — the text encoder runs once before the loop and the VAE only
-    # after it, so neither needs to be resident while the DiT is. Failing that,
-    # the denoise runs on CPU.
+    # The cost is real — ~21 minutes on CPU against ~8 on MPS — and it is paid by
+    # the one stage that has to. `--device mps` is kept so that confirming a
+    # future torch release fixes this takes a single run.
     #
-    # `--dtype`, `--chunk-size` and `--resolution-base` are the knobs that
-    # investigation needs; chunk-size 20k is what got extraction to complete at
-    # all (100k asked for another 6.10 GiB after a successful denoise).
+    # The autocast/eviction machinery below is what an MPS run NEEDS to get as
+    # far as a complete denoise, and is left in place for exactly that retry:
+    # the weights are already fp32 (measured: diffusion_model 8.58 GB,
+    # shape_model 1.32 GB), so bf16 came purely from the autocast wrapper, and
+    # disabling it OOM'd at 30.1 GiB until the 8.88 GB text encoder — larger
+    # than the DiT, and used once before the sampling loop — was evicted to CPU.
+
     if args.dtype != "bfloat16":
         _orig_autocast = torch.autocast
 
@@ -107,6 +111,7 @@ def main() -> None:
                 super().__init__(device_type, *a, **kw)
 
         torch.autocast = _NoAutocast
+
     config = Path(args.cube_dir) / "cubepart" / "configs" / "shape_denoiser_multimesh.yaml"
     pipe = PartShapeDenoiserPipeline(
         config_path=str(config),
@@ -117,35 +122,28 @@ def main() -> None:
     )
 
     if args.dtype != "bfloat16":
-        # Disabling autocast is only half of it: the DiT and VAE weights are
-        # stored bf16, so fp32 activations then meet bf16 parameters and Metal
-        # aborts the process outright ("Destination NDArray and Accumulator
-        # NDArray cannot have different datatype"). Cast the weights to match.
-        # ONLY the DiT. Casting the whole system doubles the encoder's working
-        # set and it OOMs at 30.16 GiB on the 128k-point surface encode — and it
-        # is not needed: the VAE was verified correct in bf16 (encode → decode →
-        # marching cubes reconstructed a 1.57M-vertex mesh), as was the text
-        # encoder. The denoise is the only stage that bf16 breaks.
-        try:
-            want = torch.float16 if args.dtype == "float16" else torch.float32
-            pipe.system.diffusion_model = pipe.system.diffusion_model.to(want)
+        _fwd = pipe.system._forward_diffusion_model
+        _evicted = []
 
-            # …and cast what is HANDED to it. The latents arrive from the bf16
-            # VAE and the text embeddings are fp16, so an fp32 DiT alone still
-            # hits a mixed-dtype matmul, which Metal answers by aborting the
-            # process rather than raising. Casting at this one boundary keeps
-            # the denoise entirely in fp32 while everything else stays bf16.
-            _fwd = pipe.system._forward_diffusion_model
+        def _fwd_lean(*a, **kw):
+            if not _evicted and device == "mps":
+                # First sampling step: the text conditioning is already computed.
+                try:
+                    pipe.system.base_model.to("cpu")
+                    torch.mps.empty_cache()
+                    progress(STAGE, "Freed the text encoder (8.9 GB) for the denoise")
+                except Exception as err:  # noqa: BLE001 — never fail a run over this
+                    progress(STAGE, f"could not free the text encoder ({err})")
+                _evicted.append(True)
+            # The DiT is fp32 but the text embeddings arrive fp16 and the
+            # latents bf16, and Metal answers a mixed-dtype matmul by aborting
+            # the process rather than raising. Cast at this one boundary.
+            cast = lambda t: (  # noqa: E731
+                t.float() if torch.is_tensor(t) and t.is_floating_point() else t
+            )
+            return _fwd(*[cast(x) for x in a], **{k: cast(v) for k, v in kw.items()})
 
-            def _fwd_fp32(*a, **kw):
-                cast = lambda t: (  # noqa: E731
-                    t.to(want) if torch.is_tensor(t) and t.is_floating_point() else t
-                )
-                return _fwd(*[cast(x) for x in a], **{k: cast(v) for k, v in kw.items()})
-
-            pipe.system._forward_diffusion_model = _fwd_fp32
-        except Exception as err:  # noqa: BLE001
-            progress(STAGE, f"could not cast the denoiser to fp32 ({err})")
+        pipe.system._forward_diffusion_model = _fwd_lean
 
     progress(STAGE, "Encoding input mesh…")
     mesh, _, _ = load_mesh(args.mesh)

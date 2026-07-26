@@ -61,13 +61,21 @@
  * packages/ui/src/styles/base.css to every focusable .tp- control at once: a
  * always-present transparent outline that colors in via transition, gated on
  * :focus-visible so mouse clicks stay ring-free.
+ *
+ * `.tp-popover-portal` is in the list because MenuAnchor and Hint render
+ * through a PORTAL into document.body (primitives.tsx) — they are NOT inside
+ * `.tp`, so a `.tp`-rooted selector alone left every menu item in every studio
+ * dropdown still drawing the UA ring.
  */
-.tp :where(button, input, textarea, [role="switch"], [role="tab"], [role="menuitem"]) {
+.tp :where(button, input, textarea, [role="switch"], [role="tab"], [role="menuitem"]),
+.tp-popover-portal
+  :where(button, input, textarea, [role="switch"], [role="tab"], [role="menuitem"]) {
   outline: 2px solid transparent;
   outline-offset: 2px;
   transition: outline-color var(--pd-duration-base) var(--pd-easing-standard);
 }
-.tp
+.tp :where(button, input, textarea, [role="switch"], [role="tab"], [role="menuitem"]):focus-visible,
+.tp-popover-portal
   :where(button, input, textarea, [role="switch"], [role="tab"], [role="menuitem"]):focus-visible {
   outline-color: var(--pd-border-focus);
 }
@@ -85,6 +93,76 @@
 .tp {
   --tp-radius-control: min(var(--pd-radius-button), 24px);
   --tp-radius-control-outer: calc(min(var(--pd-radius-button), 24px) + 3px);
+}
+
+/*
+ * Codex squircle signature — the studio was outside it.
+ *
+ * base.css carries the same @supports block but scopes it to an ENUMERATED
+ * list of .pd-* primitives, and no .tp-* class is in that list, so under codex
+ * every chat surface got superellipse corners while every studio surface kept
+ * circular ones. That is not a subtlety you can hand-wave: codex also scales
+ * its radii x1.25 (packages/themes emit.ts) precisely BECAUSE the corners are
+ * superelliptical — without the corner shape the scaled radii just read as
+ * bigger circles, which is exactly what the studio was rendering.
+ *
+ * MEASURED, which is what makes this actionable now: the previous audit could
+ * not tell whether this Chromium implements the property at all and left the
+ * finding unverified. It does — Chrome/150.0.7871.47,
+ * CSS.supports('corner-shape', 'superellipse(1.5)') === true.
+ *
+ * The block lives here rather than being appended to base.css's list so that
+ * packages/ui does not gain knowledge of the desktop app's studio classes; the
+ * mechanism and the 1.5 exponent are copied verbatim so the two cannot drift
+ * in value, only in membership.
+ */
+@supports (corner-shape: superellipse(1.5)) {
+  :root[data-flavor="codex"]
+    :/* buttons + segmented controls (.pd-btn) */
+    is(
+      .tp-generate-btn,
+      .tp-retry-btn,
+      .tp-upload-btn,
+      .tp-ghost-btn,
+      .tp-export-cta,
+      .tp-export-confirm,
+      .tp-pill-btn,
+      .tp-back-btn,
+      .tp-iconbtn,
+      .tp-segmented,
+      .tp-segment,
+      .tp-mode-btn,
+      .tp-rail-item,
+      .tp-dl-btn,
+      /* menus + tooltips (.pd-menu / .pd-tooltip) */
+      .tp-popover,
+      .tp-menu-item,
+      .tp-hint-bubble,
+      /* dialogs (.pd-dialog) */
+      .tp-export-dialog,
+      .tp-help-card,
+      /* fields (.pd-input / .pd-textarea) */
+      .tp-textinput,
+      .tp-text-input,
+      .tp-prompt,
+      .tp-select,
+      .tp-search,
+      /* cards + chips (.pd-activity-card / .pd-chip) */
+      .tp-card,
+      .tp-input-card,
+      .tp-dropzone,
+      .tp-accordion,
+      .tp-asset-card,
+      .tp-dlcard,
+      .tp-needs-model,
+      .tp-badge-soft,
+      /* floating viewport chrome (.pd-float-pill). Deliberately NOT
+         .tp-float-group / .tp-float-btn: those are --pd-radius-full circles and
+         rails, and a superellipse on a true circle is a no-op at best. */
+      .tp-actionbar
+    ) {
+    corner-shape: superellipse(1.5);
+  }
 }
 
 /* ═══ top bar ═══════════════════════════════════════════════════════════ */

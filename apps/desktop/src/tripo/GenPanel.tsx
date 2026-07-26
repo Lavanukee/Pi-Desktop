@@ -476,11 +476,7 @@ function ModelPanel(): JSX.Element {
   const busy = job !== null && !job.done;
   const startError = useGen3dStore((s) => s.startError);
   /** The first model this run needs and does not have. */
-  const missingModel: Gen3dModelId = useCube
-    ? 'cube3d'
-    : !geometryReady
-      ? 'trellis2'
-      : 'mageflow';
+  const missingModel: Gen3dModelId = useCube ? 'cube3d' : !geometryReady ? 'trellis2' : 'mageflow';
   const missingInput =
     (inputMode === 'text' && prompt.trim().length === 0) ||
     (inputMode === 'image' && genImages.length === 0);
@@ -550,8 +546,8 @@ function ModelPanel(): JSX.Element {
         {useCube ? (
           <>
             <p className="tp-select-copy" data-testid="tp-cube-note">
-              Cube 3D builds the shape straight from your words — no image in
-              between. Geometry only, so there is no texture to bake.
+              Cube 3D builds the shape straight from your words — no image in between. Geometry
+              only, so there is no texture to bake.
             </p>
             <div className="tp-field-col">
               <span className="tp-field-label">Parts (optional)</span>
@@ -677,7 +673,8 @@ function ImagePanel(): JSX.Element {
   const startError = useGen3dStore((s) => s.startError);
   const current = imageVersions[Math.min(imageIndex, imageVersions.length - 1)] ?? null;
   const resultImage = current?.path ?? null;
-  const pdUrl = (p: string): string => `pd-file://f${p.split('/').map(encodeURIComponent).join('/')}`;
+  const pdUrl = (p: string): string =>
+    `pd-file://f${p.split('/').map(encodeURIComponent).join('/')}`;
 
   const exportImage = () => {
     if (resultImage === null) return;
@@ -803,8 +800,8 @@ function ImagePanel(): JSX.Element {
                 {busy ? 'Working…' : editReady ? 'Apply edit' : 'Get the edit model'}
               </button>
               <span className="tp-field-hint">
-                Edits land beside the original — step back with Previous and turn
-                whichever one you like into 3D.
+                Edits land beside the original — step back with Previous and turn whichever one you
+                like into 3D.
               </span>
             </div>
 
@@ -982,8 +979,8 @@ function StagePanel({
             </div>
             {!runnable ? (
               <p className="tp-stage-warn" data-testid="tp-stage-unrunnable">
-                This version has no file on disk (restored from a previous session), so it can't
-                be re-processed. Load a newer version or re-import the model.
+                This version has no file on disk (restored from a previous session), so it can't be
+                re-processed. Load a newer version or re-import the model.
               </p>
             ) : null}
           </>

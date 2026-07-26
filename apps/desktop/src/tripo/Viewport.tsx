@@ -12,8 +12,8 @@ import type { JSX, ReactNode } from 'react';
 import { lazy, Suspense, useRef, useState } from 'react';
 import { BlendGraph } from './BlendGraph';
 import { EXPORT_FORMATS, type ExportFormat } from './data';
-import { useGen3dStore } from './gen3d-client';
 import { GenStage } from './GenStage';
+import { useGen3dStore } from './gen3d-client';
 import {
   IcCamera,
   IcCaretSmall,
@@ -570,7 +570,9 @@ export function Viewport(): JSX.Element {
           />
           <div className="tp-image-stage-cap">
             {imageStageView.label}
-            {imageStageView.count > 1 ? ` · ${imageStageView.index + 1}/${imageStageView.count}` : ''}
+            {imageStageView.count > 1
+              ? ` · ${imageStageView.index + 1}/${imageStageView.count}`
+              : ''}
           </div>
         </div>
       ) : (

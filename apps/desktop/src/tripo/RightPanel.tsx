@@ -12,8 +12,8 @@ import { useRef } from 'react';
 import {
   IcArmature,
   IcBoxNode,
-  IcCheck,
   IcCaretSmall,
+  IcCheck,
   IcCube,
   IcDots,
   IcEye,

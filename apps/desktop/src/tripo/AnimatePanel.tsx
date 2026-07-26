@@ -53,6 +53,12 @@ function AnimPreviewCard({ preset }: { readonly preset: string | undefined }): J
       playsInline
       preload="none"
       onMouseEnter={(e) => {
+        // CSS cannot stop a <video>, so the reduced-motion contract has to be
+        // honoured here: under `reduce` the card stays on its poster frame,
+        // which is a mid-motion still and still says what the clip is. Every
+        // other animation in the studio opts out via the media query in
+        // tripo.css; this was the one that could not.
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
         void e.currentTarget.play().catch(() => {});
       }}
       onMouseLeave={(e) => {

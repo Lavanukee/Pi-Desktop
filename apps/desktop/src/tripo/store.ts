@@ -310,12 +310,7 @@ interface TripoState {
   previewVersion: (versionId: string | null) => void;
   /** The viewer captured a real rendered preview for a version. */
   setAssetThumb: (versionId: string, thumb: string) => void;
-  setAssetCounts: (
-    versionId: string,
-    faces: number,
-    vertices: number,
-    topology?: string,
-  ) => void;
+  setAssetCounts: (versionId: string, faces: number, vertices: number, topology?: string) => void;
   /** The version the viewer should render right now. */
   activeVersionId: () => string | null;
   toggleList: (key: 'checkedAssets' | 'hierarchyCollapsed' | 'hiddenNodes', id: string) => void;

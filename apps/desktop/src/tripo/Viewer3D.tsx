@@ -172,9 +172,7 @@ function hasTextureMaps(mat: InstanceType<typeof THREE.Material>): boolean {
     roughnessMap?: unknown;
     emissiveMap?: unknown;
   };
-  return (
-    m.map != null || m.metalnessMap != null || m.roughnessMap != null || m.emissiveMap != null
-  );
+  return m.map != null || m.metalnessMap != null || m.roughnessMap != null || m.emissiveMap != null;
 }
 
 /** Generate the procedural "generated texture": muted painterly bands +
@@ -1093,7 +1091,18 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       const octx = out.getContext('2d');
       if (octx === null) return;
       octx.drawImage(full, 0, 0, THUMB_SIDE, THUMB_SIDE);
-      useTripoStore.getState().setAssetThumb(assetId, out.toDataURL('image/jpeg', 0.82));
+      /*
+       * PNG, not JPEG. The renderer is `alpha: true` with no clear colour, so
+       * the capture's background is genuinely TRANSPARENT — but JPEG has no
+       * alpha channel and Chromium flattens it onto BLACK. Every asset card in
+       * the grid was therefore a black slab, which is invisible in dark mode
+       * and glaring under bobble-light / codex-light (a black square in an
+       * otherwise white panel). PNG keeps the alpha so the card's own surface
+       * shows through and the thumbnail re-tints with the theme for free.
+       * Size is not a concern: thumbnails are session-only — viewer-io writes
+       * `thumb: null` into localStorage precisely because they are heavy.
+       */
+      useTripoStore.getState().setAssetThumb(assetId, out.toDataURL('image/png'));
     };
 
     // ── render loop + frame/fps instrumentation (probe hooks) ───────────────

@@ -31,39 +31,35 @@ clean clone that can be pulled forward):
                            process — including the bpy subprocess, which imports
                            the same modules
 
-MEASURED on this M5 Pro, giraffe.glb: pipeline load 12.6s, then generate 16s at
-1 beam / 242s at the upstream default of 10 — which is why `--beams` is exposed.
-Output is a structurally complete rig: a skin with inverseBindMatrices, the mesh
-carrying JOINTS_0 + WEIGHTS_0, and a real bone hierarchy (85 joints at 10 beams
-over 14,807 vertices).
+FLOAT32, NOT BFLOAT16 — THIS IS THE WHOLE BALL GAME ON THIS BACKEND
 
-*** NOT WIRED INTO THE STUDIO YET — THE RIG IS WRONG. ***
+bfloat16 on MPS runs without complaint and produces a rig that is *structurally*
+perfect and *geometrically* meaningless: valid skin, inverse bind matrices,
+JOINTS_0/WEIGHTS_0, a clean bone hierarchy — and joints that have nothing to do
+with the vertices they drive.
 
-The predicted skeleton does not correspond to the mesh, and the environment is
-NOT the remaining problem — the model runs, it is the OUTPUT that is bad.
+Measuring that took two attempts, and the first was wrong. Counting joints
+inside the mesh's BOUNDING BOX said 40%, and a per-axis rescale
+(fit_joints_to_mesh) took it to 100% — which looked like a fix and was not: a
+giraffe's bounding box is mostly air. The test that means something is the
+distance from each joint to the weighted centroid of the vertices it actually
+drives, as a fraction of the model diagonal:
 
-I first measured this by asking how many joints fall inside the mesh's bounding
-box, got it up from 40% to 100% with a per-axis rescale (fit_joints_to_mesh
-below), and concluded the predictions were fine and only their frame was wrong.
-That conclusion was WRONG: a bounding box is mostly empty space, so containment
-proves almost nothing. The test that means something is whether each joint sits
-near the vertices it actually drives — take the vertices weighted >0.3 to a
-joint, and measure the distance from the joint to their weighted centroid:
+    MPS bfloat16   242s   median 36.6%   p90 60.8%    scattered noise
+    CPU float32   1103s   median  2.3%   p90 12.7%    correct
+    MPS float32     76s   median  2.9%   p90  6.9%    correct   ← default
 
-    before the rescale   median 36.6% of the model diagonal
-    after  the rescale   median 39.9%
+So it was never the model, the frame, the beam count or the export path — it was
+the dtype. fp32 on MPS is also 3x faster than the broken bf16 path and 14x
+faster than CPU, because the fallbacks bf16 forces are slower than the native
+fp32 kernels. Rendered side by side, bf16 gives a cloud of joints in open space
+and fp32 gives a recognisable giraffe skeleton: neck chain, spine, four legs.
 
-A usable rig is a few percent. The joints and the skinning weights simply do not
-agree with each other, which no coordinate transform can fix.
+Requires PI_ST_AUTOCAST=off in the environment (the venv's .pth reads it at
+interpreter start, because the autocast decorators bind at import time) together
+with --dtype float32, which casts the model after load.
 
-Still open: whether this is MPS numerics or something wrong in how this worker
-drives the pipeline. Ruled out so far — beam count (10 beams, the upstream
-default, is no better than 3) and the export path (upstream's `transfer`
-endpoint changes the mesh's frame, not the joints'). The CPU/fp32 control is the
-next experiment and has not completed yet.
-
-`--fit-joints` is left ON because it is strictly better than nothing, but it is
-cosmetic: it puts the skeleton in the right neighbourhood, not the right place.
+`--fit-joints` stays ON: with a correct rig it is a small tidy-up, not a crutch.
 
 Mesh I/O goes through upstream's own bpy server (Blender as a Python module),
 spawned here and shut down with the job. It takes no dock tile (verified via
@@ -196,6 +192,10 @@ def run(args) -> None:
     progress(STAGE, "Loading the rigging model…", 1, 10)
     t0 = time.time()
     model = get_model(CKPT, hf_path=None, device=device)
+    if args.dtype == "float32":
+        # bfloat16 on MPS produces a rig whose joints do not match its own skin
+        # weights — see the module docstring for the measurement.
+        model = model.float()
     tokenizer = get_tokenizer(**model.tokenizer_config)
     transform = Transform.parse(**model.transform_config["predict_transform"])
     progress(STAGE, f"Model loaded in {time.time() - t0:.0f}s", 2, 10)
@@ -327,6 +327,10 @@ def main() -> None:
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--root", required=True, help="the SkinTokens checkout")
     ap.add_argument("--device", default="mps")
+    # fp32 by DEFAULT on this backend: bf16 is what breaks the rig (see the
+    # module docstring). PI_ST_AUTOCAST=off must be exported by the launcher so
+    # the venv's .pth sees it — autocast decorators bind at import time.
+    ap.add_argument("--dtype", default="float32", choices=["float32", "bfloat16"])
     # The upstream default of 10 beams is what makes a run take minutes.
     ap.add_argument("--beams", type=int, default=10)
     ap.add_argument("--top-k", type=int, default=5)

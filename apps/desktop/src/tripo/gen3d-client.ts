@@ -192,19 +192,13 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
        * Carry the verdict the user just CONFIRMED into the rig job.
        *
        * The shape probe (rig_worker --probe-only) measures humanoid-ness and
-       * the panel asks about it; the rig that follows is a different job. When
-       * SkinTokens is installed jobs.py routes that job to skintokens_worker,
-       * which predicts a skeleton for an arbitrary mesh and therefore emits NO
-       * humanoid measurement at all — so `jobHumanoid` stayed empty, the
-       * produced version recorded humanoid:false, and the Animate panel replied
-       * "Animation presets are hidden, this model isn't humanoid" to a user who
-       * had just been told "This looks humanoid (96% confidence)" and pressed
-       * "Rig as humanoid". MEASURED end to end: the pipeline probe recorded
-       * `shape probe said humanoid=true` and then `motion library hidden: the
-       * rig did not read as humanoid` in the same run. That contradiction hid
-       * the whole motion half of the studio behind a rig that had succeeded.
+       * the panel asks about it; the rig that FOLLOWS is a different job, and
+       * when SkinTokens is installed jobs.py routes it to skintokens_worker —
+       * which emits `isHumanoid: false` as a placeholder (see confirmedHumanoid
+       * for why that is a non-answer). Kept in its own map so that emission
+       * cannot overwrite it.
        */
-      if (knownHumanoid !== undefined) jobHumanoid.set(res.jobId, knownHumanoid);
+      if (knownHumanoid !== undefined) confirmedHumanoid.set(res.jobId, knownHumanoid);
     }
     return null;
   },
@@ -262,6 +256,24 @@ const stageOrigins = new Map<string, StageOrigin>();
 
 /** jobId → the rig stage's humanoid verdict, so the produced version records it. */
 const jobHumanoid = new Map<string, boolean>();
+
+/**
+ * jobId → the humanoid verdict the USER confirmed, which outranks the engine's.
+ *
+ * `skintokens_worker.py` emits `humanoid: { isHumanoid: false, reasons: ["14
+ * joints predicted by SkinTokens"] }` — and its own comment says why: "SkinTokens
+ * predicts an arbitrary skeleton rather than fitting a humanoid template, so
+ * there is no humanoid/non-humanoid verdict to make". It is a NON-ANSWER shaped
+ * like an answer, and because it arrives on the same channel as the real
+ * measurement it silently overwrote what the shape probe measured and the user
+ * then confirmed. MEASURED: `shape probe said humanoid=true` and `motion library
+ * hidden: the rig did not read as humanoid` in the same run, twice.
+ *
+ * A confirmed answer therefore lives in its own map and wins. Only the SHAPE
+ * PROBE (rig_worker --probe-only) produces a verdict worth overriding it, and
+ * that is a different job.
+ */
+const confirmedHumanoid = new Map<string, boolean>();
 
 /** Jobs dispatched as shape probes — the only ones that ASK the user. */
 const probeJobs = new Set<string>();
@@ -417,7 +429,8 @@ export function ensureGen3dWired(): void {
     if (update.artifact?.kind === 'model-glb') {
       const artifact = update.artifact;
       const jobId = update.jobId;
-      const humanoid = jobHumanoid.get(jobId) === true;
+      // A verdict the user confirmed outranks anything the rig job emitted.
+      const humanoid = confirmedHumanoid.get(jobId) ?? jobHumanoid.get(jobId) === true;
       // Queue behind this job's previous artifact so the geometry has registered
       // its asset before the textured model looks for it (see jobIngestChain).
       const chain = (jobIngestChain.get(jobId) ?? Promise.resolve())
@@ -442,6 +455,7 @@ export function ensureGen3dWired(): void {
       void (jobIngestChain.get(jobId) ?? Promise.resolve()).finally(() => {
         stageOrigins.delete(jobId);
         jobHumanoid.delete(jobId);
+        confirmedHumanoid.delete(jobId);
         probeJobs.delete(jobId);
         jobRootAsset.delete(jobId);
         jobIngestChain.delete(jobId);

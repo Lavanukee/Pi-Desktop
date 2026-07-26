@@ -938,7 +938,7 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
           : ['Top', 'Middle', 'Base'];
         // Compared by VALUE: the old length check could not see one 3-part list
         // replaced by a different 3-part list.
-        if (s.segmentParts.join(' ') !== parts.join(' ')) {
+        if (s.segmentParts.join('|') !== parts.join('|')) {
           useTripoStore.getState().set('segmentParts', parts);
         }
       } else if (s.renderMode === 'textured') {

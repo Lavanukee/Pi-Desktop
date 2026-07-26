@@ -124,7 +124,7 @@ try {
   out.squircle = await page.evaluate(() => {
     const shapeOf = (sel) => {
       const el = document.querySelector(sel);
-      return el === null ? null : getComputedStyle(el).cornerShape ?? '(property unknown)';
+      return el === null ? null : (getComputedStyle(el).cornerShape ?? '(property unknown)');
     };
     return {
       supported: CSS.supports('corner-shape', 'superellipse(1.5)'),
@@ -142,7 +142,8 @@ try {
   await page.waitForSelector('[data-testid="composer-input"]', { timeout: 15000 });
   out.squircleChat = await page.evaluate(() => ({
     'pd-btn': getComputedStyle(document.querySelector('.pd-btn')).cornerShape ?? '(unknown)',
-    'pd-composer': getComputedStyle(document.querySelector('.pd-composer')).cornerShape ?? '(unknown)',
+    'pd-composer':
+      getComputedStyle(document.querySelector('.pd-composer')).cornerShape ?? '(unknown)',
   }));
   await shot('S2-codex-chat');
   await setTheme('bobble', 'dark');
@@ -187,7 +188,8 @@ try {
   const helpOpened = (await page.locator('[data-testid="tp-help-modal"]').count()) > 0;
   await page.keyboard.press('Escape');
   await page.waitForTimeout(400);
-  escapes.helpModal = helpOpened && (await page.locator('[data-testid="tp-help-modal"]').count()) === 0;
+  escapes.helpModal =
+    helpOpened && (await page.locator('[data-testid="tp-help-modal"]').count()) === 0;
   // (d) the FULL-VIEWPORT state-machine editor (graphOpen — not a `modal`).
   // Its launcher is gated behind a real humanoid rig, so this only runs when a
   // rigged asset happens to be present; the pipeline probe covers the rigged
@@ -380,7 +382,9 @@ try {
 
   writeFileSync(path.join(OUT, 'audit4.json'), JSON.stringify(out, null, 2));
   console.log(`audit4 written → ${path.join(OUT, 'audit4.json')}`);
-  console.log(`focus: chat ${out.focusChat.uaDefault.length}/${out.focusChat.sampled} UA rings, studio ${out.focusStudio.uaDefault.length}/${out.focusStudio.sampled}`);
+  console.log(
+    `focus: chat ${out.focusChat.uaDefault.length}/${out.focusChat.sampled} UA rings, studio ${out.focusStudio.uaDefault.length}/${out.focusStudio.sampled}`,
+  );
   console.log(`corner-shape supported: ${out.squircle.supported}`);
   console.log(`escape: ${JSON.stringify(out.escape)}`);
   console.log(`reduced-motion: ${out.reducedMotion.count} still animating`);

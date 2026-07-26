@@ -62,7 +62,8 @@ const TEXT3D_PROMPT = 'a simple wooden stool with three legs';
 
 const report = [];
 const t0 = Date.now();
-const log = (...a) => console.log(`[${String(Math.round((Date.now() - t0) / 1000)).padStart(5)}s]`, ...a);
+const log = (...a) =>
+  console.log(`[${String(Math.round((Date.now() - t0) / 1000)).padStart(5)}s]`, ...a);
 const flush = () => writeFileSync(path.join(OUT, 'report.json'), JSON.stringify(report, null, 2));
 
 const app = await electron.launch({
@@ -78,11 +79,21 @@ win.on('console', (m) => {
   if (m.type() === 'error') log('  [renderer error]', m.text().slice(0, 180));
 });
 
+/**
+ * Screenshot, tolerating a dead window. A heavy stage CAN take the renderer
+ * down (observed once: the app died ~8m into a CubePart segmentation), and a
+ * probe whose job is to report honestly must survive that and keep its earlier
+ * verdicts rather than throwing them away on the way out.
+ */
 const shot = async (name) => {
-  await win.waitForTimeout(500);
   const file = path.join(OUT, `${name}.png`);
-  await win.screenshot({ path: file }).catch(() => {});
-  log(`  shot: ${name}.png`);
+  try {
+    await win.waitForTimeout(500);
+    await win.screenshot({ path: file });
+    log(`  shot: ${name}.png`);
+  } catch {
+    log(`  shot: ${name}.png SKIPPED — window is gone`);
+  }
   return file;
 };
 
@@ -105,9 +116,11 @@ const snapshot = () =>
       failed: stage?.getAttribute('data-failed') === 'true',
       msg: document.querySelector('[data-testid="tp-genstage-msg"]')?.textContent ?? '',
       title: document.querySelector('[data-testid="tp-genstage-title"]')?.textContent ?? '',
-      pct: document.querySelector('[data-testid="tp-genbar"]')?.getAttribute('aria-valuenow') ?? null,
+      pct:
+        document.querySelector('[data-testid="tp-genbar"]')?.getAttribute('aria-valuenow') ?? null,
       chunks: [...document.querySelectorAll('.tp-chunk')].map(
-        (c) => `${c.querySelector('.tp-chunk-label')?.textContent ?? '?'}[${c.getAttribute('data-state')}]`,
+        (c) =>
+          `${c.querySelector('.tp-chunk-label')?.textContent ?? '?'}[${c.getAttribute('data-state')}]`,
       ),
       cards,
       stats: document.querySelector('[data-testid="tp-stats"]')?.textContent ?? '',
@@ -134,11 +147,14 @@ async function runJob(label, fire, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     snap = await snapshot().catch(() => null);
-    if (snap === null) return { ok: false, why: 'renderer stopped answering', seconds: -1, snap: {} };
+    if (snap === null)
+      return { ok: false, why: 'renderer stopped answering', seconds: -1, snap: {} };
     const key = `${snap.phase}|${snap.pct}|${snap.chunks.join(' ')}|${snap.msg}`;
     if (key !== last) {
       last = key;
-      log(`  ${label}: ${snap.phase ?? '—'} ${snap.pct ?? '–'}% ${snap.chunks.join(' ')} — ${snap.msg.slice(0, 90)}`);
+      log(
+        `  ${label}: ${snap.phase ?? '—'} ${snap.pct ?? '–'}% ${snap.chunks.join(' ')} — ${snap.msg.slice(0, 90)}`,
+      );
     }
     if (snap.phase === 'end') break;
     await win.waitForTimeout(3000);
@@ -188,7 +204,9 @@ try {
   // pipeline exercised is identical, only the structure grid is coarser.
   await win.click('[data-testid="tp-rail-model"]');
   await win
-    .locator('[data-testid="tp-resolution"] button', { hasText: RES === 'low' ? '512' : RES === 'medium' ? '1024' : '1536' })
+    .locator('[data-testid="tp-resolution"] button', {
+      hasText: RES === 'low' ? '512' : RES === 'medium' ? '1024' : '1536',
+    })
     .click()
     .catch(() => {});
 
@@ -203,7 +221,13 @@ try {
     );
     const ok = r.ok && (await win.locator('[data-testid="tp-image-preview"]').count()) > 0;
     const s = await shot('01-image-generated');
-    record('image generation (Mage-Flow)', ok ? 'PASS' : 'FAIL', ok ? `image rendered in the panel (${r.seconds}s)` : r.why, [s], r.seconds);
+    record(
+      'image generation (Mage-Flow)',
+      ok ? 'PASS' : 'FAIL',
+      ok ? `image rendered in the panel (${r.seconds}s)` : r.why,
+      [s],
+      r.seconds,
+    );
     await dismiss();
   }
 
@@ -215,7 +239,11 @@ try {
       record('image edit (Mage-Flow-Edit)', 'SKIP', 'no generated image to edit', [], 0);
     } else {
       await win.fill('[data-testid="tp-image-edit-prompt"]', EDIT_PROMPT);
-      const r = await runJob('edit', () => win.click('[data-testid="tp-image-edit-btn"]'), 25 * 60_000);
+      const r = await runJob(
+        'edit',
+        () => win.click('[data-testid="tp-image-edit-btn"]'),
+        25 * 60_000,
+      );
       // A real edit adds a SECOND image version — the stepper only exists then.
       const versions = await win.locator('[data-testid="tp-image-steps"]').count();
       const ok = r.ok && versions > 0;
@@ -237,9 +265,15 @@ try {
     if ((await win.locator('[data-testid="tp-image-make3d"]').count()) === 0) {
       record('image→3D (TRELLIS-2)', 'SKIP', 'no image in the panel to convert', [], 0);
     } else {
-      const r = await runJob('img3d', () => win.click('[data-testid="tp-image-make3d"]'), 60 * 60_000);
+      const r = await runJob(
+        'img3d',
+        () => win.click('[data-testid="tp-image-make3d"]'),
+        60 * 60_000,
+      );
       await win
-        .waitForSelector('[data-testid="tp-canvas-host"][data-tp-canvas-ready="1"]', { timeout: 60_000 })
+        .waitForSelector('[data-testid="tp-canvas-host"][data-tp-canvas-ready="1"]', {
+          timeout: 60_000,
+        })
         .catch(() => {});
       const snap = await snapshot();
       const ok = r.ok && snap.cards.length > 0 && snap.canvasReady;
@@ -247,7 +281,9 @@ try {
       record(
         'image→3D (TRELLIS-2)',
         ok ? 'PASS' : 'FAIL',
-        ok ? `mesh in the viewport, ${snap.cards.length} asset card(s), stats "${snap.stats}" (${r.seconds}s)` : r.why,
+        ok
+          ? `mesh in the viewport, ${snap.cards.length} asset card(s), stats "${snap.stats}" (${r.seconds}s)`
+          : r.why,
         [s],
         r.seconds,
       );
@@ -261,7 +297,11 @@ try {
     await win.click('[data-testid="tp-input-tab-text"]');
     await win.locator('[data-testid="tp-engine"] button', { hasText: 'Cube 3D' }).click();
     await win.fill('[data-testid="tp-prompt"]', TEXT3D_PROMPT);
-    const r = await runJob('text3d', () => win.click('[data-testid="tp-generate-btn"]'), 45 * 60_000);
+    const r = await runJob(
+      'text3d',
+      () => win.click('[data-testid="tp-generate-btn"]'),
+      45 * 60_000,
+    );
     const snap = await snapshot();
     const s = await shot('04-text-to-3d');
     record(
@@ -293,11 +333,16 @@ try {
   if (STAGES.includes('texture')) {
     await loadFirstAsset();
     await win.click('[data-testid="tp-rail-texture"]');
-    const runnable = (await win.locator('[data-testid="tp-texture-btn"]:not([disabled])').count()) > 0;
+    const runnable =
+      (await win.locator('[data-testid="tp-texture-btn"]:not([disabled])').count()) > 0;
     if (!runnable) {
       record('texturing', 'SKIP', 'run button disabled — nothing runnable loaded', [], 0);
     } else {
-      const r = await runJob('texture', () => win.click('[data-testid="tp-texture-btn"]'), 60 * 60_000);
+      const r = await runJob(
+        'texture',
+        () => win.click('[data-testid="tp-texture-btn"]'),
+        60 * 60_000,
+      );
       await win.click('[data-testid="tp-rmode-textured"]').catch(() => {});
       const s = await shot('07-textured');
       record(
@@ -318,7 +363,11 @@ try {
       record('segmentation (CubePart)', 'SKIP', 'no asset loaded to segment', [], 0);
     } else {
       await win.click('[data-testid="tp-rail-segment"]');
-      const r = await runJob('segment', () => win.click('[data-testid="tp-segment-btn"]'), 60 * 60_000);
+      const r = await runJob(
+        'segment',
+        () => win.click('[data-testid="tp-segment-btn"]'),
+        60 * 60_000,
+      );
       const parts = await win.locator('[data-testid="tp-parts-list"] .tp-part-row').count();
       const s = await shot('05-segmented');
       record(
@@ -335,11 +384,22 @@ try {
   // ── 7. RETOPOLOGY (QuadriFlow) ────────────────────────────────────────
   if (STAGES.includes('retopo')) {
     await win.click('[data-testid="tp-rail-retopo"]');
-    const runnable = (await win.locator('[data-testid="tp-retopo-btn"]:not([disabled])').count()) > 0;
+    const runnable =
+      (await win.locator('[data-testid="tp-retopo-btn"]:not([disabled])').count()) > 0;
     if (!runnable) {
-      record('retopology (QuadriFlow)', 'SKIP', 'run button disabled — nothing runnable loaded', [], 0);
+      record(
+        'retopology (QuadriFlow)',
+        'SKIP',
+        'run button disabled — nothing runnable loaded',
+        [],
+        0,
+      );
     } else {
-      const r = await runJob('retopo', () => win.click('[data-testid="tp-retopo-btn"]'), 40 * 60_000);
+      const r = await runJob(
+        'retopo',
+        () => win.click('[data-testid="tp-retopo-btn"]'),
+        40 * 60_000,
+      );
       const snap = await snapshot();
       const s = await shot('06-retopo');
       // Wireframe on, so the "Topology: Quad vs triangles drawn" claim is visible.
@@ -349,14 +409,15 @@ try {
       record(
         'retopology (QuadriFlow)',
         r.ok ? 'PASS' : 'FAIL',
-        r.ok ? `remesh returned, stats "${snap.stats}" (${r.seconds}s) — inspect 06*.png for mesh QUALITY` : r.why,
+        r.ok
+          ? `remesh returned, stats "${snap.stats}" (${r.seconds}s) — inspect 06*.png for mesh QUALITY`
+          : r.why,
         [s, s2],
         r.seconds,
       );
       await dismiss();
     }
   }
-
 
   // ── 8. RIGGING (SkinTokens) ───────────────────────────────────────────
   if (STAGES.includes('rig')) {
@@ -366,18 +427,38 @@ try {
       const why = (await win.locator('[data-testid="tp-rig-unavailable"]').count())
         ? await win.textContent('[data-testid="tp-rig-unavailable"]')
         : 'rig button disabled';
-      record('rigging (SkinTokens)', 'FAIL', why ?? 'rig button disabled', [await shot('08-rig-blocked')], 0);
+      record(
+        'rigging (SkinTokens)',
+        'FAIL',
+        why ?? 'rig button disabled',
+        [await shot('08-rig-blocked')],
+        0,
+      );
     } else {
       // Two jobs: the shape PROBE, then the rig the user confirms.
-      const probe = await runJob('shape-probe', () => win.click('[data-testid="tp-rig-btn"]'), 30 * 60_000);
+      const probe = await runJob(
+        'shape-probe',
+        () => win.click('[data-testid="tp-rig-btn"]'),
+        30 * 60_000,
+      );
       await win.waitForTimeout(1000);
       const asked = (await win.locator('[data-testid="tp-humanoid-ask"]').count()) > 0;
       const askShot = await shot('08-humanoid-question');
       if (!asked) {
-        record('rigging (SkinTokens)', 'FAIL', `shape probe produced no humanoid question — ${probe.why}`, [askShot], probe.seconds);
+        record(
+          'rigging (SkinTokens)',
+          'FAIL',
+          `shape probe produced no humanoid question — ${probe.why}`,
+          [askShot],
+          probe.seconds,
+        );
       } else {
         const humanoid = await win.getAttribute('[data-testid="tp-humanoid-ask"]', 'data-humanoid');
-        const r = await runJob('rig', () => win.click('[data-testid="tp-humanoid-confirm"]'), 40 * 60_000);
+        const r = await runJob(
+          'rig',
+          () => win.click('[data-testid="tp-humanoid-confirm"]'),
+          40 * 60_000,
+        );
         const rigged = (await win.locator('[data-testid="tp-rig-status"]').count()) > 0;
         const s = await shot('09-rigged');
         record(
@@ -398,13 +479,25 @@ try {
   if (STAGES.includes('skeleton')) {
     const btn = win.locator('[data-testid="tp-skeleton-btn"]');
     if ((await btn.count()) === 0) {
-      record('skeleton overlay', 'FAIL', 'the viewport skeleton toggle never appeared (hasSkeleton false)', [await shot('10-no-skeleton-btn')], 0);
+      record(
+        'skeleton overlay',
+        'FAIL',
+        'the viewport skeleton toggle never appeared (hasSkeleton false)',
+        [await shot('10-no-skeleton-btn')],
+        0,
+      );
     } else {
       await btn.click();
       await win.waitForTimeout(1200);
       const on = await btn.getAttribute('data-active');
       const s = await shot('10-skeleton-overlay');
-      record('skeleton overlay', on === 'true' ? 'PASS' : 'FAIL', `toggle active=${on} — inspect 10-skeleton-overlay.png for drawn bones`, [s], 0);
+      record(
+        'skeleton overlay',
+        on === 'true' ? 'PASS' : 'FAIL',
+        `toggle active=${on} — inspect 10-skeleton-overlay.png for drawn bones`,
+        [s],
+        0,
+      );
     }
   }
 
@@ -422,7 +515,9 @@ try {
       await cards.nth(0).click();
       await cards.nth(1).click();
       await win.click('[data-testid="tp-open-graph"]');
-      await win.waitForSelector('[data-testid="tp-blend-graph"]', { timeout: 10_000 }).catch(() => {});
+      await win
+        .waitForSelector('[data-testid="tp-blend-graph"]', { timeout: 10_000 })
+        .catch(() => {});
       shots.push(await shot('12-state-machine'));
       const nodes = await win.locator('.tp-node[data-testid^="tp-node-st-"]').count();
       await win.click('[data-testid="tp-graph-close"]').catch(() => {});
@@ -448,7 +543,13 @@ try {
   }
 } catch (err) {
   log('PROBE ERROR', err?.stack ?? String(err));
-  report.push({ stage: '(probe)', status: 'ERROR', detail: String(err?.message ?? err), shots: [], seconds: 0 });
+  report.push({
+    stage: '(probe)',
+    status: 'ERROR',
+    detail: String(err?.message ?? err),
+    shots: [],
+    seconds: 0,
+  });
   flush();
   await shot('ZZ-error');
 } finally {

@@ -132,7 +132,12 @@ try {
   // The catalog populates asynchronously (engine refresh); wait for the cards.
   await page.waitForSelector('[data-testid="tp-dlcard-trellis2"]', { timeout: 8000 });
   const dlText = await page.textContent('[data-testid="tp-download-panel"]');
-  for (const expected of ['TRELLIS-2', 'Mage-Flow', 'Hunyuan Paint', 'CubePart', 'AutoRemesher']) {
+  // The roster tracks catalog.ts. 'Hunyuan Paint' and 'AutoRemesher' were the
+  // texture and retopo entries when this was written; the texture stage is now
+  // a TRELLIS re-bake with no separate model at all, and QuadriFlow replaced
+  // AutoRemesher as the primary remesher. Asserting names that no longer exist
+  // is how this probe went red on main without anyone noticing.
+  for (const expected of ['TRELLIS-2', 'Mage-Flow', 'CubePart', 'QuadriFlow', 'SkinTokens']) {
     assert(dlText.includes(expected), `download panel lists ${expected}`);
   }
   assert(/\d+\.\d GB/.test(dlText), 'download panel shows n.n GB sizes');
@@ -156,7 +161,10 @@ try {
   });
   const helpOk = page.locator('[data-testid="tp-help-ok"]');
   if (await helpOk.count()) await helpOk.click();
-  await page.waitForSelector('[data-testid="tp-asset-imported-1"] img.tp-asset-preview', {
+  // Asset ids are `imported-<session>-<n>` (asset-registry.ts), so match the
+  // PREFIX — the hardcoded `imported-1` stopped existing when the per-session
+  // component was added, and this probe has been red on main ever since.
+  await page.waitForSelector('[data-testid^="tp-asset-imported-"] img.tp-asset-preview', {
     timeout: 12000,
   });
   await shot('03-imported');
@@ -181,10 +189,13 @@ try {
   await page.click('[data-testid="tp-wire-toggle"]');
 
   // ── stage panels name their engine + present a download card (no fake) ───
+  // Names track data.ts: retopo is QuadriFlow now (AutoRemesher is the fallback
+  // and keeps the model id), and the texture stage is a TRELLIS-2 re-bake with
+  // no separate paint model at all.
   const stages = [
     ['segment', 'CubePart', 'cubepart'],
-    ['retopo', 'AutoRemesher', 'autoremesher'],
-    ['texture', 'Hunyuan Paint', 'hunyuan-paint'],
+    ['retopo', 'QuadriFlow', 'autoremesher'],
+    ['texture', 'TRELLIS-2', 'trellis2'],
   ];
   for (const [rail, name, modelId] of stages) {
     await page.click(`[data-testid="tp-rail-${rail}"]`);
@@ -208,41 +219,33 @@ try {
   await shot('05-stage-download');
   await page.click('[data-testid="tp-download-back"]');
 
-  // ── rig + animate (SkinTokens / ARDY named; motion library previews) ────
+  // ── animate: the RIG GATE, which is the whole point of this panel ────────
+  // This block used to author an ARDY motion and build a state machine over an
+  // unrigged model. Both are now deliberately unreachable — jedd asked for the
+  // gate explicitly ("a state machine over a model with no skeleton is
+  // theatre") — so the assertion is that NOTHING about motion is offered until
+  // there is a real rig. The rigged path is covered end to end, on real
+  // engines, by tripo-e2e-pipeline-probe.mjs.
   await page.click('[data-testid="tp-rail-animate"]');
   const animText = await page.textContent('[data-testid="tp-panel-animate"]');
-  assert(animText.includes('SkinTokens') && animText.includes('ARDY'), 'rig/anim engines named');
+  assert(animText.includes('SkinTokens'), 'animate panel names its rig engine');
   assert(
-    (await page.locator('[data-testid="tp-anim-grid"] video.tp-anim-video').count()) >= 8,
-    'motion library previews as real videos',
+    (await page.locator('[data-testid="tp-anim-grid"]').count()) === 0,
+    'no motion library before the model is rigged',
+  );
+  assert(
+    (await page.locator('[data-testid="tp-open-graph"]').count()) === 0,
+    'no state-machine launcher before the model is rigged',
+  );
+  // A browser-dropped GLB has no path on disk, so the engine has nothing to
+  // rig FROM and the panel says so rather than offering a button that cannot
+  // run (`hasModel` is `version.diskPath !== undefined`, not "a model is
+  // loaded").
+  assert(
+    await page.isVisible('[data-testid="tp-rig-imported-note"]'),
+    'a model with no file on disk explains why it cannot be rigged',
   );
   await shot('06-animate');
-
-  // ── ARDY: author a motion + build the state machine (motion matching) ────
-  await page.fill('[data-testid="tp-motion-prompt"]', 'a slow cautious crouch-walk');
-  await page.click('[data-testid="tp-generate-motion"]');
-  // The new ARDY motion joins the library (kind=generated).
-  await page.waitForSelector('[data-testid="tp-anim-grid"] .tp-anim-card[data-generated="true"]', {
-    timeout: 5000,
-  });
-  // Drop two motions into the machine, then open the full-viewport editor.
-  await page.click('[data-testid="tp-motion-m-walk"]');
-  await page.click('[data-testid="tp-motion-m-run"]');
-  await page.click('[data-testid="tp-open-graph"]');
-  await page.waitForSelector('[data-testid="tp-blend-graph"]', { timeout: 5000 });
-  const nodeCount = await page.locator('.tp-node[data-testid^="tp-node-st-"]').count();
-  assert(nodeCount >= 2, `state machine has nodes (got ${nodeCount})`);
-  assert(await page.isVisible('.tp-node[data-entry="true"]'), 'an entry state is marked');
-  // Wire a transition between the two states → the condition editor appears.
-  const nodeIds = await page.$$eval('.tp-node[data-testid^="tp-node-st-"]', (els) =>
-    els.map((e) => e.getAttribute('data-testid').replace('tp-node-', '')),
-  );
-  await page.click(`[data-testid="tp-node-connect-${nodeIds[0]}"]`);
-  await page.click(`[data-testid="tp-node-${nodeIds[1]}"]`);
-  await page.waitForSelector('[data-testid="tp-transition-editor"]', { timeout: 5000 });
-  assert(await page.isEnabled('[data-testid="tp-graph-export"]'), 'state machine exports JSON');
-  await shot('06b-state-machine');
-  await page.click('[data-testid="tp-graph-close"]');
 
   // ── Send To: real DCC app logos (needs a loaded model) ──────────────────
   await page.click('[data-testid="tp-sendto-btn"]');
@@ -255,7 +258,9 @@ try {
   await page.keyboard.press('Escape');
 
   // ── gizmo stacks BELOW menus (the dropdown z-index bug) ──────────────────
-  const gz = await page.evaluate(() => getComputedStyle(document.querySelector('.tp-gizmo')).zIndex);
+  const gz = await page.evaluate(
+    () => getComputedStyle(document.querySelector('.tp-gizmo')).zIndex,
+  );
   assert(Number(gz) < 80, `gizmo z-index (${gz}) must sit below menus (80)`);
 
   // ── export dialog: real formats ──────────────────────────────────────────
@@ -276,7 +281,8 @@ try {
   console.log(
     'tripo-ui-probe PASSED — no placeholder, download panel with capability loops + per-model ' +
       'downloads, multi-image input, drop-import with rendered previews, 3 render modes + ' +
-      `wireframe overlay, stage download cards, animate video previews, Send To logos, export. Shots: ${OUT_DIR}`,
+      'wireframe overlay, stage download cards, the animate rig GATE, Send To logos, export. ' +
+      `Shots: ${OUT_DIR}`,
   );
 } finally {
   await app.close();

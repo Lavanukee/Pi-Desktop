@@ -737,11 +737,28 @@
   font: inherit;
   font-size: var(--pd-font-size-caption);
   cursor: pointer;
-  transition: background var(--pd-duration-fast) var(--pd-easing-standard);
+  /*
+   * The app's focus grammar (base.css .pd-focusable): an always-present
+   * transparent outline that colors in on :focus-visible. Declared here rather
+   * than by adding .pd-focusable to the element because this rule already owns
+   * the `transition` shorthand — the two would clash and one would silently
+   * lose. MEASURED before this: tabbing to the chip in the real app reported
+   * `outline: auto 1px rgb(153,200,255)` at offset 0, i.e. Chromium's default,
+   * against `solid 2px rgb(41,151,255)` at offset 2px everywhere else.
+   */
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition:
+    background var(--pd-duration-fast) var(--pd-easing-standard),
+    outline-color 200ms var(--pd-easing-standard);
 }
 
 .pd-project-chip:hover {
   background: var(--pd-bg-hover);
+}
+
+.pd-project-chip:focus-visible {
+  outline-color: var(--pd-border-focus);
 }
 
 .pd-project-chip-icon {

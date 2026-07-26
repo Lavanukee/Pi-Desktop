@@ -20,13 +20,27 @@
  * outline that colors in via transition is the shared mechanism; each flavor
  * colors it with its own --pd-border-focus.
  */
-.pd-focusable {
+.pd-focusable,
+/*
+ * .pd-menu-trigger — the shared Popover/DropdownMenu/Select trigger — never
+ * opted in, so it was one of only two things left in the chat UI drawing
+ * CHROMIUM'S ring. MEASURED by tabbing the real app: `pd-menu-trigger
+ * pd-effort-trigger` reported `outline: auto 1px rgb(153,200,255)` at offset 0
+ * while its neighbours reported the app's `solid 2px rgb(41,151,255)` at
+ * offset 2px. (Select's variant carries .pd-btn too and was already fine;
+ * the bare ones inherited nothing.) Listed here rather than in menu.css so the
+ * grammar keeps ONE definition — a second copy is how it drifted in the first
+ * place. .pd-btn's richer transition still wins for triggers that are also
+ * buttons: button.css is imported after this file.
+ */
+.pd-menu-trigger {
   outline: 2px solid transparent;
   outline-offset: 2px;
   transition: outline-color 200ms var(--pd-easing-standard);
 }
 
-.pd-focusable:focus-visible {
+.pd-focusable:focus-visible,
+.pd-menu-trigger:focus-visible {
   outline-color: var(--pd-border-focus);
 }
 

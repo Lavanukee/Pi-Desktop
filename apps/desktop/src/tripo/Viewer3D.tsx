@@ -447,6 +447,10 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
     // Imported (drag-and-drop / upload) model currently in the scene.
     let importedGroup: InstanceType<typeof THREE.Group> | null = null;
     let importedWire: InstanceType<typeof THREE.LineSegments> | null = null;
+    /** Bones of the USER's model. The SkeletonHelper further up is bound to the
+     * bundled sample rig and never showed anything for an imported or generated
+     * one — so a real rig was invisible in the app that produced it. */
+    let importedSkeleton: InstanceType<typeof THREE.SkeletonHelper> | null = null;
     let importedId: string | null = null;
     /** Quad topology of the loaded asset (retopo results only). */
     let importedTopology: PdTopology | null = null;
@@ -657,6 +661,11 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
         scene.remove(importedWire);
         disposeTree(importedWire);
       }
+      if (importedSkeleton !== null) {
+        scene.remove(importedSkeleton);
+        importedSkeleton.dispose();
+        importedSkeleton = null;
+      }
       // The wireframe-overlay clones share the outgoing geometry, so they must
       // go with it rather than linger pointing at disposed buffers.
       for (const [, overlay] of wireOverlays) scene.remove(overlay);
@@ -706,6 +715,32 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       importedGroup = group;
       importedId = id;
       scene.add(group);
+
+      // Skeleton overlay, when this model actually carries one. SkeletonHelper
+      // walks the object's bone hierarchy, so it follows the rig's real joint
+      // positions rather than anything reconstructed here — and it tracks the
+      // bind pose the same way the mesh does. depthTest off so the bones read
+      // THROUGH the surface; a skeleton hidden inside an opaque body is the
+      // same as no skeleton at all.
+      const hasSkin = (() => {
+        let found = false;
+        group.traverse((o) => {
+          if ((o as { isSkinnedMesh?: boolean }).isSkinnedMesh === true) found = true;
+        });
+        return found;
+      })();
+      if (hasSkin) {
+        const helper = new THREE.SkeletonHelper(group);
+        const mat = helper.material as InstanceType<typeof THREE.LineBasicMaterial>;
+        mat.depthTest = false;
+        mat.transparent = true;
+        mat.linewidth = 2;
+        helper.renderOrder = 999;
+        helper.visible = useTripoStore.getState().showSkeleton;
+        importedSkeleton = helper;
+        scene.add(helper);
+      }
+      useTripoStore.getState().set('hasSkeleton', hasSkin);
 
       // Real counts → asset row + (via applyState) the stats readout.
       let faces = 0;
@@ -828,6 +863,8 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
     const applyState = () => {
       const s = useTripoStore.getState();
       const stage = s.pipelineStage;
+      // The user's own rig, drawn over the model when they ask for it.
+      if (importedSkeleton !== null) importedSkeleton.visible = s.showSkeleton;
       // The viewer renders the ACTIVE VERSION: the asset's working version, or
       // an older node the user is inspecting from the history tree.
       const assetId = s.activeVersionId();

@@ -24,6 +24,7 @@ import {
   IcMouse,
   IcPlanet,
   IcQuestion,
+  IcRig,
   IcSun,
   IcTrackpad,
 } from './icons';
@@ -91,6 +92,10 @@ function Gizmo({
 function FloatToolbar({ onSnapshot }: { readonly onSnapshot: () => void }): JSX.Element {
   const toggleMenu = useTripoStore((s) => s.toggleMenu);
   const showGrid = useTripoStore((s) => s.showGrid);
+  const showSkeleton = useTripoStore((s) => s.showSkeleton);
+  // Only offered when the loaded model actually has a rig — a toggle that
+  // cannot do anything is worse than no toggle.
+  const hasSkeleton = useTripoStore((s) => s.hasSkeleton);
   const envLight = useTripoStore((s) => s.envLight);
   const lightIntensity = useTripoStore((s) => s.lightIntensity);
   const history = useTripoStore((s) => s.history);
@@ -175,6 +180,19 @@ function FloatToolbar({ onSnapshot }: { readonly onSnapshot: () => void }): JSX.
             <IcFrame size={17} />
           </button>
         </Hint>
+        {hasSkeleton ? (
+          <Hint text="Skeleton" side="left">
+            <button
+              type="button"
+              className="tp-float-btn"
+              data-active={showSkeleton}
+              data-testid="tp-skeleton-btn"
+              onClick={() => set('showSkeleton', !showSkeleton)}
+            >
+              <IcRig size={17} />
+            </button>
+          </Hint>
+        ) : null}
       </div>
 
       <Hint text="Viewer help" side="left">

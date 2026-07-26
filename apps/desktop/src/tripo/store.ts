@@ -203,6 +203,11 @@ interface TripoState {
   /** Which shape model text→3D uses. TRELLIS goes via an image; Cube3D does
    * not, and produces no texture. Image→3D is always TRELLIS. */
   genEngine: 'trellis2' | 'cube3d';
+  /** Draw the rig's bones over the model. Only meaningful when hasSkeleton. */
+  showSkeleton: boolean;
+  /** The loaded model actually carries a skin — set by the viewer on load, so
+   * the toggle appears only where there is something to show. */
+  hasSkeleton: boolean;
   /** TRELLIS bake resolution in texels. */
   genTextureSize: 1024 | 2048 | 4096;
   /** Cube3D: comma-separated part names to split the result into (optional). */
@@ -364,6 +369,8 @@ export const useTripoStore = create<TripoState>((set, get) => ({
   genModel: 'trellis-2',
   genResolution: 'medium',
   genEngine: 'trellis2',
+  showSkeleton: false,
+  hasSkeleton: false,
   genTextureSize: 2048,
   genParts: '',
   genAutoTexture: true,

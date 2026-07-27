@@ -276,7 +276,59 @@ def fit_skeleton(vertices: np.ndarray) -> dict[str, np.ndarray]:
     missing = [n for n in BONE_NAMES if n not in joints]
     if missing:
         raise RuntimeError(f"skeleton fit is missing joints: {missing}")
-    return joints
+    return _pull_joints_inside(joints, vertices, height)
+
+
+def _pull_joints_inside(
+    joints: dict[str, np.ndarray], vertices: np.ndarray, height: float
+) -> dict[str, np.ndarray]:
+    """Move every joint onto the local medial axis of the mesh around it.
+
+    THE JOINTS ABOVE ARE GUESSES IN TWO OF THREE AXES. A hand is placed at the
+    silhouette's x-extreme with y taken from a fixed fraction of height and z
+    from the body's centre — so if the arm does not happen to sit at exactly
+    0.783 of the model's height, the joint lands beside the arm rather than in
+    it, and the skeleton visibly pokes out of the body. jedd saw exactly that on
+    a generated human, and it is not cosmetic: this fit is what ARDY's motion
+    drives, so a joint outside the limb swings the limb about the wrong pivot.
+
+    The fix needs no new dependency and no anatomy. For each joint, take the
+    surface vertices within a small radius and move the joint to their mean. On
+    a tube — which every limb is — the mean of a ring of surface points lies on
+    the tube's axis, so this lands the joint INSIDE the limb it belongs to.
+    Terminal joints come in from the fingertips as a consequence, which is also
+    correct: a hand joint belongs in the palm, not past the nails.
+
+    A joint with too few neighbours (a gap in the mesh, a joint that started far
+    from any surface) keeps its guessed position rather than being dragged to
+    the centroid of something irrelevant — the radius grows a couple of times
+    first, and only then does it give up.
+    """
+    if len(vertices) == 0 or height <= 0:
+        return joints
+    out: dict[str, np.ndarray] = {}
+    for name, guess in joints.items():
+        placed = guess
+        # ONE pass, not mean-shift. Iterating re-centres the ball on the new
+        # position, and MEASURED on the real generated humanoid that walks a
+        # joint along the surface into a neighbouring body part: it put one more
+        # joint nominally inside while taking the WORST overshoot from 1.3 mm to
+        # 17.1 mm. A 17 mm spike is visible in the viewport and wrong for the
+        # pivot ARDY swings; 1.3 mm is neither. Worst case is the metric here.
+        delta = vertices - placed
+        d2 = np.einsum("ij,ij->i", delta, delta)
+        # Grow the neighbourhood until it holds enough surface to average. The
+        # first radius is about a limb's thickness; the last is generous enough
+        # for a joint that started outside the body altogether. A joint with no
+        # surface near it keeps its guess rather than being dragged to the
+        # centroid of something irrelevant.
+        for frac in (0.05, 0.09, 0.15):
+            near = vertices[d2 <= (height * frac) ** 2]
+            if len(near) >= 8:
+                placed = near.mean(axis=0)
+                break
+        out[name] = placed
+    return out
 
 
 def _segment_distance(points: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:

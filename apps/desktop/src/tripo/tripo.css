@@ -860,7 +860,11 @@
 }
 .tp-dropzone-sub {
   font-size: var(--pd-font-size-footnote);
-  color: var(--pd-text-muted);
+  /* Secondary, not muted: this is readable content, and --pd-text-muted is
+   * 50% alpha in the codex flavors — it measured 3.4:1 against --pd-bg-raised,
+   * below AA's 4.5. The token is shared with the chat UI and is not the
+   * studio's to redefine, so stop spending a decorative token on text. */
+  color: var(--pd-text-secondary);
 }
 .tp-gen-image-link {
   display: flex;
@@ -1081,14 +1085,19 @@
  * --pd-text-link, which had two costs: it made three non-links look clickable,
  * and because the link token stays blue in every flavor (claude #74abe2, codex
  * #339cff) it was the one element that stayed BLUE when the rest of the studio
- * went terracotta/mono. --pd-text-muted is what a summary should be.
+ * went terracotta/mono. A summary should be quieter than its title — but
+ * quieter than the title, not quieter than legibility: --pd-text-muted is 50%
+ * alpha in the codex flavors and this measured 2.79:1 against --pd-bg-raised,
+ * below AA's 4.5. The token is shared with the chat UI and is not the studio's
+ * to redefine, so the fix is to stop using a DECORATIVE token for text that
+ * has to be read.
  */
 .tp-accordion-sub {
   display: flex;
   align-items: center;
   gap: 4px;
   font-size: var(--pd-font-size-footnote);
-  color: var(--pd-text-muted);
+  color: var(--pd-text-secondary);
 }
 .tp-accordion-caret {
   display: inline-flex;
@@ -1354,7 +1363,11 @@
 }
 .tp-model-hint {
   font-size: var(--pd-font-size-footnote);
-  color: var(--pd-text-muted);
+  /* Secondary, not muted: this is readable content, and --pd-text-muted is
+   * 50% alpha in the codex flavors — it measured 3.4:1 against --pd-bg-raised,
+   * below AA's 4.5. The token is shared with the chat UI and is not the
+   * studio's to redefine, so stop spending a decorative token on text. */
+  color: var(--pd-text-secondary);
 }
 .tp-model-caret {
   display: inline-flex;

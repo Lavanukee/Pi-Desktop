@@ -221,11 +221,9 @@ export function AnimatePanel(): JSX.Element {
   const motionPrompt = useTripoStore((s) => s.motionPrompt);
   const motionSeconds = useTripoStore((s) => s.motionSeconds);
   const motions = useTripoStore((s) => s.motionLibrary);
-  const states = useTripoStore((s) => s.blendStates);
   const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
   const assets = useTripoStore((s) => s.assets);
   const set = useTripoStore((s) => s.set);
-  const addBlendState = useTripoStore((s) => s.addBlendState);
 
   const engineReady = useGen3dStore((s) => s.engineReady);
   const models = useGen3dStore((s) => s.models);
@@ -254,8 +252,15 @@ export function AnimatePanel(): JSX.Element {
    * stays hidden for it, because ARDY only generates human motion.
    */
 
-  const runMotion = () => {
+  /**
+   * `inPlace` pins the root so the character performs where it stands.
+   * A preset like "Angry" or "Afraid" is a performance, not a journey — letting
+   * it wander off across the grid is how you lose sight of the thing you asked
+   * to see (jedd). A typed prompt keeps its travel unless asked otherwise.
+   */
+  const runMotion = (prompt = motionPrompt, inPlace = false) => {
     if (asset === undefined || version?.diskPath === undefined) return;
+    if (prompt.trim() === '') return;
     // The RIGGED model is the input: the clip is written into it, so the result
     // keeps this character's mesh, skin weights and texture.
     void runStage(
@@ -265,7 +270,7 @@ export function AnimatePanel(): JSX.Element {
       // knownHumanoid is not in doubt here: this button only exists on a rig
       // that measured humanoid. Without it the ANIMATED version records
       // humanoid:false and the motion controls disappear after the first clip.
-      { prompt: motionPrompt.trim(), seconds: motionSeconds, knownHumanoid: true },
+      { prompt: prompt.trim(), seconds: motionSeconds, inPlace, knownHumanoid: true },
     );
   };
 
@@ -382,7 +387,7 @@ export function AnimatePanel(): JSX.Element {
               className="tp-btn-primary"
               data-testid="tp-generate-motion"
               disabled={!motionInstalled || motionBusy || motionPrompt.trim() === ''}
-              onClick={runMotion}
+              onClick={() => runMotion()}
             >
               <IcSparkles size={15} />
               {motionBusy ? 'Generating motion…' : 'Generate Motion'}
@@ -396,10 +401,10 @@ export function AnimatePanel(): JSX.Element {
               reading the prompt first.
             </p>
 
-            {/* ── motion library (click a motion → drop it into the machine) ─ */}
-            <div className="tp-section-title">Motion library</div>
+            {/* ── presets: one click generates that motion on THIS model ──── */}
+            <div className="tp-section-title">Presets</div>
             <p className="tp-select-copy">
-              Bundled sample clips. Click one to add it to the state machine · hover to preview.
+              Click one to generate it on your model, in place · hover to preview.
             </p>
             <div className="tp-search">
               <IcSearch size={15} />
@@ -420,7 +425,8 @@ export function AnimatePanel(): JSX.Element {
                   data-generated={m.kind === 'generated'}
                   data-testid={`tp-motion-${m.id}`}
                   title={m.prompt ?? m.name}
-                  onClick={() => addBlendState(m.id)}
+                  disabled={!motionInstalled || motionBusy}
+                  onClick={() => runMotion(m.prompt ?? m.name, true)}
                 >
                   <span className="tp-anim-add">
                     <IcPlus size={11} />
@@ -443,23 +449,6 @@ export function AnimatePanel(): JSX.Element {
           </p>
         ) : null}
       </div>
-
-      {/* ── state machine launcher: only once there is a humanoid rig ─── */}
-      {rigged && humanoid ? (
-        <div className="tp-panel-foot">
-          <button
-            type="button"
-            className="tp-btn-primary"
-            data-testid="tp-open-graph"
-            onClick={() => set('graphOpen', true)}
-          >
-            <IcBolt size={15} />
-            {states.length === 0
-              ? 'Open State Machine'
-              : `Open State Machine · ${states.length} states`}
-          </button>
-        </div>
-      ) : null}
     </>
   );
 }

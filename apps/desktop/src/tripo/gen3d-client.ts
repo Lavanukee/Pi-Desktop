@@ -97,6 +97,8 @@ interface Gen3dState {
       readonly sourcePath?: string;
       /** Motion: clip length in seconds (cost is linear in it). */
       readonly seconds?: number;
+      /** Motion: pin the root so the clip plays on the spot. */
+      readonly inPlace?: boolean;
       /** Motion: the movement to generate. Required for that op — every other
        * stage acts on the mesh alone. */
       readonly prompt?: string;

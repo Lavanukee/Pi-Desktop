@@ -76,6 +76,7 @@ def _worker_env(registry: Registry) -> dict:
 #: model as "imported". `test_stage_args.py` asserts this list stays complete.
 STAGE_OPTION_KEYS = (
     "seconds",
+    "inPlace",
     "humanoid",
     "targetQuads",
     "adaptivity",
@@ -543,6 +544,8 @@ class JobManager:
                     # it, keeping its mesh, skin weights and texture.
                     "--mesh", model_path,
                 ]
+                if options.get("inPlace"):
+                    args.append("--in-place")
                 cwd = self.registry.tool_dir("ardy")
             else:  # texture — TRELLIS re-bakes from the colours it already made
                 # No separate texture model: the generation saved its voxel

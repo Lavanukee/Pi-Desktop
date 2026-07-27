@@ -246,6 +246,17 @@ def run(args: argparse.Namespace, out_dir: Path) -> None:
     output.update(corrected)
     output = to_numpy(output)
 
+    if args.in_place:
+        # Hold the root's GROUND position at its first frame and leave the
+        # vertical alone — a jump still has to leave the floor. Applied after
+        # post-processing so the foot contacts it solved for are what gets
+        # pinned. Shapes are (samples, frames, 3), so the [:, :1] slice
+        # broadcasts frame zero across the clip.
+        root = output["root_positions"]
+        root[..., 0] = root[..., :1, 0]
+        root[..., 2] = root[..., :1, 2]
+        progress(STAGE, "Pinned in place")
+
     rest = np.asarray(model.skeleton.neutral_joints.detach().cpu(), dtype=np.float64)
     parents = [int(p) for p in model.skeleton.joint_parents]
     _assert_our_skeleton(model, parents)
@@ -341,6 +352,11 @@ def main() -> None:
     ap.add_argument("--op", default="text2motion", choices=["text2motion"])
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--prompt", required=True)
+    ap.add_argument(
+        "--in-place",
+        action="store_true",
+        help="Pin the root so the clip performs on the spot instead of travelling.",
+    )
     ap.add_argument(
         "--mesh",
         default="",

@@ -247,6 +247,9 @@ export type Gen3dInvokeMap = {
        * REQUIRED for this op; every other stage acts on the mesh alone.
        */
       readonly seconds?: number;
+      /** Motion: pin the root so the clip performs on the spot instead of
+       * travelling. What a preset wants — a performance, not a journey. */
+      readonly inPlace?: boolean;
     };
     response: { readonly ok: boolean; readonly jobId?: string; readonly error?: string };
   };

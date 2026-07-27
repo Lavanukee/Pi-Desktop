@@ -188,19 +188,6 @@ function FloatToolbar({ onSnapshot }: { readonly onSnapshot: () => void }): JSX.
             <IcFrame size={17} />
           </button>
         </Hint>
-        {hasSkeleton ? (
-          <Hint text="Skeleton" side="left">
-            <button
-              type="button"
-              className="tp-float-btn"
-              data-active={showSkeleton}
-              data-testid="tp-skeleton-btn"
-              onClick={() => set('showSkeleton', !showSkeleton)}
-            >
-              <IcRig size={17} />
-            </button>
-          </Hint>
-        ) : null}
       </div>
 
       <div className="tp-float-group">
@@ -266,6 +253,8 @@ const RENDER_MODES: readonly { id: TripoRenderMode; label: string }[] = [
 function RenderModeStrip(): JSX.Element {
   const renderMode = useTripoStore((s) => s.renderMode);
   const wireframe = useTripoStore((s) => s.wireframe);
+  const showSkeleton = useTripoStore((s) => s.showSkeleton);
+  const hasSkeleton = useTripoStore((s) => s.hasSkeleton);
   const set = useTripoStore((s) => s.set);
 
   return (
@@ -302,6 +291,24 @@ function RenderModeStrip(): JSX.Element {
           <span className="tp-mode-toggle-dot" />
           Wireframe
         </button>
+        {/* Skeleton is the OTHER overlay toggle, so it belongs here next to
+            Wireframe rather than in the float toolbar with lighting and the
+            grid — those change how you look at the model, these two change what
+            is drawn on it (jedd). */}
+        {hasSkeleton ? (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={showSkeleton}
+            className="tp-mode-btn tp-mode-toggle"
+            data-active={showSkeleton}
+            data-testid="tp-skeleton-btn"
+            onClick={() => set('showSkeleton', !showSkeleton)}
+          >
+            <span className="tp-mode-toggle-dot" />
+            Skeleton
+          </button>
+        ) : null}
       </div>
     </div>
   );

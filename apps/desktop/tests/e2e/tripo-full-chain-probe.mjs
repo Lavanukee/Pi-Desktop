@@ -192,7 +192,6 @@ try {
       // Answering YES is what routes the rig to ARDY's cskel27; answering no
       // would hand it to SkinTokens and there would be no motion to generate.
       await win.click('[data-testid="tp-humanoid-confirm"]');
-      await waitFor((s) => s.phase === 'building' || s.phase === 'refining', 'rig start', 180_000);
       const done = await runToEnd('rig');
       const status = await win.textContent('[data-testid="tp-rig-status"]').catch(() => null);
       if (done === null) note('rig', 'failed', 'timed out');

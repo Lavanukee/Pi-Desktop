@@ -93,8 +93,13 @@ try {
 
   // ── 1. generate ─────────────────────────────────────────────────────────
   console.log(`\n1. generate (${ENGINE}): ${JSON.stringify(PROMPT)}`);
-  await win.click('[data-testid="tp-rail-model"]').catch(() => {});
+  await win.click('[data-testid="tp-rail-model"]');
   await win.waitForTimeout(600);
+  // The panel opens in IMAGE mode, where the text prompt is not rendered at
+  // all — the first run of this probe timed out looking for a textarea that
+  // only exists once text input is selected.
+  await win.click('[data-testid="tp-input-tab-text"]');
+  await win.waitForTimeout(400);
   // Cube3D vs TRELLIS is a Segmented, whose options carry no ids of their own.
   const engineLabel = ENGINE === 'cube3d' ? 'Cube 3D' : 'TRELLIS';
   await win
@@ -102,8 +107,15 @@ try {
     .catch(() => console.log(`   (engine picker not present — using the default)`));
   await win.fill('[data-testid="tp-prompt"]', PROMPT);
   await win.waitForTimeout(300);
-  const genBtn = await win.$('[data-testid="tp-genmodel-btn"]');
-  if (genBtn === null || (await genBtn.isDisabled())) {
+  // `tp-generate-btn` is the Generate Model action. NOT `tp-genmodel-btn` —
+  // that is the model-picker dropdown next to it, and waiting on it reported
+  // "Generate is disabled" for four runs while the screenshot plainly showed a
+  // live blue button. The engine sidecar also boots in the background on a
+  // fresh profile, so the wait is long on purpose.
+  const genBtn = await win
+    .waitForSelector('[data-testid="tp-generate-btn"]:not([disabled])', { timeout: 900_000 })
+    .catch(() => null);
+  if (genBtn === null) {
     note('generate', 'failed', 'the Generate button is missing or disabled');
   } else {
     await genBtn.click();
@@ -217,4 +229,6 @@ console.log('\n──────── chain ────────');
 for (const r of results)
   console.log(`  ${r.outcome.padEnd(8)} ${r.stage}${r.detail ? ` — ${r.detail}` : ''}`);
 console.log(`screenshots → ${OUT_DIR}`);
-process.exit(results.some((r) => r.outcome === 'failed') ? 1 : 0);
+// An empty result list means it fell over before any stage was even attempted,
+// which is a failure — the first run exited 0 on exactly that.
+process.exit(results.length === 0 || results.some((r) => r.outcome === 'failed') ? 1 : 0);

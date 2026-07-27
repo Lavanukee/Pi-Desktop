@@ -20,6 +20,7 @@ describe('catalog', () => {
 
   it('covers every contract model id exactly once', () => {
     expect(GEN3D_MODEL_SPECS.map((s) => s.id).sort()).toEqual([
+      'ardy-motion',
       'autoremesher',
       'cube3d',
       'cubepart',
@@ -88,7 +89,7 @@ describe('catalog', () => {
 
   it('sidecar registry carries repos, mirrors and pipeline types', () => {
     const registry = toSidecarRegistry();
-    expect(registry.models).toHaveLength(12);
+    expect(registry.models).toHaveLength(13);
     expect(registry.gatedMirrors['facebook/dinov3-vitl16-pretrain-lvd1689m']).toContain(
       'camenduru',
     );

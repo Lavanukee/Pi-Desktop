@@ -53,6 +53,8 @@ def provision(registry: Registry, model: dict, log, cancelled: threading.Event) 
         _provision_meshtools(registry, log)
     elif env_kind == "audio":
         _provision_audio(registry, log)
+    elif env_kind == "ardy":
+        _provision_ardy(registry, log)
     else:
         raise RuntimeError(f"unknown env kind: {env_kind}")
 
@@ -304,6 +306,44 @@ MESHTOOLS_PACKAGES = [
     "fast-simplification",
 ]
 MESHTOOLS_IMPORTS = ["trimesh", "numpy", "PIL", "networkx", "scipy", "fast_simplification"]
+
+
+#: What the ardy venv must import before it counts as provisioned.
+ARDY_IMPORTS = ("ardy", "torch", "peft", "vector_quantize_pytorch")
+
+
+def _provision_ardy(registry: Registry, log) -> None:
+    """NVIDIA ARDY (text -> human motion) in its own venv.
+
+    Its own venv rather than sharing one: ARDY pins `transformers==5.8.1` for
+    the LLM2Vec text encoder it vendors, and the audio stack runs 5.12. That is
+    not a conflict worth negotiating — a venv costs disk, a wrong transformers
+    costs a text encoder that loads and returns nonsense.
+
+    NOTHING IS PATCHED HERE. Every other native tool in this file needs source
+    fixes to run on a Mac; ARDY does not. The two places it assumes CUDA are
+    both call-site decisions (which device to pick, and a float64 rest-pose
+    buffer MPS cannot hold), and motion_worker.py handles both without touching
+    the checkout — see cast_f64_buffers and to_device there.
+    """
+    uv = registry.uv_path
+    tool = registry.ensure_tool_clone("ardy", log)
+    python = tool / ".venv" / "bin" / "python"
+    if not python.exists():
+        log("Creating the motion venv…")
+        _run([uv, "venv", str(tool / ".venv"), "--python", "3.12"], tool, log)
+    probe = subprocess.run(
+        [str(python), "-c", "import " + ", ".join(ARDY_IMPORTS)],
+        capture_output=True,
+        text=True,
+    )
+    if probe.returncode == 0:
+        return
+    log("Installing ARDY (torch + LLM2Vec text encoder)…")
+    # Editable, so the pinned checkout IS what runs — a wheel copy would let the
+    # skeleton assert in motion_worker.py pass against different source than the
+    # one the registry pinned.
+    _run([uv, "pip", "install", "--python", str(python), "-e", str(tool)], tool, log)
 
 
 def _provision_meshtools(registry: Registry, log) -> None:

@@ -56,6 +56,7 @@ const STAGE_WORD: Record<Gen3dRole, { readonly doing: string; readonly done: str
   segment: { doing: 'Segmenting', done: 'Segmented' },
   retopo: { doing: 'Remeshing', done: 'Remeshed' },
   rig: { doing: 'Rigging', done: 'Rigged' },
+  motion: { doing: 'Animating', done: 'Animated' },
   audio: { doing: 'Sounding', done: 'Sounded' },
 };
 
@@ -72,6 +73,7 @@ const STAGE_TITLE: Record<Gen3dRole, string> = {
   // Audio is not a studio stage — these strings exist so the map stays
   // exhaustive over Gen3dRole. If audio ever runs through this panel, they are
   // already right.
+  motion: 'Generating motion',
   audio: 'Generating audio',
 };
 
@@ -83,6 +85,7 @@ const STAGE_HINT: Record<Gen3dRole, string> = {
   segment: 'Splitting the mesh into semantic parts.',
   retopo: 'Rebuilding the surface as clean quad topology.',
   rig: 'Measuring the shape and fitting joints to it.',
+  motion: 'Turning your description into an animation.',
   audio: 'Generating audio from your description.',
 };
 
@@ -103,7 +106,9 @@ function useElapsed(jobId: string | null, done: boolean): string | null {
   if (start === null || jobId === null) return null;
   const secs = Math.max(0, Math.floor((Date.now() - start.at) / 1000));
   if (secs < 3) return null;
-  return secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, '0')}s`;
+  return secs < 60
+    ? `${secs}s`
+    : `${Math.floor(secs / 60)}m ${String(secs % 60).padStart(2, '0')}s`;
 }
 
 /**
@@ -312,7 +317,8 @@ export function GenStage(): JSX.Element | null {
   // Phase 2 the moment this job's model is on screen — either because the job
   // just produced it, or because the stage is running on a model that was
   // already loaded (every downstream stage).
-  const showingModel = loadedAssetId !== null && (modelReadyJobId === job.jobId || !isBuildJob(job));
+  const showingModel =
+    loadedAssetId !== null && (modelReadyJobId === job.jobId || !isBuildJob(job));
   const indeterminate = !job.done && job.stagePercent === 0 && job.overallPercent === 0;
   // The heading is about the JOB; the chunks say which stage. Naming the stage
   // here too gave "Building geometry" as a title over a chunk labelled
@@ -356,7 +362,9 @@ export function GenStage(): JSX.Element | null {
           <span className="tp-genfoot-title">{title}</span>
           <span className="tp-genfoot-msg" data-testid="tp-genstage-msg">
             {detail}
-            {elapsed !== null && !job.done ? <span className="tp-genfoot-dim"> · {elapsed}</span> : null}
+            {elapsed !== null && !job.done ? (
+              <span className="tp-genfoot-dim"> · {elapsed}</span>
+            ) : null}
           </span>
           {!job.done && !failed && !cancelled && !indeterminate ? (
             <span className="tp-genfoot-pct">{Math.round(shownPercent)}%</span>

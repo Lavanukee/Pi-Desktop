@@ -40,6 +40,15 @@ TOOL_REPOS = {
         "https://github.com/Roblox/cube.git",
         "3c6d06ddbef3160a1e1950cb13ab63dd12a61e50",
     ),
+    "ardy": (
+        "https://github.com/nv-tlabs/ardy.git",
+        # Not patched, unlike the entries below — ARDY runs on Metal unmodified,
+        # with the device handling done at the call site in motion_worker.py.
+        # Pinned anyway: the worker asserts ARDY's skeleton is still cskel27
+        # joint-for-joint, and a pin makes that assert a build-time promise
+        # rather than a runtime surprise.
+        "693f74d13b3d04a0a22ce127ee79c929dd89756b",
+    ),
     "thinksound.cpp": (
         "https://github.com/pwilkin/thinksound.cpp.git",
         # Pinned for the same reason as SkinTokens: _patch_thinksound_for_macos

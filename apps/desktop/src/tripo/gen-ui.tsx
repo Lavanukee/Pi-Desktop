@@ -144,6 +144,7 @@ const ROLE_LABEL: Record<Gen3dRole, string> = {
   segment: 'Segmentation',
   retopo: 'Retopology',
   rig: 'Rigging',
+  motion: 'Motion',
   audio: 'Audio',
 };
 
@@ -156,6 +157,7 @@ const ROLE_BLURB: Record<Gen3dRole, string> = {
   segment: 'Split a model into clean, named semantic parts.',
   retopo: 'Rebuild a messy mesh as clean, animation-ready quad topology.',
   rig: 'Fit a humanoid skeleton and skin weights so the model can be animated.',
+  motion: 'Describe a movement and get an animation for the rigged skeleton.',
   audio: 'Speak text aloud, make sound effects, and turn speech into text.',
 };
 

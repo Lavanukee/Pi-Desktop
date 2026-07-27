@@ -34,6 +34,7 @@ export type Gen3dModelId =
   | 'parakeet-asr'
   | 'dasheng-sfx'
   | 'fluid-1-cleanup'
+  | 'ardy-motion'
   | 'humanoid-rig';
 export type Gen3dRole =
   | 'geometry'
@@ -45,6 +46,10 @@ export type Gen3dRole =
   /** Text -> speech, text -> sound effect, speech -> text. Not a studio stage:
    * these produce audio files (and transcripts) rather than advancing a mesh
    * through the pipeline. */
+  /** Text -> an animation clip. Like 'audio' this is not a studio stage that
+   * advances a mesh: it produces a MOTION for a skeleton the rig stage already
+   * made, which is why it sits alongside the pipeline rather than inside it. */
+  | 'motion'
   | 'audio';
 export type Gen3dResolution = 'low' | 'medium' | 'high';
 
@@ -76,6 +81,9 @@ export interface Gen3dModelSpec {
     | 'binary'
     | 'meshtools'
     | 'skintokens'
+    /** ARDY's own venv: it pins transformers==5.8.1 for the LLM2Vec text
+     * encoder it vendors, and the audio stack runs 5.12. */
+    | 'ardy'
     | 'audio';
 }
 
@@ -311,6 +319,36 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
       {
         repo: 'ilintar/Dasheng-AudioGen-GGUF',
         bytes: 10_803_000_000,
+      },
+    ],
+  },
+  {
+    id: 'ardy-motion',
+    label: 'ARDY (text → motion)',
+    role: 'motion',
+    // Autoregressive diffusion over a hybrid motion representation (NVIDIA).
+    // It speaks cskel27, which is the SAME skeleton the rig stage already
+    // emits — verified joint-for-joint at runtime, so a generated clip drives
+    // a rig this app produced with no retargeting step.
+    //
+    // MEASURED on an M5 Pro: 12s of motion in 2.2s on Metal (5.6x real time),
+    // gated against CPU before it was allowed to default there. Most of the
+    // download is the LLM2Vec text encoder, which turns one sentence into one
+    // vector and is then dropped; its output is cached per prompt, so only the
+    // first use of a given wording pays for it.
+    note: 'Text → human motion — 12s of animation in 2.2s on Metal (NVIDIA ARDY, cskel27)',
+    env: 'ardy',
+    repos: [
+      { repo: 'nvidia/ARDY-Core-RP-20FPS-Horizon40', bytes: 771_000_000 },
+      { repo: 'McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp', bytes: 184_000_000 },
+      { repo: 'McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised', bytes: 172_000_000 },
+      {
+        // The LLM2Vec adapters are LoRA on this base, which is gated on HF
+        // (manual approval). Nothing here can grant that; a user without it
+        // gets a download error naming the repo, which is the honest failure.
+        repo: 'meta-llama/Meta-Llama-3-8B-Instruct',
+        allowPatterns: ['*.safetensors', '*.json', '*.model', 'tokenizer*'],
+        bytes: 16_060_000_000,
       },
     ],
   },

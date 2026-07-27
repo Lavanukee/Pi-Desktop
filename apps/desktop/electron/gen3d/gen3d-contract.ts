@@ -30,7 +30,8 @@ export type Gen3dModelId =
   | 'qwen3-tts'
   | 'parakeet-asr'
   | 'dasheng-sfx'
-  | 'fluid-1-cleanup';
+  | 'fluid-1-cleanup'
+  | 'ardy-motion';
 
 /** Which studio stage a model backs. */
 export type Gen3dRole =
@@ -45,6 +46,10 @@ export type Gen3dRole =
    * union in packages/gen3d-engine/src/catalog.ts — a value added to one and
    * not the other is exactly the break that made `pnpm typecheck` red when
    * `skintokens` was added (commit d5f1c85). */
+  /** Text -> an animation clip. Like 'audio' this is not a studio stage that
+   * advances a mesh: it produces a MOTION for a skeleton the rig stage already
+   * made, which is why it sits alongside the pipeline rather than inside it. */
+  | 'motion'
   | 'audio';
 
 export interface Gen3dModelInfo {

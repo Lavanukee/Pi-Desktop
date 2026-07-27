@@ -84,7 +84,7 @@ try {
         );
       }
       if (pred(s)) return s;
-      await new Promise((r) => setTimeout(r, 3000));
+      await new Promise((r) => setTimeout(r, 500));
     }
     return null;
   };
@@ -170,7 +170,12 @@ try {
   } else {
     await texBtn.click();
     const done = await runToEnd('texture');
-    if (done === null) note('texture', 'failed', 'timed out');
+    // The engine declining because a Cube3D mesh carries no colour volume is a
+    // SKIP — the stage is not applicable to this model, and calling that a
+    // failure buries the real ones.
+    const why = (await snap())?.msg ?? '';
+    if (/no colour data|nothing to texture/i.test(why)) note('texture', 'skipped', why.slice(0, 110));
+    else if (done === null) note('texture', 'failed', 'timed out');
     else if (done.failed) note('texture', 'failed', done.msg.slice(0, 120));
     else note('texture', 'ok', done.msg.slice(0, 90));
   }

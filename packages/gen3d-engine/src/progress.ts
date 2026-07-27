@@ -58,6 +58,32 @@ export interface HumanoidProbe {
   readonly reasons: readonly string[];
 }
 
+/**
+ * One INTERMEDIATE frame of a stage still in flight — the image worker's
+ * per-step denoise output (mflux `--stepwise-image-output-dir`), so the UI can
+ * show the picture resolving instead of a spinner.
+ *
+ * Separate from `artifact` on purpose, and the separation is a guarantee rather
+ * than tidiness: an artifact is a real output that gets registered, opened,
+ * passed to the next stage, and written into the tool result the MODEL reads. A
+ * preview is UI-only and transient — it must never reach the model's context or
+ * the session transcript. Shipping it as a small inline data URI (a MEASURED
+ * 12-17 KB of 256px JPEG, vs 1.4-2.1 MB for the step's full-res PNG) rather
+ * than a path is what keeps that true with no cleanup to get wrong: there is no
+ * file on disk for anything downstream to pick up.
+ */
+export interface JobPreview {
+  /** `data:image/jpeg;base64,…` — the downscaled frame. */
+  readonly dataUri: string;
+  /** Sampler step this frame came out of; 0 is the initial pure-noise latent. */
+  readonly step: number;
+  readonly totalSteps: number;
+  /** FULL-resolution dimensions of the image being generated (not the
+   * thumbnail's) — the UI sizes its placeholder to this aspect ratio. */
+  readonly width: number;
+  readonly height: number;
+}
+
 /** One event on the sidecar's /events stream with type:"job". */
 export interface SidecarJobEvent {
   readonly jobId: string;
@@ -79,6 +105,8 @@ export interface SidecarJobEvent {
   };
   /** Humanoid measurements from the rig stage's shape probe. */
   readonly humanoid?: HumanoidProbe;
+  /** A live denoising frame — see {@link JobPreview}. */
+  readonly preview?: JobPreview;
   readonly stageDone?: boolean;
   readonly done: boolean;
   readonly error?: string;
@@ -94,6 +122,7 @@ export interface JobUpdate {
   readonly overallPercent: number;
   readonly artifact?: SidecarJobEvent['artifact'];
   readonly humanoid?: HumanoidProbe;
+  readonly preview?: JobPreview;
   readonly done: boolean;
   readonly error?: string;
 }
@@ -133,6 +162,10 @@ export function mapJobEvent(plan: readonly StagePlan[], ev: SidecarJobEvent): Jo
     overallPercent,
     ...(ev.artifact !== undefined ? { artifact: ev.artifact } : {}),
     ...(ev.humanoid !== undefined ? { humanoid: ev.humanoid } : {}),
+    // Passed through untouched. A preview carries no step weight of its own —
+    // the worker's `progress` events already drive the percentages, and a frame
+    // arriving must never rewind the bar.
+    ...(ev.preview !== undefined ? { preview: ev.preview } : {}),
     done: ev.done,
     ...(ev.error !== undefined ? { error: ev.error } : {}),
   };

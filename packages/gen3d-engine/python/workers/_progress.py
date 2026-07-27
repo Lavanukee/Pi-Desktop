@@ -29,6 +29,34 @@ def artifact(stage: str, kind: str, path: str, label: str) -> None:
     emit(event="artifact", stage=stage, kind=kind, path=path, label=label)
 
 
+def preview(stage: str, data_uri: str, step: int, total: int, width: int, height: int) -> None:
+    """One INTERMEDIATE frame of a still-running stage — a look at the work, not
+    a result.
+
+    Deliberately a data URI rather than a path, and deliberately a separate
+    event from `artifact`: an artifact is a real output that gets registered,
+    opened, handed to the next stage and (for the chat's image tools) written
+    into the tool result the model reads. A preview is none of those things. It
+    exists for the few seconds the job runs, is thrown away when the job ends,
+    and must never reach the model's context or the session transcript. Keeping
+    it off disk is what makes that guarantee cheap to hold: there is no file for
+    anything downstream to find.
+
+    Sized for that role — see mlx_image_worker's PREVIEW_MAX_PX: a 256px JPEG
+    frame MEASURED at 12-17 KB (~23 KB base64), against 1.4-2.1 MB for the
+    full-resolution PNG of the same step.
+    """
+    emit(
+        event="preview",
+        stage=stage,
+        dataUri=data_uri,
+        step=int(step),
+        totalSteps=int(total),
+        width=int(width),
+        height=int(height),
+    )
+
+
 def stage_done(stage: str, message: str = "") -> None:
     emit(event="stage-done", stage=stage, message=message)
 

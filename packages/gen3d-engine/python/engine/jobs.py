@@ -5,6 +5,7 @@ before the next stage loads. A worker emits NDJSON on stdout:
 
   {"event":"progress","stage":"geometry","message":"…","step":3,"totalSteps":12}
   {"event":"artifact","stage":"geometry","kind":"model-glb","path":"…","label":"…"}
+  {"event":"preview","stage":"image","dataUri":"data:image/jpeg;base64,…","step":2,"totalSteps":4}
   {"event":"stage-done","stage":"geometry"}
   {"event":"error","message":"…"}
 
@@ -645,6 +646,24 @@ class JobManager:
                             if msg.get("previewPath")
                             else {}
                         ),
+                    },
+                )
+            elif event == "preview":
+                # An intermediate LOOK at a running stage (the image worker's
+                # per-step denoise frames), carried inline as a small data URI.
+                # Explicitly NOT an artifact: nothing registers it, nothing
+                # consumes it, and it never reaches a tool result — see
+                # _progress.preview for why that distinction is load-bearing.
+                self._publish(
+                    job,
+                    stage,
+                    message="",
+                    preview={
+                        "dataUri": msg.get("dataUri", ""),
+                        "step": int(msg.get("step", 0)),
+                        "totalSteps": int(msg.get("totalSteps", 0)),
+                        "width": int(msg.get("width", 0)),
+                        "height": int(msg.get("height", 0)),
                     },
                 )
             elif event == "probe":

@@ -89,6 +89,36 @@ describe('mapJobEvent', () => {
     expect(update.artifact).toEqual(artifact);
   });
 
+  it('live denoise previews pass through and do not move the bar', () => {
+    // A preview is a LOOK at the running stage, not progress in it: the
+    // worker's own `progress` events own the percentages. If a frame carried
+    // weight the bar would jerk (or rewind) five times per image.
+    const preview = {
+      dataUri: 'data:image/jpeg;base64,AAAA',
+      step: 2,
+      totalSteps: 4,
+      width: 1024,
+      height: 1024,
+    };
+    const withStep = mapJobEvent(
+      plan,
+      baseEvent({ stage: 'image', stageIndex: 0, step: 1, totalSteps: 2 }),
+    );
+    const withPreview = mapJobEvent(
+      plan,
+      baseEvent({ stage: 'image', stageIndex: 0, step: 1, totalSteps: 2, preview }),
+    );
+    expect(withPreview.preview).toEqual(preview);
+    expect(withPreview.overallPercent).toBe(withStep.overallPercent);
+    expect(withPreview.stagePercent).toBe(withStep.stagePercent);
+  });
+
+  it('an event with no preview carries no preview key', () => {
+    // The chat's placeholder keys off presence, so an undefined must not
+    // become a present-but-empty object.
+    expect('preview' in mapJobEvent(plan, baseEvent({}))).toBe(false);
+  });
+
   it('is defensive about out-of-range stageIndex', () => {
     const update = mapJobEvent(plan, baseEvent({ stageIndex: 9, step: 1, totalSteps: 2 }));
     expect(update.overallPercent).toBeLessThanOrEqual(100);

@@ -26,19 +26,139 @@ NDJSON contract so jobs.py needs no special case.
 from __future__ import annotations
 
 import argparse
+import base64
+import io
+import os
+import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _progress import artifact, emit, progress, stage_done  # noqa: E402
+from _progress import artifact, emit, preview, progress, stage_done  # noqa: E402
 
 STAGE = "image"
 
 DEFAULT_MODEL = "mage-flow-turbo"
 # 8, NOT 4 — see the module docstring: 4-bit Mage-Flow renders noise.
 DEFAULT_QUANT = 8
+
+# ---------------------------------------------------------------------------
+# Live denoising previews
+#
+# mflux's `--stepwise-image-output-dir` (mflux/callbacks/instances/
+# stepwise_handler.py) decodes the latents through the VAE after every sampler
+# step and writes the result as a full-resolution PNG. That is the real
+# intermediate image, not a simulation of one — so watching that directory is
+# how the UI gets to show the picture actually resolving.
+#
+# MEASURED on this machine (M5 Pro 24 GB, Mage-Flow-Turbo q8, 1024px, 4 steps,
+# weights warm in the HF cache):
+#
+#     without --stepwise-image-output-dir   11.85 s   (sampler loop 3.5 s)
+#     with    --stepwise-image-output-dir   13.81 s   (sampler loop 5.5 s)
+#
+# So +1.96 s over 5 frames — about 0.39 s per frame, or +17% on the run. That
+# buys ~12 s of dead air becoming a picture the user watches assemble, which is
+# the trade this worker is making. Most of the per-frame cost is mflux's own
+# VAE decode plus its full-res PNG write (and a composite strip it re-encodes
+# every step); none of it is ours. Downscaling to PREVIEW_MAX_PX costs a
+# further MEASURED ~20 ms per frame, off the sampler's thread.
+#
+# Set PI_GEN3D_IMAGE_PREVIEWS=0 (or --preview-max-px 0) to buy the 1.96 s back.
+# ---------------------------------------------------------------------------
+
+#: Longest edge of a preview frame. 256 keeps a frame at a MEASURED 12-17 KB of
+#: JPEG — small enough to ship inline as a data URI through the event stream,
+#: and still more detail than a card a few hundred pixels wide can show.
+PREVIEW_MAX_PX = 256
+#: Low enough to stay tiny, high enough that the grain being resolved reads as
+#: the model's grain rather than the encoder's.
+PREVIEW_QUALITY = 72
+#: How often to look for a new step image. Steps land ~1.4 s apart, so this is
+#: far finer than it needs to be and costs a stat() per tick.
+PREVIEW_POLL_S = 0.1
+
+_STEP_RE = re.compile(r"_step(\d+)of(\d+)\.png$")
+
+
+def _emit_preview(png: Path, step: int, total: int) -> bool:
+    """Downscale one stepwise PNG and emit it as a preview event.
+
+    False when the file could not be read — mflux's write is not atomic, so a
+    frame caught mid-write is simply left for the next poll rather than being
+    reported as an error.
+    """
+    try:
+        from PIL import Image as PILImage
+
+        with PILImage.open(png) as raw:
+            raw.load()
+            img = raw.convert("RGB")
+        width, height = img.size
+        img.thumbnail((PREVIEW_MAX_PX, PREVIEW_MAX_PX), PILImage.BILINEAR)
+        buf = io.BytesIO()
+        img.save(buf, "JPEG", quality=PREVIEW_QUALITY)
+    except Exception:  # noqa: BLE001 — a half-written frame is normal, not fatal
+        return False
+    uri = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    # `width`/`height` are the FULL-RES dimensions, not the thumbnail's: the UI
+    # sizes its placeholder card to the aspect ratio of the image being made.
+    preview(STAGE, uri, step, total, width, height)
+    return True
+
+
+class _PreviewWatcher:
+    """Watches mflux's stepwise output dir and republishes each new frame.
+
+    Its own thread because the render is a blocking `subprocess.run`; polling a
+    directory is the whole job, so there is nothing to synchronise beyond the
+    stop flag.
+    """
+
+    def __init__(self, watch_dir: Path) -> None:
+        self.dir = watch_dir
+        self._stop = threading.Event()
+        self._seen: set[str] = set()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def start(self) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=2.0)
+
+    def _sweep(self) -> None:
+        try:
+            entries = sorted(self.dir.glob("*_step*.png"))
+        except OSError:
+            return
+        for png in entries:
+            if png.name in self._seen:
+                continue
+            m = _STEP_RE.search(png.name)
+            if m is None:
+                continue
+            if not _emit_preview(png, int(m.group(1)), int(m.group(2))):
+                continue  # mid-write: try again next tick
+            self._seen.add(png.name)
+            # The frame has been published; the PNG has no other reader. Dropping
+            # it keeps the temp dir from holding five 2 MB files (mflux also
+            # writes a composite strip that reaches ~10 MB on its own).
+            png.unlink(missing_ok=True)
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            self._sweep()
+            time.sleep(PREVIEW_POLL_S)
+        self._sweep()  # last look, so the final step is never missed on exit
 
 
 # A real render measures a per-channel standard deviation in the tens; a blank
@@ -75,12 +195,29 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--quantize", type=int, default=DEFAULT_QUANT)
     ap.add_argument("--timeout", type=int, default=900)
+    # 0 disables the live denoising preview and buys back the MEASURED ~1.96 s
+    # it costs (see the PREVIEW_MAX_PX block above).
+    ap.add_argument("--preview-max-px", type=int, default=PREVIEW_MAX_PX)
     args = ap.parse_args()
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
     editing = bool(args.edit_from) and bool(args.edit_cli)
+    previews = args.preview_max_px > 0 and os.environ.get("PI_GEN3D_IMAGE_PREVIEWS") != "0"
+    # Under the system temp, NOT the job dir: these frames are UI-only, and a
+    # sandbox job dir is scanned for real outputs. Nothing downstream should be
+    # able to mistake a half-denoised step for the picture that was asked for.
+    step_root = Path(tempfile.mkdtemp(prefix="pi-image-steps-")) if previews else None
+    if step_root is not None:
+        # atexit rather than a try/finally because every failure path below is a
+        # `sys.exit(1)` after an error event — one registration covers all of
+        # them, and leaving a temp dir behind on a failed render is exactly the
+        # case a finally block is easiest to write around.
+        import atexit
+
+        atexit.register(shutil.rmtree, step_root, True)
+    attempt = [0]
 
     def render(prompt: str) -> subprocess.CompletedProcess:
         # mflux does NOT overwrite: with out.png present it writes out_1.png
@@ -88,34 +225,50 @@ def main() -> None:
         # the blank one and every check afterwards read the stale blank —
         # making a retry that actually worked look like it had failed.
         out.unlink(missing_ok=True)
-        if editing:
-            return subprocess.run(
-                [
-                    args.edit_cli,
-                    "--model", args.edit_model,
-                    "-q", str(args.quantize),
-                    "--steps", str(args.steps),
-                    "--seed", str(args.seed),
-                    "--image-paths", args.edit_from,
-                    "--prompt", prompt,
-                    "--output", str(out),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=args.timeout,
-            )
-        cmd = [
-            args.cli,
-            "--model", args.model,
-            "-q", str(args.quantize),
-            "--steps", str(args.steps),
-            "--seed", str(args.seed),
-            "--height", str(args.size),
-            "--width", str(args.size),
-            "--prompt", prompt,
-            "--output", str(out),
-        ]
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout)
+        watcher = None
+        if step_root is not None:
+            # A fresh directory per ATTEMPT. The blank-render retry below reuses
+            # the seed, so it also reuses mflux's filenames — sharing one
+            # directory would make the watcher treat every frame of the retry as
+            # already seen and the card would freeze on the failed attempt's
+            # noise for the whole second run.
+            attempt[0] += 1
+            watcher = _PreviewWatcher(step_root / f"attempt{attempt[0]}")
+            watcher.start()
+        try:
+            if editing:
+                return subprocess.run(
+                    [
+                        args.edit_cli,
+                        "--model", args.edit_model,
+                        "-q", str(args.quantize),
+                        "--steps", str(args.steps),
+                        "--seed", str(args.seed),
+                        "--image-paths", args.edit_from,
+                        "--prompt", prompt,
+                        "--output", str(out),
+                        *(["--stepwise-image-output-dir", str(watcher.dir)] if watcher else []),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=args.timeout,
+                )
+            cmd = [
+                args.cli,
+                "--model", args.model,
+                "-q", str(args.quantize),
+                "--steps", str(args.steps),
+                "--seed", str(args.seed),
+                "--height", str(args.size),
+                "--width", str(args.size),
+                "--prompt", prompt,
+                "--output", str(out),
+                *(["--stepwise-image-output-dir", str(watcher.dir)] if watcher else []),
+            ]
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=args.timeout)
+        finally:
+            if watcher is not None:
+                watcher.stop()
 
     progress(
         STAGE,

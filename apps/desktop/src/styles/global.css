@@ -708,6 +708,19 @@ body {
   background: var(--pd-bg-inset);
   cursor: zoom-in;
   overflow: hidden;
+  /* The finished image takes over from `.pd-denoise`, which has just spent the
+   * generation resolving the same picture. A hard cut there reads as a glitch
+   * even though nothing moved, so the real image comes up over the last preview
+   * frame instead of replacing it in one tick. */
+  animation: pd-thread-image-in 180ms var(--pd-easing-enter) both;
+}
+@keyframes pd-thread-image-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .pd-thread-image-thumb {
   display: block;
@@ -717,6 +730,394 @@ body {
   max-height: 320px;
   object-fit: contain;
 }
+/*
+ * ---------------------------------------------------------------------------
+ * The live denoising placeholder (.pd-denoise)
+ *
+ * The card an image occupies WHILE the model is making it, showing the real
+ * intermediate decodes rather than a spinner standing in for them. See
+ * ThreadImagePlaceholder.tsx for the phases and denoise-preview.ts for the
+ * tween that drives `--pd-dn-resolve`.
+ *
+ * Two custom properties are written from JS on every rAF tick:
+ *   --pd-dn-resolve   0 → 1, how finished the picture should currently look
+ *   --pd-dn-blur      the matching blur radius, pre-curved
+ * Everything below is a pure function of those, so the animation is one style
+ * write per frame and no React re-render.
+ *
+ * The card is sized to `.pd-thread-image-thumb`'s bounds (min(360px,100%) wide,
+ * 320px tall) so the finished image lands in the SAME box the placeholder
+ * occupied — no jump at the swap.
+ *
+ * Colour comes only from --pd-* tokens, and only from the neutral surface
+ * ramp plus the terracotta accent: it has to sit quietly in every flavor, in
+ * light and dark, and there is no purple anywhere by standing brief.
+ * ---------------------------------------------------------------------------
+ */
+/*
+ * THE WIDTH LIVES HERE, on the block-level root — not on the plate.
+ *
+ * The size is the SAME box `.pd-thread-image-thumb` will end up in, derived
+ * rather than approximated: that thumb is bounded by min(360px,100%) wide and
+ * 320px tall with object-fit:contain, so a square image settles at 320x320 and
+ * a wide one at 360x270. Folding the height bound into the width
+ * (320px x aspect) makes this element reach the identical size — a `max-height`
+ * alone would let a square card render 360x320, which is not the image's aspect
+ * ratio and would make the finished picture jump on arrival.
+ *
+ * NO PERCENTAGE IS IN THE WIDTH, and that is the point. The thread column is
+ * sized by its content, so any `100%` here is circular: the parent's width
+ * depends on this child and this child's width depends on the parent. Chromium
+ * resolves such a cycle against whatever else is in the column — first the
+ * CAPTION (card came out 106px, then RESIZED to 179px the moment the caption
+ * grew from "Generating an image" to "…— step 1 of 4"), and after that was
+ * moved, the activity row above (188px, against a 320px finished image). Both
+ * were MEASURED by the probe's rect recorder, and the first was visible as the
+ * card changing size on a denoising step.
+ *
+ * `.pd-thread-image` gets away with percentages because its `<img>` has an
+ * intrinsic size to resolve `max-content` from. This card has no content to
+ * measure, so it states its size outright. `max-width` stays a percentage on
+ * purpose: against an indefinite container that computes to no limit (no
+ * cycle), and it still clamps once a narrow window gives the column a definite
+ * width.
+ */
+.pd-denoise {
+  --pd-dn-aspect: 1;
+  --pd-dn-resolve: 0;
+  --pd-dn-blur: 6px;
+  display: flex;
+  width: min(360px, calc(320px * var(--pd-dn-aspect)));
+  max-width: 100%;
+  flex-direction: column;
+  gap: 6px;
+}
+.pd-denoise-plate {
+  position: relative;
+  width: 100%;
+  aspect-ratio: var(--pd-dn-aspect);
+  border: 1px solid var(--pd-border-subtle);
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-bg-inset);
+  overflow: hidden;
+  /*
+   * CONTAINMENT, against a one-frame flash of the whole window.
+   *
+   * jedd, from a 30fps capture: once per denoise step the entire viewport went
+   * blank for a single frame with the preview drawn at the window's top-left.
+   * The DOM was innocent — chat-denoise-preview-probe measured the image's
+   * bounding rect as constant across every swap, and it was: getBoundingClientRect
+   * reports LAYOUT, and a compositor layer rastered without its ancestor offset
+   * has correct layout and wrong pixels. That is what a layer being promoted and
+   * demoted on every step looks like.
+   *
+   * `contain: paint` promises the browser that nothing inside is visible outside
+   * this box, so it can neither paint a descendant at the viewport origin nor
+   * invalidate the page to find out. `isolation` keeps the blend/stacking work
+   * local, and translateZ pins it to its own layer instead of letting Chromium
+   * decide per frame.
+   */
+  contain: paint;
+  isolation: isolate;
+  transform: translateZ(0);
+  /*
+   * MOUNT: the card opens out of its own top-left corner into the full
+   * rectangle. clip-path rather than a width/height animation so the layout box
+   * is final from the first frame — the thread never reflows underneath the
+   * user mid-turn — and rather than a scale() so the texture inside is never
+   * stretched on the way out.
+   */
+  animation: pd-dn-open 380ms var(--pd-easing-enter) both;
+}
+@keyframes pd-dn-open {
+  from {
+    clip-path: inset(0 100% 100% 0 round var(--pd-radius-md));
+    opacity: 0.35;
+  }
+  to {
+    clip-path: inset(0 0 0 0 round var(--pd-radius-md));
+    opacity: 1;
+  }
+}
+
+/*
+ * WAITING: warp and weft drifting across each other at slightly different
+ * rates, so the pattern never visibly repeats, plus one warm accent bloom that
+ * breathes. Deliberately low contrast — this sits inline in a conversation, so
+ * it should read as "occupied" from the corner of the eye and not compete with
+ * the text around it.
+ */
+.pd-denoise-weave {
+  position: absolute;
+  inset: 0;
+  opacity: calc(1 - var(--pd-dn-resolve));
+  background:
+    radial-gradient(
+      120% 90% at 22% 18%,
+      color-mix(in srgb, var(--pd-accent-primary) 13%, transparent) 0%,
+      transparent 62%
+    ),
+    /* Pitch and alpha both deliberately low: at 1px/9px and a third opacity
+     * the lattice read as printed fabric and competed with the conversation
+     * around it. Wider and fainter, it reads as a surface that happens to be
+     * moving. */
+    repeating-linear-gradient(
+      68deg,
+      color-mix(in srgb, var(--pd-border-strong) 16%, transparent) 0 1px,
+      transparent 1px 15px
+    ),
+    repeating-linear-gradient(
+      -68deg,
+      color-mix(in srgb, var(--pd-border-strong) 11%, transparent) 0 1px,
+      transparent 1px 21px
+    );
+  background-size:
+    160% 160%,
+    44px 44px,
+    62px 62px;
+  animation:
+    pd-dn-warp 13s linear infinite,
+    pd-dn-bloom 6.5s ease-in-out infinite;
+}
+@keyframes pd-dn-warp {
+  from {
+    background-position:
+      0% 0%,
+      0 0,
+      0 0;
+  }
+  to {
+    background-position:
+      0% 0%,
+      44px 44px,
+      -62px 62px;
+  }
+}
+@keyframes pd-dn-bloom {
+  0%,
+  100% {
+    background-position-x: 8%;
+    opacity: calc(1 - var(--pd-dn-resolve));
+  }
+  50% {
+    background-position-x: 74%;
+    opacity: calc((1 - var(--pd-dn-resolve)) * 0.72);
+  }
+}
+
+/*
+ * The settle band: one soft horizontal sweep down the plate, the "something is
+ * being prepared" tell during the ~11 s the model spends loading. It fades out
+ * as real frames take over.
+ */
+.pd-denoise-plate::after {
+  content: "";
+  position: absolute;
+  inset: -20% 0;
+  pointer-events: none;
+  opacity: calc((1 - var(--pd-dn-resolve)) * 0.9);
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    color-mix(in srgb, var(--pd-text-primary) 7%, transparent) 44%,
+    color-mix(in srgb, var(--pd-accent-primary) 16%, transparent) 50%,
+    color-mix(in srgb, var(--pd-text-primary) 7%, transparent) 56%,
+    transparent 100%
+  );
+  animation: pd-dn-settle 2.6s var(--pd-easing-standard) infinite;
+}
+@keyframes pd-dn-settle {
+  from {
+    transform: translateY(-70%);
+  }
+  to {
+    transform: translateY(70%);
+  }
+}
+
+/*
+ * RESOLVING: a decoded step. The newest frame unravels in from the left over
+ * the previous one; blur, saturation and contrast are driven continuously by
+ * the tween, so the picture keeps sharpening in the ~1.3 s gaps between real
+ * steps instead of stepping four times and standing still in between.
+ */
+/*
+ * ONE filtered layer, holding both frames.
+ *
+ * The filter used to live on .pd-denoise-frame — the same element that gets a
+ * clip-path Web Animation cancelled and restarted on every step. A filter that
+ * changes every rAF forces a re-raster, and doing that to an element which is
+ * simultaneously starting a new compositor animation is what churned the layer
+ * (see the containment note on .pd-denoise-plate). Here the filter sits on a
+ * wrapper that never animates, and the clip-path animates a child that carries
+ * no filter, so neither invalidates the other.
+ *
+ * Both frames sharing one filter is also correct rather than merely cheaper:
+ * during the unravel the incoming and outgoing pictures should be at the same
+ * point in the resolve, not two different blurs sliding past each other.
+ */
+.pd-denoise-frames {
+  position: absolute;
+  inset: 0;
+  filter: blur(var(--pd-dn-blur)) saturate(calc(0.5 + 0.5 * var(--pd-dn-resolve)))
+    contrast(calc(0.86 + 0.14 * var(--pd-dn-resolve)));
+  will-change: filter;
+}
+.pd-denoise-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Promoted up front so a step does not promote-then-demote it. */
+  will-change: clip-path;
+  /* The frame is a 256px thumbnail shown larger; let it stay soft rather than
+   * letting the browser sharpen JPEG blocks into the denoise texture. */
+  image-rendering: auto;
+}
+/*
+ * Both frame layers exist from the first paint, before either has a picture.
+ * Hidden by VISIBILITY rather than display so they keep their laid-out box: a
+ * frame must never be the thing that establishes its own geometry, or the first
+ * paint of a new step happens somewhere other than where the card is.
+ */
+.pd-denoise-frame:not([src]) {
+  visibility: hidden;
+}
+/*
+ * The unravel itself is driven by the Web Animations API on these exact
+ * elements (ThreadImagePlaceholder), NOT by a CSS animation. A CSS animation
+ * can only be restarted by replacing the element, and replacing the element per
+ * step is precisely the bug that made frames flash in from the wrong place.
+ */
+/* The unravel's leading edge — a thin warm seam travelling with the reveal
+ * front, so the wipe reads as the picture being drawn out rather than as a
+ * rectangle sliding. */
+.pd-denoise-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -26px;
+  width: 26px;
+  /* Invisible at rest and animated by the WAAPI pass alongside the unravel, so
+   * the seam exists only while a frame is actually being revealed. */
+  opacity: 0;
+  pointer-events: none;
+  /* The seam is the ACCENT, not a white highlight: `--pd-text-inverse` flips
+   * with the mode, so a "bright" edge built from it goes dark in dark mode —
+   * exactly backwards. The accent reads as a leading edge against both a light
+   * and a dark plate without having to know which one it is on. Kept soft: at
+   * full strength it read as a progress bar sliding over the picture rather
+   * than as the picture being drawn out. */
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--pd-accent-primary) 14%, transparent) 55%,
+    color-mix(in srgb, var(--pd-accent-primary) 46%, transparent) 100%
+  );
+}
+
+/*
+ * Grain over the whole plate, thinning as the tween resolves. This is the layer
+ * that is ALWAYS moving: it drifts on its own clock, and its opacity is a
+ * continuous function of --pd-dn-resolve, so the card is never static even at
+ * the quietest moment between two decoded steps.
+ */
+.pd-denoise-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  mix-blend-mode: overlay;
+  opacity: calc(0.62 * (1 - var(--pd-dn-resolve)));
+  background-image:
+    repeating-conic-gradient(
+      from 0deg at 50% 50%,
+      color-mix(in srgb, var(--pd-text-primary) 42%, transparent) 0deg 12deg,
+      transparent 12deg 24deg
+    ),
+    repeating-conic-gradient(
+      from 30deg at 50% 50%,
+      color-mix(in srgb, var(--pd-bg-base) 55%, transparent) 0deg 9deg,
+      transparent 9deg 18deg
+    );
+  background-size:
+    5px 5px,
+    3px 3px;
+  animation: pd-dn-grain 900ms steps(4, end) infinite;
+}
+@keyframes pd-dn-grain {
+  0% {
+    background-position:
+      0 0,
+      0 0;
+  }
+  25% {
+    background-position:
+      -2px 1px,
+      1px -1px;
+  }
+  50% {
+    background-position:
+      1px -2px,
+      -1px 2px;
+  }
+  75% {
+    background-position:
+      2px 2px,
+      -2px -1px;
+  }
+  100% {
+    background-position:
+      0 0,
+      0 0;
+  }
+}
+
+.pd-denoise-caption {
+  color: var(--pd-text-muted);
+  font-size: 11px;
+  line-height: 1.3;
+  /* Tabular figures so "step 1 of 4" → "step 2 of 4" does not reflow the line,
+   * and the caption can never be wider than the picture above it. */
+  font-variant-numeric: tabular-nums;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Reduced motion: no motion at all. The card is present at full size, the
+ * waiting texture is a still weave, and each decoded frame simply REPLACES the
+ * last — the frames are content, not animation, so they keep arriving. Per the
+ * themes.css note, infinite animations must be cancelled explicitly here; the
+ * duration tokens alone do not reach them.
+ *
+ * The unravel is NOT covered by this block: it runs through the Web Animations
+ * API, which no media query can reach. ThreadImagePlaceholder checks the same
+ * preference itself and simply does not start it.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .pd-denoise-plate,
+  .pd-denoise-plate::after,
+  .pd-denoise-weave,
+  .pd-denoise-grain {
+    animation: none;
+  }
+  .pd-denoise-plate {
+    clip-path: none;
+  }
+  .pd-denoise-edge {
+    display: none;
+  }
+  .pd-denoise-frame {
+    filter: none;
+  }
+  .pd-denoise-grain {
+    opacity: calc(0.28 * (1 - var(--pd-dn-resolve)));
+  }
+}
+
 .pd-image-lightbox {
   position: fixed;
   inset: 0;
@@ -780,7 +1181,8 @@ body {
   .pd-chat-title-crumb {
     transition: none;
   }
-  .pd-image-lightbox {
+  .pd-image-lightbox,
+  .pd-thread-image {
     animation: none;
   }
 }

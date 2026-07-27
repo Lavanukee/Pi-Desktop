@@ -221,6 +221,12 @@ function handleSidecarEvent(value: unknown): void {
       // The rig stage's shape measurement — the renderer asks the user
       // "humanoid?" from this, so it MUST survive the re-broadcast.
       ...(update.humanoid !== undefined ? { humanoid: update.humanoid } : {}),
+      // A live denoising frame. Broadcast (the renderer animates it) but
+      // deliberately NOT handed to `imageJobs` above: that tracker feeds the
+      // chat tool's RESULT, which is the one place a preview must never reach.
+      // It only ever reads `artifact`/`done`/`error`, so this stays UI-only by
+      // construction rather than by remembering to filter it later.
+      ...(update.preview !== undefined ? { preview: update.preview } : {}),
       done: update.done,
       ...(update.error !== undefined ? { error: update.error } : {}),
     });

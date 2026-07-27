@@ -75,8 +75,31 @@ export interface Gen3dJobUpdate {
   };
   /** Rig stage only: what the shape probe measured. */
   readonly humanoid?: Gen3dHumanoidProbe;
+  /** Image stage only: a live look at the denoise, mid-flight. */
+  readonly preview?: Gen3dJobPreview;
   readonly done: boolean;
   readonly error?: string;
+}
+
+/**
+ * One intermediate denoising frame from a RUNNING image job — what makes the
+ * chat's placeholder show the picture actually resolving rather than a spinner
+ * standing in for it.
+ *
+ * UI-ONLY, and the shape enforces it: an inline data URI with no path, so there
+ * is nothing on disk for the asset registry, a canvas tab, a tool result or the
+ * session transcript to pick up. Only the finished `artifact` is a real image.
+ */
+export interface Gen3dJobPreview {
+  /** `data:image/jpeg;base64,…` — a downscaled frame, MEASURED at 12-17 KB. */
+  readonly dataUri: string;
+  /** Sampler step; 0 is the initial pure-noise latent, before any denoising. */
+  readonly step: number;
+  readonly totalSteps: number;
+  /** FULL-resolution dimensions of the image being made — the placeholder
+   * grows to THIS aspect ratio, not the thumbnail's. */
+  readonly width: number;
+  readonly height: number;
 }
 
 /** Humanoid measurements behind the rig stage's "humanoid?" question. */

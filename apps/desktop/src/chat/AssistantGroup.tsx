@@ -19,11 +19,12 @@ import {
   type ToolResultMsg,
 } from '@pi-desktop/engine';
 import type { ReactNode } from 'react';
-import { generatedImageSrc, segmentGroup } from './activity-mapping';
+import { generatedImageSrc, segmentGroup, toolStepKind } from './activity-mapping';
 import { InlineArtifact } from './canvas/InlineArtifacts';
 import { Markdown } from './markdown';
 import { ThreadActivityChain } from './ThreadActivity';
 import { ThreadImage } from './ThreadImage';
+import { ThreadImagePlaceholder } from './ThreadImagePlaceholder';
 
 export function AssistantGroup({
   group,
@@ -59,6 +60,25 @@ export function AssistantGroup({
       if (b.type !== 'toolCall') continue;
       const r = resultByCallId.get(`${m.id}:${b.id}`) ?? resultByCallId.get(b.id);
       if (r !== undefined) resultForBlock.set(b.id, r);
+    }
+  }
+
+  // The image tool call this group is CURRENTLY waiting on, if any: an image
+  // step the engine reports as executing that has not produced a result yet.
+  // At most one is possible in practice — the generation engine runs one job at
+  // a time on a 24 GB machine (see useDenoisePreview for why that invariant is
+  // what makes the frame stream unambiguous) — and taking the first here makes
+  // that explicit rather than assumed.
+  let pendingImageCallId: string | undefined;
+  if (!suppressInlineArtifacts) {
+    for (const m of group) {
+      for (const b of m.blocks) {
+        if (b.type !== 'toolCall' || pendingImageCallId !== undefined) continue;
+        if (toolStepKind(b.name) !== 'image') continue;
+        if (!runningToolCalls.includes(b.id)) continue;
+        if (resultForBlock.has(b.id)) continue;
+        pendingImageCallId = b.id;
+      }
     }
   }
 
@@ -102,6 +122,15 @@ export function AssistantGroup({
                 .map((b) => ({ id: b.id, src: generatedImageSrc(b, resultForBlock.get(b.id)) }))
                 .filter((x): x is { id: string; src: string } => x.src !== undefined)
             : [];
+        // While an image is being generated its card is NOT empty: the same box
+        // the finished picture will occupy shows the model's own intermediate
+        // decodes, resolving live (ThreadImagePlaceholder). It renders in the
+        // chain that owns the pending call, which is where the finished image
+        // would appear, so the swap happens in place.
+        const pendingHere =
+          pendingImageCallId !== undefined &&
+          seg.kind === 'chain' &&
+          seg.blocks.some((b) => b.type === 'toolCall' && b.id === pendingImageCallId);
         return (
           <div key={`${groupId}-a${activityN++}`} className="flex min-w-0 flex-col gap-2">
             <ThreadActivityChain
@@ -116,6 +145,11 @@ export function AssistantGroup({
             {chainImages.map((img) => (
               <ThreadImage key={img.id} src={img.src} />
             ))}
+            {/* Deliberately unkeyed and rendered from a stable position: the
+                placeholder subscribes to the frame stream itself and drives its
+                own DOM, so it must MOUNT ONCE per generation. Remounting it
+                would replay its entrance animation mid-run. */}
+            {pendingHere ? <ThreadImagePlaceholder /> : null}
           </div>
         );
       })}

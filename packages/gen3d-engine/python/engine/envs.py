@@ -51,6 +51,8 @@ def provision(registry: Registry, model: dict, log, cancelled: threading.Event) 
         _provision_autoremesher(registry, model, log)
     elif env_kind == "meshtools":
         _provision_meshtools(registry, log)
+    elif env_kind == "audio":
+        _provision_audio(registry, log)
     else:
         raise RuntimeError(f"unknown env kind: {env_kind}")
 
@@ -330,3 +332,113 @@ def _provision_meshtools(registry: Registry, log) -> None:
 
 def write_registry_note(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2))
+
+
+#: What the audio venv must be able to import before it counts as provisioned.
+AUDIO_IMPORTS = ("parakeet_mlx", "mlx_audio", "numpy")
+
+
+def _provision_audio(registry: Registry, log) -> None:
+    """One venv for all three audio ops, plus the thinksound.cpp build for SFX.
+
+    ONE venv on purpose: text→speech, speech→text and text→sound share MLX and
+    numpy, and a 24 GB machine should never hold two of these at once anyway
+    (jobs.py runs a single worker at a time for exactly this reason).
+
+    The SFX side is a native build rather than a wheel — thinksound.cpp is GGML
+    with a Metal backend, so it is compiled here the same way AutoRemesher and
+    QuadriFlow are. Two upstream fixes are needed on macOS and are applied to
+    the checkout after clone (see _patch_thinksound_for_macos).
+    """
+    uv = registry.uv_path
+    audio = registry.tool_dir("audio")
+    python = audio / ".venv" / "bin" / "python"
+    if not python.exists():
+        audio.mkdir(parents=True, exist_ok=True)
+        log("Creating the audio venv…")
+        _run([uv, "venv", str(audio / ".venv"), "--python", "3.12"], audio, log)
+    probe = subprocess.run(
+        [str(python), "-c", "import " + ", ".join(AUDIO_IMPORTS)],
+        capture_output=True,
+        text=True,
+    )
+    if probe.returncode != 0:
+        log("Installing the audio stack (parakeet-mlx + mlx-audio)…")
+        _run([uv, "pip", "install", "--python", str(python), "parakeet-mlx", "mlx-audio"], audio, log)
+
+    # SFX: clone + build thinksound.cpp. Skipped entirely if it is already built,
+    # since this is a multi-minute compile.
+    tool = registry.ensure_tool_clone("thinksound.cpp", log)
+    cli = tool / "build" / "ts-dasheng_generate"
+    if cli.exists():
+        return
+    _patch_thinksound_for_macos(tool, log)
+    log("Building thinksound.cpp (GGML + Metal)…")
+    _run(["cmake", "-S", str(tool), "-B", str(tool / "build"), "-DCMAKE_BUILD_TYPE=Release"], tool, log)
+    _run(["cmake", "--build", str(tool / "build"), "-j", "8"], tool, log)
+
+
+def _patch_thinksound_for_macos(tool: Path, log) -> None:
+    """Two upstream bugs that make thinksound.cpp unusable on a Mac.
+
+    BOTH were hit on a real run, and neither is subtle once seen:
+
+    1. `ts_resolve_gguf_dir` finds its own executable with
+       `read_symlink("/proc/self/exe")`. That path is Linux-only; on macOS the
+       throw escapes `main()` before any argument is parsed, so even `--help`
+       died with an uncaught filesystem_error. Darwin's answer is
+       _NSGetExecutablePath.
+
+    2. `ts-dasheng_generate` wrote a perfectly good wav and then aborted with
+       SIGABRT (exit 134) inside a STATIC destructor: ggml keeps its Metal
+       devices in a function-local static whose destructor asserts the
+       residency-set collection is empty, and something in the model wrappers
+       has not freed a buffer. A caller reading the exit status sees a failure
+       that did not happen. Leaving via _Exit after the file is closed skips
+       static teardown; the kernel reclaims the memory. This does NOT fix the
+       leak — that is worth reporting upstream — it stops the leak from being
+       reported as a failed generation.
+
+    Both are applied idempotently, so a re-provision over a patched checkout is
+    a no-op rather than a double edit.
+    """
+    utils = tool / "src" / "common" / "ts_utils.cpp"
+    if utils.exists():
+        text = utils.read_text()
+        if "_NSGetExecutablePath" not in text:
+            log("Patching thinksound: /proc/self/exe is Linux-only")
+            text = text.replace(
+                'fs::path exe = fs::read_symlink("/proc/self/exe");',
+                "fs::path exe;\n"
+                "#if defined(__APPLE__)\n"
+                "    { char buf[4096]; uint32_t sz = sizeof(buf);\n"
+                "      if (_NSGetExecutablePath(buf, &sz) == 0) {\n"
+                "          std::error_code ec; fs::path c = fs::canonical(fs::path(buf), ec);\n"
+                "          exe = ec ? fs::path(buf) : c; } }\n"
+                "#else\n"
+                "    { std::error_code ec; exe = fs::read_symlink(\"/proc/self/exe\", ec);\n"
+                "      if (ec) exe.clear(); }\n"
+                "#endif",
+            )
+            if "#include <mach-o/dyld.h>" not in text:
+                i = text.index("#include")
+                text = text[:i] + "#if defined(__APPLE__)\n#include <mach-o/dyld.h>\n#endif\n" + text[i:]
+            utils.write_text(text)
+
+    gen = tool / "src" / "tools" / "dasheng_generate.cpp"
+    if gen.exists():
+        text = gen.read_text()
+        if "std::_Exit(0)" not in text:
+            log("Patching thinksound: skip static teardown after writing the wav")
+            text = text.replace(
+                "    return 0;\n}",
+                "    // ggml's static Metal-device destructor asserts its residency set is\n"
+                "    // empty and it is not, aborting AFTER a good wav is written. Leave\n"
+                "    // before static teardown; the kernel reclaims the rest.\n"
+                "    fflush(nullptr);\n"
+                "    std::_Exit(0);\n}",
+            )
+            if "#include <cstdlib>" not in text:
+                i = text.index("#include")
+                text = text[:i] + "#include <cstdlib>\n" + text[i:]
+            gen.write_text(text)

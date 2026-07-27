@@ -56,6 +56,7 @@ const STAGE_WORD: Record<Gen3dRole, { readonly doing: string; readonly done: str
   segment: { doing: 'Segmenting', done: 'Segmented' },
   retopo: { doing: 'Remeshing', done: 'Remeshed' },
   rig: { doing: 'Rigging', done: 'Rigged' },
+  audio: { doing: 'Sounding', done: 'Sounded' },
 };
 
 /** Ticks per chunk — enough to read as "filling", few enough to stay legible. */
@@ -68,6 +69,10 @@ const STAGE_TITLE: Record<Gen3dRole, string> = {
   segment: 'Segmenting parts',
   retopo: 'Rebuilding topology',
   rig: 'Fitting the skeleton',
+  // Audio is not a studio stage — these strings exist so the map stays
+  // exhaustive over Gen3dRole. If audio ever runs through this panel, they are
+  // already right.
+  audio: 'Generating audio',
 };
 
 /** What the user is waiting for, in one line, when there is no worker message. */
@@ -78,6 +83,7 @@ const STAGE_HINT: Record<Gen3dRole, string> = {
   segment: 'Splitting the mesh into semantic parts.',
   retopo: 'Rebuilding the surface as clean quad topology.',
   rig: 'Measuring the shape and fitting joints to it.',
+  audio: 'Generating audio from your description.',
 };
 
 /** mm:ss since this job started. Null for the first few seconds — a timer on a

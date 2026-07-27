@@ -40,6 +40,15 @@ TOOL_REPOS = {
         "https://github.com/Roblox/cube.git",
         "3c6d06ddbef3160a1e1950cb13ab63dd12a61e50",
     ),
+    "thinksound.cpp": (
+        "https://github.com/pwilkin/thinksound.cpp.git",
+        # Pinned for the same reason as SkinTokens: _patch_thinksound_for_macos
+        # rewrites two specific places in this tree (the /proc/self/exe lookup
+        # in ts_utils.cpp and the return from dasheng_generate's main). Both
+        # patches match on exact source text, so an upstream edit to either
+        # must be re-checked rather than silently no-op.
+        "be3c11a474af",
+    ),
 }
 
 

@@ -23,9 +23,12 @@ describe('catalog', () => {
       'autoremesher',
       'cube3d',
       'cubepart',
+      'dasheng-sfx',
       'humanoid-rig',
       'mageflow',
       'mageflow-edit',
+      'parakeet-asr',
+      'qwen3-tts',
       'skintokens',
       'trellis2',
     ]);
@@ -84,7 +87,7 @@ describe('catalog', () => {
 
   it('sidecar registry carries repos, mirrors and pipeline types', () => {
     const registry = toSidecarRegistry();
-    expect(registry.models).toHaveLength(8);
+    expect(registry.models).toHaveLength(11);
     expect(registry.gatedMirrors['facebook/dinov3-vitl16-pretrain-lvd1689m']).toContain(
       'camenduru',
     );

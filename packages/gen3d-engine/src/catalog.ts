@@ -30,8 +30,21 @@ export type Gen3dModelId =
   | 'cubepart'
   | 'autoremesher'
   | 'skintokens'
+  | 'qwen3-tts'
+  | 'parakeet-asr'
+  | 'dasheng-sfx'
   | 'humanoid-rig';
-export type Gen3dRole = 'geometry' | 'image' | 'texture' | 'segment' | 'retopo' | 'rig';
+export type Gen3dRole =
+  | 'geometry'
+  | 'image'
+  | 'texture'
+  | 'segment'
+  | 'retopo'
+  | 'rig'
+  /** Text -> speech, text -> sound effect, speech -> text. Not a studio stage:
+   * these produce audio files (and transcripts) rather than advancing a mesh
+   * through the pipeline. */
+  | 'audio';
 export type Gen3dResolution = 'low' | 'medium' | 'high';
 
 /** One HF repo (or subset of it) a model needs on disk. */
@@ -61,7 +74,8 @@ export interface Gen3dModelSpec {
     | 'paint'
     | 'binary'
     | 'meshtools'
-    | 'skintokens';
+    | 'skintokens'
+    | 'audio';
 }
 
 /**
@@ -221,6 +235,58 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
       {
         repo: 'VAST-AI/SkinTokens',
         bytes: 3_900_000_000,
+      },
+    ],
+  },
+  {
+    id: 'parakeet-asr',
+    label: 'Parakeet (speech → text)',
+    role: 'audio',
+    // jedd asked for "FluidVoice". FluidVoice is a macOS APP (GPLv3) that
+    // wraps other engines, not a model — vendoring it would put copyleft on
+    // this codebase. Parakeet is what it runs underneath, and it has a
+    // first-class MLX port. MEASURED: 0.26s for 15s of speech (~55x real
+    // time), and it already emits punctuation, capitalisation and numerals
+    // ("three hundred and eighty four" -> "384").
+    note: 'On-device dictation — 15s of speech in 0.26s, already punctuated (NVIDIA Parakeet TDT, MLX)',
+    env: 'audio',
+    repos: [
+      {
+        repo: 'mlx-community/parakeet-tdt-0.6b-v3',
+        bytes: 2_300_000_000,
+      },
+    ],
+  },
+  {
+    id: 'qwen3-tts',
+    label: 'Qwen3-TTS (text → speech)',
+    role: 'audio',
+    // Verified by ROUND TRIP rather than by "the file is not silent":
+    // Parakeet transcribed this model's own output back word for word.
+    note: 'On-device speech — a sentence in ~2s warm (Qwen3-TTS 12Hz 0.6B, MLX)',
+    env: 'audio',
+    repos: [
+      {
+        repo: 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16',
+        bytes: 2_516_000_000,
+      },
+    ],
+  },
+  {
+    id: 'dasheng-sfx',
+    label: 'Dasheng-AudioGen (text → sound)',
+    role: 'audio',
+    // Runs through thinksound.cpp on GGML **Metal**. The DiT ships as f32,
+    // which is most of the 10 GB; thinksound can quantise it locally if that
+    // matters more than fidelity. Note the model predicts its OWN clip length
+    // from a content-adapter head, so there is no duration control to expose —
+    // every clip is ~10s.
+    note: 'Sound effects from a description — ~11s per clip on Metal (Dasheng-AudioGen, GGUF)',
+    env: 'audio',
+    repos: [
+      {
+        repo: 'ilintar/Dasheng-AudioGen-GGUF',
+        bytes: 10_803_000_000,
       },
     ],
   },

@@ -26,10 +26,25 @@ export type Gen3dModelId =
   | 'cubepart'
   | 'autoremesher'
   | 'skintokens'
-  | 'humanoid-rig';
+  | 'humanoid-rig'
+  | 'qwen3-tts'
+  | 'parakeet-asr'
+  | 'dasheng-sfx';
 
 /** Which studio stage a model backs. */
-export type Gen3dRole = 'geometry' | 'image' | 'texture' | 'segment' | 'retopo' | 'rig';
+export type Gen3dRole =
+  | 'geometry'
+  | 'image'
+  | 'texture'
+  | 'segment'
+  | 'retopo'
+  | 'rig'
+  /** Text -> speech, text -> sound, speech -> text. Not a studio stage: these
+   * produce audio (or a transcript) rather than advancing a mesh. Mirrors the
+   * union in packages/gen3d-engine/src/catalog.ts — a value added to one and
+   * not the other is exactly the break that made `pnpm typecheck` red when
+   * `skintokens` was added (commit d5f1c85). */
+  | 'audio';
 
 export interface Gen3dModelInfo {
   readonly id: Gen3dModelId;

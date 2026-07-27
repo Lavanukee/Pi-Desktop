@@ -142,14 +142,19 @@ try {
   }
   assert(/\d+\.\d GB/.test(dlText), 'download panel shows n.n GB sizes');
   assert(dlText.includes('Download all'), 'download panel offers Download all with total');
-  // Each model has its own Download button + an animated capability loop.
+  // Each model has its own Download button, and that button is the loudest
+  // thing on the card — "Download all · nn GB" is deliberately the quiet one.
   assert(
     (await page.locator('[data-testid^="tp-download-"]').count()) >= 4,
     'per-model Download buttons',
   );
+  // No capability loops on the CARDS. At card size they read as broken images
+  // (the TRELLIS loop is a near-empty rectangle with one dot); they live in the
+  // larger "Runs on <model>" hero instead, which this probe checks below via
+  // tp-needs-<id>. Asserting their ABSENCE keeps them from creeping back.
   assert(
-    (await page.locator('[data-testid="tp-download-panel"] svg.cl').count()) >= 5,
-    'animated capability loops per model',
+    (await page.locator('.tp-dlcard svg.cl').count()) === 0,
+    'no capability loops inside the download cards',
   );
   await shot('02-download-panel');
   await page.click('[data-testid="tp-download-back"]');
@@ -279,10 +284,10 @@ try {
   await shot('07-light-theme');
 
   console.log(
-    'tripo-ui-probe PASSED — no placeholder, download panel with capability loops + per-model ' +
-      'downloads, multi-image input, drop-import with rendered previews, 3 render modes + ' +
-      'wireframe overlay, stage download cards, the animate rig GATE, Send To logos, export. ' +
-      `Shots: ${OUT_DIR}`,
+    'tripo-ui-probe PASSED — no placeholder, download panel with per-model downloads (and no ' +
+      'card-size capability loops), multi-image input, drop-import with rendered previews, ' +
+      '3 render modes + wireframe overlay, stage download cards, the animate rig GATE, ' +
+      `Send To logos, export. Shots: ${OUT_DIR}`,
   );
 } finally {
   await app.close();

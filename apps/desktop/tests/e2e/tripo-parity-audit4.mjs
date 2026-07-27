@@ -130,7 +130,9 @@ try {
       supported: CSS.supports('corner-shape', 'superellipse(1.5)'),
       // studio surfaces
       'tp-topbar': shapeOf('.tp-topbar'),
-      'tp-generate-btn': shapeOf('.tp-generate-btn'),
+      // .tp-generate-btn became .tp-btn-primary (the class names now describe
+      // the button TIER rather than the first place each one appeared).
+      'tp-btn-primary': shapeOf('.tp-btn-primary'),
       'tp-card': shapeOf('.tp-input-card'),
       'tp-segmented': shapeOf('.tp-segmented'),
       'tp-rail-item': shapeOf('.tp-rail-item'),
@@ -294,23 +296,78 @@ try {
     await setTheme(f, m);
     await page.waitForTimeout(180);
     contrast[`${f}-${m}`] = await page.evaluate(() => {
-      const lum = (rgb) => {
-        const m2 = rgb.match(/rgba?\(([^)]+)\)/);
+      /**
+       * Parse a computed colour into {r,g,b,a}.
+       *
+       * Handles BOTH serialisations. Chromium returns `rgb()`/`rgba()` for
+       * ordinary declarations but `color(srgb r g b / a)` — components 0..1 —
+       * whenever the value resolved through `color-mix()`. The rgba-only regex
+       * silently returned null for those, which dropped every such element out
+       * of the sweep entirely; that is why this probe reported nothing at all
+       * about the gizmo axis balls once their fill became a color-mix.
+       */
+      const parse = (s) => {
+        const srgb = s.match(/color\(srgb\s+([^)]+)\)/);
+        if (srgb !== null) {
+          const p = srgb[1]
+            .trim()
+            .split(/[\s/]+/)
+            .map(Number.parseFloat);
+          return { r: p[0] * 255, g: p[1] * 255, b: p[2] * 255, a: p.length > 3 ? p[3] : 1 };
+        }
+        const m2 = s.match(/rgba?\(([^)]+)\)/);
         if (m2 === null) return null;
-        const [r, g, b] = m2[1].split(',').map(Number.parseFloat);
+        const p = m2[1].split(',').map(Number.parseFloat);
+        return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+      };
+      const lum = (rgb) => {
+        const c = parse(rgb);
+        if (c === null) return null;
         const ch = (v) => {
           const s = v / 255;
           return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
         };
-        return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+        return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b);
       };
-      /** Nearest ancestor with a non-transparent background. */
+      /**
+       * The colour actually BEHIND `el`, compositing translucent layers.
+       *
+       * The naive version — "first ancestor whose background isn't exactly
+       * rgba(0,0,0,0)" — is what produced this probe's one unexplained result:
+       * `.tp-segment` ("512") reported 1.00:1 under both codex modes while the
+       * screenshot showed it plainly legible. Under codex `.tp-segmented`
+       * carries `rgba(26, 28, 31, 0.02)`, a 2%-alpha tint; the walker stopped
+       * there, dropped the alpha, and compared rgb(26,28,31) text against
+       * rgb(26,28,31) "background" — identical, hence exactly 1.00. The real
+       * backdrop is .tp-genpanel's white. Composite instead of stopping.
+       */
       const bgOf = (el) => {
+        const layers = [];
         for (let n = el; n !== null; n = n.parentElement) {
-          const bg = getComputedStyle(n).backgroundColor;
-          if (bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return bg;
+          const c = parse(getComputedStyle(n).backgroundColor);
+          if (c === null || c.a === 0) continue;
+          layers.push(c);
+          if (c.a >= 1) break;
         }
-        return getComputedStyle(document.body).backgroundColor;
+        const base = parse(getComputedStyle(document.body).backgroundColor) ?? {
+          r: 255,
+          g: 255,
+          b: 255,
+          a: 1,
+        };
+        if (layers.length === 0 || layers[layers.length - 1].a < 1) layers.push(base);
+        // Bottom-up: each layer paints over what is already there.
+        let out = layers[layers.length - 1];
+        for (let i = layers.length - 2; i >= 0; i--) {
+          const t = layers[i];
+          out = {
+            r: t.r * t.a + out.r * (1 - t.a),
+            g: t.g * t.a + out.g * (1 - t.a),
+            b: t.b * t.a + out.b * (1 - t.a),
+            a: 1,
+          };
+        }
+        return `rgb(${out.r}, ${out.g}, ${out.b})`;
       };
       const rows = [];
       const seen = new Set();
@@ -321,8 +378,21 @@ try {
         if (cls === '' || seen.has(cls)) continue;
         seen.add(cls);
         const cs = getComputedStyle(el);
-        const lf = lum(cs.color);
-        const lb = lum(bgOf(el));
+        // Translucent TEXT has to be composited over its backdrop too — several
+        // studio labels are rgba(…, 0.7), and taking their raw rgb overstates
+        // the contrast.
+        const bg = bgOf(el);
+        const fgRaw = parse(cs.color);
+        const bgC = parse(bg);
+        const lf =
+          fgRaw === null || bgC === null || fgRaw.a >= 1
+            ? lum(cs.color)
+            : lum(
+                `rgb(${fgRaw.r * fgRaw.a + bgC.r * (1 - fgRaw.a)}, ` +
+                  `${fgRaw.g * fgRaw.a + bgC.g * (1 - fgRaw.a)}, ` +
+                  `${fgRaw.b * fgRaw.a + bgC.b * (1 - fgRaw.a)})`,
+              );
+        const lb = lum(bg);
         if (lf === null || lb === null) continue;
         const ratio = (Math.max(lf, lb) + 0.05) / (Math.min(lf, lb) + 0.05);
         const px = Number.parseFloat(cs.fontSize);

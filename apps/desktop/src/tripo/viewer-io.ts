@@ -176,7 +176,14 @@ export function addStageVersion(
     faces: 0,
     vertices: 0,
     topology: null,
-    ...(opts.op === 'rig' ? { rigged: true, humanoid: opts.humanoid === true } : {}),
+    // 'motion' carries the rig forward: its output IS the rigged GLB with a clip
+    // written into it, same skeleton and same skin weights. Without this the
+    // animated version looked UNRIGGED — the Animate panel dropped back to
+    // "Analyse shape & rig" the moment a clip finished, which reads as having
+    // lost the rig you just used.
+    ...(opts.op === 'rig' || opts.op === 'motion'
+      ? { rigged: true, humanoid: opts.humanoid === true }
+      : {}),
     ...(opts.diskPath !== undefined ? { diskPath: opts.diskPath } : {}),
   });
   saveAssetTree();

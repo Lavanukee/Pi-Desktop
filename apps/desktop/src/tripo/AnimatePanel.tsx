@@ -262,7 +262,10 @@ export function AnimatePanel(): JSX.Element {
       'motion',
       version.diskPath,
       { assetId: asset.id, versionId: version.id, op: 'motion' },
-      { prompt: motionPrompt.trim(), seconds: motionSeconds },
+      // knownHumanoid is not in doubt here: this button only exists on a rig
+      // that measured humanoid. Without it the ANIMATED version records
+      // humanoid:false and the motion controls disappear after the first clip.
+      { prompt: motionPrompt.trim(), seconds: motionSeconds, knownHumanoid: true },
     );
   };
 

@@ -464,6 +464,9 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
      * bundled sample rig and never showed anything for an imported or generated
      * one — so a real rig was invisible in the app that produced it. */
     let importedSkeleton: InstanceType<typeof THREE.SkeletonHelper> | null = null;
+    /** Drives clips that arrived with the USER's model. Separate from `mixer`,
+     * which belongs to the bundled sample rig. */
+    let importedMixer: InstanceType<typeof THREE.AnimationMixer> | null = null;
     let importedId: string | null = null;
     /** Quad topology of the loaded asset (retopo results only). */
     let importedTopology: PdTopology | null = null;
@@ -645,9 +648,17 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
         return;
       }
       let group: InstanceType<typeof THREE.Group> | null = null;
+      /** Clips that came in WITH this model — a generated motion lives here. */
+      let clips: InstanceType<typeof THREE.AnimationClip>[] = [];
       try {
         if (entry.format === 'glb' || entry.format === 'gltf') {
-          group = (await parseGlb(entry.buffer)).scene;
+          const parsed = await parseGlb(entry.buffer);
+          group = parsed.scene;
+          // Previously only `.scene` was taken and the clips were dropped on the
+          // floor, so a model the motion stage had just animated loaded as a
+          // statue: the ONE mixer in this file is bound to the bundled sample
+          // rig, and an imported or generated model never got one at all.
+          clips = parsed.animations ?? [];
         } else if (entry.format === 'obj') {
           const text = new TextDecoder().decode(entry.buffer);
           group = new OBJLoader().parse(text) as InstanceType<typeof THREE.Group>;
@@ -673,6 +684,10 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       if (importedWire !== null) {
         scene.remove(importedWire);
         disposeTree(importedWire);
+      }
+      if (importedMixer !== null) {
+        importedMixer.stopAllAction();
+        importedMixer = null;
       }
       if (importedSkeleton !== null) {
         scene.remove(importedSkeleton);
@@ -728,6 +743,19 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       importedGroup = group;
       importedId = id;
       scene.add(group);
+
+      // Play what it came with, on loop, straight away. A generated clip is the
+      // whole point of the motion stage, and asking the user to find a play
+      // control for it would be asking them to prove it worked.
+      // (the previous model's mixer was already stopped in the teardown above)
+      if (clips.length > 0) {
+        importedMixer = new THREE.AnimationMixer(group);
+        const first = clips[0];
+        if (first === undefined) return;
+        const action = importedMixer.clipAction(first);
+        action.setLoop(THREE.LoopRepeat, Number.POSITIVE_INFINITY);
+        action.play();
+      }
 
       // Skeleton overlay, when this model actually carries one. SkeletonHelper
       // walks the object's bone hierarchy, so it follows the rig's real joint
@@ -1152,6 +1180,10 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       if (mixer !== null && useTripoStore.getState().pipelineStage === 'animate') {
         mixer.update(dt);
       }
+      // The user's own clip plays in EVERY panel, not just Animate: they asked
+      // for a moving character, and it should still be moving when they switch
+      // to look at something else.
+      if (importedMixer !== null) importedMixer.update(dt);
       controls.update();
       renderer.render(scene, camera);
       syncGizmo();

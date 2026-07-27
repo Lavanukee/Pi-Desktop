@@ -12,6 +12,7 @@ import {
   type MenuItemConstructorOptions,
   type NativeImage,
   nativeImage,
+  session,
   type WebContents,
   type WebPreferences,
 } from 'electron';
@@ -47,6 +48,7 @@ import { registerSkillsIpc } from './skills/skills-main';
 import { disposeAllPtys, registerPtyIpc } from './terminal/pty-manager';
 import {
   isTrustedIpcEvent,
+  isTrustedWebContents,
   registerTrustedSender,
   type ValidatableIpcEvent,
 } from './trusted-senders';
@@ -518,6 +520,28 @@ if (!hasSingleInstanceLock) {
       const icon = appIconImage();
       if (icon !== null) app.dock.setIcon(icon);
     }
+    // MICROPHONE. Chromium denies getUserMedia by default in Electron, and a
+    // denial with no handler simply never resolves — the dictation button
+    // looked dead rather than blocked (measured: click, no waveform, no error).
+    // Grant ONLY audio capture, and only to our own windows; everything else a
+    // page might ask for (camera, geolocation, notifications, MIDI…) stays
+    // denied, so this widens the app's surface by exactly one capability.
+    session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+      if (!isTrustedWebContents(contents) || permission !== 'media') {
+        callback(false);
+        return;
+      }
+      // 'media' covers camera AND microphone; the requested types say which.
+      // Dictation needs audio only, so a request that also asks for video is
+      // refused rather than quietly granted alongside it.
+      const types = (details as { mediaTypes?: readonly string[] }).mediaTypes ?? [];
+      callback(types.includes('audio') && !types.includes('video'));
+    });
+    session.defaultSession.setPermissionCheckHandler((contents, permission, _origin, details) => {
+      if (!isTrustedWebContents(contents) || permission !== 'media') return false;
+      const kind = (details as { mediaType?: string }).mediaType;
+      return kind === 'audio' || kind === undefined;
+    });
     registerAppIpc();
     registerPiIpc({
       extraTeardown: reapChildProcesses,

@@ -19,7 +19,7 @@ import {
   IconClose,
 } from '@pi-desktop/ui';
 import { useEffect, useRef, useState } from 'react';
-import { IconPause, IconPlay, IconStop } from '../settings/icons';
+import { IconMic, IconPause, IconPlay, IconStop } from '../settings/icons';
 import { abortCorpTask } from '../state/corp-connect';
 import { useCorpStore } from '../state/corp-store';
 import {
@@ -37,6 +37,8 @@ import { productionHarnessEnabled } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
 import { ComposerBar } from './ComposerBar';
 import { ComposerFooter } from './ComposerFooter';
+import { DictationBar } from './DictationBar';
+import { useDictation } from './useDictation';
 import { type AcItem, Autocomplete } from './composer/Autocomplete';
 import { buildAgentMessage } from './composer/agent-message';
 import { useAttachmentPrefill } from './composer/attachment-prefill';
@@ -265,6 +267,19 @@ export function ChatComposer({
 
   const apiRef = useRef<ComposerEditorApi | null>(null);
   const [text, setText] = useState('');
+  // Dictation APPENDS rather than replaces: a user who typed half a sentence
+  // and then reached for the mic means "and also this", not "throw that away".
+  // The composer's text lives in `text` state, but this callback is created
+  // once and would close over the value at mount. A ref keeps it current
+  // without re-creating the recorder every keystroke.
+  const textRef = useRef('');
+  textRef.current = text;
+  const dictation = useDictation((spoken) => {
+    const existing = textRef.current;
+    const joined = existing.trim() === '' ? spoken : `${existing.replace(/\s+$/, '')} ${spoken}`;
+    apiRef.current?.setText(joined);
+    setText(joined);
+  });
   const [token, setToken] = useState<AcToken>(EMPTY_TOKEN);
   const [items, setItems] = useState<AcItem[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -769,10 +784,32 @@ export function ChatComposer({
             </div>
           ) : null}
 
+          {/* The waveform TAKES THE PLACE of the editor while the mic is open:
+              the composer is one input, and showing a text box you cannot type
+              into next to a live recording invites you to try. The editor is
+              hidden rather than unmounted so its content survives a cancel. */}
+          {/* A refusal has to be VISIBLE. useDictation can fail before any
+              recording exists — a denied microphone, no device, a transcription
+              that came back empty — and with only the waveform rendered those
+              all looked like a button that does nothing. */}
+          {dictation.phase === 'error' && dictation.error !== null ? (
+            <div className="pd-dictation-error" role="alert" data-testid="dictation-error">
+              {dictation.error}
+            </div>
+          ) : null}
+          {dictation.phase === 'recording' || dictation.phase === 'transcribing' ? (
+            <DictationBar
+              phase={dictation.phase}
+              levels={dictation.levels}
+              onStop={dictation.stop}
+              onCancel={dictation.cancel}
+            />
+          ) : null}
           <div
             ref={editorScrollRef}
             className="pd-composer-editor pd-scroll"
             data-ph-clip={phClipped ? 'true' : undefined}
+            hidden={dictation.phase === 'recording' || dictation.phase === 'transcribing'}
             onScroll={onEditorScroll}
           >
             <ComposerEditor
@@ -810,6 +847,19 @@ export function ChatComposer({
               onGenerateMotion={() => onGenAction('motion')}
               onPerception={() => onGenAction('perception')}
             />
+            <IconButton
+              aria-label={
+                dictation.phase === 'recording' ? 'Stop dictating' : 'Dictate a message'
+              }
+              variant="secondary"
+              circle
+              data-testid="composer-mic"
+              data-active={dictation.phase === 'recording' ? 'true' : undefined}
+              onClick={() => (dictation.phase === 'recording' ? dictation.stop() : dictation.start())}
+              disabled={dictation.phase === 'transcribing'}
+            >
+              <IconMic size={14} />
+            </IconButton>
             <div className="pd-composer-footer-spacer" />
             <ComposerFooter piModels={piModels} onOpenModels={onOpenModels} />
             {isBusy ? (

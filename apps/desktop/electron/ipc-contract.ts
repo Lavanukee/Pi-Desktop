@@ -29,7 +29,13 @@ import {
   type GenEventMap,
   type GenInvokeMap,
 } from './gen/gen-ipc-contract';
-import { GEN3D_INVOKE_CHANNELS, type Gen3dEventMap, type Gen3dInvokeMap } from './gen3d/gen3d-contract';
+import {
+  DICTATION_INVOKE_CHANNELS,
+  GEN3D_INVOKE_CHANNELS,
+  type DictationInvokeMap,
+  type Gen3dEventMap,
+  type Gen3dInvokeMap,
+} from './gen3d/gen3d-contract';
 import { IMPORT_INVOKE_CHANNELS, type ImportInvokeMap } from './import/import-contract';
 import { PI_INVOKE_CHANNELS, type PiEventMap, type PiInvokeMap } from './pi/contract';
 import { PROJECT_INVOKE_CHANNELS, type ProjectInvokeMap } from './project/project-contract';
@@ -500,6 +506,7 @@ export type AppInvokeMap = CoreInvokeMap &
   GenCatalogInvokeMap &
   GenInvokeMap &
   Gen3dInvokeMap &
+  DictationInvokeMap &
   BrowserInvokeMap &
   BrowserAgentInvokeMap &
   PtyInvokeMap &
@@ -526,6 +533,7 @@ export const APP_INVOKE_CHANNELS = [
   ...GEN_CATALOG_INVOKE_CHANNELS,
   ...GEN_INVOKE_CHANNELS,
   ...GEN3D_INVOKE_CHANNELS,
+  ...DICTATION_INVOKE_CHANNELS,
   ...BROWSER_INVOKE_CHANNELS,
   ...BROWSER_AGENT_INVOKE_CHANNELS,
   ...PTY_INVOKE_CHANNELS,

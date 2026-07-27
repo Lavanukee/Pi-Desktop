@@ -1867,3 +1867,88 @@ body {
     transform: translateY(0);
   }
 }
+
+/*
+ * ---------------------------------------------------------------------------
+ * Dictation (.pd-dictation) — the waveform that stands in for the composer's
+ * text while the microphone is open. See DictationBar.tsx / useDictation.ts.
+ *
+ * Bars are scaled, never resized: transform is the one property that animates
+ * on the compositor, and this updates ~17 times a second across 28 bars. Doing
+ * it with height would lay out the row on every tick.
+ */
+.pd-dictation {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 10px;
+}
+.pd-dictation-wave {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 2px;
+  height: 26px;
+  min-width: 0;
+}
+.pd-dictation-bar {
+  flex: 1;
+  min-width: 2px;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--pd-accent-primary);
+  /* Scaled from the middle so the bar grows both ways, like a level meter. */
+  transform-origin: center;
+  transition: transform 90ms linear;
+}
+/* Transcribing: the last waveform stays, dimmed — clearing it reads as "it
+ * lost what I said". */
+.pd-dictation[data-phase='transcribing'] .pd-dictation-bar {
+  background: var(--pd-text-muted);
+  opacity: 0.55;
+}
+.pd-dictation-hint {
+  flex-shrink: 0;
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-secondary);
+}
+.pd-dictation-x,
+.pd-dictation-done {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--pd-radius-button);
+  font-size: var(--pd-font-size-caption);
+  font-weight: var(--pd-font-weight-medium);
+  color: var(--pd-text-secondary);
+}
+.pd-dictation-x {
+  width: 26px;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+.pd-dictation-x:hover,
+.pd-dictation-done:hover {
+  background: var(--pd-bg-hover);
+  color: var(--pd-text-primary);
+}
+.pd-dictation-done {
+  color: var(--pd-accent-primary);
+}
+/* A recording indicator that pulses is decoration; the waveform already proves
+ * the mic is live. Under reduced motion the bars simply stop moving. */
+@media (prefers-reduced-motion: reduce) {
+  .pd-dictation-bar {
+    transition: none;
+  }
+}
+/* A dictation refusal (denied mic, no device, empty transcript). Sits where the
+ * waveform would be, so the answer appears where the user was looking. */
+.pd-dictation-error {
+  padding: 6px 10px;
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-status-danger-fg);
+}

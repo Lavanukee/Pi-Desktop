@@ -238,6 +238,31 @@ export type Gen3dEventMap = {
   'gen3d:catalog-changed': { readonly at: number };
 };
 
+/**
+ * Dictation: recorded microphone bytes in, transcript out.
+ *
+ * Lives on the gen3d contract because it runs the same audio worker as the
+ * other audio ops, but it is NOT a job — no jobId, no progress events, no
+ * cancel. One call, one string back. The renderer sends the encoded clip as
+ * base64 because Electron's structured clone would otherwise copy a Buffer
+ * across the boundary on every keystroke-length recording.
+ */
+export type DictationInvokeMap = {
+  'audio:transcribe': {
+    request: {
+      /** Base64 of the recorded clip exactly as the browser encoded it. */
+      readonly audioBase64: string;
+      /** File extension for that encoding, e.g. 'webm' — ffmpeg reads it. */
+      readonly extension: string;
+    };
+    response: { readonly ok: boolean; readonly text?: string; readonly error?: string };
+  };
+};
+
+export const DICTATION_INVOKE_CHANNELS = [
+  'audio:transcribe',
+] as const satisfies readonly (keyof DictationInvokeMap)[];
+
 export const GEN3D_INVOKE_CHANNELS = [
   'gen3d:catalog',
   'gen3d:download',

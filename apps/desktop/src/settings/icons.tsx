@@ -275,3 +275,16 @@ export function IconFlame(props: LocalIconProps) {
     </Svg>
   );
 }
+
+/** Microphone — the dictation toggle in the composer footer. Drawn on the same
+ * 16-unit grid as the rest of this set: a rounded capsule for the element, an
+ * arc for the basket, and a stem. */
+export function IconMic(props: LocalIconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="6.1" y="2" width="3.8" height="7.6" rx="1.9" />
+      <path d="M3.9 7.4v.6a4.1 4.1 0 0 0 8.2 0v-.6" />
+      <path d="M8 12.1V14" />
+    </Svg>
+  );
+}

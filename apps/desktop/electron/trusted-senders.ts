@@ -47,3 +47,16 @@ export function isTrustedIpcEvent(event: ValidatableIpcEvent): boolean {
     event.senderFrame === event.sender.mainFrame
   );
 }
+
+/**
+ * True for a WebContents the app itself created.
+ *
+ * The invoke path checks an EVENT (sender + senderFrame, so a child frame is
+ * rejected); Chromium's permission handlers hand over the WebContents alone,
+ * with no frame to compare. This is the same trust set, asked the only question
+ * that path can answer — used to grant microphone capture to our own windows
+ * and to nothing else.
+ */
+export function isTrustedWebContents(contents: TrustedSenderCandidate | null): boolean {
+  return contents !== null && trustedSenders.has(contents);
+}

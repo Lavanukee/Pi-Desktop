@@ -44,10 +44,16 @@ import {
 } from '@pi-desktop/shared';
 import { app, BrowserWindow, type IpcMain, type WebContents } from 'electron';
 import type { AppEventMap } from '../ipc-contract';
-import type { Gen3dInvokeMap, Gen3dModelId, Gen3dModelInfo } from './gen3d-contract';
+import type {
+  DictationInvokeMap,
+  Gen3dInvokeMap,
+  Gen3dModelId,
+  Gen3dModelInfo,
+} from './gen3d-contract';
 import { type ImageJobResult, ImageJobTracker } from './image-jobs';
 import { installRendererHealth, startMemorySampling, stopMemorySampling } from './renderer-health';
 
+import { transcribe } from './dictation-main';
 const log = createLogger('desktop:gen3d');
 const events = createIpcEventSender<AppEventMap>();
 
@@ -106,6 +112,22 @@ function sidecarScriptPath(): string {
   const bundlePath = path.join(__dirname, '..', '..', '..', ...tail);
   const devPath = path.join(__dirname, '..', '..', '..', '..', ...tail);
   return [packaged, bundlePath, devPath].find((p) => existsSync(p)) ?? devPath;
+}
+
+
+/** The audio venv's interpreter and the audio worker, resolved the same way
+ * the sidecar's own script is: cache root for the venv (it is provisioned
+ * there), and the python dir for the worker. */
+/** The audio worker needs only its weight cache; everything else it imports
+ * from its own venv. HF_HOME must match where the models were provisioned. */
+function workerEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, HF_HOME: path.join(cacheRoot(), 'hf'), PYTHONUNBUFFERED: '1' };
+}
+
+function audioPaths(): { python: string; worker: string } {
+  const python = path.join(cacheRoot(), 'src', 'audio', '.venv', 'bin', 'python');
+  const worker = path.join(path.dirname(sidecarScriptPath()), 'workers', 'audio_worker.py');
+  return { python, worker };
 }
 
 async function ensureSidecar(): Promise<Gen3dSidecar | null> {
@@ -376,7 +398,17 @@ function composeModels(
   }));
 }
 
-const handlers: IpcHandlers<Gen3dInvokeMap> = {
+const handlers: IpcHandlers<Gen3dInvokeMap & DictationInvokeMap> = {
+  /** Dictation. Not a job — see dictation-main.ts for why. */
+  'audio:transcribe': async (req) => {
+    const { python, worker } = audioPaths();
+    if (!existsSync(python)) {
+      return { ok: false, error: 'the dictation model is not installed yet' };
+    }
+    const bytes = Buffer.from(req.audioBase64, 'base64');
+    return await transcribe(python, worker, bytes, req.extension, workerEnv());
+  },
+
   'gen3d:catalog': async () => {
     // Report the live catalog ONLY if the sidecar is already up — never block
     // the first catalog call on booting it (that would leave the whole model
@@ -462,7 +494,7 @@ export function registerGen3dIpc(
   allowSender: (event: unknown) => boolean,
   _getWebContents: () => WebContents | null,
 ): void {
-  registerIpcHandlers<Gen3dInvokeMap>(ipcMain, handlers, { allowSender });
+  registerIpcHandlers<Gen3dInvokeMap & DictationInvokeMap>(ipcMain, handlers, { allowSender });
   // Record HOW the renderer dies if it does. A blank window that ignores Cmd+R
   // is a dead render process, and only the main process can say why.
   installRendererHealth();

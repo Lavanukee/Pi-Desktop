@@ -86,6 +86,7 @@ import {
   readSubagentDepth,
 } from './subagent/types.js';
 import { registerAskUser } from './tools/ask-user.js';
+import { registerImageTools } from './tools/image-tools.js';
 import { registerPlanTool } from './tools/plan-tool.js';
 import { registerSandboxFileTools } from './tools/sandbox-fs.js';
 import { truncateToolOutput } from './tools/tool-output-truncate.js';
@@ -753,6 +754,12 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
   // Ask-user tool: rich choice / multi-select / slider / free-text questions,
   // routed to the desktop QuestionCard via the input-dialog sentinel channel.
   registerAskUser(pi);
+
+  // Image generation + editing as ordinary chat tools, rendering INLINE in the
+  // thread. On-device via the gen3d engine, reached through the app's socket
+  // bridge. Registers NOTHING outside Pi Desktop (no bridge env → no tools), so
+  // a plain CLI pi never sees a capability this machine can't honour.
+  registerImageTools(pi);
 
   // Real subagents: `spawn_subagent` runs an isolated child pi and returns ONLY
   // its summary. Spawns are memory-scheduled (concurrency bounded by detected
@@ -1506,6 +1513,18 @@ export {
   registerAskUser,
   specFromParams,
 } from './tools/ask-user.js';
+export {
+  type ImageBridge,
+  type ImageBridgeResult,
+  imageBridgeFromEnv,
+} from './tools/image-bridge-client.js';
+export {
+  EDIT_IMAGE_TOOL,
+  GENERATE_IMAGE_TOOL,
+  imageToolResult,
+  pdFileUrl,
+  registerImageTools,
+} from './tools/image-tools.js';
 export {
   normalizePlan,
   PLAN_TOOL_NAME,

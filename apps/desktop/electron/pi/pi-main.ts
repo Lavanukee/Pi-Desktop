@@ -13,6 +13,8 @@ import { PiBridge } from '@pi-desktop/engine/main';
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
 import { app, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
 import { resolveBundledPackageAsset } from '../app-paths';
+import { registerGen3dBridge } from '../gen3d/gen3d-bridge';
+import { runImageJob } from '../gen3d/gen3d-main';
 import { getInferenceUtility } from '../inference/llm-main';
 import type { AppEventMap } from '../ipc-contract';
 import { activeProjectPath } from '../project/project-main';
@@ -271,6 +273,12 @@ export function registerPiIpc(
   registerResumeIpc();
   registerPrefillIpc();
   if (opts.getWindow !== undefined) registerSubagentBridge(opts.getWindow, childAgents);
+  // The chat's image tools (`generate_image` / `edit_image`) reach the gen3d
+  // engine through their own socket bridge, for the same reason and with the
+  // same timing constraint as the subagent one: its env must be published
+  // BEFORE the first pi spawn, or the harness sees no bridge and (by design)
+  // never registers the tools.
+  registerGen3dBridge(runImageJob);
 
   installPiQuitHold(app, {
     // Reap child-agent pi instances in the same held quit window as the main

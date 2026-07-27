@@ -85,7 +85,14 @@ const BROWSER = BROWSER_TOOL_NAMES;
 // — the class of request that was previously routed to a tool-search-only preset
 // and so drew "I can't access your calendar" refusals.
 const MAC_CONNECTORS = MAC_CONNECTOR_TOOLS;
-const IMAGE_GEN = ['image_generate', 'image_edit'] as const;
+// The REAL registered names come first: `generate_image` / `edit_image` are the
+// on-device image tools (tools/image-tools.ts, and gen-tools' generate_image).
+// `image_generate` / `image_edit` are legacy placeholders that no tool has ever
+// registered — kept only so an older preset name still resolves if one appears.
+// Without the real names here, an "draw me a …" turn classified as 2d-art front-
+// loaded NOTHING (resolvePresetTools filters to available tools) and the model
+// had to rediscover its own image tools through tool_search.
+const IMAGE_GEN = ['generate_image', 'edit_image', 'image_generate', 'image_edit'] as const;
 const VIDEO_GEN = ['video_generate', 'video_edit'] as const;
 const MOTION_GEN = ['motion_graphics_render'] as const;
 const THREE_D_GEN = ['model_3d_generate', 'model_3d_view'] as const;

@@ -45,11 +45,8 @@ import {
 import { app, BrowserWindow, type IpcMain, type WebContents } from 'electron';
 import type { AppEventMap } from '../ipc-contract';
 import type { Gen3dInvokeMap, Gen3dModelId, Gen3dModelInfo } from './gen3d-contract';
-import {
-  installRendererHealth,
-  startMemorySampling,
-  stopMemorySampling,
-} from './renderer-health';
+import { type ImageJobResult, ImageJobTracker } from './image-jobs';
+import { installRendererHealth, startMemorySampling, stopMemorySampling } from './renderer-health';
 
 const log = createLogger('desktop:gen3d');
 const events = createIpcEventSender<AppEventMap>();
@@ -207,6 +204,9 @@ function handleSidecarEvent(value: unknown): void {
     const jobId = String(event.jobId);
     const plan = jobPlans.get(jobId) ?? planGenerate('image', true);
     const update: JobUpdate = mapJobEvent(plan, event as unknown as SidecarJobEvent);
+    // Feed the chat's image tools, which AWAIT a specific job (the studio's
+    // panels just watch the broadcast below).
+    imageJobs.note(update);
     if (update.done) {
       jobPlans.delete(jobId);
       stopMemorySampling();
@@ -253,6 +253,105 @@ async function sidecarPost<T>(route: string, body: unknown): Promise<T | null> {
 }
 
 // ---------------------------------------------------------------------------
+// Awaitable image jobs — the seam the CHAT's image tools call through.
+//
+// The studio panels are event-driven (fire `gen3d:generate`, watch `gen3d:job`
+// broadcasts), but a tool call is a request/response: it must AWAIT one image
+// and get back either a path or a reason. So a job started here registers a
+// waiter that the same `handleSidecarEvent` branch settles — no polling, and
+// exactly the same sidecar path (`/generate` with `imageOnly`) the Image panel
+// uses, so there stays ONE engine, ONE model manager, ONE 24 GB job at a time.
+// ---------------------------------------------------------------------------
+
+const ENGINE_DOWN =
+  'The 3D engine runtime is not available (uv/Python sidecar failed to start). Install uv and retry.';
+
+export interface ImageJobRequest {
+  /** Text→image prompt, or (with `editFrom`) the edit instruction. */
+  readonly prompt: string;
+  /** Absolute path of an image to EDIT instead of generating fresh. */
+  readonly editFrom?: string;
+}
+
+/** Image gen is ~11 s warm, but a cold call loads a ~15 GB model first. Generous
+ * on purpose — the cap exists so nothing hangs forever, not to be tight. */
+const IMAGE_JOB_TIMEOUT_MS = 15 * 60_000;
+
+const imageJobs = new ImageJobTracker();
+
+const MODEL_LABELS: Record<string, string> = {
+  mageflow: 'Mage-Flow-Turbo (the image model)',
+  'mageflow-edit': 'Mage-Flow-Edit-Turbo (the image-editing model)',
+};
+
+/**
+ * Generate — or edit — ONE image and resolve with its path on disk.
+ *
+ * Every failure mode returns a reason rather than hanging: no engine runtime,
+ * the model not downloaded, a missing source image, another job already
+ * occupying the machine, an engine-side error, or the timeout.
+ */
+export async function runImageJob(
+  req: ImageJobRequest,
+  timeoutMs: number = IMAGE_JOB_TIMEOUT_MS,
+): Promise<ImageJobResult> {
+  const prompt = req.prompt.trim();
+  if (prompt === '') return { ok: false, error: 'a prompt is required' };
+
+  const editFrom = req.editFrom?.trim();
+  const editing = editFrom !== undefined && editFrom !== '';
+  if (editing) {
+    if (!path.isAbsolute(editFrom)) {
+      return { ok: false, error: `image_path must be an absolute path (got "${editFrom}")` };
+    }
+    if (!existsSync(editFrom)) return { ok: false, error: `no image at ${editFrom}` };
+  }
+
+  // Model gate FIRST, from the stamp files — a clear "download it" beats an
+  // engine-side failure ten seconds in. (The sidecar only checks `mageflow`,
+  // so an edit without the edit weights would otherwise die inside the worker.)
+  const needed = editing ? 'mageflow-edit' : 'mageflow';
+  const installed = detectInstalled(existsSync, cacheRoot());
+  if (installed[needed] !== true) {
+    return {
+      ok: false,
+      error: `${MODEL_LABELS[needed] ?? needed} is not downloaded yet. Open Bobble 3D → Image and download it first.`,
+    };
+  }
+
+  // One heavy job at a time on a 24 GB machine. `jobPlans` holds every job this
+  // process started — studio panels included — so this also refuses to pile on
+  // top of a generation the user kicked off in the 3D studio.
+  if (jobPlans.size > 0) {
+    return {
+      ok: false,
+      error:
+        'the generation engine is already running a job — only one runs at a time on this machine. Try again once it finishes.',
+    };
+  }
+
+  startMemorySampling(editing ? 'chat:edit-image' : 'chat:generate-image');
+  const res = await sidecarPost<{ ok: boolean; jobId?: string; error?: string }>('/generate', {
+    kind: 'text',
+    prompt,
+    resolution: 'medium',
+    texture: false,
+    imageOnly: true,
+    ...(editing ? { editFrom } : {}),
+  });
+  if (res === null) {
+    stopMemorySampling();
+    return { ok: false, error: ENGINE_DOWN };
+  }
+  if (!res.ok || res.jobId === undefined) {
+    stopMemorySampling();
+    return { ok: false, error: res.error ?? 'the engine refused the request' };
+  }
+  jobPlans.set(res.jobId, planGenerate('text', false));
+  return imageJobs.wait(res.jobId, timeoutMs);
+}
+
+// ---------------------------------------------------------------------------
 // Catalog composition — TS labels/sizes/notes + sidecar (or stamp-file) truth.
 // ---------------------------------------------------------------------------
 
@@ -270,9 +369,6 @@ function composeModels(
     note: spec.note,
   }));
 }
-
-const ENGINE_DOWN =
-  'The 3D engine runtime is not available (uv/Python sidecar failed to start). Install uv and retry.';
 
 const handlers: IpcHandlers<Gen3dInvokeMap> = {
   'gen3d:catalog': async () => {

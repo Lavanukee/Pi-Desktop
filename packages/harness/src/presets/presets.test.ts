@@ -32,6 +32,8 @@ const ALL_TOOLS = [
   'browser_back',
   'browser_forward',
   'browser_key',
+  'generate_image',
+  'edit_image',
   'image_generate',
   'image_edit',
   'video_generate',
@@ -173,6 +175,8 @@ describe('resolvePresetTools — full tool universe', () => {
     expect(resolvePresetTools('advanced-video', ALL_TOOLS)).toEqual([
       'video_generate',
       'video_edit',
+      'generate_image',
+      'edit_image',
       'image_generate',
       'image_edit',
       'tool_search',
@@ -181,6 +185,20 @@ describe('resolvePresetTools — full tool universe', () => {
       'edit',
       'bash',
     ]);
+  });
+
+  it('2d-art front-loads the REAL on-device image tools, not just placeholder names', () => {
+    // Regression: IMAGE_GEN listed only `image_generate`/`image_edit`, which no
+    // tool has ever registered — so resolvePresetTools filtered them out and a
+    // "draw me a …" turn front-loaded NO image tool at all.
+    const tools = resolvePresetTools('2d-art', ALL_TOOLS);
+    expect(tools).toContain('generate_image');
+    expect(tools).toContain('edit_image');
+    // …and the same for the classes that reach for an image on the way to something
+    // else (3D starts from a generated image; motion graphics composites them).
+    for (const cls of ['3d', 'motion-graphics'] as const) {
+      expect(resolvePresetTools(cls, ALL_TOOLS)).toContain('generate_image');
+    }
   });
 
   it('simple-QA → tool_search + the always-active file tools (never a bare refusal)', () => {

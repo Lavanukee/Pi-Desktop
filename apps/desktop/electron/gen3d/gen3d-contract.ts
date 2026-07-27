@@ -236,6 +236,18 @@ export type Gen3dEventMap = {
   'gen3d:download': Gen3dDownloadUpdate;
   /** Catalog changed (a download finished / the sidecar came up). */
   'gen3d:catalog-changed': { readonly at: number };
+  /**
+   * A live dictation session: the transcript so far, growing as you speak.
+   *
+   * An EVENT rather than the reply to a chunk because the recogniser does not
+   * answer per chunk — it emits when it has decided something, which may be
+   * after several chunks or in the middle of one.
+   */
+  'audio:dictation': {
+    readonly sessionId: string;
+    /** Transcript so far. Provisional: later audio can revise earlier words. */
+    readonly partial: string;
+  };
 };
 
 /**
@@ -257,10 +269,39 @@ export type DictationInvokeMap = {
     };
     response: { readonly ok: boolean; readonly text?: string; readonly error?: string };
   };
+  /**
+   * Open a streaming session. Resolves once the recogniser is LOADED, so the
+   * renderer can show "listening" only when audio will actually be heard —
+   * ~0.9s warm, and the process is kept alive between sessions so the second
+   * one is instant.
+   */
+  'audio:dictation-start': {
+    request: Record<string, never>;
+    response: { readonly ok: boolean; readonly sessionId?: string; readonly error?: string };
+  };
+  /** Feed one buffer of float32 mono 16 kHz samples (base64, little-endian). */
+  'audio:dictation-chunk': {
+    request: { readonly sessionId: string; readonly pcmBase64: string };
+    response: { readonly ok: boolean };
+  };
+  /** End the session and get the FINAL transcript (a full-context re-pass). */
+  'audio:dictation-stop': {
+    request: { readonly sessionId: string };
+    response: { readonly ok: boolean; readonly text?: string; readonly error?: string };
+  };
+  /** Abandon the session; no transcript, no final pass. */
+  'audio:dictation-cancel': {
+    request: { readonly sessionId: string };
+    response: { readonly ok: boolean };
+  };
 };
 
 export const DICTATION_INVOKE_CHANNELS = [
   'audio:transcribe',
+  'audio:dictation-start',
+  'audio:dictation-chunk',
+  'audio:dictation-stop',
+  'audio:dictation-cancel',
 ] as const satisfies readonly (keyof DictationInvokeMap)[];
 
 export const GEN3D_INVOKE_CHANNELS = [

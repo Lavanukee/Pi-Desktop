@@ -1870,35 +1870,62 @@ body {
 
 /*
  * ---------------------------------------------------------------------------
- * Dictation (.pd-dictation) — the waveform that stands in for the composer's
- * text while the microphone is open. See DictationBar.tsx / useDictation.ts.
+ * Dictation (.pd-dictation) — the row that takes over the composer FOOTER
+ * while the microphone is open. See DictationBar.tsx / useDictation.ts.
+ *
+ * It occupies the +/mic/model-picker/send row rather than the text area (jedd),
+ * because the text area is where the live transcript lands and covering it
+ * would hide the thing worth watching.
  *
  * Bars are scaled, never resized: transform is the one property that animates
- * on the compositor, and this updates ~17 times a second across 28 bars. Doing
+ * on the compositor, and this updates ~30 times a second across 40 bars. Doing
  * it with height would lay out the row on every tick.
  */
 .pd-dictation {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  /* Fills the footer it replaces, so the composer does not change height when
+   * the mic opens. */
   width: 100%;
-  min-height: 40px;
-  padding: 6px 10px;
+  min-width: 0;
+}
+/* A resting line under the bars. Silence scales every bar to its floor, which
+ * without this reads as a row of DOTS — the exact thing that made the first
+ * cut look broken. With it, quiet is a level meter at rest and speech rises
+ * out of the line. */
+.pd-dictation-wave::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--pd-text-muted);
+  opacity: 0.35;
 }
 .pd-dictation-wave {
+  position: relative;
   display: flex;
   flex: 1;
   align-items: center;
-  justify-content: flex-start;
+  /* Newest bar on the right, against the confirm button: the waveform reads as
+   * flowing toward the action, and a short recording does not start with the
+   * meter marooned in the middle of the row. */
+  justify-content: flex-end;
   /* A real level meter, not a row of dots. The first cut used 2px bars in a
    * 26px row with a 0.08 floor, so a quiet passage scaled to ~2px of a 2px bar
-   * — visually a dot, and jedd read the whole thing as unresponsive. Taller
-   * row, thicker bars, and a floor you can still see. */
+   * — visually a dot, and jedd read the whole thing as unresponsive. Thicker
+   * bars and a floor you can still see; the height now matches the footer's
+   * button row rather than the taller editor slot it used to live in. */
   gap: 3px;
-  height: 34px;
+  height: 26px;
   min-width: 0;
+  /* A narrow window clips the OLDEST bars off the left edge rather than
+   * shrinking the meter; the newest sound stays where the eye already is. */
+  overflow: hidden;
 }
 .pd-dictation-bar {
+  position: relative;
   flex: 0 0 auto;
   width: 3px;
   height: 100%;
@@ -1918,32 +1945,17 @@ body {
 }
 .pd-dictation-hint {
   flex-shrink: 0;
+  /* Steady width: "Listening" -> "Transcribing…" must not shove the waveform
+   * sideways at the exact moment the user is reading it. */
+  min-width: 74px;
+  text-align: right;
   font-size: var(--pd-font-size-caption);
   color: var(--pd-text-secondary);
 }
-.pd-dictation-x,
-.pd-dictation-done {
+/* Both buttons are the composer's own IconButtons, so the row keeps the
+ * footer's rhythm instead of introducing a second button language. */
+.pd-dictation > button {
   flex-shrink: 0;
-  height: 26px;
-  padding: 0 10px;
-  border-radius: var(--pd-radius-button);
-  font-size: var(--pd-font-size-caption);
-  font-weight: var(--pd-font-weight-medium);
-  color: var(--pd-text-secondary);
-}
-.pd-dictation-x {
-  width: 26px;
-  padding: 0;
-  font-size: 16px;
-  line-height: 1;
-}
-.pd-dictation-x:hover,
-.pd-dictation-done:hover {
-  background: var(--pd-bg-hover);
-  color: var(--pd-text-primary);
-}
-.pd-dictation-done {
-  color: var(--pd-accent-primary);
 }
 /* A recording indicator that pulses is decoration; the waveform already proves
  * the mic is live. Under reduced motion the bars simply stop moving. */

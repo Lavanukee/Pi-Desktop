@@ -44,6 +44,7 @@ import {
 } from '@pi-desktop/shared';
 import { app, BrowserWindow, type IpcMain, type WebContents } from 'electron';
 import type { AppEventMap } from '../ipc-contract';
+import { DictationSession, transcribe } from './dictation-main';
 import type {
   DictationInvokeMap,
   Gen3dInvokeMap,
@@ -53,7 +54,6 @@ import type {
 import { type ImageJobResult, ImageJobTracker } from './image-jobs';
 import { installRendererHealth, startMemorySampling, stopMemorySampling } from './renderer-health';
 
-import { transcribe } from './dictation-main';
 const log = createLogger('desktop:gen3d');
 const events = createIpcEventSender<AppEventMap>();
 
@@ -113,7 +113,6 @@ function sidecarScriptPath(): string {
   const devPath = path.join(__dirname, '..', '..', '..', '..', ...tail);
   return [packaged, bundlePath, devPath].find((p) => existsSync(p)) ?? devPath;
 }
-
 
 /** The audio venv's interpreter and the audio worker, resolved the same way
  * the sidecar's own script is: cache root for the venv (it is provisioned
@@ -410,6 +409,23 @@ function composeModels(
   }));
 }
 
+/**
+ * The live-dictation recogniser. One per app: the model is 2.3 GB and a second
+ * copy would be a second 2.3 GB, and there is one microphone anyway.
+ * Constructed lazily so an app that never dictates never spawns it.
+ */
+let dictationSession: DictationSession | null = null;
+
+function liveDictation(): DictationSession {
+  if (dictationSession === null) {
+    const { python, worker } = audioPaths();
+    dictationSession = new DictationSession(python, worker, workerEnv(), (sessionId, partial) =>
+      broadcast('audio:dictation', { sessionId, partial }),
+    );
+  }
+  return dictationSession;
+}
+
 const handlers: IpcHandlers<Gen3dInvokeMap & DictationInvokeMap> = {
   /** Dictation. Not a job — see dictation-main.ts for why. */
   'audio:transcribe': async (req) => {
@@ -419,6 +435,24 @@ const handlers: IpcHandlers<Gen3dInvokeMap & DictationInvokeMap> = {
     }
     const bytes = Buffer.from(req.audioBase64, 'base64');
     return await transcribe(python, worker, bytes, req.extension, workerEnv());
+  },
+
+  /** Live dictation. Partials arrive as `audio:dictation` events; the reply to
+   * `stop` is the accurate full-context transcript. */
+  'audio:dictation-start': async () => {
+    if (!existsSync(audioPaths().python)) {
+      return { ok: false, error: 'the dictation model is not installed yet' };
+    }
+    return await liveDictation().start();
+  },
+  'audio:dictation-chunk': async (req) => {
+    liveDictation().chunk(req.sessionId, req.pcmBase64);
+    return { ok: true };
+  },
+  'audio:dictation-stop': async (req) => await liveDictation().stop(req.sessionId),
+  'audio:dictation-cancel': async (req) => {
+    liveDictation().cancel(req.sessionId);
+    return { ok: true };
   },
 
   'gen3d:catalog': async () => {
@@ -511,6 +545,9 @@ export function registerGen3dIpc(
   // is a dead render process, and only the main process can say why.
   installRendererHealth();
   app.on('before-quit', () => {
+    // A held recogniser would outlive the window it was serving.
+    dictationSession?.dispose();
+    dictationSession = null;
     stopMemorySampling();
     eventsAbort.abort();
     sidecar?.dispose();

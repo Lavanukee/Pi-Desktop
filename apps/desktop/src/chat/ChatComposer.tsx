@@ -37,8 +37,6 @@ import { productionHarnessEnabled } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
 import { ComposerBar } from './ComposerBar';
 import { ComposerFooter } from './ComposerFooter';
-import { DictationBar } from './DictationBar';
-import { useDictation } from './useDictation';
 import { type AcItem, Autocomplete } from './composer/Autocomplete';
 import { buildAgentMessage } from './composer/agent-message';
 import { useAttachmentPrefill } from './composer/attachment-prefill';
@@ -50,6 +48,8 @@ import {
 import { useDropStore } from './composer/drop-store';
 import { type AcToken, EMPTY_TOKEN } from './composer/tokens';
 import { GEN_ACTION_PLANS, type TaskClass } from './composer-gen-actions';
+import { DictationBar } from './DictationBar';
+import { useDictation } from './useDictation';
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -274,12 +274,40 @@ export function ChatComposer({
   // without re-creating the recorder every keystroke.
   const textRef = useRef('');
   textRef.current = text;
-  const dictation = useDictation((spoken) => {
-    const existing = textRef.current;
-    const joined = existing.trim() === '' ? spoken : `${existing.replace(/\s+$/, '')} ${spoken}`;
+  // What was already typed when the mic opened. Live partials are written into
+  // the editor as they arrive, so `text` itself is no longer a stable base to
+  // append to — it already contains the last partial.
+  const dictationBaseRef = useRef('');
+  const applyDictated = (base: string, spoken: string): void => {
+    const joined = base.trim() === '' ? spoken : `${base.replace(/\s+$/, '')} ${spoken}`;
     apiRef.current?.setText(joined);
     setText(joined);
+  };
+  const dictation = useDictation((spoken) => {
+    // Dictation APPENDS rather than replaces: a user who typed half a sentence
+    // and then reached for the mic means "and also this", not "throw that away".
+    applyDictated(dictationBaseRef.current, spoken);
   });
+  const dictating = dictation.phase !== 'idle' && dictation.phase !== 'error';
+  // Words appear in the composer WHILE you speak. They are provisional — the
+  // final full-context transcript replaces them wholesale when you confirm.
+  //
+  // An effect, not a render-phase write: this touches the Lexical editor, and
+  // React may render a component twice before committing.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: writes the editor on new partials only
+  useEffect(() => {
+    if (dictation.phase !== 'recording' || dictation.partial === '') return;
+    applyDictated(dictationBaseRef.current, dictation.partial);
+  }, [dictation.partial, dictation.phase]);
+  const startDictation = (): void => {
+    dictationBaseRef.current = textRef.current;
+    dictation.start();
+  };
+  const cancelDictation = (): void => {
+    // Cancel puts the composer back exactly as it was, partials and all.
+    applyDictated(dictationBaseRef.current, '');
+    dictation.cancel();
+  };
   const [token, setToken] = useState<AcToken>(EMPTY_TOKEN);
   const [items, setItems] = useState<AcItem[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -784,10 +812,6 @@ export function ChatComposer({
             </div>
           ) : null}
 
-          {/* The waveform TAKES THE PLACE of the editor while the mic is open:
-              the composer is one input, and showing a text box you cannot type
-              into next to a live recording invites you to try. The editor is
-              hidden rather than unmounted so its content survives a cancel. */}
           {/* A refusal has to be VISIBLE. useDictation can fail before any
               recording exists — a denied microphone, no device, a transcription
               that came back empty — and with only the waveform rendered those
@@ -797,19 +821,12 @@ export function ChatComposer({
               {dictation.error}
             </div>
           ) : null}
-          {dictation.phase === 'recording' || dictation.phase === 'transcribing' ? (
-            <DictationBar
-              phase={dictation.phase}
-              levels={dictation.levels}
-              onStop={dictation.stop}
-              onCancel={dictation.cancel}
-            />
-          ) : null}
+          {/* The editor STAYS VISIBLE while dictating — it is where the words
+              land, and hiding it would hide the whole point. */}
           <div
             ref={editorScrollRef}
             className="pd-composer-editor pd-scroll"
             data-ph-clip={phClipped ? 'true' : undefined}
-            hidden={dictation.phase === 'recording' || dictation.phase === 'transcribing'}
             onScroll={onEditorScroll}
           >
             <ComposerEditor
@@ -823,7 +840,20 @@ export function ChatComposer({
             />
           </div>
 
-          <div className="pd-composer-footer">
+          {/* While the mic is open this row IS the dictation row: X, waveform,
+              confirm, standing exactly where +/mic/model/send normally are
+              (jedd). One row, one purpose at a time. */}
+          {dictating ? (
+            <div className="pd-composer-footer">
+              <DictationBar
+                phase={dictation.phase}
+                levels={dictation.levels}
+                onStop={dictation.stop}
+                onCancel={cancelDictation}
+              />
+            </div>
+          ) : null}
+          <div className="pd-composer-footer" hidden={dictating}>
             <input
               ref={fileInputRef}
               type="file"
@@ -848,15 +878,11 @@ export function ChatComposer({
               onPerception={() => onGenAction('perception')}
             />
             <IconButton
-              aria-label={
-                dictation.phase === 'recording' ? 'Stop dictating' : 'Dictate a message'
-              }
+              aria-label="Dictate a message"
               variant="secondary"
               circle
               data-testid="composer-mic"
-              data-active={dictation.phase === 'recording' ? 'true' : undefined}
-              onClick={() => (dictation.phase === 'recording' ? dictation.stop() : dictation.start())}
-              disabled={dictation.phase === 'transcribing'}
+              onClick={startDictation}
             >
               <IconMic size={14} />
             </IconButton>

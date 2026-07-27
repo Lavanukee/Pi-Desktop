@@ -1,22 +1,27 @@
 /**
- * The waveform that replaces the composer's text while you dictate.
+ * The dictation row: it TAKES OVER the composer footer while the mic is open.
+ *
+ * Where the +, mic, model picker and send button normally sit, there is instead
+ * an X, a live waveform, and a confirm button. The editor above stays visible
+ * and fills with words as you speak — which is the reason this row moved down
+ * here at all (jedd): a waveform standing where the text goes hides the thing
+ * you actually want to watch.
  *
  * Bars are drawn from the live analyser levels (useDictation), newest on the
- * right, so the shape follows the voice rather than a timer. The row also
- * carries the two exits — cancel throws the recording away, stop transcribes it
- * — because a recording UI with no visible way out is the thing people
- * complain about.
+ * right, so the shape follows the voice rather than a timer.
  *
  * `transcribing` keeps the last waveform on screen at reduced opacity instead
- * of clearing it. A box that empties the instant you stop reads as "it lost
+ * of clearing it. A row that empties the instant you stop reads as "it lost
  * what I said"; a frozen waveform reads as "it is working on that".
  */
+
+import { IconArrowUp, IconButton, IconClose } from '@pi-desktop/ui';
 import type { JSX } from 'react';
 import type { DictationPhase } from './useDictation';
 
 /** Bars are drawn even before any level arrives, so the row has a shape the
  * moment it appears rather than growing into one. */
-const MIN_BARS = 28;
+const MIN_BARS = 96;
 
 export function DictationBar({
   phase,
@@ -34,6 +39,9 @@ export function DictationBar({
       ? levels.slice(-MIN_BARS)
       : [...Array.from({ length: MIN_BARS - levels.length }, () => 0), ...levels];
 
+  const label =
+    phase === 'transcribing' ? 'Transcribing…' : phase === 'starting' ? 'Starting…' : 'Listening';
+
   return (
     <div
       className="pd-dictation"
@@ -43,15 +51,15 @@ export function DictationBar({
       aria-live="polite"
       aria-label={phase === 'transcribing' ? 'Transcribing your dictation' : 'Recording'}
     >
-      <button
-        type="button"
-        className="pd-dictation-x pd-focusable"
-        data-testid="dictation-cancel"
+      <IconButton
         aria-label="Discard this recording"
+        variant="secondary"
+        circle
+        data-testid="dictation-cancel"
         onClick={onCancel}
       >
-        ×
-      </button>
+        <IconClose size={13} />
+      </IconButton>
       <div className="pd-dictation-wave" aria-hidden="true">
         {padded.map((level, i) => (
           <span
@@ -64,19 +72,19 @@ export function DictationBar({
           />
         ))}
       </div>
-      <span className="pd-dictation-hint">
-        {phase === 'transcribing' ? 'Transcribing…' : 'Listening'}
-      </span>
-      {phase === 'recording' ? (
-        <button
-          type="button"
-          className="pd-dictation-done pd-focusable"
-          data-testid="dictation-stop"
-          onClick={onStop}
-        >
-          Done
-        </button>
-      ) : null}
+      <span className="pd-dictation-hint">{label}</span>
+      <IconButton
+        aria-label="Finish dictating and keep the text"
+        variant="accent"
+        circle
+        data-testid="dictation-stop"
+        onClick={onStop}
+        // Nothing has been heard yet while the recogniser loads, so there is
+        // nothing to confirm.
+        disabled={phase !== 'recording'}
+      >
+        <IconArrowUp size={13} />
+      </IconButton>
     </div>
   );
 }

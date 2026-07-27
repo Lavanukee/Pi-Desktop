@@ -145,4 +145,18 @@ export default defineConfig({
       },
     ]),
   ],
+  build: {
+    /**
+     * Keep the dictation AudioWorklet as a REAL FILE.
+     *
+     * Vite inlines assets under 4 KB as `data:` URLs, and the worklet is 1.7 KB
+     * — but the renderer's CSP is `script-src 'self'` and a worklet is a script,
+     * so a `data:` URL is refused in the packaged app. It fell back to the
+     * deprecated main-thread ScriptProcessor silently, which is exactly the kind
+     * of "works in dev" difference that is only ever found by someone dictating
+     * into a shipped build.
+     */
+    assetsInlineLimit: (filePath: string) =>
+      filePath.endsWith('pcm-worklet.js') ? false : undefined,
+  },
 });

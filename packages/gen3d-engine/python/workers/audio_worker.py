@@ -35,6 +35,7 @@ exposed here rather than exposed and ignored.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -147,9 +148,108 @@ def run_asr(args: argparse.Namespace, _out_dir: Path) -> None:
     stage_done(STAGE, text)
 
 
+def run_serve(args: argparse.Namespace, _out_dir: Path) -> None:
+    """Warm streaming recogniser: PCM in on stdin, partial transcripts out.
+
+    Dictation cannot be real-time on a cold spawn — the model costs ~15s to
+    load, which is longer than most of what anyone dictates. So this process is
+    started once, holds the model, and answers a session at a time.
+
+    PROTOCOL, one JSON object per line on stdin:
+        {"cmd":"start"}                  begin a session (resets the context)
+        {"cmd":"audio","pcm":"<b64>"}    float32 mono 16 kHz, little-endian
+        {"cmd":"stop"}                   end the session, emit the final text
+    and NDJSON out: a `progress` per partial (the transcript so far) and a
+    `stage-done` carrying the final text.
+
+    RAW PCM, NOT AN ENCODED CLIP. The renderer sends float32 samples straight
+    from an AudioWorklet, which means nothing has to decode them here — that is
+    what removes the ffmpeg dependency that broke dictation for jedd in the
+    packaged app (a GUI process has no /opt/homebrew/bin on its PATH).
+    """
+    import base64
+
+    import mlx.core as mx
+    import numpy as np
+    from parakeet_mlx import from_pretrained
+
+    progress(STAGE, "Loading the recogniser…")
+    model = from_pretrained(ASR_MODEL)
+    # Ready BEFORE any audio arrives: the caller waits for this line, so the
+    # ~15s load is paid while the user is still reaching for the button rather
+    # than after they have finished speaking.
+    stage_done(STAGE, "ready")
+
+    stream = None
+    # Every sample of the session, kept for the final pass (see the `stop`
+    # branch for why the streaming text is not good enough to insert).
+    captured: list[np.ndarray] = []
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        cmd = msg.get("cmd")
+        if cmd == "start":
+            # context_size is (left, right) in encoder frames. A right context
+            # of 0 would be ideal — a partial that never waits on audio the user
+            # has not spoken yet — but the local-attention kernel REJECTS it
+            # ("Context size ... must be > 0"). 32 is the smallest lookahead
+            # that still runs: ~0.3s of latency against the library's default
+            # 256, which would be ~2.5s and would not read as real time.
+            stream = model.transcribe_stream(context_size=(256, 32)).__enter__()
+            captured = []
+            progress(STAGE, "")
+        elif cmd == "audio" and stream is not None:
+            pcm = np.frombuffer(base64.b64decode(msg.get("pcm", "")), dtype=np.float32)
+            if pcm.size == 0:
+                continue
+            captured.append(pcm)
+            stream.add_audio(mx.array(pcm))
+            progress(STAGE, (stream.result.text or "").strip())
+        elif cmd == "stop":
+            partial = "" if stream is None else (stream.result.text or "").strip()
+            if stream is not None:
+                stream.__exit__(None, None, None)
+                stream = None
+            # RE-TRANSCRIBE THE WHOLE THING. Streaming has to decide with a
+            # 32-frame lookahead, and it shows — MEASURED on the same 16.5s
+            # clip, streaming gave "we should crack the every factor the retapa
+            # worker ... three hundred and eighty four pimes, two beg" where a
+            # full pass gave "we should probably uh refactor the Retapo worker
+            # ... 384 times too big". The partials are for the live feel; the
+            # text a user actually keeps comes from the full-context pass.
+            #
+            # Fed as samples rather than a file: model.transcribe() would call
+            # load_audio(), which shells out to ffmpeg. Going straight to the
+            # log-mel keeps dictation working on a machine that has no ffmpeg
+            # and in a GUI process that cannot see it on PATH.
+            final = partial
+            if captured:
+                try:
+                    from parakeet_mlx.audio import get_logmel
+
+                    samples = mx.array(np.concatenate(captured))
+                    mel = get_logmel(samples, model.preprocessor_config)
+                    result = model.generate(mel)
+                    whole = (result[0].text if isinstance(result, list) else result.text) or ""
+                    if whole.strip():
+                        final = whole.strip()
+                except Exception as err:  # noqa: BLE001
+                    # A failed second pass must never lose what streaming heard.
+                    progress(STAGE, f"(kept the streaming transcript: {err})")
+            captured = []
+            stage_done(STAGE, final)
+        elif cmd == "quit":
+            return
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--op", required=True, choices=["tts", "sfx", "asr"])
+    ap.add_argument("--op", required=True, choices=["tts", "sfx", "asr", "serve"])
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--text", default="")
     ap.add_argument("--audio", default="")
@@ -167,7 +267,7 @@ def main() -> None:
     if args.op == "asr" and not Path(args.audio).exists():
         raise SystemExit(f"--audio not found: {args.audio}")
 
-    {"tts": run_tts, "sfx": run_sfx, "asr": run_asr}[args.op](args, out_dir)
+    {"tts": run_tts, "sfx": run_sfx, "asr": run_asr, "serve": run_serve}[args.op](args, out_dir)
 
 
 if __name__ == "__main__":

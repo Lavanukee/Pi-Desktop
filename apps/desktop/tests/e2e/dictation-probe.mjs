@@ -219,7 +219,11 @@ try {
   // fixture and are exactly the ones the streaming decoder mangles.
   // "384" vs "three hundred and eighty four" is the model's own formatting call
   // and it moves with context; either is a correct hearing of the fixture.
-  const expected = ['refactor', 'grid coordinates', ['384', 'eighty four']];
+  // 'retopo'/'CubePart' are the CLEANUP's job (Fluid-1) and the rest is the
+  // full-context pass. Asserted together because the user only ever sees the
+  // combination, and either half regressing shows up here as the same failure:
+  // words they said coming back wrong.
+  const expected = ['refactor', 'grid coordinates', ['384', 'eighty four'], 'retopo', 'cubepart'];
   const flat = finalText.toLowerCase().replace(/-/g, ' ');
   const has = (w) => flat.includes(w.toLowerCase());
   const missing = expected

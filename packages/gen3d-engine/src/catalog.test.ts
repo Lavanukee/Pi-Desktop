@@ -24,6 +24,7 @@ describe('catalog', () => {
       'cube3d',
       'cubepart',
       'dasheng-sfx',
+      'fluid-1-cleanup',
       'humanoid-rig',
       'mageflow',
       'mageflow-edit',
@@ -87,7 +88,7 @@ describe('catalog', () => {
 
   it('sidecar registry carries repos, mirrors and pipeline types', () => {
     const registry = toSidecarRegistry();
-    expect(registry.models).toHaveLength(11);
+    expect(registry.models).toHaveLength(12);
     expect(registry.gatedMirrors['facebook/dinov3-vitl16-pretrain-lvd1689m']).toContain(
       'camenduru',
     );

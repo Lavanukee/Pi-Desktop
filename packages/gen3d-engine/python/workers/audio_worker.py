@@ -148,6 +148,37 @@ def run_asr(args: argparse.Namespace, _out_dir: Path) -> None:
     stage_done(STAGE, text)
 
 
+def _warm_cleanup(cleanup) -> None:
+    """Load the corrector; never let it take the worker down.
+
+    Runs on the corrector's OWN thread — see where the pool is created for why
+    that is not optional.
+    """
+    try:
+        cleanup.load()
+    except Exception:  # noqa: BLE001
+        # Not installed is the common case and is not an error: dictation works
+        # without it, just with "Retapa" in it.
+        pass
+
+
+# A correction is MEASURED at 0.25-0.76s warm. Ten seconds means something is
+# wrong, and a user staring at a finished sentence should get their raw text
+# rather than a spinner.
+CLEANUP_TIMEOUT_S = 10.0
+
+
+def _corrected(pool, cleanup, text: str) -> str:
+    """Correct on the corrector's thread, or hand back exactly what was heard."""
+    try:
+        return pool.submit(cleanup.clean, text, lambda m: progress(STAGE, m)).result(
+            timeout=CLEANUP_TIMEOUT_S
+        )
+    except Exception:  # noqa: BLE001
+        progress(STAGE, "correction skipped, keeping the raw transcript")
+        return text
+
+
 def run_serve(args: argparse.Namespace, _out_dir: Path) -> None:
     """Warm streaming recogniser: PCM in on stdin, partial transcripts out.
 
@@ -168,10 +199,13 @@ def run_serve(args: argparse.Namespace, _out_dir: Path) -> None:
     packaged app (a GUI process has no /opt/homebrew/bin on its PATH).
     """
     import base64
+    from concurrent.futures import ThreadPoolExecutor
 
     import mlx.core as mx
     import numpy as np
     from parakeet_mlx import from_pretrained
+
+    import _asr_cleanup
 
     progress(STAGE, "Loading the recogniser…")
     model = from_pretrained(ASR_MODEL)
@@ -179,6 +213,24 @@ def run_serve(args: argparse.Namespace, _out_dir: Path) -> None:
     # ~15s load is paid while the user is still reaching for the button rather
     # than after they have finished speaking.
     stage_done(STAGE, "ready")
+
+    # Warm the corrector WHILE the user is still speaking. It costs 2.7s to
+    # load and ~0.3s to run, and the moment it is needed — right after `stop` —
+    # is the one moment a user is waiting on a finished sentence. Loading it
+    # then would put the whole 2.7s in front of them; loading it now spends a
+    # window that is otherwise just recording. Failure is silent by design:
+    # `clean` falls back to the raw transcript, so a machine that cannot load it
+    # dictates exactly as it did before.
+    #
+    # ONE WORKER, AND IT MATTERS. MLX binds arrays to the thread that made them:
+    # loading on a background thread and generating on the main one fails with
+    # "There is no Stream(gpu, 3) in current thread" — MEASURED, and it failed
+    # silently into the raw-transcript fallback, which is the kind of bug that
+    # ships. A single-worker pool guarantees the load and every later generate
+    # happen on the same thread. Parakeet keeps the main thread, so the two
+    # models never share one.
+    cleanup_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cleanup")
+    cleanup_pool.submit(_warm_cleanup, _asr_cleanup)
 
     stream = None
     # Every sample of the session, kept for the final pass (see the `stop`
@@ -242,7 +294,7 @@ def run_serve(args: argparse.Namespace, _out_dir: Path) -> None:
                     # A failed second pass must never lose what streaming heard.
                     progress(STAGE, f"(kept the streaming transcript: {err})")
             captured = []
-            stage_done(STAGE, final)
+            stage_done(STAGE, _corrected(cleanup_pool, _asr_cleanup, final))
         elif cmd == "quit":
             return
 

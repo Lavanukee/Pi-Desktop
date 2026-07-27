@@ -33,6 +33,7 @@ export type Gen3dModelId =
   | 'qwen3-tts'
   | 'parakeet-asr'
   | 'dasheng-sfx'
+  | 'fluid-1-cleanup'
   | 'humanoid-rig';
 export type Gen3dRole =
   | 'geometry'
@@ -254,6 +255,29 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
       {
         repo: 'mlx-community/parakeet-tdt-0.6b-v3',
         bytes: 2_300_000_000,
+      },
+    ],
+  },
+  {
+    id: 'fluid-1-cleanup',
+    label: 'Fluid-1 (dictation cleanup)',
+    role: 'audio',
+    // Fixes what Parakeet MISHEARS, and only that. Parakeet already gets
+    // punctuation, capitalisation and numerals right, so this is scoped to
+    // homophones ("weather"/"whether") and jargon ("Retapa" -> "retopo") — with
+    // a similarity guard that falls back to the raw transcript rather than
+    // ever showing words the user did not say.
+    //
+    // MEASURED on an M5 Pro: 2.7s to load, 0.25-0.93s per correction with
+    // thinking disabled (3.7s with it on, for the same answer). Optional —
+    // dictation works without it, just with "Retapa" in it.
+    note: 'Corrects misheard words in dictation — ~0.5s per transcript (Fluid-1, Gemma-4 nvfp4 MLX)',
+    env: 'audio',
+    repos: [
+      {
+        repo: 'altic-dev/FluidIntelligence',
+        allowPatterns: ['models/fluid-1-nvfp4-mlx/*'],
+        bytes: 3_583_000_000,
       },
     ],
   },

@@ -29,7 +29,8 @@ export type Gen3dModelId =
   | 'humanoid-rig'
   | 'qwen3-tts'
   | 'parakeet-asr'
-  | 'dasheng-sfx';
+  | 'dasheng-sfx'
+  | 'fluid-1-cleanup';
 
 /** Which studio stage a model backs. */
 export type Gen3dRole =

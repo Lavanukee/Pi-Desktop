@@ -67,10 +67,7 @@ describe('catalog', () => {
 
   it('detectInstalled reduces stamp-file existence per weight-backed model', () => {
     const cache = '/cache';
-    const present = new Set([
-      installStampPath(cache, 'trellis2'),
-      autoremesherCli(cache),
-    ]);
+    const present = new Set([installStampPath(cache, 'trellis2'), autoremesherCli(cache)]);
     const installed = detectInstalled((p) => present.has(p), cache);
     expect(installed.trellis2).toBe(true);
     expect(installed.mageflow).toBe(false);

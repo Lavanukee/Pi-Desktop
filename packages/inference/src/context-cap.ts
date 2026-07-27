@@ -41,11 +41,7 @@ export const CONTEXT_STEPS: readonly number[] = [
  * (weights + weights·(ctx/32768)·0.2 + 1GB overhead) by multiplying ONLY the KV
  * term by the slot count — the weights are resident once regardless of slots.
  */
-export function estimateLaunchRamGB(
-  sizeBytes: number,
-  contextWindow: number,
-  slots = 1,
-): number {
+export function estimateLaunchRamGB(sizeBytes: number, contextWindow: number, slots = 1): number {
   const weightsGB = sizeBytes / 1024 ** 3;
   const ctx = contextWindow > 0 ? contextWindow : CONTEXT_FLOOR;
   const k = Number.isFinite(slots) ? Math.max(1, Math.floor(slots)) : 1;
@@ -85,10 +81,7 @@ export function chooseContextCap(input: ContextCapInput): number {
     memoryFraction = DEFAULT_MEMORY_FRACTION,
     ceiling = CONTEXT_CEILING,
   } = input;
-  const hardMax = Math.min(
-    ceiling,
-    modelMaxContext > 0 ? modelMaxContext : ceiling,
-  );
+  const hardMax = Math.min(ceiling, modelMaxContext > 0 ? modelMaxContext : ceiling);
   const budgetGB = totalRamGB > 0 ? totalRamGB * memoryFraction : Number.POSITIVE_INFINITY;
   for (const step of CONTEXT_STEPS) {
     if (step > hardMax) continue;

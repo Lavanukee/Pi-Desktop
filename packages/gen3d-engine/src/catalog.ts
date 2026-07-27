@@ -233,7 +233,7 @@ export const GEN3D_MODEL_SPECS: readonly Gen3dModelSpec[] = [
     // The earlier "CUDA-only, cannot run here" claim in this comment was wrong.
     // This still matters for the shape PROBE, which SkinTokens has no
     // equivalent for, and on machines without that checkout.
-    note: "Geometric humanoid rig — fits a 27-joint skeleton + skin weights by measuring the mesh. Local, nothing to download.",
+    note: 'Geometric humanoid rig — fits a 27-joint skeleton + skin weights by measuring the mesh. Local, nothing to download.',
     env: 'meshtools',
     repos: [],
   },

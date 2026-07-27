@@ -39,6 +39,7 @@ export {
   MAC_SNAPSHOT_TOOL,
   MAC_TYPE_TOOL,
 } from './tool-names.js';
+
 import {
   MAC_CLICK_TOOL,
   MAC_KEY_TOOL,

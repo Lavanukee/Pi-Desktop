@@ -66,8 +66,8 @@ describe('chooseContextCap', () => {
   });
 
   it('treats unknown RAM (0) as unbounded → the ceiling', () => {
-    expect(
-      chooseContextCap({ modelBytes: 4 * GiB, modelMaxContext: 131_072, totalRamGB: 0 }),
-    ).toBe(CONTEXT_CEILING);
+    expect(chooseContextCap({ modelBytes: 4 * GiB, modelMaxContext: 131_072, totalRamGB: 0 })).toBe(
+      CONTEXT_CEILING,
+    );
   });
 });

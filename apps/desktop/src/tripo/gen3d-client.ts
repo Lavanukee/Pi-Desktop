@@ -80,7 +80,7 @@ interface Gen3dState {
     editFrom?: string;
   }) => Promise<string | null>;
   runStage: (
-    op: 'segment' | 'retopo' | 'texture' | 'rig',
+    op: 'segment' | 'retopo' | 'texture' | 'rig' | 'motion',
     modelPath: string,
     /** Which asset/version this op ran on — the result becomes a node on that
      * asset's history tree instead of a new top-level asset. */
@@ -91,6 +91,11 @@ interface Gen3dState {
       readonly probeOnly?: boolean;
       readonly requireHumanoid?: boolean;
       readonly sourcePath?: string;
+      /** Motion: clip length in seconds (cost is linear in it). */
+      readonly seconds?: number;
+      /** Motion: the movement to generate. Required for that op — every other
+       * stage acts on the mesh alone. */
+      readonly prompt?: string;
       /**
        * The humanoid verdict the user already confirmed, carried onto the
        * version this job produces. UI-only — stripped before the IPC call.
@@ -359,9 +364,11 @@ async function ingestModelArtifact(
        * "segmentation (CubePart) — 0 part(s) listed in the panel (808s)").
        *
        * 'source' is the only TripoOp that is not a TripoStage, and a stage job
-       * never produces one.
+       * never produces one. 'motion' is the panel named 'animate' — the op and
+       * the panel it belongs to are spelled differently.
        */
-      if (origin.op !== 'source') useTripoStore.getState().runStage(origin.op);
+      if (origin.op === 'motion') useTripoStore.getState().runStage('animate');
+      else if (origin.op !== 'source') useTripoStore.getState().runStage(origin.op);
       markVisible();
       return;
     }

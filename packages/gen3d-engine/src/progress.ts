@@ -8,7 +8,17 @@
  * is the UX contract: the untextured GLB event arrives while texturing runs).
  */
 
-export type Gen3dStage = 'image' | 'geometry' | 'texture' | 'segment' | 'retopo' | 'rig';
+export type Gen3dStage =
+  | 'image'
+  | 'geometry'
+  | 'texture'
+  | 'segment'
+  | 'retopo'
+  | 'rig'
+  /** Text -> an animation clip written into an already-rigged model. Runs after
+   * `rig` rather than in the generation pipeline: it needs a skeleton to drive,
+   * and it takes a prompt of its own. */
+  | 'motion';
 
 export interface StagePlan {
   readonly stage: Gen3dStage;
@@ -40,7 +50,9 @@ export function planGenerate(kind: 'text' | 'image', texture: boolean): readonly
     : [{ stage: 'geometry', weight: 1 }];
 }
 
-export function planStageOp(op: 'segment' | 'retopo' | 'texture' | 'rig'): readonly StagePlan[] {
+export function planStageOp(
+  op: 'segment' | 'retopo' | 'texture' | 'rig' | 'motion',
+): readonly StagePlan[] {
   return [{ stage: op, weight: 1 }];
 }
 

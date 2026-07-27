@@ -44,7 +44,7 @@ export type TripoModal = null | 'help' | 'export';
 export type TripoStage = 'mesh' | 'segment' | 'retopo' | 'texture' | 'rig' | 'animate';
 
 /** Which operation produced a version. 'source' is the imported/generated root. */
-export type TripoOp = 'source' | 'segment' | 'retopo' | 'texture' | 'rig';
+export type TripoOp = 'source' | 'segment' | 'retopo' | 'texture' | 'rig' | 'motion';
 
 /**
  * One node on an asset's history tree.
@@ -233,6 +233,9 @@ interface TripoState {
   selectedAnim: string;
   /** NL action prompt for generating a motion with ARDY. */
   motionPrompt: string;
+  /** Clip length for a generated motion, in seconds. ARDY is autoregressive so
+   * cost is linear in this — it is a real dial, not a quality preset. */
+  motionSeconds: number;
   /** Every motion available to place in the state machine. */
   motionLibrary: readonly MotionClip[];
   /** The animation state machine (motion matching). */
@@ -397,6 +400,7 @@ export const useTripoStore = create<TripoState>((set, get) => ({
   animSearch: '',
   selectedAnim: 'angry_01',
   motionPrompt: '',
+  motionSeconds: 8,
   motionLibrary: SEED_MOTIONS,
   blendParams: SEED_PARAMS,
   blendStates: [],
@@ -548,6 +552,9 @@ export const useTripoStore = create<TripoState>((set, get) => ({
     })),
 
   // ── motions + state machine ─────────────────────────────────────────────
+  /** Adds a MOCK entry to the bundled motion library. Real generation does not
+   * come through here — AnimatePanel runs the `motion` stage, whose output is a
+   * real animated GLB on the asset's history tree. */
   generateMotion: () =>
     set((s) => {
       const prompt = s.motionPrompt.trim();

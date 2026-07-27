@@ -18,9 +18,12 @@
  *    `mlx-community/SkinTokens-bf16` runs natively on Apple Silicon; wiring it
  *    is tracked work, and it emits a VRoid hierarchy so it needs retargeting to
  *    reach cskel27.
- *  - ARDY motion generation is NOT wired. ARDY is Linux + NVIDIA only. The rig
- *    it produces is ARDY-COMPATIBLE (same joint hierarchy), so clips generated
- *    elsewhere retarget onto it, but nothing here generates motion locally.
+ *  - ARDY motion generation IS wired and runs HERE, on Metal (2026-07-27).
+ *    The "Linux + NVIDIA only" note this file used to carry was true of the
+ *    upstream repo, not of the port: MEASURED on this Mac, 8s of motion in
+ *    ~1s. The clip is written into the rigged GLB itself, so what animates is
+ *    the user's own textured character rather than a preview skeleton — the
+ *    rig already uses ARDY's exact cskel27, so no retargeting step exists.
  * The panel says so on screen rather than implying otherwise.
  */
 import type { JSX } from 'react';
@@ -197,6 +200,8 @@ function HumanoidPrompt({
 
 export function AnimatePanel(): JSX.Element {
   const animSearch = useTripoStore((s) => s.animSearch);
+  const motionPrompt = useTripoStore((s) => s.motionPrompt);
+  const motionSeconds = useTripoStore((s) => s.motionSeconds);
   const motions = useTripoStore((s) => s.motionLibrary);
   const states = useTripoStore((s) => s.blendStates);
   const loadedAssetId = useTripoStore((s) => s.loadedAssetId);
@@ -217,6 +222,33 @@ export function AnimatePanel(): JSX.Element {
   const rigInstalled =
     engineReady && models.find((m) => m.id === 'humanoid-rig')?.installed === true;
   const busy = job !== null && !job.done && job.stage === 'rig';
+  const motionBusy = job !== null && !job.done && job.stage === 'motion';
+  const motionInstalled =
+    engineReady && models.find((m) => m.id === 'ardy-motion')?.installed === true;
+  /*
+   * ARDY drives ITS OWN 27-joint skeleton and nothing else, so the rig has to
+   * be cskel27 for a clip to apply.
+   *
+   * Which rigger ran decides that, and jobs.py decides by exactly this test:
+   * SkinTokens when installed, the geometric cskel27 fitter otherwise. MEASURED
+   * on this machine — SkinTokens predicted a FIFTEEN-joint skeleton for a
+   * humanoid mesh, which is a perfectly good rig that ARDY cannot animate.
+   * Mirroring the engine's own condition here is what keeps the panel from
+   * offering a button that can only fail.
+   */
+  const skinTokensRig = models.find((m) => m.id === 'skintokens')?.installed === true;
+
+  const runMotion = () => {
+    if (asset === undefined || version?.diskPath === undefined) return;
+    // The RIGGED model is the input: the clip is written into it, so the result
+    // keeps this character's mesh, skin weights and texture.
+    void runStage(
+      'motion',
+      version.diskPath,
+      { assetId: asset.id, versionId: version.id, op: 'motion' },
+      { prompt: motionPrompt.trim(), seconds: motionSeconds },
+    );
+  };
 
   const visible = motions.filter((m) => m.name.toLowerCase().includes(animSearch.toLowerCase()));
 
@@ -293,27 +325,71 @@ export function AnimatePanel(): JSX.Element {
           </div>
         ) : null}
 
+        {rigged && skinTokensRig ? (
+          <div className="tp-notice" data-testid="tp-motion-skeleton-mismatch">
+            <IcInfo size={14} />
+            <span>
+              SkinTokens rigged this model with a skeleton it predicted for the mesh, not{' '}
+              {ANIM_MODEL}'s 27-joint hierarchy — so motion generation is unavailable for it until
+              retargeting between the two is wired. The geometric rigger produces an {ANIM_MODEL}
+              -compatible skeleton that motion generation drives directly.
+            </span>
+          </div>
+        ) : null}
+
         {/* Everything below is gated on a REAL rig. */}
         {rigged && humanoid ? (
           <>
             <div className="tp-section-title">Describe a motion ({ANIM_MODEL})</div>
-            <div className="tp-notice" data-testid="tp-ardy-unavailable">
-              <IcInfo size={14} />
-              <span>
-                {ANIM_MODEL} motion generation runs on Linux + NVIDIA only, so it can't generate
-                clips on this Mac. The rig above uses {ANIM_MODEL}'s exact 27-joint hierarchy, so
-                clips generated elsewhere retarget onto it directly.
-              </span>
+            {!motionInstalled && !skinTokensRig ? (
+              <div className="tp-notice" data-testid="tp-ardy-unavailable">
+                <IcInfo size={14} />
+                <span>
+                  {ANIM_MODEL} isn't downloaded yet. Open the download panel to add it — most of its
+                  size is a text encoder that runs once per new wording.
+                </span>
+              </div>
+            ) : null}
+            <textarea
+              className="tp-prompt"
+              rows={2}
+              placeholder="A person walks forward, then waves."
+              value={motionPrompt}
+              data-testid="tp-motion-prompt"
+              onChange={(e) => set('motionPrompt', e.target.value)}
+            />
+            <div className="tp-field-row" data-testid="tp-motion-seconds">
+              <span className="tp-field-label">Length</span>
+              <Segmented
+                value={String(motionSeconds)}
+                options={[
+                  { id: '4', label: '4s' },
+                  { id: '8', label: '8s' },
+                  { id: '15', label: '15s' },
+                ]}
+                onChange={(v) => set('motionSeconds', Number(v))}
+              />
             </div>
             <button
               type="button"
               className="tp-btn-primary"
               data-testid="tp-generate-motion"
-              disabled
+              disabled={
+                !motionInstalled || skinTokensRig || motionBusy || motionPrompt.trim() === ''
+              }
+              onClick={runMotion}
             >
               <IcSparkles size={15} />
-              Generate Motion — {ANIM_MODEL} unavailable locally
+              {motionBusy ? 'Generating motion…' : 'Generate Motion'}
             </button>
+            {/* The FIRST use of a new wording loads a 16 GB text encoder; every
+                later use of the same words skips it entirely. Saying so up
+                front is the difference between "slow" and "broken". */}
+            <p className="tp-select-copy" data-testid="tp-motion-note">
+              Runs on this Mac — about a second of compute for {motionSeconds}s of animation. A
+              wording used before starts immediately; a brand-new one spends a couple of minutes
+              reading the prompt first.
+            </p>
 
             {/* ── motion library (click a motion → drop it into the machine) ─ */}
             <div className="tp-section-title">Motion library</div>

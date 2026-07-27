@@ -41,15 +41,15 @@ export type Gen3dRole =
   | 'segment'
   | 'retopo'
   | 'rig'
-  /** Text -> speech, text -> sound, speech -> text. Not a studio stage: these
-   * produce audio (or a transcript) rather than advancing a mesh. Mirrors the
-   * union in packages/gen3d-engine/src/catalog.ts — a value added to one and
+  /** Text -> an animation clip. Not a studio stage that advances a mesh: it
+   * produces a MOTION for a skeleton the rig stage already made, which is why
+   * it sits alongside the pipeline rather than inside it. */
+  | 'motion'
+  /** Text -> speech, text -> sound, speech -> text. Not a studio stage either:
+   * these produce audio (or a transcript) rather than advancing a mesh. Mirrors
+   * the union in packages/gen3d-engine/src/catalog.ts — a value added to one and
    * not the other is exactly the break that made `pnpm typecheck` red when
    * `skintokens` was added (commit d5f1c85). */
-  /** Text -> an animation clip. Like 'audio' this is not a studio stage that
-   * advances a mesh: it produces a MOTION for a skeleton the rig stage already
-   * made, which is why it sits alongside the pipeline rather than inside it. */
-  | 'motion'
   | 'audio';
 
 export interface Gen3dModelInfo {
@@ -208,7 +208,7 @@ export type Gen3dInvokeMap = {
   /** Run a single downstream stage on an existing model file. */
   'gen3d:stage': {
     request: {
-      readonly op: 'segment' | 'retopo' | 'texture' | 'rig';
+      readonly op: 'segment' | 'retopo' | 'texture' | 'rig' | 'motion';
       readonly modelPath: string;
       /** Optional image/prompt context for texturing. */
       readonly prompt?: string;
@@ -227,6 +227,14 @@ export type Gen3dInvokeMap = {
       readonly probeOnly?: boolean;
       /** Rig: refuse to fit a humanoid skeleton to a non-humanoid mesh. */
       readonly requireHumanoid?: boolean;
+      /**
+       * Motion: how long a clip to generate, in seconds.
+       *
+       * Cost is linear — ARDY is autoregressive — so this is a real dial, not a
+       * quality setting. `prompt` carries the movement description and is
+       * REQUIRED for this op; every other stage acts on the mesh alone.
+       */
+      readonly seconds?: number;
     };
     response: { readonly ok: boolean; readonly jobId?: string; readonly error?: string };
   };

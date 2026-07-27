@@ -75,6 +75,7 @@ def _worker_env(registry: Registry) -> dict:
 #: mesh could not find the colours the generation had saved and reported the
 #: model as "imported". `test_stage_args.py` asserts this list stays complete.
 STAGE_OPTION_KEYS = (
+    "seconds",
     "targetQuads",
     "adaptivity",
     "probeOnly",
@@ -280,8 +281,12 @@ class JobManager:
         op = body.get("op")
         model_path = body.get("modelPath") or ""
         prompt = (body.get("prompt") or "").strip()
-        if op not in ("segment", "retopo", "texture", "rig"):
+        if op not in ("segment", "retopo", "texture", "rig", "motion"):
             return {"ok": False, "error": f"unknown stage op: {op}"}
+        if op == "motion" and not prompt:
+            # Every other stage acts on the mesh alone; this one has nothing to
+            # generate without a description of the movement.
+            return {"ok": False, "error": "describe the movement to generate"}
         if not model_path or not Path(model_path).exists():
             return {"ok": False, "error": "model file not found"}
         required = {
@@ -289,6 +294,7 @@ class JobManager:
             "retopo": "autoremesher",
             "texture": "trellis2",
             "rig": "humanoid-rig",
+            "motion": "ardy-motion",
         }[op]
         if not self.registry.is_installed(required):
             return {"ok": False, "error": f"{required} is not installed yet"}
@@ -510,6 +516,18 @@ class JobManager:
                     if options.get("requireHumanoid"):
                         args.append("--require-humanoid")
                     cwd = self.registry.tool_dir("meshtools")
+            elif op == "motion":
+                venv = self.registry.venv_python("ardy")
+                script = WORKERS_DIR / "motion_worker.py"
+                args = [
+                    "--out-dir", str(job_dir),
+                    "--prompt", prompt,
+                    "--seconds", str(float(options.get("seconds") or 5.0)),
+                    # The rigged model IS the subject: the clip is written into
+                    # it, keeping its mesh, skin weights and texture.
+                    "--mesh", model_path,
+                ]
+                cwd = self.registry.tool_dir("ardy")
             else:  # texture — TRELLIS re-bakes from the colours it already made
                 # No separate texture model: the generation saved its voxel
                 # colour field next to the mesh, so this re-bakes from that.

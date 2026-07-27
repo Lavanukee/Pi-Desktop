@@ -292,6 +292,7 @@ const OP_LABEL: Record<TripoOp, string> = {
   retopo: 'Retopology',
   texture: 'Texture',
   rig: 'Rig',
+  motion: 'Motion',
 };
 
 function VersionRow({

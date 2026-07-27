@@ -47,7 +47,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _glbanim import write_animated_glb  # noqa: E402
+from _glbanim import retarget_into_glb, write_animated_glb  # noqa: E402
 from _humanoid import BONE_NAMES  # noqa: E402
 from _progress import artifact, progress, stage_done  # noqa: E402
 
@@ -252,21 +252,37 @@ def run(args: argparse.Namespace, out_dir: Path) -> None:
 
     progress(STAGE, f"Generated in {took:.1f}s ({seconds / max(took, 1e-6):.1f}x real time)")
 
+    retarget_note = None
     for i in range(args.samples):
         suffix = "" if args.samples == 1 else f"_{i:02d}"
         glb = out_dir / f"motion{suffix}.glb"
         npz = out_dir / f"motion{suffix}.npz"
-        write_animated_glb(
-            str(glb),
-            bone_names=BONE_NAMES,
-            parents=parents,
-            rest_world=rest,
-            local_rot_mats=output["local_rot_mats"][i],
-            root_positions=output["root_positions"][i],
-            fps=fps,
-            name=args.prompt[:48],
-            extras={"prompt": args.prompt, "fps": float(fps), "skeleton": "ardy-cskel27"},
-        )
+        if args.mesh:
+            # Animate the user's OWN rigged character. This is the studio case:
+            # the rig stage made a skinned, textured body and "animate it" has
+            # to mean that body moving, not a stick figure next to it.
+            retarget_note = retarget_into_glb(
+                args.mesh,
+                str(glb),
+                bone_names=BONE_NAMES,
+                local_rot_mats=output["local_rot_mats"][i],
+                root_positions=output["root_positions"][i],
+                ardy_rest_world=rest,
+                fps=fps,
+                name=args.prompt[:48],
+            )
+        else:
+            write_animated_glb(
+                str(glb),
+                bone_names=BONE_NAMES,
+                parents=parents,
+                rest_world=rest,
+                local_rot_mats=output["local_rot_mats"][i],
+                root_positions=output["root_positions"][i],
+                fps=fps,
+                name=args.prompt[:48],
+                extras={"prompt": args.prompt, "fps": float(fps), "skeleton": "ardy-cskel27"},
+            )
         # The NPZ is the real data — rotations, contacts, joint positions — for
         # anything that wants the motion rather than a preview of it.
         np.savez(
@@ -276,6 +292,14 @@ def run(args: argparse.Namespace, out_dir: Path) -> None:
             text=np.asarray(args.prompt),
         )
         artifact(STAGE, "model-glb", str(glb), f"Motion — {args.prompt[:40]}")
+
+    if retarget_note is not None:
+        progress(
+            STAGE,
+            f"Applied to your rigged model (stride scaled {retarget_note['scale']:.2f}x — "
+            f"{retarget_note['characterLegLength']:.2f}m legs vs "
+            f"{retarget_note['ardyLegLength']:.2f}m)",
+        )
 
     stage_done(
         STAGE,
@@ -287,6 +311,7 @@ def run(args: argparse.Namespace, out_dir: Path) -> None:
                 "device": device,
                 "generateSeconds": round(took, 2),
                 "samples": args.samples,
+                "retarget": retarget_note,
             }
         ),
     )
@@ -316,6 +341,11 @@ def main() -> None:
     ap.add_argument("--op", default="text2motion", choices=["text2motion"])
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--prompt", required=True)
+    ap.add_argument(
+        "--mesh",
+        default="",
+        help="A rigged GLB to animate. Without it, a bare skeleton is written instead.",
+    )
     ap.add_argument("--seconds", type=float, default=5.0)
     ap.add_argument("--samples", type=int, default=1)
     ap.add_argument("--steps", type=int, default=None)

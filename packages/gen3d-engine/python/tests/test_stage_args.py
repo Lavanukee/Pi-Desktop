@@ -50,16 +50,8 @@ def _fixture() -> tuple[Path, Path]:
     return gen / "geometry.glb", retopo / "retopo.glb"
 
 
-def _staged(body: dict) -> list[str]:
-    """Push one request through start_stage; return the worker argv it builds.
-
-    Deliberately goes through `start_stage` rather than calling `_run_stage`
-    directly — the whole defect is the handover between them, and a test that
-    hands `_run_stage` a ready-made options dict cannot see it.
-    """
-    calls: list[list[str]] = []
-    spawned = threading.Event()
-
+def _manager():
+    """A JobManager with every path stubbed — no cache dir, no threads, no venvs."""
     m = JobManager.__new__(JobManager)  # bypass __init__: no cache dir, no threads
     m.registry = MagicMock()
     m.registry.is_installed.return_value = True
@@ -84,6 +76,20 @@ def _staged(body: dict) -> list[str]:
         return job
 
     m._new_job = new_job
+    return m
+
+
+def _staged(body: dict) -> list[str]:
+    """Push one request through start_stage; return the worker argv it builds.
+
+    Deliberately goes through `start_stage` rather than calling `_run_stage`
+    directly — the whole defect is the handover between them, and a test that
+    hands `_run_stage` a ready-made options dict cannot see it.
+    """
+    calls: list[list[str]] = []
+    spawned = threading.Event()
+
+    m = _manager()
 
     def capture(job, venv, script, args, **kw):
         calls.append(list(args))
@@ -146,6 +152,9 @@ def test_every_stage_op_builds() -> None:
     _, mesh = _fixture()
     for op in ("segment", "retopo", "rig", "texture"):
         _staged({"op": op, "modelPath": str(mesh)})
+    # Motion is the one op that REQUIRES a prompt — start_stage rejects it
+    # without one, so it cannot be built like the others.
+    _staged({"op": "motion", "modelPath": str(mesh), "prompt": "a person waves"})
 
 
 def test_option_allowlist_covers_everything_run_stage_reads() -> None:
@@ -163,3 +172,30 @@ def test_option_allowlist_covers_everything_run_stage_reads() -> None:
         f"_run_stage reads {missing} but start_stage does not forward them — "
         "add them to STAGE_OPTION_KEYS or they are silently always None"
     )
+
+
+def test_motion_carries_the_prompt_the_length_and_the_rigged_mesh() -> None:
+    """All three are the whole request, and `seconds` travels the allowlist.
+
+    The prompt IS the input (every other stage acts on the mesh alone), the
+    length is a real cost dial, and `--mesh` is what makes the clip land in the
+    user's own rigged character instead of a bare skeleton.
+    """
+    _, mesh = _fixture()
+    argv = _staged(
+        {"op": "motion", "modelPath": str(mesh), "prompt": "a person waves", "seconds": 12}
+    )
+    assert "--prompt" in argv and argv[argv.index("--prompt") + 1] == "a person waves"
+    assert "--seconds" in argv and float(argv[argv.index("--seconds") + 1]) == 12.0
+    assert "--mesh" in argv and argv[argv.index("--mesh") + 1] == str(mesh)
+
+
+def test_motion_without_a_prompt_is_refused() -> None:
+    """A blank description would generate something arbitrary and call it the
+    user's. Refusing is the honest answer, and it must happen before a job
+    exists rather than as a worker crash."""
+    _, mesh = _fixture()
+    m = _manager()
+    res = m.start_stage({"op": "motion", "modelPath": str(mesh)})
+    assert res["ok"] is False
+    assert "movement" in res["error"]

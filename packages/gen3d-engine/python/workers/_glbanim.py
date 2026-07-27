@@ -284,3 +284,170 @@ def _write_glb(path: str, gltf: dict, binary: bytes) -> None:
     out.write(bin_chunk)
     with open(path, "wb") as fh:
         fh.write(out.getvalue())
+
+
+# ---------------------------------------------------------------- retarget --
+
+
+def _read_glb(path: str) -> tuple[dict, bytearray]:
+    with open(path, "rb") as fh:
+        blob = fh.read()
+    magic, _version, _length = struct.unpack_from("<III", blob, 0)
+    if magic != 0x46546C67:
+        raise ValueError(f"{path} is not a GLB")
+    gltf: dict | None = None
+    binary = bytearray()
+    offset = 12
+    while offset < len(blob):
+        chunk_len, chunk_type = struct.unpack_from("<II", blob, offset)
+        payload = blob[offset + 8 : offset + 8 + chunk_len]
+        if chunk_type == 0x4E4F534A:
+            gltf = json.loads(payload.decode("utf-8"))
+        elif chunk_type == 0x004E4942:
+            binary = bytearray(payload)
+        offset += 8 + chunk_len + (-chunk_len % 4)
+    if gltf is None:
+        raise ValueError(f"{path} has no JSON chunk")
+    return gltf, binary
+
+
+def _world_positions(gltf: dict) -> dict[int, np.ndarray]:
+    """Every node's world translation, by walking the scene once.
+
+    Only translations are accumulated: joint nodes in a bind pose are
+    translation-only by construction (both _glbskin and this module write them
+    that way), so a full TRS compose would be ceremony around the same numbers.
+    """
+    nodes = gltf.get("nodes", [])
+    world: dict[int, np.ndarray] = {}
+
+    def walk(index: int, parent: np.ndarray) -> None:
+        local = np.asarray(nodes[index].get("translation", [0.0, 0.0, 0.0]), dtype=np.float64)
+        here = parent + local
+        world[index] = here
+        for child in nodes[index].get("children", []):
+            walk(int(child), here)
+
+    roots = set(range(len(nodes)))
+    for node in nodes:
+        for child in node.get("children", []):
+            roots.discard(int(child))
+    for index in sorted(roots):
+        walk(index, np.zeros(3))
+    return world
+
+
+def retarget_into_glb(
+    src_path: str,
+    dst_path: str,
+    *,
+    bone_names: list[str],
+    local_rot_mats: np.ndarray,
+    root_positions: np.ndarray,
+    ardy_rest_world: np.ndarray,
+    fps: float,
+    name: str = "motion",
+) -> dict:
+    """Write a generated clip INTO an already-rigged GLB, keeping its mesh.
+
+    This is what makes the motion stage useful rather than a curiosity: the rig
+    stage produced a character with skin weights and a texture, and the answer
+    to "animate it" has to be that character moving — not a stick figure beside
+    it.
+
+    NO RETARGETING MATHS IS NEEDED FOR THE POSE. ARDY's cskel27 and the rig
+    stage's skeleton are the same joints in the same order (motion_worker.py
+    asserts it), and the clip drives LOCAL ROTATIONS, which are proportion-
+    independent by construction — a long-limbed character and a short one both
+    bend the elbow by the same angle.
+
+    THE ROOT TRANSLATION IS THE EXCEPTION and does need scaling. It is measured
+    in metres against ARDY's own body, so a character half its height would take
+    ARDY-sized strides on half-sized legs and skate. The ratio is taken on LEG
+    LENGTH — hips above the lowest joint — on both bodies, because that is what
+    stride length actually scales with, and because it is the only measure that
+    survives the two skeletons using different origins: ARDY's rest pose is
+    HIPS-RELATIVE (Hips at exactly 0,0,0), so a naive "hip height" reads as
+    zero, quietly disables the scaling, and leaves a short character taking
+    full-size strides.
+
+    Returns what it did, so the caller can report it rather than assume it.
+    """
+    gltf, binary = _read_glb(src_path)
+    nodes = gltf.get("nodes", [])
+    by_name = {node.get("name"): i for i, node in enumerate(nodes)}
+    missing = [b for b in bone_names if b not in by_name]
+    if missing:
+        raise ValueError(
+            f"{src_path} has no joint node named {missing[0]!r} "
+            f"({len(missing)} of {len(bone_names)} missing) — is it rigged?"
+        )
+
+    local_rot_mats = np.asarray(local_rot_mats, dtype=np.float64)
+    root_positions = np.asarray(root_positions, dtype=np.float64)
+    num_frames = local_rot_mats.shape[0]
+
+    world = _world_positions(gltf)
+    hips = by_name[bone_names[0]]
+    joint_ys = [float(world[by_name[b]][1]) for b in bone_names]
+    character_leg = float(world[hips][1]) - min(joint_ys)
+    rest = np.asarray(ardy_rest_world, dtype=np.float64)
+    ardy_leg = float(rest[0][1] - rest[:, 1].min())
+    # A degenerate rig (every joint at one point, a mesh authored in
+    # centimetres) must not scale the motion to nothing or fling it off-world.
+    scale = 1.0
+    if ardy_leg > 1e-3 and character_leg > 1e-3:
+        ratio = character_leg / ardy_leg
+        if 0.1 <= ratio <= 10.0:
+            scale = ratio
+
+    # Append to the EXISTING buffer rather than rebuilding it: the mesh, its UVs,
+    # its texture and its skin weights are already in there and are exactly what
+    # must survive.
+    accessors = gltf.setdefault("accessors", [])
+    views = gltf.setdefault("bufferViews", [])
+
+    def add(payload: bytes, component: int, count: int, kind: str, mins=None, maxs=None) -> int:
+        while len(binary) % 4:
+            binary.append(0)
+        views.append({"buffer": 0, "byteOffset": len(binary), "byteLength": len(payload)})
+        binary.extend(payload)
+        accessors.append(_accessor(len(views) - 1, component, count, kind, mins, maxs))
+        return len(accessors) - 1
+
+    times = (np.arange(num_frames, dtype=np.float32) / float(fps)).astype(np.float32)
+    t_acc = add(times.tobytes(), FLOAT, num_frames, "SCALAR", [times.min()], [times.max()])
+
+    quats = _quats_from_matrices(local_rot_mats)
+    samplers: list[dict] = []
+    channels: list[dict] = []
+    for j, bone in enumerate(bone_names):
+        rot = np.ascontiguousarray(quats[:, j, :], dtype=np.float32)
+        r_acc = add(rot.tobytes(), FLOAT, num_frames, "VEC4")
+        samplers.append({"input": t_acc, "output": r_acc, "interpolation": "LINEAR"})
+        channels.append({"sampler": len(samplers) - 1, "target": {"node": by_name[bone], "path": "rotation"}})
+
+    # The hips node may hang under a parent (an armature root); its animated
+    # translation is a LOCAL value, so the parent's world offset comes off first
+    # or the character is displaced by however deep its rig is nested.
+    parent_offset = world[hips] - np.asarray(
+        nodes[hips].get("translation", [0.0, 0.0, 0.0]), dtype=np.float64
+    )
+    root_local = root_positions * scale - parent_offset
+    rt = np.ascontiguousarray(root_local, dtype=np.float32)
+    rt_acc = add(rt.tobytes(), FLOAT, num_frames, "VEC3")
+    samplers.append({"input": t_acc, "output": rt_acc, "interpolation": "LINEAR"})
+    channels.append({"sampler": len(samplers) - 1, "target": {"node": hips, "path": "translation"}})
+
+    # Replace rather than append: re-running the stage should give one clip, not
+    # a pile of them fighting over the same joints.
+    gltf["animations"] = [{"name": name, "samplers": samplers, "channels": channels}]
+    gltf["buffers"] = [{"byteLength": len(binary)}]
+    _write_glb(dst_path, gltf, bytes(binary))
+    return {
+        "scale": round(scale, 4),
+        "characterLegLength": round(character_leg, 4),
+        "ardyLegLength": round(ardy_leg, 4),
+        "frames": num_frames,
+        "joints": len(bone_names),
+    }

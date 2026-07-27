@@ -43,13 +43,13 @@ export type Gen3dRole =
   | 'segment'
   | 'retopo'
   | 'rig'
-  /** Text -> speech, text -> sound effect, speech -> text. Not a studio stage:
-   * these produce audio files (and transcripts) rather than advancing a mesh
-   * through the pipeline. */
-  /** Text -> an animation clip. Like 'audio' this is not a studio stage that
-   * advances a mesh: it produces a MOTION for a skeleton the rig stage already
-   * made, which is why it sits alongside the pipeline rather than inside it. */
+  /** Text -> an animation clip. Not a studio stage that advances a mesh: it
+   * produces a MOTION for a skeleton the rig stage already made, which is why
+   * it sits alongside the pipeline rather than inside it. */
   | 'motion'
+  /** Text -> speech, text -> sound effect, speech -> text. Not a studio stage
+   * either: these produce audio files (and transcripts) rather than advancing a
+   * mesh through the pipeline. */
   | 'audio';
 export type Gen3dResolution = 'low' | 'medium' | 'high';
 

@@ -36,3 +36,24 @@
 .pd-markdown .katex {
   font-size: 1.02em;
 }
+
+/*
+ * An image the MODEL embedded in its reply.
+ *
+ * The image tools hand back a `pd-file://` URL, and a model that has just made
+ * a picture tends to put it straight into its answer ("I should show it to the
+ * user"). With no rule here that markdown image rendered at the full width of
+ * the message column — MEASURED ~690px against the 360px card the same picture
+ * had just been generated in, so the same image appeared twice at wildly
+ * different sizes in one turn.
+ *
+ * 414px is 1.15x the 360px the tool's own card uses: big enough to be the
+ * subject of the reply, close enough that it does not read as a different
+ * artifact. Click-to-open in the canvas is where a full-size look belongs.
+ */
+.pd-prose img {
+  max-width: min(414px, 100%);
+  max-height: 414px;
+  height: auto;
+  border-radius: var(--pd-radius-md);
+}

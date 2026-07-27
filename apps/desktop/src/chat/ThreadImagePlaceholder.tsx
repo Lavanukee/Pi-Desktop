@@ -90,11 +90,22 @@ export function ThreadImagePlaceholder({
       const { current } = visibleFrames(state);
       const cap = captionRef.current;
       if (cap === null) return;
+      // The caption does NOT repeat the tool's name. The activity row directly
+      // above already says "Generating an image", and saying it again under the
+      // card put the same three words on screen three times (jedd counted).
+      // What the caption is FOR is the thing the row cannot tell you: which
+      // step of the sampler is on screen right now.
       cap.textContent =
         current === undefined
+          ? ''
+          : `Step ${Math.min(current.step + 1, current.totalSteps)} of ${current.totalSteps}`;
+      // Screen readers get the whole sentence — they have no row above to read.
+      root.setAttribute(
+        'aria-label',
+        current === undefined
           ? labelRef.current
-          : `${labelRef.current} — step ${Math.min(current.step + 1, current.totalSteps)} of ${current.totalSteps}`;
-      root.setAttribute('aria-label', cap.textContent);
+          : `${labelRef.current} — ${cap.textContent.toLowerCase()}`,
+      );
       root.setAttribute('data-phase', current === undefined ? 'waiting' : 'resolving');
       root.setAttribute('data-frames', String(state.frames.length));
     };
@@ -228,9 +239,10 @@ export function ThreadImagePlaceholder({
             keeps moving between steps. */}
         <div className="pd-denoise-grain" aria-hidden="true" />
       </div>
-      <div ref={captionRef} className="pd-denoise-caption">
-        {label}
-      </div>
+      {/* Starts EMPTY: before the first decode there is nothing to say that the
+          activity row above has not already said. It fills in with the step
+          counter once frames start arriving. */}
+      <div ref={captionRef} className="pd-denoise-caption" />
     </div>
   );
 }

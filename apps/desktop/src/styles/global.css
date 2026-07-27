@@ -851,57 +851,95 @@ body {
   position: absolute;
   inset: 0;
   opacity: calc(1 - var(--pd-dn-resolve));
+  /*
+   * NO LATTICE. This was two repeating-linear-gradients crossing at +/-68deg,
+   * which is a woven mesh however faint you make it — jedd read it as a
+   * spiderweb, and he was describing exactly what it was. A crosshatch also
+   * says "fabric", when what this moment should say is "a picture is coming".
+   *
+   * So: three broad, soft luminance fields drifting across each other at
+   * different rates and sizes, with nothing straight in them. Because the
+   * periods (19s/23s/31s) share no common factor, the pattern does not visibly
+   * repeat for minutes. It reads as depth forming rather than a pattern
+   * playing, and it sits quietly enough behind a conversation to ignore.
+   */
   background:
     radial-gradient(
-      120% 90% at 22% 18%,
-      color-mix(in srgb, var(--pd-accent-primary) 13%, transparent) 0%,
-      transparent 62%
+      68% 78% at 26% 30%,
+      color-mix(in srgb, var(--pd-accent-primary) 10%, transparent) 0%,
+      transparent 70%
     ),
-    /* Pitch and alpha both deliberately low: at 1px/9px and a third opacity
-     * the lattice read as printed fabric and competed with the conversation
-     * around it. Wider and fainter, it reads as a surface that happens to be
-     * moving. */
-    repeating-linear-gradient(
-      68deg,
-      color-mix(in srgb, var(--pd-border-strong) 16%, transparent) 0 1px,
-      transparent 1px 15px
+    radial-gradient(
+      52% 62% at 74% 62%,
+      color-mix(in srgb, var(--pd-text-primary) 7%, transparent) 0%,
+      transparent 72%
     ),
-    repeating-linear-gradient(
-      -68deg,
-      color-mix(in srgb, var(--pd-border-strong) 11%, transparent) 0 1px,
-      transparent 1px 21px
+    radial-gradient(
+      84% 58% at 48% 88%,
+      color-mix(in srgb, var(--pd-text-primary) 5%, transparent) 0%,
+      transparent 76%
     );
   background-size:
-    160% 160%,
-    44px 44px,
-    62px 62px;
+    170% 170%,
+    150% 150%,
+    190% 190%;
   animation:
-    pd-dn-warp 13s linear infinite,
-    pd-dn-bloom 6.5s ease-in-out infinite;
+    pd-dn-drift-a 19s ease-in-out infinite,
+    pd-dn-drift-b 23s ease-in-out infinite,
+    pd-dn-drift-c 31s ease-in-out infinite;
 }
-@keyframes pd-dn-warp {
-  from {
-    background-position:
-      0% 0%,
-      0 0,
-      0 0;
-  }
-  to {
-    background-position:
-      0% 0%,
-      44px 44px,
-      -62px 62px;
-  }
-}
-@keyframes pd-dn-bloom {
+/*
+ * Three drifts, one per field. Each moves its OWN layer (background-position
+ * takes a value per background image), on a different period and a different
+ * path, so the fields slide across each other instead of translating together.
+ * Small distances: this should look like light moving, not like something
+ * scrolling past.
+ */
+@keyframes pd-dn-drift-a {
   0%,
   100% {
-    background-position-x: 8%;
+    background-position:
+      18% 26%,
+      50% 50%,
+      50% 50%;
+  }
+  50% {
+    background-position:
+      42% 44%,
+      50% 50%,
+      50% 50%;
+  }
+}
+@keyframes pd-dn-drift-b {
+  0%,
+  100% {
+    background-position:
+      50% 50%,
+      76% 60%,
+      50% 50%;
+  }
+  50% {
+    background-position:
+      50% 50%,
+      54% 34%,
+      50% 50%;
+  }
+}
+@keyframes pd-dn-drift-c {
+  0%,
+  100% {
+    background-position:
+      50% 50%,
+      50% 50%,
+      44% 88%;
     opacity: calc(1 - var(--pd-dn-resolve));
   }
   50% {
-    background-position-x: 74%;
-    opacity: calc((1 - var(--pd-dn-resolve)) * 0.72);
+    background-position:
+      50% 50%,
+      50% 50%,
+      62% 66%;
+    opacity: calc((1 - var(--pd-dn-resolve)) * 0.82);
   }
 }
 

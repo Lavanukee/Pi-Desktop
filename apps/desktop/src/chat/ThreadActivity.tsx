@@ -18,6 +18,7 @@ import { useCanvasTabs } from '@pi-desktop/canvas';
 import type { ToolResultMsg } from '@pi-desktop/engine';
 import { ActivityChain } from '@pi-desktop/ui';
 import type { ReactNode } from 'react';
+import { useCanvasStore } from '../state/canvas-store';
 import { usePiStore } from '../state/pi-slice';
 import {
   type ActivityBlock,
@@ -144,7 +145,16 @@ export function ThreadActivityChain({
       active={streaming}
       onOpenCanvas={(_step, index) => {
         const spec = steps[index]?.tabSpec;
-        if (spec?.key !== undefined) canvas.upsertTab(spec.key, spec);
+        if (spec?.key === undefined) return;
+        canvas.upsertTab(spec.key, spec);
+        // upsertTab creates and FOCUSES the tab; it does not reveal the panel.
+        // With the canvas collapsed that made clicking a media row look like it
+        // did nothing at all — the tab was there, behind a closed drawer
+        // (jedd: "clicking that focuses the image in the canvas but doesn't
+        // slide it open if it's closed"). Every other path that puts something
+        // in the canvas on the user's behalf opens it too (useGen, corp stream,
+        // subagent routing, browser agent); this one was the exception.
+        useCanvasStore.getState().setCanvasOpen(true);
       }}
       // A read/edit/skill row's primary click opens that file in the canvas
       // (deliverable A2). The full path lives on `step.detail`; resolve it against

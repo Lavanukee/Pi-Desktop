@@ -19,11 +19,10 @@ import {
   type ToolResultMsg,
 } from '@pi-desktop/engine';
 import type { ReactNode } from 'react';
-import { generatedImageSrc, segmentGroup, toolStepKind } from './activity-mapping';
+import { segmentGroup, toolStepKind } from './activity-mapping';
 import { InlineArtifact } from './canvas/InlineArtifacts';
 import { Markdown } from './markdown';
 import { ThreadActivityChain } from './ThreadActivity';
-import { ThreadImage } from './ThreadImage';
 import { ThreadImagePlaceholder } from './ThreadImagePlaceholder';
 
 export function AssistantGroup({
@@ -111,17 +110,19 @@ export function AssistantGroup({
         // connector line + "Done ✓"). ONE shared counter keys both kinds, so a run
         // that starts thinking-only and later gains a tool call keeps the SAME
         // component instance (no remount → the expand/collapse rolls smoothly).
-        // Generated images a chain produced render INLINE beneath it (round-5 #7);
-        // a thinking-only run never has tool calls, so it contributes none.
-        const chainImages =
-          seg.kind === 'chain' && !suppressInlineArtifacts
-            ? seg.blocks
-                .filter(
-                  (b): b is Extract<ContentBlock, { type: 'toolCall' }> => b.type === 'toolCall',
-                )
-                .map((b) => ({ id: b.id, src: generatedImageSrc(b, resultForBlock.get(b.id)) }))
-                .filter((x): x is { id: string; src: string } => x.src !== undefined)
-            : [];
+        // NO inline copy of a finished generated image here.
+        //
+        // This used to render one beneath the chain (round-5 #7), from before
+        // image generation was a tool. Now the same picture arrives up to three
+        // ways in one turn: this copy under "Done", the model embedding it in
+        // its own reply (a model that has just made a picture says "I should
+        // show it to the user" and puts it in the markdown), and the chain row
+        // itself, which opens it in the canvas. jedd saw it twice at 360px and
+        // ~690px in the same turn.
+        //
+        // The row is the one that belongs to the tool and it opens the canvas,
+        // so this copy goes. The model's own embed is capped to 414px in
+        // markdown.css — 1.15x the card the picture was generated in.
         // While an image is being generated its card is NOT empty: the same box
         // the finished picture will occupy shows the model's own intermediate
         // decodes, resolving live (ThreadImagePlaceholder). It renders in the
@@ -142,9 +143,6 @@ export function AssistantGroup({
               tps={tps}
               {...(onOpenFile !== undefined ? { onOpenFile } : {})}
             />
-            {chainImages.map((img) => (
-              <ThreadImage key={img.id} src={img.src} />
-            ))}
             {/* Deliberately unkeyed and rendered from a stable position: the
                 placeholder subscribes to the frame stream itself and drives its
                 own DOM, so it must MOUNT ONCE per generation. Remounting it

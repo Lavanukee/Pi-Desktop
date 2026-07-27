@@ -39,6 +39,12 @@ const repoRoot = path.resolve(appRoot, '../..');
 const WAV = process.env.WAV ?? '';
 const RECORD_MS = Number(process.env.RECORD_MS ?? 12_000);
 const OUT = process.env.OUT ?? path.join(repoRoot, '.corp-runs', 'dictation-probe');
+// PACKAGED=1 drives /Applications/Bobble.app instead of the dev tree. Worth
+// running: the shipped renderer loads over a different scheme, and `script-src
+// 'self'` is exactly the sort of thing that resolves differently there — which
+// is how the worklet silently fell back to ScriptProcessor in the first place.
+const PACKAGED = process.env.PACKAGED === '1';
+const PACKAGED_BIN = '/Applications/Bobble.app/Contents/MacOS/Bobble';
 
 if (WAV === '' || !existsSync(WAV)) {
   console.error('dictation-probe: set WAV=<16-bit PCM mono wav>');
@@ -48,9 +54,9 @@ mkdirSync(OUT, { recursive: true });
 
 const userDataDir = mkdtempSync(path.join(tmpdir(), 'pi-dict-udd-'));
 const app = await electron.launch({
-  executablePath: electronBinary,
+  executablePath: PACKAGED ? PACKAGED_BIN : electronBinary,
   args: [
-    appRoot,
+    ...(PACKAGED ? [] : [appRoot]),
     `--user-data-dir=${userDataDir}`,
     // Grant + fake the microphone. Without the first flag the permission
     // dialog never resolves headlessly; without the other two there is no

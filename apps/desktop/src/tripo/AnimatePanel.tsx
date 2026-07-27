@@ -10,9 +10,20 @@
  * and reports it → we ASK ("humanoid?") instead of guessing → the rig runs and
  * produces a real skinned GLB on the asset's history tree.
  *
+ * WHICH RIGGER RUNS IS DECIDED BY THE SHAPE PROBE'S ANSWER (jedd), and the two
+ * are not interchangeable:
+ *   humanoid  -> a geometric fit to ARDY's exact 27-joint cskel27, which is the
+ *                only skeleton the motion stage can drive
+ *   anything  -> SkinTokens, which PREDICTS a skeleton per mesh and is the only
+ *   else        way to rig an animal or an invented creature at all
+ * Routing SkinTokens over everything, as this did before, silently cost every
+ * humanoid its ability to animate — MEASURED, it predicted a 15-joint skeleton
+ * for a humanoid mesh. So a model that reaches "rigged and humanoid" here is
+ * animatable by construction, and needs no further compatibility check.
+ *
  * HONEST STATUS of the two named engines:
- *  - Rigging is a GEOMETRIC fit to NVIDIA ARDY's 27-joint skeleton, not
- *    SkinTokens. NOTE (2026-07-24): this used to say SkinTokens "needs a >=14 GB
+ *  - Humanoid rigging is a GEOMETRIC fit to NVIDIA ARDY's 27-joint skeleton,
+ *    not SkinTokens. NOTE (2026-07-24): this used to say SkinTokens "needs a >=14 GB
  *    NVIDIA GPU … cannot run on this machine at all" — that was WRONG (it
  *    described the upstream CUDA repo, from unexecuted web research).
  *    `mlx-community/SkinTokens-bf16` runs natively on Apple Silicon; wiring it
@@ -137,16 +148,23 @@ function HumanoidPrompt({
   const dismiss = () => useTripoStore.setState({ humanoidPrompt: null });
   const rig = () => {
     dismiss();
-    // Pass the verdict the user just answered. The rig job itself may not
-    // measure humanoid-ness (SkinTokens predicts a skeleton for any mesh and
-    // reports none), and without this the produced version recorded
-    // humanoid:false — hiding every motion control behind a rig that had just
-    // succeeded and been confirmed humanoid.
+    // The verdict travels TWICE, to two different places, and both matter.
+    //
+    // `humanoid` goes to the ENGINE, where it chooses the rigger: yes fits
+    // ARDY's cskel27 so the motion stage can drive the result, no hands the
+    // mesh to SkinTokens, which can rig a creature a humanoid template cannot.
+    //
+    // `knownHumanoid` stays in the UI. The rig job itself may not measure
+    // humanoid-ness (SkinTokens predicts a skeleton for any mesh and reports
+    // none), and without it the produced version recorded humanoid:false —
+    // hiding every motion control behind a rig that had just succeeded and been
+    // confirmed humanoid.
     void runStage(
       'rig',
       diskPath,
       { assetId, versionId, op: 'rig' },
       {
+        humanoid: prompt.isHumanoid,
         knownHumanoid: prompt.isHumanoid,
       },
     );
@@ -226,17 +244,15 @@ export function AnimatePanel(): JSX.Element {
   const motionInstalled =
     engineReady && models.find((m) => m.id === 'ardy-motion')?.installed === true;
   /*
-   * ARDY drives ITS OWN 27-joint skeleton and nothing else, so the rig has to
-   * be cskel27 for a clip to apply.
+   * Motion needs no separate compatibility check any more: answering "yes,
+   * humanoid" is what routes the rig to the cskel27 fitter, which is ARDY's
+   * exact hierarchy. A model that reached `rigged && humanoid` is therefore
+   * animatable by construction.
    *
-   * Which rigger ran decides that, and jobs.py decides by exactly this test:
-   * SkinTokens when installed, the geometric cskel27 fitter otherwise. MEASURED
-   * on this machine — SkinTokens predicted a FIFTEEN-joint skeleton for a
-   * humanoid mesh, which is a perfectly good rig that ARDY cannot animate.
-   * Mirroring the engine's own condition here is what keeps the panel from
-   * offering a button that can only fail.
+   * A non-humanoid keeps SkinTokens' predicted skeleton — which is the point:
+   * it can rig a creature no humanoid template fits — and the motion section
+   * stays hidden for it, because ARDY only generates human motion.
    */
-  const skinTokensRig = models.find((m) => m.id === 'skintokens')?.installed === true;
 
   const runMotion = () => {
     if (asset === undefined || version?.diskPath === undefined) return;
@@ -325,23 +341,11 @@ export function AnimatePanel(): JSX.Element {
           </div>
         ) : null}
 
-        {rigged && skinTokensRig ? (
-          <div className="tp-notice" data-testid="tp-motion-skeleton-mismatch">
-            <IcInfo size={14} />
-            <span>
-              SkinTokens rigged this model with a skeleton it predicted for the mesh, not{' '}
-              {ANIM_MODEL}'s 27-joint hierarchy — so motion generation is unavailable for it until
-              retargeting between the two is wired. The geometric rigger produces an {ANIM_MODEL}
-              -compatible skeleton that motion generation drives directly.
-            </span>
-          </div>
-        ) : null}
-
         {/* Everything below is gated on a REAL rig. */}
         {rigged && humanoid ? (
           <>
             <div className="tp-section-title">Describe a motion ({ANIM_MODEL})</div>
-            {!motionInstalled && !skinTokensRig ? (
+            {!motionInstalled ? (
               <div className="tp-notice" data-testid="tp-ardy-unavailable">
                 <IcInfo size={14} />
                 <span>
@@ -374,9 +378,7 @@ export function AnimatePanel(): JSX.Element {
               type="button"
               className="tp-btn-primary"
               data-testid="tp-generate-motion"
-              disabled={
-                !motionInstalled || skinTokensRig || motionBusy || motionPrompt.trim() === ''
-              }
+              disabled={!motionInstalled || motionBusy || motionPrompt.trim() === ''}
               onClick={runMotion}
             >
               <IcSparkles size={15} />

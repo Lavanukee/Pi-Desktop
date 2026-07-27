@@ -76,6 +76,7 @@ def _worker_env(registry: Registry) -> dict:
 #: model as "imported". `test_stage_args.py` asserts this list stays complete.
 STAGE_OPTION_KEYS = (
     "seconds",
+    "humanoid",
     "targetQuads",
     "adaptivity",
     "probeOnly",
@@ -489,13 +490,28 @@ class JobManager:
                 ]
                 cwd = self.registry.tool_dir("meshtools")
             elif op == "rig":
-                # SkinTokens when it is installed: it PREDICTS the skeleton and
-                # the skin weights for any mesh, where rig_worker.py fits a
-                # fixed 27-joint humanoid template by measuring the shape. The
-                # geometric rigger stays as the fallback so the stage still
-                # works on a machine without the checkout, and it is the only
-                # one that can answer the "is this humanoid?" probe.
-                if self.registry.has_skintokens() and not options.get("probeOnly"):
+                # WHICH RIGGER IS DECIDED BY THE ANSWERED HUMANOID QUESTION.
+                #
+                # The two produce different skeletons and that difference is the
+                # whole point. rig_worker.py fits a fixed 27-joint template —
+                # ARDY's exact cskel27 — so a humanoid can be ANIMATED by the
+                # motion stage. SkinTokens predicts a skeleton per mesh (MEASURED
+                # at 15 joints for a humanoid) and is the only one that can rig a
+                # quadruped, a bird or an invented creature at all.
+                #
+                # So: humanoid -> the template, and motion works on it;
+                # anything else -> SkinTokens, and it gets a rig that actually
+                # fits its body. Choosing SkinTokens for everything, as this did
+                # before, silently cost every humanoid its ability to animate.
+                #
+                # `humanoid` is None for a probe run, which must always use the
+                # geometric worker — it is the only one that measures shape.
+                use_skintokens = (
+                    self.registry.has_skintokens()
+                    and not options.get("probeOnly")
+                    and options.get("humanoid") is not True
+                )
+                if use_skintokens:
                     venv = self.registry.skintokens_python()
                     script = WORKERS_DIR / "skintokens_worker.py"
                     args = [

@@ -90,6 +90,10 @@ interface Gen3dState {
       readonly adaptivity?: number;
       readonly probeOnly?: boolean;
       readonly requireHumanoid?: boolean;
+      /** Rig: the answered humanoid question. CHOOSES THE RIGGER in the engine
+       * — true fits ARDY's cskel27 (animatable), false lets SkinTokens predict
+       * a skeleton for whatever the mesh actually is. */
+      readonly humanoid?: boolean;
       readonly sourcePath?: string;
       /** Motion: clip length in seconds (cost is linear in it). */
       readonly seconds?: number;

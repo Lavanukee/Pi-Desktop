@@ -199,3 +199,58 @@ def test_motion_without_a_prompt_is_refused() -> None:
     res = m.start_stage({"op": "motion", "modelPath": str(mesh)})
     assert res["ok"] is False
     assert "movement" in res["error"]
+
+
+def _rigger(body: dict, *, skintokens: bool) -> str:
+    """Which worker script a rig request reaches."""
+    calls: list[str] = []
+    spawned = threading.Event()
+    m = _manager()
+    m.registry.has_skintokens.return_value = skintokens
+
+    def capture(job, venv, script, args, **kw):
+        calls.append(Path(script).name)
+        spawned.set()
+
+    m._run_worker = capture
+    assert m.start_stage(body).get("ok") is True
+    assert spawned.wait(10), f"no worker spawned for {body}"
+    return calls[0]
+
+
+def test_humanoid_is_rigged_for_ardy_even_when_skintokens_is_installed() -> None:
+    """The answer to "is this humanoid?" CHOOSES THE RIGGER.
+
+    Yes has to reach the cskel27 fitter, because that is ARDY's exact skeleton
+    and the only rig the motion stage can drive. Before this, SkinTokens took
+    every mesh whenever it was installed, so confirming "humanoid" produced a
+    15-joint predicted rig that could never be animated.
+    """
+    _, mesh = _fixture()
+    body = {"op": "rig", "modelPath": str(mesh), "humanoid": True}
+    assert _rigger(body, skintokens=True) == "rig_worker.py"
+
+
+def test_non_humanoid_goes_to_skintokens() -> None:
+    """The other half, and the reason SkinTokens is here: it predicts a skeleton
+    per mesh, so a creature no humanoid template fits still gets a real rig."""
+    _, mesh = _fixture()
+    body = {"op": "rig", "modelPath": str(mesh), "humanoid": False}
+    assert _rigger(body, skintokens=True) == "skintokens_worker.py"
+
+
+def test_without_skintokens_everything_uses_the_template() -> None:
+    """The geometric fitter is the fallback, so the stage still works on a
+    machine that never downloaded SkinTokens."""
+    _, mesh = _fixture()
+    for humanoid in (True, False):
+        body = {"op": "rig", "modelPath": str(mesh), "humanoid": humanoid}
+        assert _rigger(body, skintokens=False) == "rig_worker.py"
+
+
+def test_the_shape_probe_always_measures() -> None:
+    """A probe run must reach the geometric worker whatever else is installed —
+    it is the only one that can answer the question the routing depends on."""
+    _, mesh = _fixture()
+    body = {"op": "rig", "modelPath": str(mesh), "probeOnly": True}
+    assert _rigger(body, skintokens=True) == "rig_worker.py"

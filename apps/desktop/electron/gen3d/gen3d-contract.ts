@@ -228,6 +228,18 @@ export type Gen3dInvokeMap = {
       /** Rig: refuse to fit a humanoid skeleton to a non-humanoid mesh. */
       readonly requireHumanoid?: boolean;
       /**
+       * Rig: the answered "is this humanoid?" question, which CHOOSES THE
+       * RIGGER.
+       *
+       * true  -> the geometric cskel27 fitter, whose skeleton is ARDY's exact
+       *          27-joint hierarchy, so the motion stage can drive it.
+       * false -> SkinTokens, which predicts a skeleton per mesh and handles the
+       *          animals and creatures a humanoid template cannot.
+       *
+       * Undefined leaves the engine to pick, which is what a probe run does.
+       */
+      readonly humanoid?: boolean;
+      /**
        * Motion: how long a clip to generate, in seconds.
        *
        * Cost is linear — ARDY is autoregressive — so this is a real dial, not a

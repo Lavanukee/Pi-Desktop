@@ -201,9 +201,11 @@ function ModelCard({ id }: { readonly id: Gen3dModelId }): JSX.Element | null {
       data-installed={model.installed}
       data-testid={`tp-dlcard-${id}`}
     >
-      <div className="tp-dlcard-loop">
-        <CapabilityLoop role={model.role} />
-      </div>
+      {/* No capability loop here. At card size the loops are a near-empty dark
+          rectangle with one dot (TRELLIS) or a small grey square (Mage-Flow) —
+          they read as a failed image rather than as an illustration, and the
+          card's name + blurb + note already say what the model does. The loops
+          keep the "Runs on <model>" hero in GenPanel, where they have room. */}
       <div className="tp-dlcard-body">
         <div className="tp-dlcard-titles">
           <span className="tp-dlcard-name">{model.label}</span>
@@ -283,9 +285,15 @@ export function DownloadPanel(): JSX.Element {
         ))}
       </div>
       <div className="tp-dlpanel-foot">
+        {/* QUIET, deliberately. This was the accent-filled primary at 12,558px²
+            against a per-card Download at 5,757px² — i.e. the biggest, loudest
+            control on screen committed to tens of GB in one press, while the
+            targeted action a user is far more likely to want was the small one.
+            The per-card buttons stay primary; the bulk action is available, not
+            advertised. */}
         <button
           type="button"
-          className="tp-generate-btn"
+          className="tp-btn-quiet tp-dlpanel-all"
           data-testid="tp-download-all"
           disabled={missing.length === 0 || anyDownloading}
           onClick={() => void download(missing.map((m) => m.id))}

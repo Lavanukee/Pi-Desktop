@@ -205,7 +205,7 @@ export function BlendGraph(): JSX.Element {
         </div>
         <button
           type="button"
-          className="tp-upload-btn tp-graph-export"
+          className="tp-btn-quiet tp-graph-export"
           data-testid="tp-graph-export"
           disabled={states.length === 0}
           onClick={exportJson}

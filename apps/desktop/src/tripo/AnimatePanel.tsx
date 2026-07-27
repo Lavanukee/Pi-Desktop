@@ -107,7 +107,7 @@ function ParametersSection(): JSX.Element {
           </button>
         </div>
       ))}
-      <button type="button" className="tp-upload-btn" data-testid="tp-add-param" onClick={addParam}>
+      <button type="button" className="tp-btn-quiet" data-testid="tp-add-param" onClick={addParam}>
         <IcPlus size={14} />
         Add parameter
       </button>
@@ -175,7 +175,7 @@ function HumanoidPrompt({
       <div className="tp-humanoid-ask-actions">
         <button
           type="button"
-          className="tp-generate-btn"
+          className="tp-btn-primary"
           data-testid="tp-humanoid-confirm"
           onClick={rig}
         >
@@ -261,7 +261,7 @@ export function AnimatePanel(): JSX.Element {
             ) : null}
             <button
               type="button"
-              className="tp-retry-btn"
+              className="tp-btn-tonal"
               data-testid="tp-rig-btn"
               disabled={!rigInstalled || busy}
               onClick={analyse}
@@ -307,7 +307,7 @@ export function AnimatePanel(): JSX.Element {
             </div>
             <button
               type="button"
-              className="tp-generate-btn"
+              className="tp-btn-primary"
               data-testid="tp-generate-motion"
               disabled
             >
@@ -368,7 +368,7 @@ export function AnimatePanel(): JSX.Element {
         <div className="tp-panel-foot">
           <button
             type="button"
-            className="tp-generate-btn"
+            className="tp-btn-primary"
             data-testid="tp-open-graph"
             onClick={() => set('graphOpen', true)}
           >

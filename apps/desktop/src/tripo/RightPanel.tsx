@@ -411,7 +411,7 @@ function HistoryTab(): JSX.Element {
       {previewVersionId !== null ? (
         <button
           type="button"
-          className="tp-upload-btn"
+          className="tp-btn-quiet"
           data-testid="tp-ver-back-to-current"
           onClick={() => previewVersion(null)}
         >

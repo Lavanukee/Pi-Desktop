@@ -70,7 +70,7 @@ function GenerateButton({
   return (
     <button
       type="button"
-      className="tp-generate-btn"
+      className="tp-btn-primary"
       disabled={disabled}
       data-testid={testid}
       onClick={onClick}
@@ -98,7 +98,7 @@ function DownloadCta({
   return (
     <button
       type="button"
-      className="tp-generate-btn tp-generate-btn-dl"
+      className="tp-btn-primary tp-btn-primary-dl"
       data-testid={testid}
       onClick={() => open(true, modelId)}
     >
@@ -160,7 +160,7 @@ function UploadModelButton(): JSX.Element {
     <>
       <button
         type="button"
-        className="tp-upload-btn"
+        className="tp-btn-quiet"
         data-testid="tp-upload-model-btn"
         onClick={() => inputRef.current?.click()}
       >
@@ -755,7 +755,7 @@ function ImagePanel(): JSX.Element {
               <div className="tp-image-steps" data-testid="tp-image-steps">
                 <button
                   type="button"
-                  className="tp-upload-btn"
+                  className="tp-btn-quiet"
                   data-testid="tp-image-prev"
                   disabled={imageIndex === 0}
                   onClick={() => set('imageIndex', Math.max(0, imageIndex - 1))}
@@ -764,7 +764,7 @@ function ImagePanel(): JSX.Element {
                 </button>
                 <button
                   type="button"
-                  className="tp-upload-btn"
+                  className="tp-btn-quiet"
                   data-testid="tp-image-next"
                   disabled={imageIndex >= imageVersions.length - 1}
                   onClick={() =>
@@ -791,7 +791,7 @@ function ImagePanel(): JSX.Element {
               />
               <button
                 type="button"
-                className="tp-upload-btn"
+                className="tp-btn-quiet"
                 data-testid="tp-image-edit-btn"
                 disabled={busy || editPrompt.trim().length === 0}
                 onClick={runEdit}
@@ -808,16 +808,21 @@ function ImagePanel(): JSX.Element {
             <div className="tp-image-result-actions">
               <button
                 type="button"
-                className="tp-upload-btn"
+                className="tp-btn-quiet"
                 data-testid="tp-image-export"
                 onClick={exportImage}
               >
                 <IcDownload size={14} />
                 Export image
               </button>
+              {/* TONAL, not a second accent fill. "Generate Image" in the panel
+                  foot is what this panel is FOR and keeps the one accent-filled
+                  primary; "Make 3D" is the hand-off to the next stage, and two
+                  accent CTAs side by side (measured: 2 on this panel) is the
+                  panel refusing to say which one it wants. */}
               <button
                 type="button"
-                className="tp-generate-btn tp-generate-btn-inline"
+                className="tp-btn-tonal tp-btn-inline"
                 data-testid="tp-image-make3d"
                 disabled={!trellisInstalled}
                 onClick={() => {

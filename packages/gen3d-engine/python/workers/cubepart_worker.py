@@ -61,6 +61,59 @@ ROUTER.default_stage = STAGE
 ROUTER.fallback_message = "Deciding which surface belongs to which part"
 
 
+def install_extraction_progress(pipe, parts, evaluator_cls) -> None:
+    """Report the MESH EXTRACTION, which used to run in total silence.
+
+    `input_to_part_shape()` runs the denoise AND the extraction in one call, and
+    only the denoise is a tqdm loop — so patch_tqdm's readout froze on
+    "Deciding which surface belongs to which part (30/30)" and stayed there for
+    the whole extraction. MEASURED on a real run: over five minutes on that one
+    stale sentence while the worker was genuinely busy (7 GB RSS, extracting),
+    with a ticking elapsed counter as the only sign of life.
+
+    There is no percentage here that would not be a lie. The coarse field pass
+    is one shot over the whole batch, and the fine pass is per part but its cost
+    per part depends on how much surface that part has, which is not known until
+    it has been evaluated. So this reports the PHASE and the part index — both
+    things that are true — rather than a bar that invents a denominator.
+
+    Both hooks wrap what the pipeline already calls, so the pipeline call itself
+    is untouched:
+
+      * ``pipe.decode_shape`` — an INSTANCE attribute shadowing the bound
+        method, which ``self.decode_shape(...)`` inside ``input_to_part_shape``
+        picks up. This fires once, the moment the denoise ends.
+      * ``evaluator_cls.evaluate`` — it receives the per-part "fine" callback,
+        so wrapping that callback yields exactly one event per part, named.
+        Pass None (upstream moved it) and the phase label still lands; only the
+        per-part detail is lost.
+    """
+    real_decode = pipe.decode_shape
+
+    def decode_with_progress(*a, **kw):
+        progress(STAGE, f"Building part meshes ({len(parts)} parts)…")
+        return real_decode(*a, **kw)
+
+    pipe.decode_shape = decode_with_progress
+
+    if evaluator_cls is None:
+        return
+
+    real_evaluate = evaluator_cls.evaluate
+
+    def evaluate_with_progress(self, eval_func_coarse, eval_func_fine, *a, **kw):
+        def fine(positions, batch_idx):
+            name = parts[batch_idx] if batch_idx < len(parts) else f"part {batch_idx + 1}"
+            progress(STAGE, f"Building part meshes — {name} ({batch_idx + 1}/{len(parts)})")
+            return eval_func_fine(positions, batch_idx)
+
+        result = real_evaluate(self, eval_func_coarse, fine, *a, **kw)
+        progress(STAGE, f"Extracting surfaces from {len(parts)} parts…")
+        return result
+
+    evaluator_cls.evaluate = evaluate_with_progress
+
+
 
 def main() -> None:
     ap = argparse.ArgumentParser()
@@ -293,6 +346,14 @@ def main() -> None:
     latents, _ = pipe.encode_shape(surface)
     mark("mesh encode")
 
+    # See install_extraction_progress: without this the readout freezes on
+    # "… (30/30)" for the whole extraction.
+    try:
+        from cube_part.utils.field import ImplicitFieldCoarseToFineEvaluator as _Evaluator
+    except Exception:  # noqa: BLE001 — upstream may move it; the phase label still lands
+        _Evaluator = None
+    install_extraction_progress(pipe, parts, _Evaluator)
+
     progress(STAGE, f"Decomposing into {len(parts)} parts ({args.steps} steps)…")
     part_meshes = pipe.input_to_part_shape(
         ShapeInput(prompt=[parts], latents=latents),
@@ -309,6 +370,7 @@ def main() -> None:
     )
     mark("denoise + extract")
 
+    progress(STAGE, f"Writing {len(parts)} part meshes…")
     scene = trimesh.Scene()
     saved = 0
     palette = PART_PALETTE

@@ -102,6 +102,14 @@ function FloatToolbar({ onSnapshot }: { readonly onSnapshot: () => void }): JSX.
   const modal = useTripoStore((s) => s.modal);
   const set = useTripoStore((s) => s.set);
 
+  // GROUPING RULE (the only one — do not add a third pill without extending it):
+  //   pill 1 — VIEW CONTROLS: things that change what the viewport shows or
+  //            captures. Lighting, snapshot (camera), grid, skeleton.
+  //   pill 2 — ABOUT THIS SESSION: things that tell you something rather than
+  //            change something. Viewer help, session task history.
+  // Before this, pill 1 held lighting/snapshot/grid and help and history each
+  // floated as their own single-button pill — three visual groups expressing
+  // two ideas, with nothing distinguishing the solos from each other.
   return (
     <div className="tp-float-tools">
       <div className="tp-float-group">
@@ -195,53 +203,55 @@ function FloatToolbar({ onSnapshot }: { readonly onSnapshot: () => void }): JSX.
         ) : null}
       </div>
 
-      <Hint text="Viewer help" side="left">
-        <button
-          type="button"
-          className="tp-float-btn tp-float-solo"
-          data-testid="tp-help-btn"
-          aria-pressed={modal === 'help'}
-          // Strictly a toggle, and the ONLY way this dialog opens.
-          onClick={() => set('modal', modal === 'help' ? null : 'help')}
-        >
-          <IcQuestion size={17} />
-        </button>
-      </Hint>
-
-      <MenuAnchor
-        id="history"
-        placement="left-end"
-        trigger={
-          <Hint text="Session tasks" side="left">
-            <button
-              type="button"
-              className="tp-float-btn tp-float-solo"
-              data-testid="tp-history-btn"
-              onClick={() => toggleMenu('history')}
-            >
-              <IcHistory size={17} />
-            </button>
-          </Hint>
-        }
-        menu={
-          <div className="tp-history-menu" data-testid="tp-history-menu">
-            <div className="tp-menu-heading">Tasks this session</div>
-            {history.length === 0 ? (
-              <div className="tp-history-empty">No stages run yet</div>
-            ) : (
-              history.map((h) => (
-                <div key={h.id} className="tp-history-row" data-state="done">
-                  <div className="tp-history-main">
-                    <span className="tp-history-label">{h.label}</span>
-                    <span className="tp-history-sub">{h.sub}</span>
+      <div className="tp-float-group">
+        <Hint text="Viewer help" side="left">
+          <button
+            type="button"
+            className="tp-float-btn"
+            data-testid="tp-help-btn"
+            aria-pressed={modal === 'help'}
+            // Strictly a toggle, and the ONLY way this dialog opens.
+            onClick={() => set('modal', modal === 'help' ? null : 'help')}
+          >
+            <IcQuestion size={17} />
+          </button>
+        </Hint>
+        <span className="tp-float-sep" />
+        <MenuAnchor
+          id="history"
+          placement="left-end"
+          trigger={
+            <Hint text="Session tasks" side="left">
+              <button
+                type="button"
+                className="tp-float-btn"
+                data-testid="tp-history-btn"
+                onClick={() => toggleMenu('history')}
+              >
+                <IcHistory size={17} />
+              </button>
+            </Hint>
+          }
+          menu={
+            <div className="tp-history-menu" data-testid="tp-history-menu">
+              <div className="tp-menu-heading">Tasks this session</div>
+              {history.length === 0 ? (
+                <div className="tp-history-empty">No stages run yet</div>
+              ) : (
+                history.map((h) => (
+                  <div key={h.id} className="tp-history-row" data-state="done">
+                    <div className="tp-history-main">
+                      <span className="tp-history-label">{h.label}</span>
+                      <span className="tp-history-sub">{h.sub}</span>
+                    </div>
+                    <span className="tp-history-state tp-history-done">Completed</span>
                   </div>
-                  <span className="tp-history-state tp-history-done">Completed</span>
-                </div>
-              ))
-            )}
-          </div>
-        }
-      />
+                ))
+              )}
+            </div>
+          }
+        />
+      </div>
     </div>
   );
 }

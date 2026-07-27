@@ -213,6 +213,26 @@ export function Toggle({
   );
 }
 
+/**
+ * Exclusive choice: Resolution, Topology, Symmetry, Texture size, Shape model.
+ *
+ * This used to be `role="tablist"` / `role="tab"` with no tabpanels anywhere,
+ * so a screen reader announced "tab 1 of 3" for a set of *values* and keyboard
+ * users were promised arrow keys that would move them into a panel that does
+ * not exist. These are radio groups, so they are `radiogroup` / `radio` /
+ * `aria-checked` now — and the ARIA radio pattern is not just attributes, it
+ * carries a keyboard contract:
+ *
+ *   • ROVING TABINDEX — the group is ONE tab stop. The checked option is
+ *     tabbable (0); the rest are -1. Tab moves past the whole control rather
+ *     than through every option, which is what a radio group must do.
+ *   • Left/Up move to the previous option, Right/Down to the next, both wrap;
+ *     Home/End jump to the first/last. Moving SELECTS (the standard "selection
+ *     follows focus" radio behaviour) — these are cheap, instantly-reversible
+ *     UI choices, so there is nothing to protect the user from.
+ *
+ * Nothing visual changes: same classes, same data-active, same testids.
+ */
 export function Segmented<T extends string>({
   options,
   value,
@@ -226,14 +246,51 @@ export function Segmented<T extends string>({
   readonly size?: 'sm' | 'md';
   readonly testid?: string;
 }): JSX.Element {
+  const groupRef = useRef<HTMLDivElement>(null);
+
+  /** Select `next` and move DOM focus onto it, so the roving stop follows. */
+  const moveTo = (next: number): void => {
+    const opt = options[next];
+    if (opt === undefined) return;
+    onChange(opt.id);
+    const el = groupRef.current?.children[next];
+    if (el instanceof HTMLElement) el.focus();
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    const i = options.findIndex((o) => o.id === value);
+    const from = i === -1 ? 0 : i;
+    const last = options.length - 1;
+    let next: number | null = null;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = from === last ? 0 : from + 1;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = from === 0 ? last : from - 1;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = last;
+    if (next === null) return;
+    // Arrow keys inside a radio group must not also scroll the panel.
+    e.preventDefault();
+    moveTo(next);
+  };
+
   return (
-    <div className={`tp-segmented tp-segmented-${size}`} data-testid={testid} role="tablist">
-      {options.map((o) => (
+    <div
+      ref={groupRef}
+      className={`tp-segmented tp-segmented-${size}`}
+      data-testid={testid}
+      role="radiogroup"
+      onKeyDown={onKeyDown}
+    >
+      {options.map((o, i) => (
+        // biome-ignore lint/a11y/useSemanticElements: <input type=radio> cannot render a segment's label/geometry, and the roving-tabindex + arrow-key contract below is the reason role=radio is honest here
         <button
           key={o.id}
           type="button"
-          role="tab"
-          aria-selected={value === o.id}
+          role="radio"
+          aria-checked={value === o.id}
+          // Roving: exactly one option is in the tab order at a time. When the
+          // value is somehow unmatched, the first option holds the stop so the
+          // group can never become unreachable by keyboard.
+          tabIndex={value === o.id || (i === 0 && !options.some((x) => x.id === value)) ? 0 : -1}
           className="tp-segment"
           data-active={value === o.id}
           onClick={() => onChange(o.id)}

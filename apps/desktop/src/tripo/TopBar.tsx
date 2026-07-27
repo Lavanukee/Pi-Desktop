@@ -1,8 +1,13 @@
 /**
  * Bobble 3D top bar — deliberately minimal (no promos, credits, accounts, or
- * nav ballast): back-to-chat, the Bobble 3D mark, a workspace label, and the
- * two things a local studio actually needs up top — Send To (real DCC app
- * logos, exports a GLB named for the target) and Export (opens the dialog).
+ * nav ballast): back-to-chat, the Bobble 3D mark, and the two things a local
+ * studio actually needs up top — Send To (real DCC app logos, exports a GLB
+ * named for the target) and Export (opens the dialog).
+ *
+ * There is no "3D Workspace" caption beside the mark any more. It restated
+ * "Bobble 3D" in weaker words and measured 3.33:1 against the bar under
+ * bobble-light (AA wants 4.5) — a label that fails contrast to tell you
+ * something the logo already said is worth deleting rather than fixing.
  */
 import type { JSX } from 'react';
 import { exitModality } from '../state/modality-store';
@@ -44,9 +49,6 @@ export function TopBar(): JSX.Element {
           <LogoMark size={22} />
           <span className="tp-logo-word">Bobble 3D</span>
         </button>
-        <span className="tp-workspace-label" data-testid="tp-workspace-label">
-          3D Workspace
-        </span>
       </div>
 
       <div className="tp-topbar-right">

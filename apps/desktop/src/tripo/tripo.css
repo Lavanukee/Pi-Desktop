@@ -14,6 +14,29 @@
  * --pd-status-* token; those are gone.
  */
 
+/*
+ * THE TYPE FLOOR. Nothing in this stylesheet declares text below 11px.
+ *
+ * The studio had 14 sub-11px declarations — 7.5px, 8px, 9px ×4, 9.5px, 10px ×5,
+ * 10.5px ×2 — while the rest of the app bottoms out at --pd-font-size-caption
+ * (12px, or 11px under codex). Two of them, the gizmo axis balls at 8px, failed
+ * WCAG AA outright (3.36:1 and 3.62:1 under codex-light). The floor is 11px
+ * rather than the chat body's 14px on purpose: this is a dense tool surface and
+ * matching chat would cost real information density in the rails and
+ * inspectors. But "we chose 10px here" and "this drifted and nobody noticed"
+ * look identical in CSS, and only one of them is a decision — so the floor is a
+ * token you can grep for.
+ *
+ * On :root, not on .tp: MenuAnchor and Hint render through a PORTAL into
+ * document.body, so anything scoped to .tp is invisible to menu contents.
+ *
+ * If you need something smaller you need a different design, not a smaller
+ * number. `grep -n 'font-size: [0-9]' tripo.css` is the audit.
+ */
+:root {
+  --tp-font-size-min: 11px;
+}
+
 .tp {
   /* Derived "clay render" tones for the SVG artwork + 3D materials. */
   --tp-clay-1: color-mix(in srgb, var(--pd-text-primary) 78%, var(--pd-bg-inset));
@@ -21,6 +44,23 @@
   --tp-clay-3: color-mix(in srgb, var(--pd-text-primary) 28%, var(--pd-bg-inset));
   --tp-accent-glow: color-mix(in srgb, var(--pd-accent-primary) 45%, transparent);
   --tp-card-bg: color-mix(in srgb, var(--pd-text-primary) 5%, var(--pd-bg-inset));
+
+  /*
+   * Axis-gizmo colours. The X/Y/Z balls carry a letter in --pd-bg-base, so the
+   * raw --pd-status-*-fg hues are not free choices: MEASURED on the raw hues,
+   * codex-light gave 3.36:1 for Y and 3.62:1 for Z (AA needs 4.5), and
+   * claude-dark Y sat on the line at 4.52.
+   *
+   * Mixing 24% of --pd-text-primary into each hue pushes the ball AWAY from
+   * --pd-bg-base in whichever direction that theme needs — darker under a light
+   * theme, lighter under a dark one — so one rule fixes all six flavors instead
+   * of six overrides. Computed worst case across flavors × modes: 4.93:1.
+   * Lines, balls and the negative-axis rings all draw from these so the gizmo
+   * stays one object.
+   */
+  --tp-axis-x: color-mix(in srgb, var(--pd-status-danger-fg) 76%, var(--pd-text-primary));
+  --tp-axis-y: color-mix(in srgb, var(--pd-status-success-fg) 76%, var(--pd-text-primary));
+  --tp-axis-z: color-mix(in srgb, var(--pd-status-info-fg) 76%, var(--pd-text-primary));
 
   display: flex;
   flex-direction: column;
@@ -34,7 +74,7 @@
 }
 
 /* Zero-specificity button reset (:where) so single-class rules like
- * .tp-generate-btn can set backgrounds without fighting the reset. */
+ * .tp-btn-primary can set backgrounds without fighting the reset. */
 .tp :where(button) {
   font-family: inherit;
   color: inherit;
@@ -132,9 +172,9 @@
 @supports (corner-shape: superellipse(1.5)) {
   :root[data-flavor="codex"]
     :is(
-      .tp-generate-btn,
-      .tp-retry-btn,
-      .tp-upload-btn,
+      .tp-btn-primary,
+      .tp-btn-tonal,
+      .tp-btn-quiet,
       .tp-ghost-btn,
       .tp-export-cta,
       .tp-export-confirm,
@@ -305,7 +345,7 @@
   background: var(--pd-bg-hover);
 }
 .tp-badge-mt {
-  font-size: 9px;
+  font-size: var(--tp-font-size-min);
   font-weight: var(--pd-font-weight-bold);
   background: color-mix(in srgb, var(--pd-status-danger-fg) 85%, var(--pd-bg-base));
   color: var(--pd-bg-base);
@@ -409,15 +449,27 @@
   top: 0;
 }
 
+/*
+ * Menus are CHROME, not dense tool data, so they run at the app's row rhythm
+ * rather than the studio's. Measured before: 35px rows at 12px against the
+ * app's --pd-row-height / --pd-font-size-body, which is a dropdown that reads
+ * as belonging to a different program from the one behind it. Panels and
+ * inspectors keep their tighter density — that part is a real tool-surface
+ * decision; a dropdown is not.
+ *
+ * min-height, not height: a label+hint item is legitimately two lines and grows
+ * (this is how .pd-menu-item does it too).
+ */
 .tp-menu-item {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   width: 100%;
-  padding: 8px 10px;
+  min-height: var(--pd-row-height);
+  padding: 4px 10px;
   border-radius: var(--pd-radius-menu-item);
   text-align: left;
-  font-size: var(--pd-font-size-caption);
+  font-size: var(--pd-font-size-body);
 }
 .tp-menu-item:hover {
   background: var(--pd-bg-hover);
@@ -442,8 +494,10 @@
   text-overflow: ellipsis;
   flex: 1;
 }
+/* Caption, i.e. a step BELOW the label — it was footnote (13-14px) under a
+ * 12px label, so the subtitle outsized the thing it was subtitling. */
 .tp-menu-item-hint {
-  font-size: var(--pd-font-size-footnote);
+  font-size: var(--pd-font-size-caption);
   color: var(--pd-text-muted);
 }
 .tp-menu-item-check {
@@ -464,7 +518,7 @@
   letter-spacing: 0.06em;
 }
 .tp-badge-soft {
-  font-size: 9px;
+  font-size: var(--tp-font-size-min);
   font-weight: var(--pd-font-weight-semibold);
   color: var(--pd-accent-primary);
   background: var(--pd-accent-subtle);
@@ -614,7 +668,7 @@
   line-height: 1;
 }
 .tp-rail-badge {
-  font-size: 7.5px;
+  font-size: var(--tp-font-size-min);
   font-weight: var(--pd-font-weight-bold);
   background: linear-gradient(
     100deg,
@@ -847,7 +901,7 @@
 }
 .tp-mv-slot em {
   font-style: normal;
-  font-size: 9px;
+  font-size: var(--tp-font-size-min);
   color: var(--pd-accent-primary);
 }
 
@@ -1311,8 +1365,21 @@
   transform: rotate(180deg);
 }
 
-/* generate / retry buttons */
-.tp-generate-btn {
+/* ── the studio's three button tiers ──────────────────────────────────────
+ * These used to be named for the first place each one happened to appear —
+ * .tp-generate-btn, .tp-retry-btn, .tp-upload-btn — and then got reused
+ * everywhere, so "Open State Machine" was a `generate` button, "Analyse shape
+ * & rig" was a `retry` button and "Add parameter" was an `upload` button. The
+ * classes describe the TIER now, which is what they actually encode; every
+ * data-testid is unchanged, so nothing that drives this UI had to move.
+ *
+ *   .tp-btn-primary  accent-FILLED. One per panel: the committing action.
+ *   .tp-btn-tonal    accent-tinted. Step-level actions — clearly actionable,
+ *                    not shouting over the primary.
+ *   .tp-btn-quiet    neutral surface + hairline. Row-level and secondary
+ *                    actions ("Add parameter", "Export image", "Download all").
+ */
+.tp-btn-primary {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1326,13 +1393,13 @@
   font-weight: var(--pd-font-weight-semibold);
   transition: transform var(--pd-duration-fast) var(--pd-easing-press);
 }
-.tp-generate-btn:hover:not(:disabled) {
+.tp-btn-primary:hover:not(:disabled) {
   background: var(--pd-accent-hover);
 }
-.tp-generate-btn:active:not(:disabled) {
+.tp-btn-primary:active:not(:disabled) {
   transform: scale(var(--pd-press-scale, 0.98));
 }
-.tp-generate-btn:disabled {
+.tp-btn-primary:disabled {
   background: var(--pd-bg-track);
   color: var(--pd-text-muted);
 }
@@ -1347,7 +1414,7 @@
  * like Auto-Rig become tonal — accent-tinted, clearly actionable, not shouting.
  * The 22px accent glow went with it: nothing else in the app glows.
  */
-.tp-retry-btn {
+.tp-btn-tonal {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1361,10 +1428,10 @@
   box-shadow: inset 0 0 0 1px var(--pd-accent-subtle);
   transition: background-color var(--pd-duration-base) var(--pd-easing-standard);
 }
-.tp-retry-btn:hover:not(:disabled) {
+.tp-btn-tonal:hover:not(:disabled) {
   background: color-mix(in srgb, var(--pd-accent-primary) 18%, transparent);
 }
-.tp-retry-btn:disabled {
+.tp-btn-tonal:disabled {
   background: var(--pd-bg-track);
   color: var(--pd-text-muted);
   box-shadow: none;
@@ -1473,7 +1540,7 @@
 /* QUIET tertiary — "Add parameter" and friends are row-level add actions, not
  * the point of the panel; they were accent-filled at 5998px^2, out-shouting the
  * actual primary. Height rides --pd-control-md so it matches .pd-btn. */
-.tp-upload-btn {
+.tp-btn-quiet {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1487,7 +1554,7 @@
   font-size: var(--pd-font-size-caption);
   transition: background-color var(--pd-duration-base) var(--pd-easing-standard);
 }
-.tp-upload-btn:hover {
+.tp-btn-quiet:hover {
   background: var(--pd-bg-hover);
 }
 .tp-unavail {
@@ -1532,7 +1599,7 @@
   border-radius: var(--pd-radius-full);
   background: var(--pd-status-danger-fg);
   color: var(--pd-bg-base);
-  font-size: 10px;
+  font-size: var(--tp-font-size-min);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1664,36 +1731,40 @@
   stroke-width: 1.5;
 }
 .tp-axline-x {
-  stroke: var(--pd-status-danger-fg);
+  stroke: var(--tp-axis-x);
 }
 .tp-axline-y {
-  stroke: var(--pd-status-success-fg);
+  stroke: var(--tp-axis-y);
 }
 .tp-axline-z {
-  stroke: var(--pd-status-info-fg);
+  stroke: var(--tp-axis-z);
 }
+/* 18px, not 16: the label went 8px → the 11px floor and needs the room. The
+ * ball's CENTRE must stay at (38, 38) in the 76×76 gizmo — the viewer only ever
+ * writes `transform` on these — so top/left move with the size. */
 .tp-axball {
   position: absolute;
-  top: 30px;
-  left: 30px;
-  width: 16px;
-  height: 16px;
+  top: 29px;
+  left: 29px;
+  width: 18px;
+  height: 18px;
   border-radius: var(--pd-radius-full);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 8px;
+  font-size: var(--tp-font-size-min);
+  line-height: 1;
   font-weight: var(--pd-font-weight-bold);
   color: var(--pd-bg-base);
 }
 .tp-axball-x {
-  background: var(--pd-status-danger-fg);
+  background: var(--tp-axis-x);
 }
 .tp-axball-y {
-  background: var(--pd-status-success-fg);
+  background: var(--tp-axis-y);
 }
 .tp-axball-z {
-  background: var(--pd-status-info-fg);
+  background: var(--tp-axis-z);
 }
 .tp-axball-neg {
   width: 10px;
@@ -1704,16 +1775,19 @@
   border: 2px solid;
 }
 .tp-axball-nx {
-  border-color: var(--pd-status-danger-fg);
+  border-color: var(--tp-axis-x);
 }
 .tp-axball-ny {
-  border-color: var(--pd-status-success-fg);
+  border-color: var(--tp-axis-y);
 }
 .tp-axball-nz {
-  border-color: var(--pd-status-info-fg);
+  border-color: var(--tp-axis-z);
 }
 
-/* floating right toolbar */
+/* Floating right toolbar — TWO pills, grouped by function (see the rule in
+ * Viewport.tsx's FloatToolbar): view controls, then session information.
+ * .tp-float-solo is gone: a one-button pill was never a group, and having two
+ * of them meant three pills expressing two ideas. */
 .tp-float-tools {
   position: absolute;
   top: 50%;
@@ -1759,14 +1833,6 @@
   height: 1px;
   background: var(--pd-border-default);
   margin: 3px 0;
-}
-.tp-float-solo {
-  background: color-mix(in srgb, var(--pd-bg-raised) 88%, transparent);
-  border: 1px solid var(--pd-border-subtle);
-  box-shadow: var(--pd-shadow-md);
-  width: 40px;
-  height: 40px;
-  backdrop-filter: blur(10px);
 }
 .tp-reddot {
   position: absolute;
@@ -2183,7 +2249,7 @@
   height: 21px;
   border-radius: var(--pd-radius-sm);
   background: color-mix(in srgb, var(--pd-text-primary) 14%, var(--pd-bg-inset));
-  font-size: 10px;
+  font-size: var(--tp-font-size-min);
   font-weight: var(--pd-font-weight-bold);
   flex-shrink: 0;
 }
@@ -2702,34 +2768,34 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   Studio redo (de-Tripo pass): workspace label, engine rows, labeled render
-   modes, segment parts list, real asset previews, drop-to-import overlay,
-   Send To logos. */
+   Studio redo (de-Tripo pass): engine rows, labeled render modes, segment
+   parts list, real asset previews, drop-to-import overlay, Send To logos.
+   (.tp-workspace-label — the "3D Workspace" caption — was deleted with the
+   markup: it restated the logo beside it and measured 3.33:1 on bobble-light.)
+ */
 
-.tp-workspace-label {
-  /* was a fractional 12.5px / literal 600 — both off-token */
-  font-size: var(--pd-font-size-caption);
-  font-weight: var(--pd-font-weight-semibold);
-  color: var(--pd-text-muted);
-  padding: 5px 10px;
-  border-left: 1px solid var(--pd-border-subtle);
-  margin-left: 4px;
-}
-
-/* Stage panels: the "Model · <engine>" row naming the real backing model. */
+/*
+ * Stage panels: the "Model · <engine>" / "Target · <asset>" rows.
+ *
+ * These are STATIC INFORMATION. They used to wear the bordered, inset-filled
+ * card treatment that .tp-needs-model and .tp-model-select use for things you
+ * can actually click, so "Model / CubePart" advertised an affordance it does
+ * not have. A plain label/value row with a hairline under it reads as a fact,
+ * which is what it is — the clickable cards keep the border + fill and are now
+ * the only things in the panel that look pressable.
+ */
 .tp-engine-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 9px 11px;
-  border: 1px solid var(--pd-border-subtle);
-  border-radius: var(--pd-radius-md);
-  background: var(--pd-bg-inset);
-  margin-bottom: 8px;
+  gap: 10px;
+  padding: 7px 2px;
+  border-bottom: 1px solid var(--pd-border-subtle);
+  margin-bottom: 6px;
 }
 .tp-engine-name {
-  font-size: 12.5px;
-  font-weight: 650;
+  font-size: var(--pd-font-size-caption);
+  font-weight: var(--pd-font-weight-semibold);
   color: var(--pd-text-primary);
 }
 
@@ -2979,7 +3045,7 @@
 }
 .tp-download-role {
   font-style: normal;
-  font-size: 10.5px;
+  font-size: var(--tp-font-size-min);
   font-weight: 600;
   color: var(--pd-text-muted);
   border: 1px solid var(--pd-border-subtle);
@@ -3271,7 +3337,7 @@
   .tp-drop-card {
     animation: none;
   }
-  .tp-generate-btn:active:not(:disabled) {
+  .tp-btn-primary:active:not(:disabled) {
     transform: none;
   }
 }
@@ -3329,6 +3395,17 @@
   padding: 12px 14px;
   border-top: 1px solid var(--pd-border-subtle);
   flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+}
+/* The bulk "Download all · nn GB" action: quiet tier AND auto width, centred.
+ * The most expensive, least reversible control on the panel should not also be
+ * the biggest thing on screen — MEASURED, it was 12,558px² of accent fill
+ * against a 5,757px² per-card Download. Shrink-to-fit is what actually settles
+ * that: full width would keep it the largest control no matter how quiet its
+ * colour got. */
+.tp-dlpanel-all {
+  justify-content: center;
 }
 
 .tp-dlcard {
@@ -3346,11 +3423,10 @@
 .tp-dlcard[data-installed="true"] {
   opacity: 0.82;
 }
-.tp-dlcard-loop {
-  height: 88px;
-  background: var(--pd-bg-inset);
-  border-bottom: 1px solid var(--pd-border-subtle);
-}
+/* .tp-dlcard-loop is gone with the markup — a CapabilityLoop at 88px tall and
+ * card-width has no room to read as anything but a broken image. The loops
+ * survive in .tp-needs-loop, the "Runs on <model>" hero, which is where they
+ * were designed to live. */
 .tp-dlcard-body {
   padding: 10px 12px 12px;
   display: flex;
@@ -3413,7 +3489,7 @@
 }
 
 /* a stage's "needs its model" card + the download-as-primary-action button */
-.tp-generate-btn-dl {
+.tp-btn-primary-dl {
   background: var(--pd-accent-primary);
 }
 .tp-needs-model {
@@ -3540,7 +3616,9 @@
   display: flex;
   gap: 8px;
 }
-.tp-generate-btn-inline {
+/* Size modifier, not a tier: an action that sits inline in a row of actions
+ * rather than filling the panel foot. Works on any of the three tiers. */
+.tp-btn-inline {
   flex: 1;
   height: 38px;
   font-size: var(--pd-font-size-footnote);
@@ -3682,7 +3760,7 @@
   border-radius: var(--pd-radius-full);
   background: color-mix(in srgb, var(--pd-status-success-fg) 88%, var(--pd-text-primary));
   color: #fff;
-  font-size: 10px;
+  font-size: var(--tp-font-size-min);
   font-weight: var(--pd-font-weight-semibold);
 }
 .tp-node-thumb {
@@ -3717,7 +3795,7 @@
   max-width: 66px;
 }
 .tp-node-kind {
-  font-size: 10px;
+  font-size: var(--tp-font-size-min);
   color: var(--pd-text-secondary);
 }
 .tp-node-handle {
@@ -3909,7 +3987,7 @@
   background: var(--pd-bg-elevated);
   border: 1px solid var(--pd-border-subtle);
   color: var(--pd-text-secondary);
-  font-size: 10px;
+  font-size: var(--tp-font-size-min);
   font-weight: 600;
   line-height: 15px;
   text-align: center;
@@ -3981,7 +4059,7 @@
   background: var(--pd-bg-elevated);
   border: 1px solid var(--pd-border-subtle);
   color: var(--pd-text-muted);
-  font-size: 9px;
+  font-size: var(--tp-font-size-min);
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
@@ -4293,7 +4371,7 @@
 }
 .tp-chunk-label {
   color: var(--pd-text-muted);
-  font-size: 10.5px;
+  font-size: var(--tp-font-size-min);
   font-weight: 600;
   letter-spacing: 0.01em;
   white-space: nowrap;
@@ -4340,8 +4418,11 @@
 .tp-chunks-slim .tp-chunk {
   gap: 3px;
 }
+/* The slim variant used to step the label down a further 1px, which put it
+ * below the floor for no gain — the slim/hero difference is the tick height,
+ * not the type. */
 .tp-chunks-slim .tp-chunk-label {
-  font-size: 9.5px;
+  font-size: var(--tp-font-size-min);
 }
 
 /* The worker has gone quiet mid-stage (the PBR bake reports once and then works
@@ -4472,7 +4553,7 @@
   gap: 8px;
   padding-top: 8px;
 }
-.tp-image-steps .tp-upload-btn {
+.tp-image-steps .tp-btn-quiet {
   flex: 1;
   justify-content: center;
 }

@@ -506,3 +506,150 @@ explaining ARDY is Linux + NVIDIA only. The motion library is **bundled sample c
 such. So: rigging is real, the state machine is real and exports real JSON, and **no motion is
 generated on this machine.** That is a wiring gap rather than a defect — but "animation works"
 would be the wrong thing to tell anyone.
+
+---
+
+# PART 3 — Decisions implemented (D1–D12)
+
+The twelve open calls above are decided and built. jedd delegated the calls; every one below is
+followed by the measurement that closed it.
+
+**The evidence is a new probe, not this table.** `apps/desktop/tests/e2e/tripo-decisions-probe.mjs`
+drives the built app and reports PASS/FAIL with a number per decision, writing `decisions.json` so a
+before/after diff is one `diff` away. It is now the last link in `pnpm e2e`, so these decisions
+cannot silently rot.
+
+```bash
+pnpm --filter @pi-desktop/desktop build     # the probe loads dist
+DECISIONS_OUT=/tmp/dec-after node apps/desktop/tests/e2e/tripo-decisions-probe.mjs
+# and for the "before" column, from the parent commit:
+DECISIONS_BASELINE=1 DECISIONS_OUT=/tmp/dec-before node apps/desktop/tests/e2e/tripo-decisions-probe.mjs
+```
+
+Baseline run: **11 of 11 DOM-visible decisions FAIL**. After: **11 of 11 PASS.**
+D1 and D12 have no DOM surface and are covered by
+`packages/gen3d-engine/python/tests/test_cubepart_progress.py` (4 new tests) and by `data.ts`'s
+header respectively.
+
+| # | decision | before → after (measured) |
+|---|---|---|
+| D1 | Segmentation reports its extraction | **silent** → phase label + one named event per part |
+| D2 | Type floor = 11px; the two AA failures fixed | **14 sub-11px declarations** (7.5–10.5px) → **0**; axis balls **8px, 3.36:1 / 3.62:1** → **11px, worst 4.94:1 across 6 flavors** |
+| D3 | "3D Workspace" deleted | 1 node, 3.33:1 → **0 nodes** |
+| D4 | One accent CTA on the Image panel | **2 accent fills** (Generate Image 12,558px² + Make 3D 4,932px²) → **1** |
+| D5 | "Download all" demoted | accent-filled **46px / 14px / 12,558px²** → quiet **32px / 12px / 5,871px²** |
+| D6 | No capability loops on download cards | **8 loops across 8 cards** → **0** (kept in the "Runs on <model>" hero) |
+| D7 | `Segmented` is a real radiogroup | `tablist`/`tab`, `tabindex=0,0,0`, arrows dead → `radiogroup`/`radio`/`aria-checked`, `tabindex=-1,0,-1`, arrows/Home/End move and select |
+| D8 | Menus at the app's density | **35px rows @ 12px** → **32px @ 14px** (= `--pd-row-height` / `--pd-font-size-body`) |
+| D9 | Static rows are not cards | `1px border + rgb(18,18,20) fill + 10px radius` — identical to the clickable card → `0px border, transparent, 0px radius` |
+| D10 | Float toolbar grouped by function | **1 group + 2 orphan pills** → **2 groups, 0 orphans** |
+| D11 | Semantic class names | `tp-generate-btn` ×6 / `tp-upload-btn` ×5 / `tp-retry-btn` → **0**; `tp-btn-primary` / `tp-btn-tonal` / `tp-btn-quiet` |
+| D12 | `data.ts` corrected about the rig engine | comment claimed SkinTokens "cannot run on Apple Silicon at all" → corrected; `RIG_MODEL = 'SkinTokens'` unchanged |
+
+## The ones with something to say
+
+**D1 — segmentation stops going silent.** `input_to_part_shape()` runs the denoise *and* the mesh
+extraction in one call and only the denoise is a tqdm loop, which is why the readout froze on
+`"Deciding which surface belongs to which part (30/30)"` for five-plus minutes. The fix wraps the
+two seams the pipeline already passes through, so the pipeline call itself is untouched:
+`pipe.decode_shape` (an instance attribute shadowing the bound method — this fires the moment the
+denoise ends) and `ImplicitFieldCoarseToFineEvaluator.evaluate`, whose per-part "fine" callback
+yields exactly one event per part, named:
+
+```
+Building part meshes (5 parts)…
+Building part meshes — main body (1/5)
+Building part meshes — top part (2/5)     … etc
+Extracting surfaces from 5 parts…
+Writing 5 part meshes…
+```
+
+**No percentage, deliberately.** The coarse field pass is one shot over the whole batch and the fine
+pass's cost per part is not known until the part has been evaluated, so any denominator would be
+invented. One of the four new tests asserts precisely this — that nothing emitted from the
+extraction carries `step`/`totalSteps`, and that `(30/30)` never reappears. The failure mode here is
+silence, and silence is what a smoke test cannot see, so the tests drive the real wrappers with
+fakes (no torch, no weights, no 25-minute run).
+
+**D2 — the floor is a token, not a habit.** `--tp-font-size-min: 11px` on `:root` (not `.tp`:
+`MenuAnchor`/`Hint` portal into `document.body`, so anything scoped to `.tp` is invisible to menu
+contents). 11px rather than chat's 14px is the density decision the audit asked someone to actually
+make; the point of the token is that the next 10px is now a visible choice rather than a drift.
+`grep -n 'font-size: [0-9]' tripo.css` is the audit and it returns nothing.
+
+For the axis balls, mixing 24% of `--pd-text-primary` into each status hue pushes the ball *away*
+from `--pd-bg-base` in whichever direction the theme needs — darker under light, lighter under dark
+— so one rule covers all six flavors rather than six overrides. Lines, balls and negative-axis rings
+all draw from `--tp-axis-{x,y,z}` so the gizmo stays one object, and the ball grew 16→18px (centre
+held at 38,38, which is all the viewer's per-frame `transform` assumes) to give 11px room.
+
+| flavor | before x / y / z | after |
+|---|---|---|
+| codex-light | 4.57 / **3.36** / **3.62** | 6.53 / **4.94** / 5.26 |
+| claude-dark | 5.67 / 4.52 / 6.06 | 6.89 / 5.62 / 7.27 |
+| bobble-light | 5.43 / 4.95 / 6.38 | 6.99 / 6.34 / 7.83 |
+
+**D5 — colour was only half of it.** Demoting the tier is not enough on its own: a full-width footer
+button stays the largest control on screen whatever colour it is. `Download all` is shrink-to-fit
+and centred now, so the claim is literally true — 46px tall / 14px / accent-filled became 32px /
+12px / neutral. Its raw area (5,871px²) is still a hair over a per-card Download (5,757px²) purely
+because "Download all · 65.9 GB" is a longer string than "Download · 17.5 GB", which is why the
+probe asserts tier, height and type size rather than area: an area assertion would be measuring the
+copy, not the hierarchy.
+
+**D7 — this is a behaviour change, and it is the correct one.** `radiogroup`/`radio`/`aria-checked`
+plus a roving tabindex: the group is ONE tab stop (checked option `0`, the rest `-1`), Left/Up and
+Right/Down move and wrap, Home/End jump, and selection follows focus — these are cheap, instantly
+reversible UI choices, so there is nothing to protect the user from. Every `data-testid` and every
+class is unchanged; the probe records the control's geometry (width, height, radius, item height,
+item font) alongside the keyboard walk to show the visual result did not move. Measured walk from
+the checked option: `start@1 → R2 → R0 → L2 → Home@0 → End@2 → Down@0`.
+
+**D8 — menus only.** `.tp-menu-item` now runs `min-height: var(--pd-row-height)` / `padding: 4px
+10px` / `gap: 8px` / `font-size: var(--pd-font-size-body)`, matching `.pd-menu-item`; `min-height`
+rather than `height` so a label+hint row still grows (56px → 49px). `.tp-menu-item-hint` dropped
+from footnote to caption, because it had been *larger* than the label it subtitled. Panels, rails
+and inspectors keep their tighter density — that part is a real tool-surface decision; a dropdown
+is not.
+
+**D11 — the rename is the point, not the names.** These three classes never described buttons, they
+described whichever button came first. They describe the TIER now — `.tp-btn-primary` (accent-
+filled, one per panel), `.tp-btn-tonal` (accent-tinted step actions), `.tp-btn-quiet` (neutral
+surface) — plus `.tp-btn-inline` as a pure size modifier that works on any tier. Every
+`data-testid` is untouched; `tripo-parity-audit4.mjs` was the only probe that reached for a class
+name and it was updated.
+
+## Two things found while verifying, both reported rather than quietly fixed
+
+**1. The audit's own "Unresolved measurement" is a probe bug, and it is fixed.** `.tp-segment`
+("512") reported **1.00:1** under both codex modes while the screenshot showed it plainly legible.
+Cause: under codex `.tp-segmented` carries `rgba(26, 28, 31, 0.02)` — a 2%-alpha tint — and
+`audit4`'s `bgOf` stopped at the first background that was not *exactly* `rgba(0,0,0,0)`, discarded
+the alpha, and compared `rgb(26,28,31)` text against `rgb(26,28,31)` "background". Exactly 1.00,
+every time. `bgOf` now composites translucent layers down to the first opaque one, translucent
+*text* is composited over its backdrop too, and the parser handles the `color(srgb …)` serialisation
+Chromium uses for anything resolved through `color-mix()` — without which every color-mixed element
+(including the new axis balls) silently dropped out of the sweep. `.tp-segment` passes.
+
+**2. Three more AA failures that the broken walker was hiding.** With the contrast maths corrected,
+`audit4` reports three studio labels below 4.5:1, all of them `--pd-text-muted` on a raised panel,
+all pre-existing and none of them D1–D12:
+
+| element | bobble-light | claude-light | codex-light | codex-dark | claude-dark |
+|---|---|---|---|---|---|
+| `.tp-accordion-sub` | **2.79** | **3.96** | **3.19** | **4.45** | pass |
+| `.tp-model-hint` | **2.79** | **3.96** | **3.19** | **4.45** | pass |
+| `.tp-dropzone-sub` | **3.43** | pass | **3.24** | pass | **4.45** |
+
+This is the `--pd-text-muted` token against `--pd-bg-raised`, not a studio-local choice, so fixing
+it is an app-wide token decision rather than something to slip into a studio pass. Flagged, not
+touched. `bobble-dark` is clean; the sweep is `contrast` in `audit4.json`.
+
+## Build health
+
+`pnpm test` **767/767 TS + 26/26 gen3d-engine TS + 10/10 Python** (four new Python tests for D1).
+`pnpm typecheck` green across 24 packages. `pnpm build` green. `tripo-ui-probe` and
+`tripo-resize-probe` both pass — the latter still reports no studio column leaving the window from
+760px to 1280px. `tripo-ui-probe`'s capability-loop assertion was inverted rather than deleted: it
+now asserts the loops are **absent** from the cards, so D6 cannot creep back. `biome check` is
+unchanged at the repo's pre-existing 42 errors / 22 warnings — this branch adds none.

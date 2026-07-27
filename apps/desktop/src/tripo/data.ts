@@ -8,12 +8,15 @@
  * ACTUALLY runs, never an aspiration:
  *   generation   TRELLIS-2 (Hunyuan 3D Omni has no Metal port, and says so)
  *   segmentation CubePart (Roblox/cubepart)
- *   retopology   AutoRemesher
- *   rigging      a local geometric fit to ARDY's 27-joint skeleton. NOT
- *                SkinTokens: SkinTokens needs a >=14 GB NVIDIA GPU, builds
- *                flash-attn and hardcodes .to("cuda"), so it cannot run on
- *                Apple Silicon at all — labelling this stage "SkinTokens"
- *                claimed something untrue.
+ *   retopology   QuadriFlow (AutoRemesher is the fallback binary)
+ *   rigging      SkinTokens. This comment used to claim the opposite — that
+ *                SkinTokens "needs a >=14 GB NVIDIA GPU … cannot run on Apple
+ *                Silicon at all" — while RIG_MODEL two screens down already
+ *                said SkinTokens and catalog.ts said fp32-on-MPS in ~76s. The
+ *                COMMENT was the stale half: skintokens_worker.py runs it here,
+ *                and the end-to-end pipeline run MEASURED it rigging a real
+ *                265,779-vertex mesh in 73s (14 joints). Naming the stage
+ *                SkinTokens is therefore true, and stays.
  *   animation    ARDY is the skeleton TARGET. ARDY itself is Linux + NVIDIA
  *                only, so no motion is generated locally; the Animate panel
  *                says so rather than faking clips.

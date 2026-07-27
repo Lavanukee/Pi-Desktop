@@ -1889,19 +1889,26 @@ body {
   display: flex;
   flex: 1;
   align-items: center;
-  gap: 2px;
-  height: 26px;
+  justify-content: flex-start;
+  /* A real level meter, not a row of dots. The first cut used 2px bars in a
+   * 26px row with a 0.08 floor, so a quiet passage scaled to ~2px of a 2px bar
+   * — visually a dot, and jedd read the whole thing as unresponsive. Taller
+   * row, thicker bars, and a floor you can still see. */
+  gap: 3px;
+  height: 34px;
   min-width: 0;
 }
 .pd-dictation-bar {
-  flex: 1;
-  min-width: 2px;
+  flex: 0 0 auto;
+  width: 3px;
   height: 100%;
   border-radius: 999px;
-  background: var(--pd-accent-primary);
+  background: var(--pd-text-secondary);
   /* Scaled from the middle so the bar grows both ways, like a level meter. */
   transform-origin: center;
-  transition: transform 90ms linear;
+  /* Fast enough to feel attached to the voice. At 90ms the bar was still
+   * easing toward the last value when the next arrived, which reads as lag. */
+  transition: transform 55ms ease-out;
 }
 /* Transcribing: the last waveform stays, dimmed — clearing it reads as "it
  * lost what I said". */

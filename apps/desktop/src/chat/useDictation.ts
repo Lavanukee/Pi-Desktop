@@ -21,8 +21,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 export type DictationPhase = 'idle' | 'recording' | 'transcribing' | 'error';
 
 /** How many bars the waveform keeps. ~3s of history at the sample rate below. */
-const LEVEL_HISTORY = 48;
-const LEVEL_INTERVAL_MS = 60;
+const LEVEL_HISTORY = 64;
+// ~30fps. At 60ms the bars visibly stepped; speech has syllable structure well
+// under that and the meter has to show it or it reads as not listening.
+const LEVEL_INTERVAL_MS = 33;
 
 export interface DictationState {
   readonly phase: DictationPhase;
@@ -124,7 +126,13 @@ export function useDictation(onText: (text: string) => void): DictationState {
         // sqrt of mean square, then a gentle curve: speech sits low in a linear
         // scale and the bar would barely move without it.
         const rms = Math.sqrt(sum / buf.length);
-        const level = Math.min(1, rms ** 0.6 * 2.2);
+        // Speech RMS sits around 0.02-0.15 — on a linear scale that is the
+        // bottom tenth of the meter, which is exactly why the first cut looked
+        // dead. Map it in dB instead, where the ear lives: -55 dBFS floor to
+        // -12 dBFS full scale, then keep a visible minimum so silence still
+        // draws a line rather than nothing.
+        const db = 20 * Math.log10(Math.max(rms, 1e-5));
+        const level = Math.max(0.06, Math.min(1, (db + 55) / 43));
         setLevels((prev) => [...prev, level].slice(-LEVEL_HISTORY));
       }, LEVEL_INTERVAL_MS);
 

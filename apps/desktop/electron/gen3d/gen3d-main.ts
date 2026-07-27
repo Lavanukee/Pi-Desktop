@@ -121,7 +121,19 @@ function sidecarScriptPath(): string {
 /** The audio worker needs only its weight cache; everything else it imports
  * from its own venv. HF_HOME must match where the models were provisioned. */
 function workerEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, HF_HOME: path.join(cacheRoot(), 'hf'), PYTHONUNBUFFERED: '1' };
+  // PATH, because the recogniser shells out to ffmpeg to decode the clip.
+  // An app launched from Finder inherits a minimal PATH — no /opt/homebrew/bin,
+  // no /usr/local/bin — so dictation died with "FFmpeg is not installed or not
+  // in your PATH" on a machine where ffmpeg was installed and on MY shell's
+  // PATH the whole time. Anything spawned from a GUI app has to be told.
+  const extraPath = ['/opt/homebrew/bin', '/usr/local/bin', '/opt/local/bin'];
+  const currentPath = process.env.PATH ?? '';
+  return {
+    ...process.env,
+    PATH: [...extraPath, currentPath].filter((p) => p !== '').join(':'),
+    HF_HOME: path.join(cacheRoot(), 'hf'),
+    PYTHONUNBUFFERED: '1',
+  };
 }
 
 function audioPaths(): { python: string; worker: string } {

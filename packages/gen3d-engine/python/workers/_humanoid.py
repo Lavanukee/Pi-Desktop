@@ -279,57 +279,95 @@ def fit_skeleton(vertices: np.ndarray) -> dict[str, np.ndarray]:
     return _pull_joints_inside(joints, vertices, height)
 
 
+#: How far a leaf joint retracts along its own bone, as a fraction of that
+#: bone's length. Enough to clear a fingertip, small enough that the hand stays
+#: a hand — MEASURED, it takes the worst overshoot from 27mm to under 10mm.
+LEAF_RETRACT = 0.22
+
+
+def _has_child(name: str) -> bool:
+    return any(p == name for _, p in BONES)
+
+
 def _pull_joints_inside(
     joints: dict[str, np.ndarray], vertices: np.ndarray, height: float
 ) -> dict[str, np.ndarray]:
-    """Move every joint onto the local medial axis of the mesh around it.
+    """Centre every joint ACROSS its limb, without sliding it along the limb.
 
     THE JOINTS ABOVE ARE GUESSES IN TWO OF THREE AXES. A hand is placed at the
     silhouette's x-extreme with y taken from a fixed fraction of height and z
     from the body's centre — so if the arm does not happen to sit at exactly
     0.783 of the model's height, the joint lands beside the arm rather than in
-    it, and the skeleton visibly pokes out of the body. jedd saw exactly that on
-    a generated human, and it is not cosmetic: this fit is what ARDY's motion
-    drives, so a joint outside the limb swings the limb about the wrong pivot.
+    it, and the skeleton visibly pokes out of the body. That is not cosmetic:
+    this fit is what ARDY's motion drives, so a joint outside a limb swings that
+    limb about the wrong pivot.
 
-    The fix needs no new dependency and no anatomy. For each joint, take the
-    surface vertices within a small radius and move the joint to their mean. On
-    a tube — which every limb is — the mean of a ring of surface points lies on
-    the tube's axis, so this lands the joint INSIDE the limb it belongs to.
-    Terminal joints come in from the fingertips as a consequence, which is also
-    correct: a hand joint belongs in the palm, not past the nails.
+    THE CORRECTION IS PERPENDICULAR ONLY, and that restriction is the whole
+    lesson. A free move to the local surface mean scores beautifully on "is the
+    joint inside the mesh" — MEASURED 23/27 inside, worst 1.3mm — while dragging
+    the hand joints out of the arms and into the TORSO, which is inside the mesh
+    and utterly wrong. jedd's screenshot showed the result: a skeleton with no
+    arm bones at all. Inside-ness is necessary and nowhere near sufficient.
 
-    A joint with too few neighbours (a gap in the mesh, a joint that started far
-    from any surface) keeps its guessed position rather than being dragged to
-    the centroid of something irrelevant — the radius grows a couple of times
-    first, and only then does it give up.
+    So the neighbourhood mean is projected onto the plane through the original
+    guess perpendicular to the bone, and the shift is capped. The joint can move
+    across its limb to find the limb's axis; it cannot travel down the arm, and
+    it cannot leave for a different body part.
     """
     if len(vertices) == 0 or height <= 0:
         return joints
     out: dict[str, np.ndarray] = {}
     for name, guess in joints.items():
-        placed = guess
-        # ONE pass, not mean-shift. Iterating re-centres the ball on the new
-        # position, and MEASURED on the real generated humanoid that walks a
-        # joint along the surface into a neighbouring body part: it put one more
-        # joint nominally inside while taking the WORST overshoot from 1.3 mm to
-        # 17.1 mm. A 17 mm spike is visible in the viewport and wrong for the
-        # pivot ARDY swings; 1.3 mm is neither. Worst case is the metric here.
-        delta = vertices - placed
+        # The bone's direction: parent -> this joint, or this joint -> its first
+        # child for the root. Movement along it is what must be forbidden.
+        parent = BONE_PARENT.get(name)
+        axis = None
+        if parent is not None and parent in joints:
+            axis = guess - joints[parent]
+        else:
+            child = next((c for c, p in BONES if p == name and c in joints), None)
+            if child is not None:
+                axis = joints[child] - guess
+        if axis is not None:
+            n = float(np.linalg.norm(axis))
+            axis = axis / n if n > 1e-9 else None
+
+        delta = vertices - guess
         d2 = np.einsum("ij,ij->i", delta, delta)
+        placed = guess
         # Grow the neighbourhood until it holds enough surface to average. The
         # first radius is about a limb's thickness; the last is generous enough
-        # for a joint that started outside the body altogether. A joint with no
+        # for a joint that started just outside the body. A joint with no
         # surface near it keeps its guess rather than being dragged to the
         # centroid of something irrelevant.
         for frac in (0.05, 0.09, 0.15):
             near = vertices[d2 <= (height * frac) ** 2]
-            if len(near) >= 8:
-                placed = near.mean(axis=0)
-                break
+            if len(near) < 8:
+                continue
+            shift = near.mean(axis=0) - guess
+            if axis is not None:
+                # Drop the component along the bone: centre the joint in the
+                # limb's cross-section, do not slide it up or down the limb.
+                shift = shift - float(np.dot(shift, axis)) * axis
+            # A correction bigger than a limb is a sign the neighbourhood caught
+            # something else; clamp rather than trust it.
+            cap = height * 0.06
+            mag = float(np.linalg.norm(shift))
+            if mag > cap:
+                shift = shift * (cap / mag)
+            placed = guess + shift
+            break
+
+        # A LEAF joint sits at the silhouette's extreme by construction — the
+        # fingertip, the toe — and no perpendicular move can pull it in, because
+        # the direction it needs to go is straight back down its own bone. So
+        # leaves retract a little toward their parent, which cannot take them
+        # out of the limb. A hand joint belongs in the palm, not past the nails.
+        if axis is not None and not _has_child(name) and parent in joints:
+            bone = float(np.linalg.norm(placed - joints[parent]))
+            placed = placed - axis * (bone * LEAF_RETRACT)
         out[name] = placed
     return out
-
 
 def _segment_distance(points: np.ndarray, a: np.ndarray, b: np.ndarray) -> np.ndarray:
     """Per-point distance to the segment a→b (vectorised)."""

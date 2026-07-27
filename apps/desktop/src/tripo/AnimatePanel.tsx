@@ -363,8 +363,8 @@ export function AnimatePanel(): JSX.Element {
               </div>
             ) : null}
             <textarea
-              className="tp-prompt"
-              rows={2}
+              className="tp-prompt tp-motion-prompt"
+              rows={3}
               placeholder="A person walks forward, then waves."
               value={motionPrompt}
               data-testid="tp-motion-prompt"
@@ -392,14 +392,6 @@ export function AnimatePanel(): JSX.Element {
               <IcSparkles size={15} />
               {motionBusy ? 'Generating motion…' : 'Generate Motion'}
             </button>
-            {/* The FIRST use of a new wording loads a 16 GB text encoder; every
-                later use of the same words skips it entirely. Saying so up
-                front is the difference between "slow" and "broken". */}
-            <p className="tp-select-copy" data-testid="tp-motion-note">
-              Runs on this Mac — about a second of compute for {motionSeconds}s of animation. A
-              wording used before starts immediately; a brand-new one spends a couple of minutes
-              reading the prompt first.
-            </p>
 
             {/* ── presets: one click generates that motion on THIS model ──── */}
             <div className="tp-section-title">Presets</div>

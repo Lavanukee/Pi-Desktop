@@ -81,8 +81,12 @@ def test_a_joint_outside_the_body_is_brought_in():
     surface = _tube(0.0, 0.1, 0.0, 1.0)
     outside = {"LeftHandEnd": np.array([0.16, 0.5, 0.0])}
     moved = _pull_joints_inside(outside, surface, height=1.0)["LeftHandEnd"]
-    assert float(np.hypot(moved[0], moved[2])) < 0.1, "joint was not brought inside"
-    assert float(np.hypot(moved[0], moved[2])) < 0.16, "joint did not move in at all"
+    off = float(np.hypot(moved[0], moved[2]))
+    # The shift is CAPPED at 6% of height, so a joint 60% of a radius outside is
+    # pulled to the surface rather than to the axis. The cap is deliberate: an
+    # uncapped move is what let hand joints migrate into the torso.
+    assert off <= 0.102, f"joint was not brought back to the body ({off:.4f})"
+    assert off < 0.16, "joint did not move in at all"
 
 
 def test_a_joint_with_no_nearby_surface_keeps_its_guess():

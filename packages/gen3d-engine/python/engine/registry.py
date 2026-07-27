@@ -233,7 +233,15 @@ class Registry:
             # The humanoid rigger runs entirely inside the mesh-prep venv —
             # nothing to download, so "installed" == the venv is usable.
             return self.meshtools_python().exists()
-        return False
+        if env in ("ardy", "audio"):
+            # Both are plain venvs under their own tool dir, named after the env.
+            return self.venv_python(env).exists()
+        # An env with no case here can NEVER report installed, no matter what is
+        # downloaded — which is exactly what happened to ardy-motion: the model
+        # was complete on disk and the panel still said "isn't downloaded yet",
+        # and no amount of using the download button could have fixed it.
+        # test_env_present_covers_every_env keeps a new env from landing mute.
+        raise ValueError(f"env_present has no case for env {env!r}")
 
     def is_installed(self, model_id: str) -> bool:
         if not (self.weights_present(model_id) and self.env_present(model_id)):

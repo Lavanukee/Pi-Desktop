@@ -88,8 +88,22 @@ try {
     }
     return null;
   };
-  /** A stage is finished when the strip reaches 'end'. */
-  const runToEnd = (label, ms = STAGE_MS) => waitFor((s) => s.phase === 'end', label, ms);
+  /**
+   * A stage is finished when the strip reaches 'end' — but 'end' is ALREADY the
+   * phase left behind by the previous stage, so waiting for it directly matches
+   * instantly and reports a stage that never started as passed. Wait for the
+   * job to actually start first. That false pass is why the texture result in
+   * the first green run could not be trusted.
+   */
+  const runToEnd = async (label, ms = STAGE_MS) => {
+    const started = await waitFor(
+      (s) => s.phase === 'building' || s.phase === 'refining',
+      `${label} start`,
+      Math.min(ms, 300_000),
+    );
+    if (started === null) return { phase: null, failed: true, msg: 'the job never started' };
+    return waitFor((s) => s.phase === 'end', label, ms);
+  };
 
   // ── 1. generate ─────────────────────────────────────────────────────────
   console.log(`\n1. generate (${ENGINE}): ${JSON.stringify(PROMPT)}`);

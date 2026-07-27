@@ -7,7 +7,9 @@ import type { AssistantMsg, ContentBlock, ToolResultMsg } from '@pi-desktop/engi
 import { describe, expect, it } from 'vitest';
 import {
   chainRunningFlags,
+  firstMediaUrl,
   type GroupSegment,
+  generatedImageSrc,
   mapThinkingStep,
   mapToolStep,
   resolveTool,
@@ -407,6 +409,62 @@ describe('mapToolStep', () => {
     // B1: the tab spec must NOT hard-control the load status — the surface
     // self-manages from the media element's load/error events.
     expect(mapped.tabSpec?.mediaStatus).toBeUndefined();
+  });
+});
+
+describe('on-device image tools (generate_image / edit_image)', () => {
+  // What the harness image tools actually return: the pd-file media URL on line
+  // one (renderable), the plain disk path on line two (for a follow-up edit).
+  const PNG = '/Users/j/.pi/desktop/sandbox/gen3d/abc/prompt-image.png';
+  const toolText = `pd-file://f${PNG}\nGenerated image saved at ${PNG}`;
+
+  it('edit_image is an IMAGE step, not a file edit', () => {
+    // It contains "edit", so without an exact registry entry the edit/write
+    // heuristic would claim it and draw a diff row instead of a picture.
+    expect(toolStepKind('edit_image')).toBe('image');
+    expect(toolStepKind('generate_image')).toBe('image');
+    expect(resolveTool('edit_image').label?.[1]).toBe('Edited an image');
+  });
+
+  it('firstMediaUrl takes the URL line and ignores the prose line', () => {
+    expect(firstMediaUrl(toolText)).toBe(`pd-file://f${PNG}`);
+    expect(firstMediaUrl('data:image/png;base64,AAAA')).toBe('data:image/png;base64,AAAA');
+    expect(firstMediaUrl(`Generated image saved at ${PNG}`)).toBeUndefined();
+    expect(firstMediaUrl(PNG)).toBeUndefined(); // a bare path is not loadable
+    expect(firstMediaUrl(undefined)).toBeUndefined();
+  });
+
+  it('renders the generated image INLINE from its pd-file URL', () => {
+    expect(
+      generatedImageSrc(call('c1', 'generate_image', { prompt: 'a bike' }), result('c1', toolText)),
+    ).toBe(`pd-file://f${PNG}`);
+  });
+
+  it('renders an EDITED image inline too, and does not mistake the source arg for the result', () => {
+    const editText = `pd-file://f/tmp/edited.png\nEdited image saved at /tmp/edited.png`;
+    const block = call('c2', 'edit_image', {
+      image_path: '/tmp/source.png',
+      instruction: 'make the jacket red',
+    });
+    expect(generatedImageSrc(block, result('c2', editText))).toBe('pd-file://f/tmp/edited.png');
+    const mapped = mapToolStep(block, result('c2', editText), false);
+    expect(mapped.data).toMatchObject({ kind: 'image', label: 'Edited an image' });
+    expect(mapped.tabSpec?.mediaSrc).toBe('pd-file://f/tmp/edited.png');
+  });
+
+  it('a FAILED image tool renders no inline image (the arg path is not a picture)', () => {
+    const block = call('c3', 'edit_image', { image_path: '/tmp/source.png', instruction: 'x' });
+    const failed = result('c3', 'edit_image failed: Mage-Flow-Edit-Turbo is not downloaded yet.');
+    expect(generatedImageSrc(block, failed)).toBeUndefined();
+  });
+
+  it('still renders a legacy single-line data-URI result', () => {
+    expect(
+      generatedImageSrc(
+        call('c4', 'generate_image', {}),
+        result('c4', 'data:image/png;base64,AAAA'),
+      ),
+    ).toBe('data:image/png;base64,AAAA');
   });
 });
 

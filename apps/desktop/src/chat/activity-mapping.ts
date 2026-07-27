@@ -251,6 +251,11 @@ const TOOL_REGISTRY: Record<string, ToolResolution> = {
   // tool search (the harness `tool_search` builtin — the tool registry, not the web)
   tool_search: { kind: 'tool-search' },
   search_tools: { kind: 'tool-search' },
+  // on-device image generation + editing (harness image tools). Both are EXACT
+  // entries because `edit_image` would otherwise be swallowed by the edit/write
+  // heuristic below and render as a file edit instead of a picture.
+  generate_image: { kind: 'image' },
+  edit_image: { kind: 'image', label: ['Editing an image', 'Edited an image'] },
   // web search
   web_search: { kind: 'search' },
   brave_search: { kind: 'search' },
@@ -568,13 +573,39 @@ function hostOf(url: string | undefined): string | undefined {
   }
 }
 
-/** A media/preview src the canvas tab shows (data URI, http(s), else undefined). */
+/**
+ * Schemes a media surface can actually LOAD: a data URI, the web, or the app's
+ * own `pd-file://` media scheme (canvas-main.ts), which streams bytes off disk.
+ * `pd-file:` is how the on-device image tools return a 1 MB PNG without base64ing
+ * it into the transcript and the model's context.
+ */
+const MEDIA_URL_RE = /^(data:|https?:|pd-file:)/;
+
+/**
+ * The first loadable media URL in a tool result's text.
+ *
+ * Scanned LINE BY LINE rather than tested whole, because a result may pair the
+ * URL with human/model-facing text (the image tools return the `pd-file://` URL
+ * on line 1 and the plain disk path on line 2). Single-line results — the shape
+ * every previous image tool returned — are unaffected, and no media URL contains
+ * a newline.
+ */
+export function firstMediaUrl(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined;
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (MEDIA_URL_RE.test(trimmed)) return trimmed;
+  }
+  return undefined;
+}
+
+/** A media/preview src the canvas tab shows (data URI, http(s), pd-file, else a path). */
 function pickMediaSrc(
   args: Record<string, unknown>,
   result: ToolResultMsg | undefined,
 ): string | undefined {
-  const fromResult = str(result?.text);
-  if (fromResult && /^(data:|https?:)/.test(fromResult.trim())) return fromResult.trim();
+  const fromResult = firstMediaUrl(str(result?.text));
+  if (fromResult !== undefined) return fromResult;
   const fromArgs = str(args.url) ?? str(args.src) ?? pickPath(args);
   return fromArgs;
 }
@@ -583,16 +614,17 @@ function pickMediaSrc(
  * The renderable src for a generated-IMAGE tool result, or undefined when the
  * result isn't an inline-displayable image. Round-5 #7: generated images render
  * INLINE in the thread (a bounded thumbnail → click for a fullscreen preview),
- * diverging from the reference apps that route them to the canvas. Only `data:`
- * / `http(s):` srcs qualify (a bare path can't be shown inline).
+ * diverging from the reference apps that route them to the canvas. Only a real
+ * URL qualifies ({@link MEDIA_URL_RE}) — a bare disk path can't be shown inline,
+ * which is why the image tools return a `pd-file://` URL beside the path.
  */
 export function generatedImageSrc(
   block: ToolCallBlock,
   result: ToolResultMsg | undefined,
 ): string | undefined {
   if (toolStepKind(block.name) !== 'image') return undefined;
-  const src = pickMediaSrc(block.arguments ?? {}, result);
-  return src !== undefined && /^(data:|https?:)/.test(src.trim()) ? src.trim() : undefined;
+  // Only the RESULT can carry a renderable image; an argument path never can.
+  return firstMediaUrl(str(result?.text));
 }
 
 /** Map one tool-call block (+ its result) to a chain step and optional canvas tab. */

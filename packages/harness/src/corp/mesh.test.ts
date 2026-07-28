@@ -167,8 +167,13 @@ describe('AgentMesh — bounds (an emergent loop must never run away)', () => {
       },
     });
     const out = await mesh.run('ceo', 'go');
-    expect(sawBusy).toContain('busy');
     expect(out).toBe('done anyway');
+    // The refusal must name the route that WORKS. This message is 100% of what an
+    // agent messaging its caller will ever receive — `deliver` marks the recipient
+    // active before awaiting, so the caller is on the stack for the whole turn —
+    // and it used to say "check back later", which can never succeed.
+    expect(sawBusy).toContain('mid-turn');
+    expect(sawBusy).toContain('put it in your reply');
   });
 
   it('a throwing seam becomes the agent’s reply, never a mesh crash', async () => {

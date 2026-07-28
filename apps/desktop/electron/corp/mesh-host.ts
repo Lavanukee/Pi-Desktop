@@ -140,6 +140,37 @@ const ROLE_PURPOSE: Record<string, string> = {
  */
 export const DEFAULT_STEPS_PER_MESSAGE = 24;
 
+/**
+ * The settings a run passes STRAIGHT THROUGH to its agent host.
+ *
+ * Extracted and named because forgetting one is silent: `onSubmitted` was
+ * declared on both sides and forwarded by neither, so run 7's single successful
+ * `submit_work` — the first any run had produced — left no record, and the
+ * transcript read as though the tool had never fired. A dropped observer does not
+ * fail, it just makes you believe the wrong thing about the run. Keeping the list
+ * in one pure function means it can be tested rather than trusted.
+ */
+export const PASSTHROUGH_KEYS = [
+  'maxTokens',
+  'maxLiveAgents',
+  'maxStepsPerMessage',
+  'onActivity',
+  'onSubmitted',
+] as const;
+
+/** Copy the passthrough settings that were actually supplied. `undefined` is left
+ * out entirely rather than set, so the host's own defaults still apply under
+ * `exactOptionalPropertyTypes`. */
+export function hostPassthrough<T extends Record<string, unknown>>(
+  opts: T,
+): Partial<Pick<T, (typeof PASSTHROUGH_KEYS)[number] & keyof T>> {
+  const out: Record<string, unknown> = {};
+  for (const key of PASSTHROUGH_KEYS) {
+    if (opts[key] !== undefined) out[key] = opts[key];
+  }
+  return out as Partial<Pick<T, (typeof PASSTHROUGH_KEYS)[number] & keyof T>>;
+}
+
 /** Config for {@link createMeshAgentHost}. */
 export interface MeshAgentHostConfig {
   /** The resolved corp model (registry/auth/model) every agent runs on. */
@@ -360,6 +391,14 @@ export async function runCorpMeshTask(opts: {
   readonly maxGateRounds?: number;
   /** Observe each gate attempt (logging / the situation room). */
   readonly onGate?: (result: GateResult, round: number) => void;
+  /** Observe every `submit_work`, accepted or refused. This was declared on the
+   * host and NOT forwarded here, so run 7's one successful submission — the first
+   * a run had ever produced — left no trace in the transcript, and the run read as
+   * though the tool had never fired. */
+  readonly onSubmitted?: (agentId: string, command: string, accepted: boolean) => void;
+  /** How many WORK tool calls one message may spend before the role is pushed to
+   * conclude ({@link DEFAULT_STEPS_PER_MESSAGE}). */
+  readonly maxStepsPerMessage?: number;
   /** Skip the capability probe (tests — it shells out). */
   readonly skipCapabilityProbe?: boolean;
 }): Promise<CorpMeshRunResult> {
@@ -393,9 +432,7 @@ export async function runCorpMeshTask(opts: {
     cwd: opts.cwd,
     roster,
     ...(teamDir !== undefined ? { projectDir: teamDir } : {}),
-    ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
-    ...(opts.maxLiveAgents !== undefined ? { maxLiveAgents: opts.maxLiveAgents } : {}),
-    ...(opts.onActivity !== undefined ? { onActivity: opts.onActivity } : {}),
+    ...hostPassthrough(opts),
     sessionFileFor: (id) => team.sessionFileFor(id),
     onSessionFile: (id, file) => team.remember(id, roleOf.get(id) ?? 'engineer', file),
   });

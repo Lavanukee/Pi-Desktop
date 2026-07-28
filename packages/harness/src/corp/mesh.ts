@@ -137,11 +137,21 @@ export class AgentMesh {
   /** The ordered transcript of every talk (including refusals). */
   readonly hops: MeshHop[] = [];
 
+  // PLAIN FIELDS, not constructor parameter properties. The real-server drivers
+  // load these modules directly under Node's strip-only TypeScript, which cannot
+  // transform a parameter property — it throws ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX
+  // before a single agent runs. Same rule as role-agent.ts's "no syntax the smoke
+  // cannot load".
+  private readonly runTurn: RunAgentTurn;
+  private readonly budget: MeshBudget;
+
   constructor(
-    private readonly runTurn: RunAgentTurn,
+    runTurn: RunAgentTurn,
     agents: readonly MeshAgent[],
-    private readonly budget: MeshBudget = DEFAULT_MESH_BUDGET,
+    budget: MeshBudget = DEFAULT_MESH_BUDGET,
   ) {
+    this.runTurn = runTurn;
+    this.budget = budget;
     for (const a of agents) this.agents.set(a.id, a);
   }
 

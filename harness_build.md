@@ -172,7 +172,36 @@ guard destruction hard at the terminal layer (including its python spellings —
 
 ---
 
-## 5. Known-hard, deliberately deferred
+## 5. Lessons
+
+Every failed or disappointing run, what it actually was, and what changed. Kept
+in the order they were hit, because the order is itself information — the early
+ones are all "the machine could not start", the later ones are about the work.
+
+**L1 · A TypeScript parameter property stops the whole run before a single agent
+speaks.** First live run died at import: `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` from
+`constructor(private readonly runTurn: RunAgentTurn, …)` in `mesh.ts`. The
+real-server drivers load these modules directly under Node's *strip-only*
+TypeScript, which erases types but cannot TRANSFORM syntax — and a parameter
+property is a transform. `role-agent.ts` already carried this rule in its header
+("no relative value-imports so the smoke can load it") but it was never written
+down as a constraint on the corp modules generally, so I reintroduced it in
+`AgentPool` and `TeamBook` the same afternoon. **Rule: no parameter properties,
+no enums, no decorators, no namespaces anywhere the drivers import.** Plain
+fields, assigned in the constructor body.
+
+**L2 · Half the team could not read documentation, and engineers could not
+edit.** The mesh roster shipped `ceo/manager: ['read']`, `engineer: ['read',
+'write', 'bash']`, `specialist: ['read', 'bash']`. So: nobody could `web_search`
+(the seam's research factory gates on that NAME being in the allowlist, so it was
+never even installed), no one could `ls` an unfamiliar tree or `grep` for a
+symbol, and an engineer could only ever CREATE files — it had no `edit`, so
+"change this line" was not expressible. For "wire up ffmpeg" or "build this in
+Godot", where most of the work is looking things up and modifying what exists,
+that is not a limitation, it is a hard stop. Roles now carry the full working
+set: file tools + shell + research, with `tool_search` on top.
+
+## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.
 

@@ -39,6 +39,7 @@ import {
   type TalkFn,
 } from '@pi-desktop/harness/corp';
 import { AgentPool } from './agent-pool';
+import { type GateResult, gateFeedback, runProductGate } from './product-gate';
 import type { CorpModelHandle } from './role-agent';
 import { TeamBook } from './team-record';
 
@@ -246,6 +247,9 @@ export interface CorpMeshRunResult {
   readonly hops: readonly MeshHop[];
   /** How many agent turns ran. */
   readonly turns: number;
+  /** What happened when the product's own check was RUN. `ok` is the only honest
+   * "it works" in the whole result — everything else is what people said. */
+  readonly gate: GateResult;
 }
 
 /**
@@ -269,6 +273,11 @@ export async function runCorpMeshTask(opts: {
    * Explicit `null` runs an anonymous, in-memory team (tests). */
   readonly teamDir?: string | null;
   readonly maxLiveAgents?: number;
+  /** How many times a failing product check is handed back to the team before the
+   * failing verdict stands. Default 2. */
+  readonly maxGateRounds?: number;
+  /** Observe each gate attempt (logging / the situation room). */
+  readonly onGate?: (result: GateResult, round: number) => void;
 }): Promise<CorpMeshRunResult> {
   const roster = buildCorpRoster({
     task: opts.task,
@@ -297,8 +306,31 @@ export async function runCorpMeshTask(opts: {
     else opts.signal.addEventListener('abort', () => mesh.abort(), { once: true });
   }
   try {
-    const reply = await mesh.run('ceo', opts.task);
-    return { reply, hops: mesh.hops, turns: mesh.turns };
+    let reply = await mesh.run('ceo', opts.task);
+
+    /*
+     * THE GATE. The conversation is free; DONE is not a conversation outcome.
+     *
+     * The team says it has finished, and then the product's own check is RUN. If
+     * it fails, the failure output goes straight back to the CEO as the next
+     * message — and because the CEO's session is persistent, that is a follow-up
+     * to the same person who just told us it was done, not a fresh briefing. A
+     * concrete failing command with its real output is the single most useful
+     * thing you can hand a small model; "please improve the code" is the least.
+     *
+     * Bounded: after `maxGateRounds` the honest failing verdict stands rather
+     * than looping forever.
+     */
+    const rounds = opts.maxGateRounds ?? 2;
+    let gate = await runProductGate(opts.cwd);
+    for (let round = 0; !gate.ok && round < rounds && !mesh.exhausted; round += 1) {
+      if (opts.signal?.aborted === true) break;
+      opts.onGate?.(gate, round);
+      reply = await mesh.run('ceo', gateFeedback(gate));
+      gate = await runProductGate(opts.cwd);
+    }
+    opts.onGate?.(gate, rounds);
+    return { reply, hops: mesh.hops, turns: mesh.turns, gate };
   } finally {
     // Close the live sessions; their FILES stay, so the next run resumes them.
     host.dispose();

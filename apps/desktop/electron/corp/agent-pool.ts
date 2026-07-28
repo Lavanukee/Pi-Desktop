@@ -89,7 +89,14 @@ export class AgentPool {
   private readonly known = new Map<string, string>(); // agentId → session file
   private clock = 0;
 
-  constructor(private readonly config: AgentPoolConfig) {}
+  // A plain field, NOT a constructor parameter property: the real-server drivers
+  // load this module under Node's strip-only TypeScript, which cannot transform
+  // one (ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX at import time).
+  private readonly config: AgentPoolConfig;
+
+  constructor(config: AgentPoolConfig) {
+    this.config = config;
+  }
 
   /** The session file backing an agent, once it has one. */
   sessionFile(agentId: string): string | undefined {

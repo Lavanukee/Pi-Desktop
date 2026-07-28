@@ -119,10 +119,12 @@ export function withMember(record: TeamRecord, member: TeamMember): TeamRecord {
 export class TeamBook {
   private record: TeamRecord;
 
-  constructor(
-    private readonly projectDir: string | undefined,
-    task?: string,
-  ) {
+  /** Plain field — see AgentPool: parameter properties break the real-server
+   * drivers, which import these modules under Node's strip-only TypeScript. */
+  private readonly projectDir: string | undefined;
+
+  constructor(projectDir: string | undefined, task?: string) {
+    this.projectDir = projectDir;
     this.record =
       projectDir === undefined
         ? EMPTY

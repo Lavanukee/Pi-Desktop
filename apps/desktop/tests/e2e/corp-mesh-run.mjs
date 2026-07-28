@@ -1,0 +1,335 @@
+/**
+ * THE CORP MESH RUN — the real thing, end to end, against a real model.
+ *
+ * Starts the app's own llama-server and runs `runCorpMeshTask` on a task: the CEO
+ * is prompted, talks to the manager, the manager talks to engineers and
+ * specialists, everyone works in ONE shared tree, and a product either exists at
+ * the end or it does not. Nothing about the outcome is a model's opinion — the
+ * gate at the bottom looks at the FILES.
+ *
+ * It is also the diagnostic instrument. A failed run here is the only place the
+ * real lessons live, so everything needed to trace one is written to disk:
+ *
+ *   <run>/server.log      the llama-server log (prefill/cache/slot behaviour)
+ *   <run>/transcript.jsonl every hop and every activity record, in order
+ *   <run>/summary.json    per-agent turn counts, tools used, files written
+ *   <run>/ws/             the product itself, plus .pi/corp/ (team + sessions)
+ *
+ *   node tests/e2e/corp-mesh-run.mjs --task converter   # the small green-run target
+ *   node tests/e2e/corp-mesh-run.mjs --task memory      # A8: does an agent remember?
+ *   node tests/e2e/corp-mesh-run.mjs --task godot
+ *   node tests/e2e/corp-mesh-run.mjs --task "…free text…" [--engineers 2] [--minutes 45]
+ *
+ * Kills the server on every exit path — no orphan.
+ */
+import { spawn } from 'node:child_process';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { register } from 'node:module';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const HOME = os.homedir();
+const SERVER_BIN = `${HOME}/.cache/pi-desktop/llamacpp/b9934/llama-b9934/llama-server`;
+const MODEL_GGUF = `${HOME}/.cache/pi-desktop/models/qwen3.5-4b-mtp/Qwen3.5-4B-Q8_0.gguf`;
+const CHAT_TEMPLATE = `${HOME}/.cache/pi-desktop/chat-templates/Qwen--Qwen3.5-4B.jinja`;
+const HOST = '127.0.0.1';
+const PORT = Number(process.env.PORT ?? 8174);
+const BASE_URL = `http://${HOST}:${PORT}/v1`;
+const HEALTH_URL = `http://${HOST}:${PORT}/health`;
+const MODEL_ID = 'qwen3.5-4b';
+
+const args = process.argv.slice(2);
+const flag = (name, fallback) => {
+  const i = args.indexOf(`--${name}`);
+  return i >= 0 && args[i + 1] !== undefined ? args[i + 1] : fallback;
+};
+
+/** The named targets. `converter` is the SMALL one the machine gets debugged on. */
+const TASKS = {
+  converter:
+    'Build a small offline file-conversion tool in this directory. It must convert ' +
+    'between exactly three formats to start: JSON, CSV, and YAML — any of the three ' +
+    'to any other. Provide a command-line entry point that takes an input file and ' +
+    'an output file and does the conversion. It must RUN with no network access and ' +
+    'no paid services. Include a test that converts a real file each way and checks ' +
+    'the result, and make sure that test passes before you call the work done.',
+  godot:
+    'Build a 3D flight-combat game in Godot 4: command a fleet, create units, direct ' +
+    'them on a 3D map against an enemy, with capturable bases and outposts, buildable ' +
+    'turrets, and several types of plane. Production ready.',
+  memory:
+    'This is a MEMORY CHECK, not a build. Ask your engineer to invent a distinctive ' +
+    'codename for this project and remember it. Then, in a SEPARATE later message, ask ' +
+    'that same engineer what codename they chose. Report both replies verbatim.',
+};
+const taskArg = flag('task', 'converter');
+const TASK = TASKS[taskArg] ?? taskArg;
+const TASK_NAME = TASKS[taskArg] !== undefined ? taskArg : 'custom';
+const ENGINEERS = Number(flag('engineers', '2'));
+const BUDGET_MS = Number(flag('minutes', '45')) * 60_000;
+
+const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const repoRoot = path.resolve(appRoot, '../..');
+const MESH_HOST_TS = path.join(appRoot, 'electron', 'corp', 'mesh-host.ts');
+const ROLE_AGENT_TS = path.join(appRoot, 'electron', 'corp', 'role-agent.ts');
+
+const RUN_DIR = process.env.RUN_DIR ?? mkdtempSync(path.join(os.tmpdir(), 'corp-mesh-'));
+const SERVER_LOG = path.join(RUN_DIR, 'server.log');
+const TRANSCRIPT = path.join(RUN_DIR, 'transcript.jsonl');
+const WORKSPACE = path.join(RUN_DIR, 'ws');
+mkdirSync(WORKSPACE, { recursive: true });
+
+const t0 = Date.now();
+const since = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
+function log(...a) {
+  console.error(`[${since()}] ${a.join(' ')}`);
+}
+function record(entry) {
+  try {
+    appendFileSync(TRANSCRIPT, `${JSON.stringify({ at: since(), ...entry })}\n`);
+  } catch {
+    /* the transcript must never break the run */
+  }
+}
+
+// The corp TS sources use `.js` specifiers that resolve to `.ts`.
+const tsResolveHook = `
+export async function resolve(specifier, context, next) {
+  if (/^(\\.\\.?\\/|\\/)/.test(specifier)) {
+    try { return await next(specifier, context); }
+    catch (err) {
+      if (!err || err.code !== 'ERR_MODULE_NOT_FOUND') throw err;
+      if (specifier.endsWith('.js')) { try { return await next(specifier.slice(0, -3) + '.ts', context); } catch {} }
+      try { return await next(specifier + '.ts', context); } catch {}
+      throw err;
+    }
+  }
+  return next(specifier, context);
+}`;
+register(`data:text/javascript,${encodeURIComponent(tsResolveHook)}`);
+
+const missing = [
+  [SERVER_BIN, 'llama-server binary'],
+  [MODEL_GGUF, 'qwen3.5-4b Q8 gguf'],
+  [CHAT_TEMPLATE, 'qwen chat template'],
+].filter(([p]) => !existsSync(p));
+if (missing.length > 0) {
+  for (const [p, what] of missing) log(`SKIP: missing ${what} at ${p}`);
+  console.log('CORP MESH RUN: SKIPPED (model assets not present)');
+  process.exit(0);
+}
+
+// ── server lifecycle ────────────────────────────────────────────────────────
+let serverProc = null;
+function startServer() {
+  const a = [
+    '-m',
+    MODEL_GGUF,
+    '--host',
+    HOST,
+    '--port',
+    String(PORT),
+    // Room for a role that works for a long time. Each agent holds its OWN
+    // conversation now, so the window is per-role, not shared.
+    '-c',
+    '32768',
+    '--parallel',
+    '1',
+    '--spec-type',
+    'draft-mtp',
+    '--spec-draft-n-max',
+    '2',
+    '--jinja',
+    '--chat-template-file',
+    CHAT_TEMPLATE,
+  ];
+  log('starting llama-server on', PORT);
+  serverProc = spawn(SERVER_BIN, a, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const append = (d) => {
+    try {
+      appendFileSync(SERVER_LOG, d);
+    } catch {}
+  };
+  serverProc.stdout.on('data', append);
+  serverProc.stderr.on('data', append);
+  serverProc.on('exit', (code, sig) => log(`llama-server exited code=${code} sig=${sig}`));
+}
+function killServer() {
+  if (serverProc && !serverProc.killed) {
+    try {
+      serverProc.kill('SIGKILL');
+    } catch {}
+  }
+}
+async function waitForHealth(timeoutMs = 180000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (serverProc && serverProc.exitCode !== null) throw new Error('server exited before healthy');
+    try {
+      const r = await fetch(HEALTH_URL);
+      if (r.ok) {
+        const j = await r.json().catch(() => ({}));
+        if (!j.status || j.status === 'ok') return;
+      }
+    } catch {}
+    await new Promise((res) => setTimeout(res, 750));
+  }
+  throw new Error('server never became healthy');
+}
+for (const sig of ['SIGINT', 'SIGTERM'])
+  process.on(sig, () => {
+    killServer();
+    process.exit(1);
+  });
+process.on('uncaughtException', (e) => {
+  log('uncaughtException', e?.stack || e);
+  killServer();
+  process.exit(1);
+});
+
+/** Every file in the product tree, excluding the corp's own bookkeeping. */
+function productFiles(root, base = root, out = []) {
+  let entries;
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (e.name === '.pi' || e.name === 'node_modules' || e.name === '.git') continue;
+    const abs = path.join(root, e.name);
+    if (e.isDirectory()) productFiles(abs, base, out);
+    else {
+      let bytes = 0;
+      try {
+        bytes = statSync(abs).size;
+      } catch {}
+      out.push({ path: path.relative(base, abs), bytes });
+    }
+  }
+  return out;
+}
+
+async function main() {
+  startServer();
+  await waitForHealth();
+  log('server healthy · task:', TASK_NAME, '· workspace:', WORKSPACE);
+
+  const roleMod = await import(pathToFileURL(ROLE_AGENT_TS).href);
+  const meshMod = await import(pathToFileURL(MESH_HOST_TS).href);
+  const handle = await roleMod.createCorpModelProvider({ baseUrl: BASE_URL, model: MODEL_ID });
+
+  // Per-agent accounting, so a bad run can be READ rather than guessed at.
+  const agents = new Map();
+  const seen = (id) => {
+    let a = agents.get(id);
+    if (a === undefined) {
+      a = { turns: 0, tools: {}, files: new Set(), lastText: '' };
+      agents.set(id, a);
+    }
+    return a;
+  };
+
+  const controller = new AbortController();
+  const budget = setTimeout(() => {
+    log(`BUDGET SPENT (${BUDGET_MS / 60000} min) — telling every agent to wrap up`);
+    record({ kind: 'budget-exceeded' });
+    controller.abort();
+  }, BUDGET_MS);
+
+  let result;
+  try {
+    result = await meshMod.runCorpMeshTask({
+      handle,
+      task: TASK,
+      cwd: WORKSPACE,
+      engineerCount: ENGINEERS,
+      signal: controller.signal,
+      onActivity: (agentId, r) => {
+        const a = seen(agentId);
+        if (r.kind === 'turn-start') {
+          a.turns += 1;
+          log(`${agentId} · turn ${a.turns}`);
+        }
+        if (r.kind === 'tool') {
+          a.tools[r.toolName] = (a.tools[r.toolName] ?? 0) + 1;
+          log(
+            `  ${agentId} → ${r.toolName}${r.detail ? `: ${String(r.detail).slice(0, 100)}` : ''}`,
+          );
+        }
+        if (r.kind === 'file-write' && r.phase !== 'start') a.files.add(r.path);
+        // Full fidelity to disk; only the interesting lines to the console.
+        if (r.kind !== 'assistant-text' && r.kind !== 'thinking') record({ agentId, ...r });
+        if (r.kind === 'assistant-text' && r.phase === 'end') {
+          a.lastText = String(r.text ?? '').slice(0, 4000);
+          record({ agentId, kind: 'said', text: a.lastText });
+        }
+      },
+    });
+  } finally {
+    clearTimeout(budget);
+  }
+
+  for (const hop of result.hops) record({ kind: 'hop', ...hop });
+
+  const files = productFiles(WORKSPACE);
+  const summary = {
+    task: TASK_NAME,
+    wallSeconds: Math.round((Date.now() - t0) / 1000),
+    turns: result.turns,
+    hops: result.hops.length,
+    ceoReply: result.reply.slice(0, 4000),
+    agents: [...agents.entries()].map(([id, a]) => ({
+      id,
+      turns: a.turns,
+      tools: a.tools,
+      files: [...a.files],
+    })),
+    files,
+    productBytes: files.reduce((n, f) => n + f.bytes, 0),
+  };
+  writeFileSync(path.join(RUN_DIR, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
+
+  console.log('\n──────── corp mesh run ────────');
+  console.log(`task            ${TASK_NAME}`);
+  console.log(`wall            ${summary.wallSeconds}s`);
+  console.log(`agent turns     ${result.turns}   hops ${result.hops.length}`);
+  for (const a of summary.agents) {
+    const tools = Object.entries(a.tools)
+      .map(([n, c]) => `${n}×${c}`)
+      .join(' ');
+    console.log(`  ${a.id.padEnd(22)} turns ${String(a.turns).padStart(3)}  ${tools}`);
+  }
+  console.log(`\nproduct         ${files.length} file(s), ${summary.productBytes} bytes`);
+  for (const f of files.slice(0, 40)) console.log(`  ${f.bytes.toString().padStart(8)}  ${f.path}`);
+  console.log(`\nartifacts       ${RUN_DIR}`);
+  console.log(`CEO said: ${result.reply.slice(0, 600)}`);
+
+  /*
+   * THE GATE. Deliberately about the ARTIFACT, never the conversation: a run that
+   * talks beautifully and writes nothing has failed, and that is the exact failure
+   * mode this whole rebuild exists to catch.
+   */
+  const nonTrivial = files.filter((f) => f.bytes > 64);
+  const verdict =
+    nonTrivial.length > 0 ? 'PRODUCED A PRODUCT' : 'NO PRODUCT — talked, built nothing';
+  console.log(`\nVERDICT: ${verdict}`);
+  killServer();
+  process.exit(nonTrivial.length > 0 ? 0 : 1);
+}
+
+main().catch((e) => {
+  log('FAILED', e?.stack || e);
+  record({ kind: 'run-error', error: String(e?.stack || e) });
+  killServer();
+  process.exit(1);
+});

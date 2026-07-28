@@ -111,10 +111,35 @@ export interface CorpMeshOptions {
 }
 
 const DEFAULT_ENGINEERS = 4;
-const DEFAULT_CEO_TOOLS = ['read'];
-const DEFAULT_MANAGER_TOOLS = ['read'];
-const DEFAULT_ENGINEER_TOOLS = ['read', 'write', 'bash'];
-const DEFAULT_SPECIALIST_TOOLS = ['read', 'bash'];
+/*
+ * THE FULL WORKING TOOLSET.
+ *
+ * These lists were `['read']` and `['read','write','bash']` — an engineer that
+ * could not `edit` an existing file, `ls` to see what was already there, or
+ * `grep` for a symbol, and NOBODY on the team who could read documentation. Half
+ * of "wire up ffmpeg" or "build this in Godot" is looking things up, so a team
+ * without web access cannot do the work at all; and an engineer that can only
+ * `write` can only ever create files from scratch, never change anything that exists.
+ *
+ * `web_search` / `web_fetch` are named here so the seam's web-research factory is
+ * actually installed (it gates on these names appearing in a role's allowlist —
+ * which is why nothing could search before). `tool_search` remains on top of all
+ * of it, so a role can still reach anything else it needs mid-run.
+ *
+ * Python is not a tool name: it runs through `bash`, which every working role has.
+ */
+const RESEARCH_TOOLS = ['web_search', 'web_fetch'];
+/** Everything needed to work in a real tree: see it, search it, read it, change it. */
+const FILE_TOOLS = ['read', 'write', 'edit', 'ls', 'grep', 'find'];
+
+/** The CEO reads the product and checks it runs; it does not write code. */
+const DEFAULT_CEO_TOOLS = ['read', 'ls', 'grep', 'find', 'bash', ...RESEARCH_TOOLS];
+/** The manager reads the tree to write sensible contracts, and looks things up. */
+const DEFAULT_MANAGER_TOOLS = ['read', 'ls', 'grep', 'find', ...RESEARCH_TOOLS];
+/** An engineer works: full file tools, a shell, and the ability to look things up. */
+const DEFAULT_ENGINEER_TOOLS = [...FILE_TOOLS, 'bash', ...RESEARCH_TOOLS];
+/** A specialist MEASURES — it must be able to run the thing it is judging. */
+const DEFAULT_SPECIALIST_TOOLS = ['read', 'ls', 'grep', 'find', 'bash', ...RESEARCH_TOOLS];
 
 /**
  * Assemble the corp roster: the CEO, the manager, a pool of engineers, and one

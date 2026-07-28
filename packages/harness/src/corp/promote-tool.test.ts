@@ -85,13 +85,7 @@ describe('create_production_hierarchy — normal-chat tool', () => {
   it('rejects unusable args (no valid division) without publishing', async () => {
     const tool = register('max');
     const { ctx, statuses } = fakeCtx();
-    const res = await tool.execute(
-      'c',
-      { reason: 'x', divisions: [] },
-      undefined,
-      undefined,
-      ctx,
-    );
+    const res = await tool.execute('c', { reason: 'x', divisions: [] }, undefined, undefined, ctx);
     expect(res.isError).toBe(true);
     expect(statuses[PROMOTE_STATUS_KEY]).toBeUndefined();
   });

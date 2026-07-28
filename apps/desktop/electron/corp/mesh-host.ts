@@ -1,19 +1,23 @@
 /**
  * The PERSISTENT-SESSION HOST for the agent mesh (jedd's model — desktop side): it
  * implements the harness `RunAgentTurn` seam over REAL pi agents. Every mesh agent
- * (CEO, manager, engineers, specialists) is a live pi run that KEEPS ITS MEMORY across
- * turns (its prior conversation is replayed into each new prompt), and its universal
+ * (CEO, manager, engineers, specialists) is a PERSISTENT pi session that stays open
+ * across turns — its history, its own tool calls and the server's warm KV all still
+ * there when it is next spoken to — and its universal
  * `talk_to` / `commission_specialist` tools route through the mesh — so anyone can talk
  * to anyone. Writing a contract (manager → engineer), submitting it (engineer →
  * manager), and commissioning a specialist are all the SAME conversation.
  *
- * It REUSES the tested {@link runRoleAgent} per turn rather than refactoring the pi
- * session lifecycle, so it inherits the sampling, the per-call abort watchdog, the live
- * activity stream, and the tool loop unchanged. This host only adds (a) per-agent
- * MEMORY replay and (b) the communication tools as `ToolDefinition`s whose async
- * `execute` calls the mesh router (the exact shape the `consult` tool already uses to
- * spawn an advisor and await its reply). Fully ADDITIVE — it never touches the existing
- * deterministic corp path.
+ * Turns run through the {@link AgentPool}, which opens each role's session ONCE and
+ * keeps it (bounded, LRU-evicted, resumable from its file). It inherits the sampling,
+ * the per-call abort watchdog, the live activity stream and the tool loop unchanged;
+ * this host adds the communication tools as `ToolDefinition`s whose async `execute`
+ * calls the mesh router — the exact shape the `consult` tool already uses to spawn an
+ * advisor and await its reply.
+ *
+ * WHAT THIS REPLACED: an 8,000-character transcript TAIL, replayed into a brand-new
+ * session on every turn. That is a summary handed to a stranger, and it cost a full
+ * re-prefill each time. A role now simply remembers.
  *
  * VERIFICATION: the routing, the peer permissions, and the bounds this sits on ARE
  * unit-tested (mesh.ts / corp-mesh.ts). This host itself runs REAL pi sessions, so it
@@ -34,11 +38,9 @@ import {
   TALK_TO_TOOL,
   type TalkFn,
 } from '@pi-desktop/harness/corp';
-import { type CorpModelHandle, runRoleAgent } from './role-agent';
-
-/** Keep an agent's replayed memory bounded so a long conversation never blows the
- * context window — we keep the TAIL (the most recent exchanges). */
-const MAX_MEMORY_CHARS = 8000;
+import { AgentPool } from './agent-pool';
+import type { CorpModelHandle } from './role-agent';
+import { TeamBook } from './team-record';
 
 /** A pi tool result carrying a single text block (the reply the calling agent reads). */
 function textResult(text: string): {
@@ -134,7 +136,26 @@ export interface MeshAgentHostConfig {
   readonly maxTokens?: number;
   /** Live activity sink for the situation room, tagged with the emitting agent. */
   readonly onActivity?: (agentId: string, record: RoleAgentActivity) => void;
+  /** The project whose `.pi/corp/sessions/` holds the team's conversations, so a
+   * role's memory outlives the run. Omitted → in-memory sessions (tests). */
+  readonly projectDir?: string;
+  /** Max simultaneously-open agent sessions before the least-recently-used is
+   * evicted (its file kept; it resumes on the next message). */
+  readonly maxLiveAgents?: number;
+  /** Restore a persisted session file for an agent id — how a reopened project
+   * gets its SAME team back rather than a new one wearing the same names. */
+  readonly sessionFileFor?: (agentId: string) => string | undefined;
+  /** Record where an agent's conversation landed, so it can be found next time. */
+  readonly onSessionFile?: (agentId: string, file: string) => void;
 }
+
+/** A mesh host, plus the pool behind it (for lifecycle + telemetry). */
+export type MeshAgentHost = RunAgentTurn & {
+  /** The live/resumable agent sessions this host is driving. */
+  readonly pool: AgentPool;
+  /** Close every open session. Their files are kept — they resume on next use. */
+  dispose(): void;
+};
 
 /**
  * Build the {@link RunAgentTurn} the {@link import('@pi-desktop/harness/corp').AgentMesh}
@@ -144,49 +165,77 @@ export interface MeshAgentHostConfig {
  * memory is kept (bounded) so the NEXT time it is talked to, it remembers. Never
  * throws — a session error becomes the reply.
  */
-export function createMeshAgentHost(config: MeshAgentHostConfig): RunAgentTurn {
+export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost {
   const roster = new Map(config.roster.map((a) => [a.id, a]));
-  const memory = new Map<string, string>();
+  const pool = new AgentPool({
+    handle: config.handle,
+    ...(config.projectDir !== undefined ? { projectDir: config.projectDir } : {}),
+    ...(config.maxLiveAgents !== undefined ? { maxLive: config.maxLiveAgents } : {}),
+    ...(config.sessionFileFor !== undefined ? { sessionFileFor: config.sessionFileFor } : {}),
+    ...(config.onSessionFile !== undefined ? { onSessionFile: config.onSessionFile } : {}),
+  });
 
-  return async ({ agentId, from, message, talk }) => {
+  /*
+   * THE `talk` CLOSURE PROBLEM.
+   *
+   * An agent's communication tools close over the mesh's `talk`, and they are
+   * built ONCE, when its session opens. But `talk` arrives per TURN. So the tools
+   * read it through this holder, which each turn updates — the tools stay the same
+   * objects (the session keeps them), while the routing they use is always the
+   * current one.
+   */
+  const talkRef = new Map<string, TalkFn>();
+  const talkThrough =
+    (agentId: string): TalkFn =>
+    (from, to, msg) => {
+      const live = talkRef.get(agentId);
+      if (live === undefined) return Promise.resolve('(this conversation is no longer open.)');
+      return live(from, to, msg);
+    };
+
+  const run: RunAgentTurn = async ({ agentId, from, message, talk }) => {
     const agent = roster.get(agentId);
     if (agent === undefined) return { reply: `(there is no ${agentId} on this team.)` };
+    talkRef.set(agentId, talk);
 
-    const prior = memory.get(agentId) ?? '';
+    // NO REPLAYED TRANSCRIPT. The agent's session is still open (or resumes from
+    // its file), so it already remembers everything it has done and been told —
+    // this is just the next thing said to it.
     const incoming = `Message from ${from}:\n${message}`;
-    const userPrompt = prior === '' ? incoming : `${prior}\n\n———\n${incoming}`;
-
     let reply = '';
     try {
-      const result = await runRoleAgent(config.handle, {
-        purpose: ROLE_PURPOSE[agent.role] ?? 'engineer',
-        systemPrompt: agent.systemPrompt,
-        userPrompt,
-        // The comm-tool NAMES must be in the allowlist or the SDK never offers them.
-        tools: [...agent.tools, TALK_TO_TOOL, COMMISSION_SPECIALIST_TOOL],
-        customTools: communicationTools(agent, talk),
-        cwd: config.cwd,
-        thinking: true,
-        samplingMode: 'thinking-general',
-        ...(config.maxTokens !== undefined ? { maxTokens: config.maxTokens } : {}),
-        ...(config.onActivity !== undefined
-          ? { onActivity: (r: RoleAgentActivity) => config.onActivity?.(agentId, r) }
-          : {}),
-      });
+      const result = await pool.talk(
+        agentId,
+        {
+          purpose: ROLE_PURPOSE[agent.role] ?? 'engineer',
+          systemPrompt: agent.systemPrompt,
+          // The comm-tool NAMES must be in the allowlist or the SDK never offers them.
+          tools: [...agent.tools, TALK_TO_TOOL, COMMISSION_SPECIALIST_TOOL],
+          customTools: communicationTools(agent, talkThrough(agentId)),
+          cwd: config.cwd,
+          thinking: true,
+          samplingMode: 'thinking-general',
+          ...(config.maxTokens !== undefined ? { maxTokens: config.maxTokens } : {}),
+        },
+        incoming,
+        {
+          ...(config.onActivity !== undefined
+            ? { onActivity: (r: RoleAgentActivity) => config.onActivity?.(agentId, r) }
+            : {}),
+        },
+      );
       reply = result.finalText.trim();
     } catch (err) {
       reply = `(${agentId} hit a problem: ${err instanceof Error ? err.message : String(err)})`;
     }
     if (reply === '') reply = '(no reply)';
-
-    // Remember this exchange for the agent's next turn — bounded to the recent tail.
-    const nextMemory = `${userPrompt}\n\nYou replied:\n${reply}`;
-    memory.set(
-      agentId,
-      nextMemory.length > MAX_MEMORY_CHARS ? nextMemory.slice(-MAX_MEMORY_CHARS) : nextMemory,
-    );
     return { reply };
   };
+
+  return Object.assign(run, {
+    pool,
+    dispose: () => pool.disposeAll(),
+  });
 }
 
 /** The outcome of a live corp mesh run. */
@@ -215,23 +264,43 @@ export async function runCorpMeshTask(opts: {
   readonly onActivity?: (agentId: string, record: RoleAgentActivity) => void;
   /** Cooperative stop: fires the mesh's abort so no new agent turns start. */
   readonly signal?: AbortSignal;
+  /** Where the TEAM is kept — `.pi/corp/` under this directory. Defaults to the
+   * product workspace, so a project's agents live with the code they work on.
+   * Explicit `null` runs an anonymous, in-memory team (tests). */
+  readonly teamDir?: string | null;
+  readonly maxLiveAgents?: number;
 }): Promise<CorpMeshRunResult> {
   const roster = buildCorpRoster({
     task: opts.task,
     ...(opts.engineerCount !== undefined ? { engineerCount: opts.engineerCount } : {}),
   });
-  const runAgentTurn = createMeshAgentHost({
+  // The team lives with the product unless told otherwise, so reopening the
+  // project reaches the SAME people rather than new ones wearing their names.
+  const teamDir = opts.teamDir === null ? undefined : (opts.teamDir ?? opts.cwd);
+  const team = new TeamBook(teamDir, opts.task);
+  const roleOf = new Map(roster.map((a) => [a.id, a.role]));
+
+  const host = createMeshAgentHost({
     handle: opts.handle,
     cwd: opts.cwd,
     roster,
+    ...(teamDir !== undefined ? { projectDir: teamDir } : {}),
     ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+    ...(opts.maxLiveAgents !== undefined ? { maxLiveAgents: opts.maxLiveAgents } : {}),
     ...(opts.onActivity !== undefined ? { onActivity: opts.onActivity } : {}),
+    sessionFileFor: (id) => team.sessionFileFor(id),
+    onSessionFile: (id, file) => team.remember(id, roleOf.get(id) ?? 'engineer', file),
   });
-  const mesh = new AgentMesh(runAgentTurn, roster);
+  const mesh = new AgentMesh(host, roster);
   if (opts.signal !== undefined) {
     if (opts.signal.aborted) mesh.abort();
     else opts.signal.addEventListener('abort', () => mesh.abort(), { once: true });
   }
-  const reply = await mesh.run('ceo', opts.task);
-  return { reply, hops: mesh.hops, turns: mesh.turns };
+  try {
+    const reply = await mesh.run('ceo', opts.task);
+    return { reply, hops: mesh.hops, turns: mesh.turns };
+  } finally {
+    // Close the live sessions; their FILES stay, so the next run resumes them.
+    host.dispose();
+  }
 }

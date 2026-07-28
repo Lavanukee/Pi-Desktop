@@ -190,7 +190,8 @@ export function startMeshTask(opts: {
     if (terminated) return;
     terminated = true;
     controller.abort();
-    for (const agent of roster) if (states.get(agent.id) === 'working') states.set(agent.id, 'idle');
+    for (const agent of roster)
+      if (states.get(agent.id) === 'working') states.set(agent.id, 'idle');
     emitChart();
     stream.push({ type: 'status', status: 'done' });
     stream.push({

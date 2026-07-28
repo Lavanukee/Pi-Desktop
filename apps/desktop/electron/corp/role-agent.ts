@@ -787,6 +787,72 @@ export interface RoleAgentResult {
 const DEFAULT_PER_CALL_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
+ * The SESSION-scoped half of {@link RoleAgentConfig} — everything that describes
+ * WHO this role is, as opposed to what it is being asked right now.
+ *
+ * The split exists so a role can be a PERSON rather than a series of strangers.
+ * Until now every turn built a whole new AgentSession, so an engineer talked to
+ * twice had no idea it had ever been talked to once; the mesh papered over that
+ * by replaying an 8,000-character transcript tail into a fresh prompt. With the
+ * session kept open, the second message is simply the next thing said to someone
+ * who was already in the room — full history, real KV reuse, its own tool calls
+ * still in context.
+ */
+export type RoleSessionConfig = Omit<RoleAgentConfig, 'userPrompt' | 'bump' | 'onActivity'> & {
+  /**
+   * Where this role's conversation is stored.
+   *  - a PATH to an existing session file → resume it (the role remembers);
+   *  - a directory + `create` → a new persisted session in that directory;
+   *  - omitted → in-memory, discarded on dispose (tests, one-shot callers).
+   */
+  readonly session?:
+    | { readonly kind: 'resume'; readonly file: string }
+    | { readonly kind: 'create'; readonly dir: string };
+};
+
+/** What changes from one turn to the next on a live role session. */
+export interface RoleTurnOptions {
+  readonly bump?: BumpConfig;
+  readonly onActivity?: (record: RoleAgentActivity) => void;
+  readonly maxSteps?: number;
+}
+
+/** A role session that stays OPEN between turns. */
+export interface OpenRoleSession {
+  /** Say something to this role and wait for it to finish responding. */
+  prompt(userPrompt: string, options?: RoleTurnOptions): Promise<RoleAgentResult>;
+  /** The session file backing this role, or undefined when in-memory. */
+  readonly sessionFile: string | undefined;
+  /** How full this role's context is (0..100), when readable. */
+  contextPercent(): number | undefined;
+  /** Close the session and clean up its agent dir. */
+  dispose(): void;
+}
+
+/** Per-TURN mutable state the session's extension writes through. Reset on every
+ * prompt so one turn's tool calls and timings never leak into the next. */
+interface TurnState {
+  toolCalls: RoleAgentToolCall[];
+  onActivity: ((record: RoleAgentActivity) => void) | undefined;
+  stepCap: ReturnType<typeof createStepCapCounter> | undefined;
+  samplingCalls: number;
+  sentSampling: SamplingParams | undefined;
+  callTimedOut: boolean;
+}
+
+function newTurnState(options: RoleTurnOptions, fallbackSteps?: number): TurnState {
+  const steps = options.maxSteps ?? fallbackSteps;
+  return {
+    toolCalls: [],
+    onActivity: options.onActivity,
+    stepCap: steps !== undefined ? createStepCapCounter(steps) : undefined,
+    samplingCalls: 0,
+    sentSampling: undefined,
+    callTimedOut: false,
+  };
+}
+
+/**
  * Run ONE corp role as a headless {@link AgentSession}: a `corpExt` extension
  * installs the owner's sampling on `before_provider_request`, strips prior thinking
  * on `context`, and captures `tool_call`s. The role runs FULLY AUTONOMOUSLY — any
@@ -800,23 +866,20 @@ const DEFAULT_PER_CALL_TIMEOUT_MS = 10 * 60 * 1000;
  * streams freely). Never throws for a misbehaving model — a caught turn returns a
  * recorded {@link RoleAgentResult}. Disposes the session + its temp dir in `finally`.
  */
-export async function runRoleAgent(
+export async function openRoleSession(
   handle: CorpModelHandle,
-  config: RoleAgentConfig,
-): Promise<RoleAgentResult> {
+  config: RoleSessionConfig,
+): Promise<OpenRoleSession> {
   const agentDir = mkdtempSync(path.join(os.tmpdir(), 'corp-role-agent-'));
 
-  // --- per-run capture state (closed over by corpExt) ---
-  const toolCalls: RoleAgentToolCall[] = [];
-  // A step cap ONLY when one is explicitly requested (tests) — the seam never sets
-  // it, so a role normally runs uncapped until it submits / the global RunBudget.
-  const stepCap = config.maxSteps !== undefined ? createStepCapCounter(config.maxSteps) : undefined;
-  let samplingCalls = 0;
-  let sentSampling: SamplingParams | undefined;
+  // --- per-TURN capture state (the extension writes THROUGH this holder) ---
+  // A holder rather than closure locals because the extension is installed ONCE,
+  // at session creation, but the session now serves many turns: each prompt swaps
+  // in a fresh TurnState so one turn's tool calls never bleed into the next.
+  let turn: TurnState = newTurnState({});
 
   // --- per-CALL network abort (the ONLY per-run guard) ---
   const perCallMs = config.perCallTimeoutMs ?? DEFAULT_PER_CALL_TIMEOUT_MS;
-  let callTimedOut = false;
   let callTimer: ReturnType<typeof setTimeout> | undefined;
   // Set after the session exists; the timer's abort closes over this holder.
   let sessionRef: { abort: () => void | Promise<void> } | undefined;
@@ -849,11 +912,11 @@ export async function runRoleAgent(
     // Best-effort + a no-op when no sink is wired: a throwing/absent sink can never
     // break the agent loop. Hoisted here so the `tool_call` gate (below) can name the
     // tool as it STARTS without a second handler racing the denylist return.
-    const onActivity = config.onActivity;
     const emit = (record: RoleAgentActivity): void => {
-      if (onActivity === undefined) return;
+      const sink = turn.onActivity;
+      if (sink === undefined) return;
       try {
-        onActivity(record);
+        sink(record);
       } catch {
         // a misbehaving sink can never break the agent loop
       }
@@ -865,7 +928,7 @@ export async function runRoleAgent(
     pi.on('before_provider_request', (e: BeforeProviderRequestEvent) => {
       clearCallTimer();
       callTimer = setTimeout(() => {
-        callTimedOut = true;
+        turn.callTimedOut = true;
         void sessionRef?.abort();
       }, perCallMs);
       const payload = applySamplingMode(e.payload, config.samplingMode);
@@ -875,8 +938,8 @@ export async function runRoleAgent(
           p.max_tokens = config.maxTokens;
           p.max_completion_tokens = config.maxTokens;
         }
-        samplingCalls += 1;
-        sentSampling = { ...SAMPLING_MODES[config.samplingMode] };
+        turn.samplingCalls += 1;
+        turn.sentSampling = { ...SAMPLING_MODES[config.samplingMode] };
       }
       return payload;
     });
@@ -902,7 +965,7 @@ export async function runRoleAgent(
     // compose around — the denylist gate slots in without clobbering the capture
     // sink or the step-cap.
     pi.on('tool_call', (e: ToolCallEvent) => {
-      toolCalls.push({ name: e.toolName, arguments: e.input });
+      turn.toolCalls.push({ name: e.toolName, arguments: e.input });
       // LIVE: name the tool the MOMENT it starts — the NAMED call + a short arg
       // summary (web_search → the query, read → the file, bash → the command) so
       // the transcript/feed show "Searching the web: …" / "Reading …" as the
@@ -928,91 +991,85 @@ export async function runRoleAgent(
       }
       const denied = bashDenylistGate(e.toolName, e.input);
       if (denied !== undefined) return denied;
-      return stepCap?.charge();
+      return turn.stepCap?.charge();
     });
-
-    // LIVE ACTIVITY (spec §11) — forward the run's turn/file lifecycle + the model's
-    // live stream the MOMENT they happen so the situation room lights up mid-work.
-    // Registered only when a sink is wired (avoids per-token overhead otherwise).
-    if (onActivity !== undefined) {
-      // Turn boundaries carry the session's live context fullness (when readable)
-      // so the app's context ring fills from the RUN's real usage.
-      pi.on('turn_start', (e: TurnStartEvent) => {
-        const contextPercent = readContextPercent();
+    // Turn boundaries carry the session's live context fullness (when readable)
+    // so the app's context ring fills from the RUN's real usage.
+    pi.on('turn_start', (e: TurnStartEvent) => {
+      const contextPercent = readContextPercent();
+      emit({
+        kind: 'turn-start',
+        turnIndex: e.turnIndex,
+        ...(contextPercent !== undefined ? { contextPercent } : {}),
+      });
+    });
+    pi.on('turn_end', (e: TurnEndEvent) => {
+      const contextPercent = readContextPercent();
+      emit({
+        kind: 'turn-end',
+        turnIndex: e.turnIndex,
+        ...(contextPercent !== undefined ? { contextPercent } : {}),
+      });
+    });
+    // A finished write/edit → the file now exists → a file-touch record (the
+    // moment to light the file map). Non-file tools already streamed at
+    // `tool_call` (start), so they are NOT re-emitted here. `tool_result` fires
+    // after execution and carries the tool args (`input`) + `isError`.
+    pi.on('tool_result', (e: ToolResultEvent) => {
+      // A bash command's RESULT text → mirror it into the live terminal tab. This
+      // is a SECOND `tool` record paired with the command's own step (same
+      // toolName + detail), so coordination folds the output onto that row instead
+      // of adding a duplicate. Captured even on a NON-zero exit (a failed build's
+      // output is the point) — so it runs BEFORE the isError early-out below.
+      if (e.toolName === 'bash') {
+        const { detail } = toolCallDetail('bash', e.input);
         emit({
-          kind: 'turn-start',
-          turnIndex: e.turnIndex,
-          ...(contextPercent !== undefined ? { contextPercent } : {}),
+          kind: 'tool',
+          toolName: 'bash',
+          ...(detail !== undefined ? { detail } : {}),
+          output: toolResultText(e.content),
         });
-      });
-      pi.on('turn_end', (e: TurnEndEvent) => {
-        const contextPercent = readContextPercent();
-        emit({
-          kind: 'turn-end',
-          turnIndex: e.turnIndex,
-          ...(contextPercent !== undefined ? { contextPercent } : {}),
-        });
-      });
-      // A finished write/edit → the file now exists → a file-touch record (the
-      // moment to light the file map). Non-file tools already streamed at
-      // `tool_call` (start), so they are NOT re-emitted here. `tool_result` fires
-      // after execution and carries the tool args (`input`) + `isError`.
-      pi.on('tool_result', (e: ToolResultEvent) => {
-        // A bash command's RESULT text → mirror it into the live terminal tab. This
-        // is a SECOND `tool` record paired with the command's own step (same
-        // toolName + detail), so coordination folds the output onto that row instead
-        // of adding a duplicate. Captured even on a NON-zero exit (a failed build's
-        // output is the point) — so it runs BEFORE the isError early-out below.
-        if (e.toolName === 'bash') {
-          const { detail } = toolCallDetail('bash', e.input);
-          emit({
-            kind: 'tool',
-            toolName: 'bash',
-            ...(detail !== undefined ? { detail } : {}),
-            output: toolResultText(e.content),
-          });
-        }
-        if (e.isError) return undefined;
-        const fileWrite = fileWriteActivity(e.toolName, e.input, config.cwd, safeStatBytes);
-        if (fileWrite !== undefined) emit(fileWrite);
-        return undefined;
-      });
-      // THE LIVE STREAM — the model producing text / reasoning token by token.
-      // `message_update` carries an `assistantMessageEvent` delta; we forward the
-      // streaming assistant text (`assistant-text`) and the reasoning block
-      // (`thinking`) as start/delta/end so the pane grows the transcript in real
-      // time and can show a genuine "thinking…" state, rather than "working…".
-      // `e` is inferred as the extension `message_update` event from the `pi.on`
-      // overload (the `MessageUpdateEvent` type is not re-exported from the barrel,
-      // so we rely on inference rather than importing it). It carries the streaming
-      // `assistantMessageEvent` delta.
-      pi.on('message_update', (e) => {
-        const ev = e.assistantMessageEvent;
-        switch (ev.type) {
-          case 'text_start':
-            emit({ kind: 'assistant-text', phase: 'start' });
-            break;
-          case 'text_delta':
-            emit({ kind: 'assistant-text', phase: 'delta', delta: ev.delta });
-            break;
-          case 'text_end':
-            emit({ kind: 'assistant-text', phase: 'end', text: ev.content });
-            break;
-          case 'thinking_start':
-            emit({ kind: 'thinking', phase: 'start' });
-            break;
-          case 'thinking_delta':
-            emit({ kind: 'thinking', phase: 'delta', delta: ev.delta });
-            break;
-          case 'thinking_end':
-            emit({ kind: 'thinking', phase: 'end', text: ev.content });
-            break;
-          default:
-            break;
-        }
-        return undefined;
-      });
-    }
+      }
+      if (e.isError) return undefined;
+      const fileWrite = fileWriteActivity(e.toolName, e.input, config.cwd, safeStatBytes);
+      if (fileWrite !== undefined) emit(fileWrite);
+      return undefined;
+    });
+    // THE LIVE STREAM — the model producing text / reasoning token by token.
+    // `message_update` carries an `assistantMessageEvent` delta; we forward the
+    // streaming assistant text (`assistant-text`) and the reasoning block
+    // (`thinking`) as start/delta/end so the pane grows the transcript in real
+    // time and can show a genuine "thinking…" state, rather than "working…".
+    // `e` is inferred as the extension `message_update` event from the `pi.on`
+    // overload (the `MessageUpdateEvent` type is not re-exported from the barrel,
+    // so we rely on inference rather than importing it). It carries the streaming
+    // `assistantMessageEvent` delta.
+    pi.on('message_update', (e) => {
+      const ev = e.assistantMessageEvent;
+      switch (ev.type) {
+        case 'text_start':
+          emit({ kind: 'assistant-text', phase: 'start' });
+          break;
+        case 'text_delta':
+          emit({ kind: 'assistant-text', phase: 'delta', delta: ev.delta });
+          break;
+        case 'text_end':
+          emit({ kind: 'assistant-text', phase: 'end', text: ev.content });
+          break;
+        case 'thinking_start':
+          emit({ kind: 'thinking', phase: 'start' });
+          break;
+        case 'thinking_delta':
+          emit({ kind: 'thinking', phase: 'delta', delta: ev.delta });
+          break;
+        case 'thinking_end':
+          emit({ kind: 'thinking', phase: 'end', text: ev.content });
+          break;
+        default:
+          break;
+      }
+      return undefined;
+    });
   };
 
   // Pull the pi-SDK value constructors from the cached dynamic loader (boot-crash
@@ -1037,7 +1094,22 @@ export async function runRoleAgent(
   });
   await loader.reload();
 
-  const sessionManager = SessionManager.inMemory();
+  /*
+   * WHERE THIS ROLE'S CONVERSATION LIVES.
+   *
+   * This was `SessionManager.inMemory()` for every role, always — which is why no
+   * corp role has ever left a trace on disk and why nothing could be resumed. A
+   * role is a person on a project, not a scratch buffer: `create` gives it a real
+   * session file under the project, `resume` re-opens the one it already had (so
+   * "improve the SFX" months later reaches the same engineer, mid-conversation),
+   * and in-memory remains for one-shot callers and tests that want no artifacts.
+   */
+  const sessionManager =
+    config.session === undefined
+      ? SessionManager.inMemory(config.cwd)
+      : config.session.kind === 'resume'
+        ? SessionManager.open(config.session.file, undefined, config.cwd)
+        : SessionManager.create(config.cwd, config.session.dir);
   // TOOL PARITY: when tool_search is on we DON'T pass a hard `tools` allowlist —
   // that would filter the searchable corpus (getAllTools) down to the allowlist
   // AND force-activate every listed tool, defeating both discovery and a curated
@@ -1074,8 +1146,6 @@ export async function runRoleAgent(
       return undefined;
     }
   };
-  let promptError = false;
-  let bumps = 0;
   const lastText = (): string => {
     try {
       return session.getLastAssistantText() ?? '';
@@ -1083,84 +1153,121 @@ export async function runRoleAgent(
       return '';
     }
   };
-  try {
-    await session.prompt(config.userPrompt);
-    // BUMP-TO-CONTINUE: if the loop ended without the deliverable, re-prompt the SAME
-    // session to reach a terminal decision — bounded to `bump.maxBumps`. Each bump is
-    // an ordinary user turn on the live session (its context preserved), NOT a fresh
-    // run and NOT a work cap.
-    while (config.bump !== undefined && bumps < config.bump.maxBumps) {
-      const next = config.bump.nextPrompt({ finalText: lastText() });
-      if (next === undefined) break; // deliverable present or unfulfillable declared
-      bumps += 1;
-      await session.prompt(next);
-    }
-  } catch {
-    promptError = true;
-  } finally {
-    clearCallTimer();
-  }
 
-  // A hung/aborted/errored call CUT the model stream, so its `thinking_end` /
-  // `text_end` / `turn_end` never fired — leaving the pane's live line a frozen
-  // "Thinking…" until the whole task ends. Settle it now with the SAME synthetic
-  // turn-end a clean turn emits (coordination's closeStream flips the live flag
-  // off). Fabricates NO content. Best-effort — a throwing sink can never break
-  // teardown, mirroring the corpExt `emit` swallow.
-  for (const record of settleActivitiesOnEnd({ promptError, timedOut: callTimedOut })) {
+  /** Say one thing to this role and wait for it to finish. The session STAYS OPEN
+   * afterwards — its history, its tool calls and the server's KV for that prefix
+   * are all still there for the next thing said to it. */
+  const promptOnce = async (
+    userPrompt: string,
+    options: RoleTurnOptions = {},
+  ): Promise<RoleAgentResult> => {
+    turn = newTurnState(options, config.maxSteps);
+    // Message-count BEFORE this turn: the session accumulates across turns now, so
+    // "how many turns ran" and "the biggest single turn" must be measured over the
+    // NEW tail, not the whole conversation.
+    const before = (session.state.messages as unknown as readonly UsageMessage[]).length;
+    let promptError = false;
+    let bumps = 0;
     try {
-      config.onActivity?.(record);
+      await session.prompt(userPrompt);
+      // BUMP-TO-CONTINUE: if the loop ended without the deliverable, re-prompt the SAME
+      // session to reach a terminal decision — bounded to `bump.maxBumps`. Each bump is
+      // an ordinary user turn on the live session (its context preserved), NOT a fresh
+      // run and NOT a work cap.
+      while (options.bump !== undefined && bumps < options.bump.maxBumps) {
+        const next = options.bump.nextPrompt({ finalText: lastText() });
+        if (next === undefined) break; // deliverable present or unfulfillable declared
+        bumps += 1;
+        await session.prompt(next);
+      }
     } catch {
-      // a misbehaving sink can never break the run
+      promptError = true;
+    } finally {
+      clearCallTimer();
     }
-  }
 
-  // --- gather results before disposing ---
-  const messages = session.state.messages as unknown as readonly UsageMessage[];
-  let stats: SessionStats | undefined;
-  try {
-    stats = session.getSessionStats();
-  } catch {
-    stats = undefined;
-  }
-  const finalText = (() => {
+    // A hung/aborted/errored call CUT the model stream, so its `thinking_end` /
+    // `text_end` / `turn_end` never fired — leaving the pane's live line a frozen
+    // "Thinking…" until the whole task ends. Settle it now with the SAME synthetic
+    // turn-end a clean turn emits (coordination's closeStream flips the live flag
+    // off). Fabricates NO content. Best-effort — a throwing sink can never break
+    // teardown, mirroring the corpExt `emit` swallow.
+    for (const record of settleActivitiesOnEnd({
+      promptError,
+      timedOut: turn.callTimedOut,
+    })) {
+      try {
+        options.onActivity?.(record);
+      } catch {
+        // a misbehaving sink can never break the run
+      }
+    }
+
+    const messages = session.state.messages as unknown as readonly UsageMessage[];
+    const fresh = messages.slice(before);
+    let stats: SessionStats | undefined;
     try {
-      return session.getLastAssistantText() ?? '';
+      stats = session.getSessionStats();
     } catch {
-      return '';
+      stats = undefined;
     }
-  })();
-
-  const filesWritten = collectFilesWritten(toolCalls, safeStatBytes, config.cwd);
-
-  try {
-    session.dispose();
-  } finally {
-    try {
-      rmSync(agentDir, { recursive: true, force: true });
-    } catch {
-      // best-effort temp cleanup
-    }
-  }
+    return {
+      finalText: lastText(),
+      filesWritten: collectFilesWritten(turn.toolCalls, safeStatBytes, config.cwd),
+      toolCalls: turn.toolCalls,
+      stats,
+      turns: countAssistantTurns(fresh),
+      bumps,
+      maxTurnOutputTokens: maxTurnOutputTokens(fresh),
+      // `timeout` here means a per-CALL network abort fired (a hung request), NOT a
+      // per-agent work limit — those no longer exist.
+      terminatedReason: deriveTerminatedReason({
+        timedOut: turn.callTimedOut,
+        stepCapHit: turn.stepCap?.hit ?? false,
+        promptError,
+      }),
+      samplingCalls: turn.samplingCalls,
+      sentSampling: turn.sentSampling,
+    };
+  };
 
   return {
-    finalText,
-    filesWritten,
-    toolCalls,
-    stats,
-    turns: countAssistantTurns(messages),
-    bumps,
-    maxTurnOutputTokens: maxTurnOutputTokens(messages),
-    // `timeout` here means a per-CALL network abort fired (a hung request), NOT a
-    // per-agent work limit — those no longer exist.
-    terminatedReason: deriveTerminatedReason({
-      timedOut: callTimedOut,
-      stepCapHit: stepCap?.hit ?? false,
-      promptError,
-    }),
-    samplingCalls,
-    sentSampling,
+    prompt: promptOnce,
+    sessionFile: sessionManager.getSessionFile(),
+    contextPercent: () => readContextPercent(),
+    dispose: () => {
+      try {
+        session.dispose();
+      } finally {
+        try {
+          rmSync(agentDir, { recursive: true, force: true });
+        } catch {
+          // best-effort temp cleanup
+        }
+      }
+    },
   };
+}
+
+/**
+ * Run ONE role turn and close the session — the original one-shot shape, now a
+ * thin wrapper over {@link openRoleSession}. Every existing caller keeps working
+ * unchanged; callers that want a role to REMEMBER hold the open session instead.
+ */
+export async function runRoleAgent(
+  handle: CorpModelHandle,
+  config: RoleAgentConfig,
+): Promise<RoleAgentResult> {
+  const { userPrompt, bump, onActivity, ...sessionConfig } = config;
+  const open = await openRoleSession(handle, sessionConfig);
+  try {
+    return await open.prompt(userPrompt, {
+      ...(bump !== undefined ? { bump } : {}),
+      ...(onActivity !== undefined ? { onActivity } : {}),
+    });
+  } finally {
+    open.dispose();
+  }
 }
 
 /** Stat a file's size, or undefined if it cannot be read (used for filesWritten). */

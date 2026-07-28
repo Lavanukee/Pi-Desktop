@@ -25,6 +25,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import { runProductGate } from './product-gate';
 
 /** The name the prompts and the allowlist must agree on. */
 export const SUBMIT_WORK_TOOL = 'submit_work';
@@ -43,6 +44,8 @@ export interface SubmitWorkOptions {
   readonly timeoutMs?: number;
   /** Called when a submission is ACCEPTED (its command exited 0). */
   readonly onAccepted?: (work: SubmittedWork) => void;
+  /** Override the product check (tests supply one; production uses the real gate). */
+  readonly checkProduct?: () => Promise<ProductCheck | undefined>;
   /** Called when one is refused, with the failing output. */
   readonly onRejected?: (command: string, output: string) => void;
 }
@@ -193,6 +196,70 @@ export function submissionReply(
   ].join('\n');
 }
 
+/** What the product's own check said. Structural, so tests can supply one. */
+export interface ProductCheck {
+  readonly ran: boolean;
+  readonly ok: boolean;
+  readonly command: string;
+  readonly output: string;
+  /** How the gate decided to check — `pytest`, `nothing runnable found`,
+   * `godot headless import (unavailable)`. The last shape is a CAPABILITY gap. */
+  readonly how: string;
+}
+
+/** Run the product gate for a submission, unless the caller supplied its own.
+ * Returns `undefined` when there is nothing to check — an engineer submitting the
+ * very first file of a run must not be blocked by a product that does not exist
+ * yet. `ran: false` is a different thing and IS reported: it means the run's own
+ * gate looked and found nothing runnable, which is the failure to catch early. */
+async function runGate(opts: SubmitWorkOptions): Promise<ProductCheck | undefined> {
+  if (opts.checkProduct !== undefined) return await opts.checkProduct();
+  const gate = await runProductGate(opts.cwd, { timeoutMs: opts.timeoutMs ?? 300_000 });
+  return {
+    ran: gate.ran,
+    ok: gate.ok,
+    command: gate.command,
+    output: gate.output,
+    how: gate.how,
+  };
+}
+
+/**
+ * The rejection an engineer gets when its own proof passed but the product's does
+ * not. Deliberately not accusatory — the broken file is often somebody else's, and
+ * the useful move then is a message, not a fix. Either way the error is right here
+ * rather than in a verdict nobody sees until minute thirty.
+ */
+export function productCheckReply(command: string, gate: ProductCheck): string {
+  if (!gate.ran) {
+    return [
+      `NOT ACCEPTED — \`${command}\` passed, but it is the only thing that proves this`,
+      `product works, and it does not live in the product.`,
+      ``,
+      `The check that judges this run looked for something runnable — a test file, a`,
+      `test script, a build target — and found nothing. When your command scrolls out`,
+      `of this conversation, nothing is left that anyone can run.`,
+      ``,
+      `Save your check as a file in the workspace (\`run_tests.py\`, \`test_*.py\`, a`,
+      `\`test\` target), run that file, and submit the command that runs it.`,
+    ].join('\n');
+  }
+  return [
+    `NOT ACCEPTED — your command passed, but the PRODUCT does not pass its own check.`,
+    ``,
+    `I ran: ${gate.command}`,
+    ``,
+    gate.output,
+    ``,
+    `Your proof and the product's check are different things, and only the second one`,
+    `decides whether this run delivered. A test file that has never been run is not`,
+    `evidence — it is an untested file that happens to contain the word "test".`,
+    ``,
+    `If the error is in a file you own, fix it and submit again. If it is in someone`,
+    `else's file, ${'`talk_to`'} the manager with this output — do not edit around it.`,
+  ].join('\n');
+}
+
 /** A pi `ToolDefinition` shape — kept structural so this module needs no SDK import. */
 interface ToolLike {
   name: string;
@@ -214,7 +281,9 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
     description:
       'Finish your piece of work. You MUST give the exact shell command that proves it works — ' +
       'a test, a script, a build. The command IS RUN in the workspace, and your submission is ' +
-      'refused with the real output if it fails. This is the only way to finish.',
+      'refused with the real output if it fails. The product\'s own check is then run too, and ' +
+      'the submission is refused if THAT fails — so make sure the test files in the workspace ' +
+      'actually run, not just your own command. This is the only way to finish.',
     promptSnippet: 'Finish your work by giving the command that proves it (it gets run).',
     parameters: {
       type: 'object',
@@ -263,8 +332,41 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
         return { content: [{ type: 'text', text: cannotFailReply(command) }], details: undefined };
       }
       const result = await runProof(command, opts);
-      if (result.ok) opts.onAccepted?.({ summary, command, output: result.output });
-      else opts.onRejected?.(command, result.output);
+      if (!result.ok) {
+        opts.onRejected?.(command, result.output);
+        return {
+          content: [{ type: 'text', text: submissionReply(command, result) }],
+          details: undefined,
+        };
+      }
+
+      /*
+       * AND THE PRODUCT'S OWN CHECK HAS TO PASS TOO.
+       *
+       * Run 8, measured: engineer:1 made FORTY-ONE bash calls and not one of them
+       * ran `test_converter.py` — the test file it had itself written, which had
+       * carried a SyntaxError on line 94 for ten minutes. It verified with a
+       * throwaway heredoc, submitted the heredoc, and was accepted. The artifact
+       * the run is judged on had never been executed by anyone.
+       *
+       * That is the evaporation problem in its final form. `submit_work` fixed
+       * "verification is never written down"; it did not fix "what was written
+       * down is not what was verified". So finishing now requires BOTH: the
+       * engineer's own proof, and the check that actually judges the product.
+       */
+      const gate = await runGate(opts);
+      // A toolchain this machine does not have is NOT the engineer's failure, and
+      // refusing over it would strand the work (D3: blocked is routed around, never
+      // fatal). Its own proof passed; that stands.
+      const capabilityGap = gate !== undefined && !gate.ran && gate.how.includes('unavailable');
+      if (gate !== undefined && !gate.ok && !capabilityGap) {
+        opts.onRejected?.(command, `product check failed: ${gate.output.slice(0, 300)}`);
+        return {
+          content: [{ type: 'text', text: productCheckReply(command, gate) }],
+          details: undefined,
+        };
+      }
+      opts.onAccepted?.({ summary, command, output: result.output });
       return {
         content: [{ type: 'text', text: submissionReply(command, result) }],
         details: undefined,

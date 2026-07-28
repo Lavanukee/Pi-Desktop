@@ -444,6 +444,38 @@ mistakes; it is one property of gates. **Assume the current gate is passable and
 ask how, rather than waiting for a run to show you** — the answer has been cheap
 every time, and each discovery has cost thirty minutes of real work.
 
+**L17 · The proof and the artifact were different things.** Run 8, measured mid-run:
+engineer:1 made **41 `bash` calls and not one of them ran `test_converter.py`** —
+the test file it had written itself, ten minutes earlier, which had carried a
+`SyntaxError` on line 94 the whole time. It verified its work with a throwaway
+heredoc, submitted the heredoc, and was accepted. Run 7 was the same shape with a
+subtler bug (a helper defined in the wrong class). Two runs, one pattern:
+
+> the engineer verifies with a private command, and leaves behind an artifact it
+> has never executed.
+
+L9 made verification mechanical — you finish by submitting a command that gets
+run. It fixed *"the verification was never written down"* and left *"what was
+written down is not what was verified"* completely untouched. The gate judges the
+committed test file; the engineer proved a heredoc; both passed; the product was
+broken.
+
+So `submit_work` now runs the **product gate** as well, and refuses when the
+product's own check fails — with its output, and with the instruction to `talk_to`
+the manager if the broken file belongs to someone else rather than editing around
+it. Two carve-outs, both deliberate: a missing toolchain never blocks a
+submission (D3 — no Godot on this machine is not the engineer's failure), while
+*nothing runnable at all* does block, because that is the evaporation problem
+itself.
+
+`check_product` (L14) offered the team the same truth voluntarily and — through
+500 seconds and 51 tool calls — **nobody called it**. Which is the more general
+lesson, and one this harness keeps re-learning: *a capability the model must
+choose to use is a capability it will not use under pressure.* Making the right
+action available is not the same as making it unavoidable. `check_product` stays,
+because the manager and the specialist genuinely need it, but delivery cannot
+depend on anyone electing to be careful.
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

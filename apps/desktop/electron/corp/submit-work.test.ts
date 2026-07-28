@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SUBMIT_WORK_TOOL, cannotFailReply, createSubmitWorkTool, proofCannotFail, proofLooksHollow, runProof, submissionReply } from './submit-work';
+import { SUBMIT_WORK_TOOL, cannotFailReply, createSubmitWorkTool, proofCannotFail, proofLooksHollow, runProof, submissionReply, type ProductCheck, type SubmitWorkOptions } from './submit-work';
 
 let dir: string;
 beforeEach(() => {
@@ -75,6 +75,127 @@ describe('the proof is run, not taken on trust', () => {
     const tool = createSubmitWorkTool({ cwd: dir });
     await expect(tool.execute(null, { command: 'exit 7', summary: 'x' })).resolves.toBeDefined();
     await expect(tool.execute(null, undefined)).resolves.toBeDefined();
+  });
+});
+
+describe('the product\u2019s own check has to pass too', () => {
+  // Run 8, measured: engineer:1 made 41 bash calls and not one ran the test file
+  // it had written itself, which had carried a SyntaxError for ten minutes. Its
+  // private heredoc passed, so it was accepted. The artifact the run is judged on
+  // had never been executed by anyone.
+  const gate = (over: Partial<ProductCheck>): (() => Promise<ProductCheck>) => {
+    const base: ProductCheck = {
+      ran: true,
+      ok: true,
+      command: 'python3 -m pytest -q',
+      output: 'ok',
+      how: 'pytest',
+    };
+    return async () => ({ ...base, ...over });
+  };
+  // Two real workspaces, so the engineer's own proof is genuinely run: `verify.py`
+  // passes in one and fails in the other.
+  let passing: string;
+  let failing: string;
+  beforeEach(() => {
+    passing = mkdtempSync(path.join(os.tmpdir(), 'pd-submit-pass-'));
+    failing = mkdtempSync(path.join(os.tmpdir(), 'pd-submit-fail-'));
+    writeFileSync(path.join(passing, 'verify.py'), 'print("converted 3 rows")\n');
+    writeFileSync(path.join(failing, 'verify.py'), 'raise SystemExit("wrong row count")\n');
+  });
+  afterEach(() => {
+    rmSync(passing, { recursive: true, force: true });
+    rmSync(failing, { recursive: true, force: true });
+  });
+
+  const run = async (opts: Partial<SubmitWorkOptions> & { cwd: string }): Promise<string> => {
+    const tool = createSubmitWorkTool(opts as SubmitWorkOptions);
+    const res = (await tool.execute(undefined, {
+      command: 'python3 verify.py',
+      summary: 'converter',
+    })) as { content: Array<{ text: string }> };
+    return res.content[0]?.text ?? '';
+  };
+
+  it('refuses when the product\u2019s test file does not even parse', async () => {
+    const rejected: string[] = [];
+    const text = await run({
+      cwd: passing,
+      checkProduct: gate({
+        ok: false,
+        output: "SyntaxError: closing parenthesis ']' does not match opening parenthesis '('",
+      }),
+      onRejected: (_c, why) => rejected.push(why),
+    });
+    expect(text).toContain('NOT ACCEPTED');
+    expect(text).toContain('SyntaxError');
+    expect(text).toContain('python3 -m pytest -q');
+    expect(rejected).toHaveLength(1);
+  });
+
+  it('tells them to route a file they do not own, rather than edit around it', async () => {
+    const text = await run({ cwd: passing, checkProduct: gate({ ok: false, output: 'boom' }) });
+    expect(text).toContain('talk_to');
+    expect(text).toContain('someone');
+  });
+
+  it('refuses when nothing runnable was left behind at all', async () => {
+    const text = await run({
+      cwd: passing,
+      checkProduct: gate({
+        ran: false,
+        ok: false,
+        command: '',
+        how: 'nothing runnable found',
+        output: 'No test, no build, no runnable entry point was found.',
+      }),
+    });
+    expect(text).toContain('NOT ACCEPTED');
+    expect(text).toContain('does not live in the product');
+  });
+
+  it('does NOT punish an engineer for a toolchain this machine lacks', async () => {
+    // D3: blocked work is routed around, never fatal. No godot here is not the
+    // engineer\u2019s failure, and refusing over it would strand working code.
+    const accepted: string[] = [];
+    const text = await run({
+      cwd: passing,
+      checkProduct: gate({
+        ran: false,
+        ok: false,
+        how: 'godot headless import (unavailable)',
+        output: 'Could not run `godot` — the tool is not installed on this machine.',
+      }),
+      onAccepted: (w) => accepted.push(w.command),
+    });
+    expect(text).toContain('ACCEPTED');
+    expect(text).not.toContain('NOT ACCEPTED');
+    expect(accepted).toEqual(['python3 verify.py']);
+  });
+
+  it('accepts when both the proof and the product check pass', async () => {
+    const accepted: string[] = [];
+    const text = await run({
+      cwd: passing,
+      checkProduct: gate({}),
+      onAccepted: (w) => accepted.push(w.command),
+    });
+    expect(text).toContain('ACCEPTED');
+    expect(text).not.toContain('NOT ACCEPTED');
+    expect(accepted).toEqual(['python3 verify.py']);
+  });
+
+  it('never reaches the product check when the engineer\u2019s own proof failed', async () => {
+    let checked = false;
+    const text = await run({
+      cwd: failing,
+      checkProduct: async () => {
+        checked = true;
+        return { ran: true, ok: true, command: 'x', output: '', how: 'pytest' };
+      },
+    });
+    expect(text).toContain('NOT ACCEPTED');
+    expect(checked).toBe(false);
   });
 });
 

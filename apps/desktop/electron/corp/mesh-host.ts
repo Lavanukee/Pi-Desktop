@@ -134,23 +134,33 @@ const STATUS_OUTPUT_CHARS = 700;
  * told. Measured at delivery time, so it can never be the stale memory that cost
  * run 10 its second half. Never throws — a broken probe must not stop a message.
  */
-export async function productStatusNote(cwd: string): Promise<string> {
+export async function productStatusNote(cwd: string, task?: string): Promise<string> {
+  // THE ASK, KEPT NEXT TO THE STATE. Run 17 shipped a library and a test file and
+  // no command-line entry point at all — which the task names in a sentence of its
+  // own — while the manager watched the tests fail for forty minutes. It had the
+  // product's state in front of it on every message and the REQUIREMENT nowhere,
+  // twenty exchanges after it last saw the brief. Same fix as the state itself:
+  // stop asking it to remember, and put the sentence back.
+  const ask =
+    task !== undefined && task.trim() !== ''
+      ? `--- WHAT WAS ASKED FOR (unchanged, re-read it) ---\n${task.trim()}\n\n`
+      : '';
   try {
     const gate = await runProductGate(cwd, { timeoutMs: 120_000 });
     if (!gate.ran) {
-      return [
+      return ask + [
         `--- PRODUCT CHECK (measured just now) ---`,
         `NOTHING RUNNABLE YET: ${gate.output.split('\n')[0] ?? ''}`,
         `Until something in the workspace can be run, nothing here counts as delivered.`,
       ].join('\n');
     }
     if (gate.ok) {
-      return [
+      return ask + [
         `--- PRODUCT CHECK (measured just now) ---`,
         `PASSES: \`${gate.command}\` exits 0. This is the check that decides the run.`,
       ].join('\n');
     }
-    return [
+    return ask + [
       `--- PRODUCT CHECK (measured just now) ---`,
       `FAILS: \`${gate.command}\``,
       gate.output.slice(-STATUS_OUTPUT_CHARS),
@@ -219,6 +229,8 @@ export interface MeshAgentHostConfig {
   /** The SHARED product workspace every agent works in (engineers write here; everyone
    * reads the same tree — one product, one truth). */
   readonly cwd: string;
+  /** The user's task, verbatim — restated to the manager with every message. */
+  readonly task?: string;
   /** The roster (to look up each agent's system prompt / peers / built-in tools). */
   readonly roster: readonly MeshAgent[];
   /** Per-turn generation cap (default the model's own). */
@@ -333,7 +345,7 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
     // check that does not get run, so put the answer in front of it instead.
     const incoming =
       agent.role === 'manager'
-        ? `Message from ${from}:\n${message}\n\n${await productStatusNote(config.cwd)}`
+        ? `Message from ${from}:\n${message}\n\n${await productStatusNote(config.cwd, config.task)}`
         : `Message from ${from}:\n${message}`;
     let reply = '';
     try {
@@ -528,6 +540,7 @@ export async function runCorpMeshTask(opts: {
     handle: opts.handle,
     cwd: opts.cwd,
     roster,
+    task: opts.task,
     ...(teamDir !== undefined ? { projectDir: teamDir } : {}),
     ...hostPassthrough(opts),
     sessionFileFor: (id) => team.sessionFileFor(id),

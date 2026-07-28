@@ -114,6 +114,22 @@ describe('what the manager is told about the product, every time', () => {
     expect(note).toContain('NOTHING RUNNABLE YET');
   });
 
+  it('restates the task, so a requirement cannot fall out of the conversation', async () => {
+    // Run 17 shipped a library with no command-line entry point — a sentence of
+    // its own in the brief — while the manager watched the tests fail for forty
+    // minutes, twenty exchanges after it last saw that sentence.
+    writeFileSync(path.join(dir, 'run_tests.py'), 'print("ok")\n');
+    const note = await productStatusNote(dir, 'Provide a command-line entry point.');
+    expect(note).toContain('WHAT WAS ASKED FOR');
+    expect(note).toContain('Provide a command-line entry point.');
+  });
+
+  it('says nothing extra when there is no task to restate', async () => {
+    writeFileSync(path.join(dir, 'run_tests.py'), 'print("ok")\n');
+    const note = await productStatusNote(dir);
+    expect(note).not.toContain('WHAT WAS ASKED FOR');
+  });
+
   it('never throws — a broken probe must not stop a message', async () => {
     await expect(productStatusNote('/definitely/not/a/directory')).resolves.toBeTypeOf('string');
   });

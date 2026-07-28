@@ -42,7 +42,16 @@ export const GEN_MODELS: readonly ModelVersion[] = [
 export const SEGMENT_MODEL = 'CubePart';
 export const RETOPO_MODEL = 'QuadriFlow';
 export const TEXTURE_MODEL = 'TRELLIS-2';
-export const RIG_MODEL = 'SkinTokens';
+/**
+ * Rigging has three, and which one runs is decided by the answered shape
+ * question — so the panel names the one that ACTUALLY ran rather than a single
+ * constant. The row that used to say "SkinTokens" for everything was wrong for
+ * every humanoid, which is fitted to a template and never touches it.
+ */
+export const RIG_MODEL = 'Medial axis';
+export const MEDIAL_MODEL = 'Medial axis';
+export const TEMPLATE_RIG_MODEL = 'cskel27 template';
+export const LEARNED_RIG_MODEL = 'SkinTokens';
 export const ANIM_MODEL = 'ARDY';
 
 /** Animation presets for the Animate panel grid (pose id → mannequin pose). */

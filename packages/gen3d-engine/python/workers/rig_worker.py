@@ -1,11 +1,19 @@
-"""Rig worker — fits NVIDIA ARDY's 27-joint humanoid skeleton to a mesh and
-writes a REAL skinned GLB (joint hierarchy + per-vertex weights).
+"""Rig worker — writes a REAL skinned GLB (joint hierarchy + per-vertex weights)
+by one of two geometric methods. No learned model, nothing to download, ~1-3 s,
+deterministic either way.
 
-Honest scope: this is a geometric auto-rigger. It is NOT SkinTokens and it runs
-no learned model — nothing to download, ~1 s, deterministic. What it guarantees
-is the interface ARDY expects: cskel27 joint-for-joint in ARDY's parent order,
-translation-only bind pose, glTF-conformant JOINTS_0/WEIGHTS_0. See _humanoid.py
-for the joint contract and why it is NOT the Mixamo hierarchy.
+  --method template  fits NVIDIA ARDY's 27-joint humanoid skeleton. What it
+                     guarantees is the interface ARDY expects: cskel27
+                     joint-for-joint in ARDY's parent order, translation-only
+                     bind pose, glTF-conformant JOINTS_0/WEIGHTS_0. See
+                     _humanoid.py for the joint contract and why it is NOT the
+                     Mixamo hierarchy. Right for a person, nonsense for a horse.
+
+  --method medial    derives the skeleton from the mesh's OWN medial axis — no
+                     template and no opinion about how many limbs the subject
+                     has. See _medial.py. This is the default for anything that
+                     does not measure as humanoid, so a creature gets a real rig
+                     without the 2.5 GB SkinTokens download.
 
 `--probe-only` measures the shape and stops, so the UI can ask the user
 "humanoid?" before rigging; `--require-humanoid` refuses to fit a humanoid
@@ -25,6 +33,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np  # noqa: E402
 
 from _glbskin import write_skinned_glb  # noqa: E402
+from _medial import extract as extract_medial  # noqa: E402
+from _medial import skin as skin_medial  # noqa: E402
 from _humanoid import (  # noqa: E402
     BONE_NAMES,
     BONE_PARENT,
@@ -60,12 +70,66 @@ def extract_uv_and_texture(mesh) -> tuple[np.ndarray | None, bytes | None]:
         return None, None
 
 
+def rig_from_medial_axis(out_dir: Path, healed, vertices, uv, base_png, probe) -> None:
+    """Rig by the mesh's own medial axis — no template, any body plan.
+
+    Kept beside the template fitter rather than in its own worker: same venv,
+    same mesh loading, same GLB writer, and the two are chosen between per run.
+    """
+    progress(STAGE, "Reading the shape's medial axis…", 3, TOTAL_STEPS)
+    skeleton = extract_medial(healed, lambda m: progress(STAGE, m, 3, TOTAL_STEPS))
+
+    progress(
+        STAGE,
+        f"Skinning {len(vertices):,} vertices to {len(skeleton.names)} bones…",
+        4,
+        TOTAL_STEPS,
+    )
+    joint_index, joint_weight = skin_medial(vertices, skeleton)
+
+    progress(STAGE, "Writing rigged GLB…", 5, TOTAL_STEPS)
+    out_glb = out_dir / "rigged.glb"
+    write_skinned_glb(
+        str(out_glb),
+        vertices,
+        np.asarray(healed.faces, dtype=np.uint32),
+        np.asarray(healed.vertex_normals, dtype=np.float32),
+        skeleton.names,
+        skeleton.parent,
+        skeleton.position,
+        joint_index,
+        joint_weight,
+        uv=uv,
+        base_color_png=base_png,
+        extras={
+            "pd_rig": {
+                "skeleton": "medial-axis",
+                "bones": skeleton.names,
+                "boneCount": len(skeleton.names),
+                # ARDY drives cskel27 and nothing else. A derived skeleton has
+                # the joints this shape needs, not the ones ARDY was trained on.
+                "ardyCompatible": False,
+                "method": "medial-axis",
+                "humanoid": probe.as_dict(),
+            }
+        },
+    )
+    (out_dir / "rig-skeleton.json").write_text(json.dumps(skeleton.as_dict(), indent=2))
+    artifact(STAGE, "model-glb", str(out_glb), f"Rigged · {len(skeleton.names)} bones")
+    summary = (
+        f"{len(skeleton.names)} bones derived from the shape, {len(vertices):,} vertices skinned"
+    )
+    progress(STAGE, f"Rig done — {summary}", TOTAL_STEPS, TOTAL_STEPS)
+    stage_done(STAGE, summary)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--mesh", required=True)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--require-humanoid", action="store_true")
     ap.add_argument("--probe-only", action="store_true")
+    ap.add_argument("--method", choices=("template", "medial"), default="template")
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -98,6 +162,10 @@ def main() -> None:
             TOTAL_STEPS,
         )
         stage_done(STAGE, "Shape analysed")
+        return
+
+    if args.method == "medial":
+        rig_from_medial_axis(out_dir, healed, vertices, uv, base_png, probe)
         return
 
     if args.require_humanoid and not probe.is_humanoid:

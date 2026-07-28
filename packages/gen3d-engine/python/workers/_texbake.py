@@ -108,15 +108,21 @@ def sample_source(
     image,
     points: np.ndarray,
     *,
-    neighbours: int = 4,
+    neighbours: int = 8,
 ) -> np.ndarray:
     """Colour of the source surface at each 3D point, as uint8 RGB.
 
-    Nearest source vertex gives the atlas coordinate to read. Blending the k
-    nearest by inverse distance would quantise less, but ONLY among vertices of
-    the same chart — averaging UVs across a seam lands in the middle of the
-    atlas, on some unrelated part of the model. So neighbours from other charts
-    are dropped rather than blended.
+    Each of the k nearest source vertices is read at ITS OWN atlas coordinate
+    and the COLOURS are blended by inverse distance — not the UVs. Blending UVs
+    is the obvious version and it is wrong twice over: across a chart seam the
+    average lands in the middle of the atlas on some unrelated part of the
+    model, and within a chart it still reads one texel per texel, so a source
+    texture with fine speckle comes back through a coarse remesh looking
+    blotchier than it started. Averaging colours low-passes it instead, which is
+    what a proper surface sample would have done anyway.
+
+    Neighbours from another chart are dropped rather than blended: they are a
+    different piece of surface that happens to be nearby in space.
     """
     from scipy.spatial import cKDTree
 
@@ -127,15 +133,18 @@ def sample_source(
         dist, idx = dist[:, None], idx[:, None]
 
     chart = _islands(source)
-    same = chart[idx] == chart[idx[:, :1]]
-    weight = np.where(same, 1.0 / np.maximum(dist, 1e-9), 0.0)
-    uv = (uv_src[idx] * weight[:, :, None]).sum(axis=1) / weight.sum(axis=1)[:, None]
+    weight = np.where(
+        chart[idx] == chart[idx[:, :1]], 1.0 / np.maximum(dist, 1e-9) ** 2, 0.0
+    )
+    weight /= weight.sum(axis=1, keepdims=True)
 
-    px = np.asarray(image.convert("RGB"))
+    px = np.asarray(image.convert("RGB")).astype(np.float32)
     h, w = px.shape[:2]
-    u = np.clip((uv[:, 0] % 1.0) * (w - 1), 0, w - 1).astype(np.int64)
-    v = np.clip((1.0 - (uv[:, 1] % 1.0)) * (h - 1), 0, h - 1).astype(np.int64)
-    return px[v, u]
+    uv = uv_src[idx]
+    u = np.clip((uv[..., 0] % 1.0) * (w - 1), 0, w - 1).astype(np.int64)
+    v = np.clip((1.0 - (uv[..., 1] % 1.0)) * (h - 1), 0, h - 1).astype(np.int64)
+    blended = (px[v, u] * weight[:, :, None]).sum(axis=1)
+    return np.clip(blended, 0, 255).astype(np.uint8)
 
 
 def bake(

@@ -39,7 +39,7 @@
  */
 import type { JSX } from 'react';
 import { ANIM_PREVIEWS } from './assets/anim-previews';
-import { ANIM_MODEL, RIG_MODEL } from './data';
+import { ANIM_MODEL, LEARNED_RIG_MODEL, MEDIAL_MODEL, RIG_MODEL, TEMPLATE_RIG_MODEL } from './data';
 import { useGen3dStore } from './gen3d-client';
 import { IcAnimate, IcBolt, IcInfo, IcPlus, IcRig, IcSearch, IcSparkles, IcTrash } from './icons';
 import { Segmented } from './primitives';
@@ -129,6 +129,15 @@ function ParametersSection(): JSX.Element {
   );
 }
 
+/** What to call each rigger in the status line. 'unknown' covers versions rigged
+ * before the choice was recorded — say nothing rather than guess. */
+const RIGGER_LABEL: Record<string, string> = {
+  template: TEMPLATE_RIG_MODEL,
+  medial: MEDIAL_MODEL,
+  skintokens: LEARNED_RIG_MODEL,
+  unknown: 'derived',
+};
+
 /** The "humanoid?" question — raised by the engine's shape probe, answered by
  * the user. This is the ONLY path to a humanoid rig. */
 function HumanoidPrompt({
@@ -151,8 +160,8 @@ function HumanoidPrompt({
     // The verdict travels TWICE, to two different places, and both matter.
     //
     // `humanoid` goes to the ENGINE, where it chooses the rigger: yes fits
-    // ARDY's cskel27 so the motion stage can drive the result, no hands the
-    // mesh to SkinTokens, which can rig a creature a humanoid template cannot.
+    // ARDY's cskel27 so the motion stage can drive the result, no derives the
+    // skeleton from the mesh's own medial axis, which fits any body plan.
     //
     // `knownHumanoid` stays in the UI. The rig job itself may not measure
     // humanoid-ness (SkinTokens predicts a skeleton for any mesh and reports
@@ -188,8 +197,9 @@ function HumanoidPrompt({
         ) : (
           <>
             {prompt.reasons.length > 0 ? prompt.reasons.join('; ') : 'no humanoid structure found'}.
-            A humanoid rig fitted to a non-humanoid mesh puts bones where there is no body — and the
-            animation presets will stay hidden either way.
+            It can still be rigged: {MEDIAL_MODEL} traces the skeleton down the middle of the shape
+            itself, so a creature gets bones where its body actually is. The animation presets stay
+            hidden either way — {ANIM_MODEL} only generates human motion.
           </>
         )}
       </p>
@@ -201,7 +211,7 @@ function HumanoidPrompt({
           onClick={rig}
         >
           <IcRig size={15} />
-          {prompt.isHumanoid ? 'Rig as humanoid' : 'Rig anyway'}
+          {prompt.isHumanoid ? 'Rig as humanoid' : 'Rig from the shape'}
         </button>
         <button
           type="button"
@@ -235,8 +245,11 @@ export function AnimatePanel(): JSX.Element {
   const hasModel = asset !== undefined && version?.diskPath !== undefined;
   const rigged = version?.rigged === true;
   const humanoid = version?.humanoid === true;
+  const rigger = version?.rigger;
   const rigInstalled =
     engineReady && models.find((m) => m.id === 'humanoid-rig')?.installed === true;
+  const skinTokensInstalled =
+    engineReady && models.find((m) => m.id === 'skintokens')?.installed === true;
   const busy = job !== null && !job.done && job.stage === 'rig';
   const motionBusy = job !== null && !job.done && job.stage === 'motion';
   const motionInstalled =
@@ -275,6 +288,24 @@ export function AnimatePanel(): JSX.Element {
   };
 
   const visible = motions.filter((m) => m.name.toLowerCase().includes(animSearch.toLowerCase()));
+
+  /**
+   * Re-rig the SAME source with the learned rigger.
+   *
+   * The parent version is the input, not the rigged one: rigging a rigged mesh
+   * would stack a second skeleton on a model that already has one.
+   */
+  const rigWithSkinTokens = () => {
+    if (asset === undefined || version === undefined) return;
+    const source = asset.versions.find((v) => v.id === version.parentId) ?? version;
+    if (source.diskPath === undefined) return;
+    void runStage(
+      'rig',
+      source.diskPath,
+      { assetId: asset.id, versionId: source.id, op: 'rig' },
+      { humanoid: false, knownHumanoid: false, rigger: 'skintokens' },
+    );
+  };
 
   const analyse = () => {
     if (asset === undefined || version?.diskPath === undefined) return;
@@ -336,16 +367,50 @@ export function AnimatePanel(): JSX.Element {
         ) : null}
 
         {rigged ? (
-          <div className="tp-rig-status" data-testid="tp-rig-status" data-humanoid={humanoid}>
+          <div
+            className="tp-rig-status"
+            data-testid="tp-rig-status"
+            data-humanoid={humanoid}
+            data-rigger={rigger ?? 'unknown'}
+          >
             <IcRig size={15} />
             <span>
-              {/* No joint count and no "humanoid skeleton" claim: SkinTokens
-                  PREDICTS a skeleton per model rather than fitting a fixed
-                  template, so the old "27-joint ARDY humanoid" line was simply
-                  false over an 11-joint predicted rig. State what is known. */}
-              Rigged · {RIG_MODEL} skeleton
+              {/* Name the rigger that RAN. No joint count and no "humanoid
+                  skeleton" claim beyond what was measured: SkinTokens PREDICTS
+                  a skeleton per model rather than fitting a fixed template, so
+                  the old "27-joint ARDY humanoid" line was simply false over an
+                  11-joint predicted rig. State what is known. */}
+              Rigged · {RIGGER_LABEL[rigger ?? 'unknown']} skeleton
               {humanoid ? ' · humanoid proportions' : ''}
             </span>
+          </div>
+        ) : null}
+
+        {/* The learned rigger, offered AFTER the derived one — jedd asked for
+            medial-axis first rather than sending people to a 2.5 GB download
+            before anything has been tried. Only for shapes no humanoid template
+            fits; a humanoid already has the skeleton ARDY drives, and swapping
+            it for a predicted one would cost the animation. */}
+        {rigged && !humanoid && rigger !== 'skintokens' ? (
+          <div className="tp-notice" data-testid="tp-rig-alternative">
+            <IcInfo size={14} />
+            <span>
+              Bones not where you want them? {LEARNED_RIG_MODEL} predicts a rig with a learned model
+              instead of measuring the shape — a different answer, not always a better one.
+              {skinTokensInstalled ? '' : ' Open the download panel to add it (2.5 GB).'}
+            </span>
+            {skinTokensInstalled ? (
+              <button
+                type="button"
+                className="tp-ghost-btn"
+                data-testid="tp-rig-skintokens"
+                disabled={busy}
+                onClick={rigWithSkinTokens}
+              >
+                <IcRig size={15} />
+                {busy ? 'Rigging…' : `Rig with ${LEARNED_RIG_MODEL}`}
+              </button>
+            ) : null}
           </div>
         ) : null}
 

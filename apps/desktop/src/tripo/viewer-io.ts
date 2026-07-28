@@ -163,6 +163,7 @@ export function addStageVersion(
     readonly label: string;
     readonly diskPath?: string;
     readonly humanoid?: boolean;
+    readonly rigger?: 'template' | 'medial' | 'skintokens';
   },
 ): string {
   const id = registerImportedModel(fileName, format, buffer, opts.diskPath);
@@ -182,7 +183,11 @@ export function addStageVersion(
     // "Analyse shape & rig" the moment a clip finished, which reads as having
     // lost the rig you just used.
     ...(opts.op === 'rig' || opts.op === 'motion'
-      ? { rigged: true, humanoid: opts.humanoid === true }
+      ? {
+          rigged: true,
+          humanoid: opts.humanoid === true,
+          ...(opts.rigger !== undefined ? { rigger: opts.rigger } : {}),
+        }
       : {}),
     ...(opts.diskPath !== undefined ? { diskPath: opts.diskPath } : {}),
   });

@@ -233,12 +233,21 @@ export type Gen3dInvokeMap = {
        *
        * true  -> the geometric cskel27 fitter, whose skeleton is ARDY's exact
        *          27-joint hierarchy, so the motion stage can drive it.
-       * false -> SkinTokens, which predicts a skeleton per mesh and handles the
-       *          animals and creatures a humanoid template cannot.
+       * false -> the medial-axis rigger, which derives the skeleton from the
+       *          mesh's own interior and so fits any body plan.
        *
        * Undefined leaves the engine to pick, which is what a probe run does.
        */
       readonly humanoid?: boolean;
+      /**
+       * Rig: ask for a specific rigger, overriding what `humanoid` implies.
+       *
+       * The only one the user picks by hand is 'skintokens' — the learned rig,
+       * offered AFTER the medial-axis one has run and been looked at, because
+       * it costs a 2.5 GB download and predicts a skeleton rather than
+       * measuring one (MEASURED: 15 joints for a humanoid mesh).
+       */
+      readonly rigger?: 'template' | 'medial' | 'skintokens';
       /**
        * Motion: how long a clip to generate, in seconds.
        *

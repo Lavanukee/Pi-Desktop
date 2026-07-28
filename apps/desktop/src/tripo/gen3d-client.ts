@@ -91,9 +91,12 @@ interface Gen3dState {
       readonly probeOnly?: boolean;
       readonly requireHumanoid?: boolean;
       /** Rig: the answered humanoid question. CHOOSES THE RIGGER in the engine
-       * — true fits ARDY's cskel27 (animatable), false lets SkinTokens predict
-       * a skeleton for whatever the mesh actually is. */
+       * — true fits ARDY's cskel27 (animatable), false derives a skeleton from
+       * the mesh's own medial axis, which fits any body plan. */
       readonly humanoid?: boolean;
+      /** Rig: override that choice. Only ever 'skintokens' from the UI, offered
+       * after the medial-axis rig has run and the user has looked at it. */
+      readonly rigger?: 'template' | 'medial' | 'skintokens';
       readonly sourcePath?: string;
       /** Motion: clip length in seconds (cost is linear in it). */
       readonly seconds?: number;
@@ -210,6 +213,14 @@ export const useGen3dStore = create<Gen3dState>((set, get) => ({
        * cannot overwrite it.
        */
       if (knownHumanoid !== undefined) confirmedHumanoid.set(res.jobId, knownHumanoid);
+      // Which rigger the engine will use, worked out the same way it does — so
+      // the finished version can name it and offer the alternative.
+      if (op === 'rig' && extra?.probeOnly !== true) {
+        jobRigger.set(
+          res.jobId,
+          extra?.rigger ?? (extra?.humanoid === true ? 'template' : 'medial'),
+        );
+      }
     }
     return null;
   },
@@ -267,6 +278,15 @@ const stageOrigins = new Map<string, StageOrigin>();
 
 /** jobId → the rig stage's humanoid verdict, so the produced version records it. */
 const jobHumanoid = new Map<string, boolean>();
+
+/**
+ * jobId → which rigger ran, so the result can say so and offer the other one.
+ *
+ * The engine picks between the humanoid template and the medial-axis rigger
+ * from the answered question, so the panel cannot know from the version alone,
+ * and after a reload the answer is gone. Recorded here, stored on the version.
+ */
+const jobRigger = new Map<string, 'template' | 'medial' | 'skintokens'>();
 
 /**
  * jobId → the humanoid verdict the USER confirmed, which outranks the engine's.
@@ -328,6 +348,7 @@ async function ingestModelArtifact(
   humanoidVerdict: boolean,
   jobId: string,
   previewPath?: string,
+  rigger?: 'template' | 'medial' | 'skintokens',
 ): Promise<void> {
   if (importedArtifacts.has(path)) return;
   importedArtifacts.add(path);
@@ -352,6 +373,7 @@ async function ingestModelArtifact(
         label,
         diskPath: path,
         humanoid: humanoidVerdict,
+        ...(rigger !== undefined ? { rigger } : {}),
       });
       /*
        * Tell the STUDIO which pipeline stage it is now showing.
@@ -455,6 +477,7 @@ export function ensureGen3dWired(): void {
             humanoid,
             jobId,
             artifact.previewPath,
+            jobRigger.get(jobId),
           ),
         )
         .catch(() => {});
@@ -468,6 +491,7 @@ export function ensureGen3dWired(): void {
       void (jobIngestChain.get(jobId) ?? Promise.resolve()).finally(() => {
         stageOrigins.delete(jobId);
         jobHumanoid.delete(jobId);
+        jobRigger.delete(jobId);
         confirmedHumanoid.delete(jobId);
         probeJobs.delete(jobId);
         jobRootAsset.delete(jobId);

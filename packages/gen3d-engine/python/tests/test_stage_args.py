@@ -201,21 +201,25 @@ def test_motion_without_a_prompt_is_refused() -> None:
     assert "movement" in res["error"]
 
 
-def _rigger(body: dict, *, skintokens: bool) -> str:
-    """Which worker script a rig request reaches."""
-    calls: list[str] = []
+def _rig_argv(body: dict, *, skintokens: bool) -> dict:
+    """Which worker script a rig request reaches, and with what arguments."""
+    calls: list[dict] = []
     spawned = threading.Event()
     m = _manager()
     m.registry.has_skintokens.return_value = skintokens
 
     def capture(job, venv, script, args, **kw):
-        calls.append(Path(script).name)
+        calls.append({"script": Path(script).name, "args": list(args)})
         spawned.set()
 
     m._run_worker = capture
     assert m.start_stage(body).get("ok") is True
     assert spawned.wait(10), f"no worker spawned for {body}"
     return calls[0]
+
+
+def _rigger(body: dict, *, skintokens: bool) -> str:
+    return _rig_argv(body, skintokens=skintokens)["script"]
 
 
 def test_humanoid_is_rigged_for_ardy_even_when_skintokens_is_installed() -> None:
@@ -231,21 +235,60 @@ def test_humanoid_is_rigged_for_ardy_even_when_skintokens_is_installed() -> None
     assert _rigger(body, skintokens=True) == "rig_worker.py"
 
 
-def test_non_humanoid_goes_to_skintokens() -> None:
-    """The other half, and the reason SkinTokens is here: it predicts a skeleton
-    per mesh, so a creature no humanoid template fits still gets a real rig."""
+def test_non_humanoid_is_rigged_from_its_own_shape() -> None:
+    """The other half. A creature no humanoid template fits gets the MEDIAL-AXIS
+    rigger, which derives the skeleton from the mesh's own interior — even when
+    SkinTokens is installed.
+
+    jedd: "can you have an option to do medial axis rigging as a first choice
+    before we ask the user to try skintokens?" The learned rigger is a 2.5 GB
+    download that PREDICTS a skeleton, and sending someone there before anything
+    has been tried is the wrong default.
+    """
     _, mesh = _fixture()
     body = {"op": "rig", "modelPath": str(mesh), "humanoid": False}
+    argv = _rig_argv(body, skintokens=True)
+    assert argv["script"] == "rig_worker.py"
+    assert argv["args"][argv["args"].index("--method") + 1] == "medial"
+
+
+def test_asking_for_skintokens_gets_skintokens() -> None:
+    """It stays available — offered after the derived rig, chosen by hand."""
+    _, mesh = _fixture()
+    body = {"op": "rig", "modelPath": str(mesh), "humanoid": False, "rigger": "skintokens"}
     assert _rigger(body, skintokens=True) == "skintokens_worker.py"
 
 
-def test_without_skintokens_everything_uses_the_template() -> None:
-    """The geometric fitter is the fallback, so the stage still works on a
-    machine that never downloaded SkinTokens."""
+def test_asking_for_skintokens_without_it_installed_says_so() -> None:
+    """Not a silent fall back to a different rigger: the user asked for a
+    specific one, and quietly running another would misreport what they got."""
     _, mesh = _fixture()
-    for humanoid in (True, False):
+    m = _manager()
+    m.registry.has_skintokens.return_value = False
+    m._run_worker = MagicMock()
+    m._run_stage(
+        m._new_job(["rig"]),
+        "rig",
+        str(mesh),
+        "",
+        {"humanoid": False, "rigger": "skintokens"},
+    )
+    m._run_worker.assert_not_called()
+    errors = [
+        str(kw.get("error", "")) for _a, kw in m._publish.call_args_list if kw.get("error")
+    ]
+    assert any("not downloaded" in e for e in errors), errors
+
+
+def test_the_template_and_medial_riggers_need_nothing_downloaded() -> None:
+    """Both geometric riggers must work on a machine that never fetched
+    SkinTokens — they run no learned model at all."""
+    _, mesh = _fixture()
+    for humanoid, method in ((True, "template"), (False, "medial")):
         body = {"op": "rig", "modelPath": str(mesh), "humanoid": humanoid}
-        assert _rigger(body, skintokens=False) == "rig_worker.py"
+        argv = _rig_argv(body, skintokens=False)
+        assert argv["script"] == "rig_worker.py"
+        assert argv["args"][argv["args"].index("--method") + 1] == method
 
 
 def test_the_shape_probe_always_measures() -> None:

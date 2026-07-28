@@ -76,6 +76,9 @@ export interface AssetVersion {
   /** Whether the rigged shape actually measured as humanoid — the animation
    * presets are humanoid clips and stay hidden when it did not. */
   readonly humanoid?: boolean;
+  /** Which rigger produced this version, so the panel can name it and offer the
+   * other one. Absent on versions rigged before this was recorded. */
+  readonly rigger?: 'template' | 'medial' | 'skintokens';
   /** On-disk path — what the gen3d engine's stage ops take as input. */
   readonly diskPath?: string;
 }

@@ -82,6 +82,7 @@ STAGE_OPTION_KEYS = (
     "adaptivity",
     "probeOnly",
     "requireHumanoid",
+    "rigger",
     "sourcePath",
     "faceBudget",
 )
@@ -505,14 +506,27 @@ class JobManager:
                 # fits its body. Choosing SkinTokens for everything, as this did
                 # before, silently cost every humanoid its ability to animate.
                 #
+                # ...and a non-humanoid no longer NEEDS SkinTokens to get a real
+                # rig. The medial-axis rigger reads the skeleton off the mesh's
+                # own interior: no template, no download, a couple of seconds,
+                # and it has no opinion about how many limbs the subject has.
+                # jedd asked for it as the first choice with SkinTokens offered
+                # after, which is what `rigger` carries when the user asks.
+                #
                 # `humanoid` is None for a probe run, which must always use the
                 # geometric worker — it is the only one that measures shape.
-                use_skintokens = (
-                    self.registry.has_skintokens()
-                    and not options.get("probeOnly")
-                    and options.get("humanoid") is not True
-                )
-                if use_skintokens:
+                if options.get("probeOnly"):
+                    rigger = "template"
+                else:
+                    rigger = options.get("rigger") or (
+                        "template" if options.get("humanoid") is True else "medial"
+                    )
+                if rigger == "skintokens" and not self.registry.has_skintokens():
+                    raise RuntimeError(
+                        "SkinTokens is not downloaded — open the download panel to add it, "
+                        "or rig from the shape instead"
+                    )
+                if rigger == "skintokens":
                     venv = self.registry.skintokens_python()
                     script = WORKERS_DIR / "skintokens_worker.py"
                     args = [
@@ -527,7 +541,7 @@ class JobManager:
                 else:
                     venv = self.registry.meshtools_python()
                     script = WORKERS_DIR / "rig_worker.py"
-                    args = ["--mesh", model_path, "--out-dir", str(job_dir)]
+                    args = ["--mesh", model_path, "--out-dir", str(job_dir), "--method", rigger]
                     if options.get("probeOnly"):
                         args.append("--probe-only")
                     if options.get("requireHumanoid"):

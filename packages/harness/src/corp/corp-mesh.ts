@@ -92,7 +92,7 @@ You are the CEO. The user asked for: ${task}
 
 YOUR FIRST ACTION IS TO ${TALK_TO_TOOL} THE MANAGER. Not to plan at length, not to look around — you have no editor, no shell and no file tools, so there is nothing here for you to do alone. Decide what the user actually wants and send the manager a clear brief. The manager has a team of engineers and can build anything you describe.
 
-You do not build and you cannot run things yourself — that is deliberate. Before you accept work as done, ${COMMISSION_SPECIALIST_TOOL} the tester and have it RUN the product for you. "The team says it is finished" is not evidence, and neither is "the tests pass" — tests are written by the same people who wrote the code, and they pass because the two agree. Name in your request the specific things the USER asked for and have the tester try each one; a capability nobody tested is a capability nobody has. If a failing check comes back, do not argue with it — ${TALK_TO_TOOL} the manager with the exact failure and have it fixed.
+Specialists MEASURE; they cannot build, and asking one to build a product wastes it entirely — it has no editor and will simply look around and report back. Building goes to the manager, always. Before you accept work as done, ${COMMISSION_SPECIALIST_TOOL} the tester and have it RUN the product for you. "The team says it is finished" is not evidence, and neither is "the tests pass" — tests are written by the same people who wrote the code, and they pass because the two agree. Name in your request the specific things the USER asked for and have the tester try each one; a capability nobody tested is a capability nobody has. If a failing check comes back, do not argue with it — ${TALK_TO_TOOL} the manager with the exact failure and have it fixed.
 
 You focus on the user's actual intent; the team handles the technical work. When it genuinely works, reply with what was built and how to run it.`;
 }
@@ -102,7 +102,7 @@ export function managerMeshPrompt(): string {
 
 You are the MANAGER. The CEO ${TALK_TO_TOOL}s you with a vision.
 
-You do not write code yourself — you have no editor and no shell, on purpose. Break the vision into concrete pieces and ${TALK_TO_TOOL} an engineer for each one. A piece of work is a clear message: what to build, WHICH FILES it owns, and what command will prove it works. Give different engineers different files — two people editing one file is how a build breaks.
+You do not write code yourself — you have no editor, on purpose. You DO have bash, to RUN things: reproduce a failure, execute the product on a file, read an error with your own eyes. Use it the moment you want to know something, rather than asking an engineer to run a command and paste the output back — that costs a whole exchange to learn what you could have seen instantly. But bash is for running, not for writing: if you find yourself typing \`cat > somefile\`, stop, and send the change to the engineer who owns that file instead. Break the vision into concrete pieces and ${TALK_TO_TOOL} an engineer for each one. A piece of work is a clear message: what to build, WHICH FILES it owns, and what command will prove it works. Give different engineers different files — two people editing one file is how a build breaks.
 
 Somebody must own the thing that proves the whole product works (a test, a build, a runnable entry point). If nobody owns it, the product cannot be shown to work and the work does not count. Assign it explicitly.
 
@@ -244,7 +244,21 @@ const FILE_TOOLS = ['read', 'write', 'edit', 'ls', 'grep', 'find'];
  * research, not the product check, not tool_search.
  */
 const DEFAULT_CEO_TOOLS: readonly string[] = [];
-const DEFAULT_MANAGER_TOOLS = ['read', 'ls', 'grep', 'find', ...RESEARCH_TOOLS];
+/*
+ * THE MANAGER GETS A SHELL — to RUN, never to write. MEASURED, run 15: with no
+ * way to execute one command it used an engineer as a remote terminal, nine times:
+ *
+ *   manager -> engineer:1  "Run this quick debug first and tell me the stderr"
+ *   manager -> engineer:1  "Just try running this and paste the full output"
+ *   manager -> engineer:1  "I've been stuck waiting for your debug output"
+ *
+ * Each of those is a full model turn on the one slot, to learn something a
+ * two-second command would have told it. L11 again: a role denied a capability
+ * does not stop needing it, it finds a worse route to it. `write`/`edit` stay
+ * out — that is the separation that actually matters — and the prompt says
+ * plainly that typing a heredoc means it has taken someone else's job.
+ */
+const DEFAULT_MANAGER_TOOLS = ['read', 'ls', 'grep', 'find', 'bash', ...RESEARCH_TOOLS];
 const DEFAULT_ENGINEER_TOOLS = [...FILE_TOOLS, 'bash', ...RESEARCH_TOOLS];
 const DEFAULT_SPECIALIST_TOOLS = ['read', 'ls', 'grep', 'find', 'bash', ...RESEARCH_TOOLS];
 

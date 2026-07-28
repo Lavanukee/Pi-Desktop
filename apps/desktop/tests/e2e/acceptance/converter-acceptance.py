@@ -103,23 +103,30 @@ def find_entry_points(ws):
     """Every plausible `<script> <input> <output>` entry point, best first.
 
     The task asked for "a command-line entry point"; it did not dictate a name,
-    so this looks the way a user would: obvious names first, then any script that
-    reads argv.
+    so this looks the way a user would: any runnable script, obvious names first.
+
+    DELIBERATELY NOT CLEVER ABOUT THIS. The first version of this function also
+    required the literal string `argv`, and reported "no command-line entry point
+    found" for run 15 — whose `converter.py` used `argparse`, which reads
+    `sys.argv` without ever naming it, and converted correctly when run by hand.
+    A false negative from the acceptance check is worse than a false positive:
+    it fails work that was done. So the only filter is "has a __main__ and is not
+    a test"; whether it is really the entry point is decided by RUNNING it.
     """
     named, other = [], []
     for root, dirs, files in os.walk(ws):
         dirs[:] = [d for d in dirs if d not in (".pi", ".pytest_cache", "__pycache__", ".git")]
         for name in files:
-            if not name.endswith(".py") or name.startswith("test_"):
+            if not name.endswith(".py") or name.startswith("test_") or name == "conftest.py":
                 continue
             full = os.path.join(root, name)
             try:
                 body = open(full).read()
             except OSError:
                 continue
-            if "__main__" not in body or "argv" not in body:
+            if "__main__" not in body:
                 continue
-            (named if any(k in name for k in ("convert", "cli", "main")) else other).append(full)
+            (named if any(k in name for k in ("convert", "cli", "main", "run")) else other).append(full)
     return named + other
 
 

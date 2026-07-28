@@ -87,9 +87,10 @@ The current position, measured rather than claimed:
 | | |
 |---|---|
 | **Runs completed end to end** | 12 (runs 7–18), each 30–40 minutes on one 4B model slot |
-| **Best product** | run 16 — **6/6 conversions correct**, confirmed by the held-out check AND by hand through a full `json→csv→yaml→json→yaml→csv→json` cycle, all records intact |
-| **Best run VERDICT** | still INCOMPLETE. Run 16's own suite has one test that never writes the file it converts, so the team's gate is red on a working product |
-| **Spread across runs** | 6/6, 5/6, 2/6, and one run with no CLI at all. High variance is the headline finding, not an anomaly |
+| **First DELIVERED** | run 18, in **293 seconds** — product exists, its own check passes, the held-out check passes. The bar this rebuild set, cleared |
+| **Best product** | run 16 — the only one that converts all six pairs AND can re-read everything it writes. Run 18 fails four of six round trips (it emits an `items:` envelope it cannot parse back) |
+| **The irony worth keeping** | run 16's verdict was INCOMPLETE, for a test in its own suite that never writes the file it converts. The best product scored worst |
+| **Spread across runs** | 6/6, 5/6, 2/6, one run with no CLI at all, and one DELIVERED in five minutes. High variance is the headline finding, not an anomaly |
 | **What is now mechanical** | done is an exit code; a proof must exercise the product, must be able to fail, and must be about the artifact the gate judges; a resubmission over an unchanged tree is refused; the manager is handed the task text and the live product state on every message; work written to a mangled path is moved back; the CEO has no tools to misuse |
 | **What is still advisory** | which file is wrong when a check fails; whether a test covers what was asked; who owns which file |
 
@@ -779,6 +780,44 @@ The practical consequence for anyone reading this later: **judge the harness on
 the distribution, never on one run**, and treat a single green as a hypothesis.
 The next thing worth building is not another gate — it is running the same task
 five times and reporting the spread.
+
+**L28 · Run 18 delivered, and a converter that cannot read its own output is not
+finished.** Run 18 came in at **293 seconds** — not the 32-minute budget — with
+both checks green:
+
+```
+GATE            PASS · pytest
+HELD-OUT CHECK  PASS — converter.py converts all six pairs correctly
+VERDICT: DELIVERED
+```
+
+That is the bar this rebuild set, cleared. Then I drove it by hand, which is the
+whole discipline, and chained its own files back through it:
+
+```
+crew.json -> a.csv -> b.yaml -> c.json -> d.yaml -> e.csv -> f.json
+{"items": [{"data": "{'data': {'items': [{'name': 'Ada', ...}]}}"}]}
+```
+
+It writes an `items:` envelope, and cannot re-read it. Four of six round trips
+corrupt. The held-out check missed this because it only ever fed **canonical**
+inputs it had written itself — the product's own output never became an input.
+Third gap in that file, and the first one that was too *lenient*. It also passed
+a team suite containing exactly **one test**, which is the `Ran 0 tests` hole one
+notch up and precisely why the held-out check has to exist.
+
+Re-measured with a read-back phase, the ordering inverts: **run 16 passes both
+phases** — six pairs and six round trips, the only genuinely correct product any
+run has produced — and its verdict was INCOMPLETE solely because its own suite
+contains a test that never writes the file it converts. Run 18, the DELIVERED one,
+fails read-back.
+
+Two things worth keeping from that. **The bar moved because the product taught me
+where it was wrong, not to deny a result** — run 18 met the criterion as it stood
+before the run, and that stands. And the deeper one: *every* acceptance criterion
+here has been provisional, and each has been sharpened by looking at an actual
+artifact rather than at a number. The gates in §5 stop the team lying to itself.
+Nothing except opening the file stops **me** from doing it.
 
 ## 6. Known-hard, deliberately deferred
 

@@ -47,6 +47,7 @@ import {
 } from './capabilities';
 import { type GateResult, gateFeedback, runProductGate } from './product-gate';
 import type { CorpModelHandle } from './role-agent';
+import { createSubmitWorkTool, SUBMIT_WORK_TOOL } from './submit-work';
 import { TeamBook } from './team-record';
 
 /** A pi tool result carrying a single text block (the reply the calling agent reads). */
@@ -154,6 +155,8 @@ export interface MeshAgentHostConfig {
   readonly sessionFileFor?: (agentId: string) => string | undefined;
   /** Record where an agent's conversation landed, so it can be found next time. */
   readonly onSessionFile?: (agentId: string, file: string) => void;
+  /** An engineer submitted work and its proof command was run. */
+  readonly onSubmitted?: (agentId: string, command: string, accepted: boolean) => void;
 }
 
 /** A mesh host, plus the pool behind it (for lifecycle + telemetry). */
@@ -238,8 +241,29 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
           purpose: ROLE_PURPOSE[agent.role] ?? 'engineer',
           systemPrompt: `${agent.systemPrompt}\n${workspaceNote}`,
           // The comm-tool NAMES must be in the allowlist or the SDK never offers them.
-          tools: [...agent.tools, TALK_TO_TOOL, COMMISSION_SPECIALIST_TOOL],
-          customTools: communicationTools(agent, talkThrough(agentId)),
+          tools: [
+            ...agent.tools,
+            TALK_TO_TOOL,
+            COMMISSION_SPECIALIST_TOOL,
+            ...(agent.role === 'engineer' ? [SUBMIT_WORK_TOOL] : []),
+          ],
+          customTools: [
+            ...communicationTools(agent, talkThrough(agentId)),
+            // ENGINEERS ONLY. Finishing is not something they can assert: the
+            // command they submit as proof is RUN, and the submission is refused
+            // with the real output if it fails. Four runs in a row produced
+            // working code that was verified BY HAND and then reported done,
+            // leaving nothing runnable behind — this makes "done" an exit code.
+            ...(agent.role === 'engineer'
+              ? [
+                  createSubmitWorkTool({
+                    cwd: config.cwd,
+                    onAccepted: (w) => config.onSubmitted?.(agentId, w.command, true),
+                    onRejected: (cmd) => config.onSubmitted?.(agentId, cmd, false),
+                  }) as unknown as ToolDefinition,
+                ]
+              : []),
+          ],
           cwd: config.cwd,
           thinking: true,
           samplingMode: 'thinking-general',

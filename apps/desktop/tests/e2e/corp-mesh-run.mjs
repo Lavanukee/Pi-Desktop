@@ -254,10 +254,22 @@ async function main() {
       cwd: WORKSPACE,
       engineerCount: ENGINEERS,
       signal: controller.signal,
+      onSubmitted: (agentId, command, accepted) => {
+        log(`  ${agentId} SUBMIT ${accepted ? 'ACCEPTED' : 'REJECTED'}: ${command.slice(0, 90)}`);
+        record({ kind: 'submit', agentId, command, accepted });
+      },
       onGate: (g, round) => {
         const verdict = g.ok ? 'PASS' : g.ran ? `FAIL (exit ${g.exitCode})` : 'UNVERIFIABLE';
         log(`GATE round ${round}: ${verdict} — ${g.how}${g.command ? ` [${g.command}]` : ''}`);
-        record({ kind: 'gate', round, ok: g.ok, ran: g.ran, how: g.how, command: g.command, output: g.output });
+        record({
+          kind: 'gate',
+          round,
+          ok: g.ok,
+          ran: g.ran,
+          how: g.how,
+          command: g.command,
+          output: g.output,
+        });
       },
       onActivity: (agentId, r) => {
         const a = seen(agentId);
@@ -322,7 +334,8 @@ async function main() {
     `\nGATE            ${g.ok ? 'PASS' : g.ran ? 'FAIL' : 'UNVERIFIABLE'} · ${g.how}` +
       `${g.command ? `\n                ${g.command}` : ''}`,
   );
-  if (!g.ok) console.log(`                ${g.output.split('\n').slice(-6).join('\n                ')}`);
+  if (!g.ok)
+    console.log(`                ${g.output.split('\n').slice(-6).join('\n                ')}`);
   if (result.blocked.length > 0) console.log(`BLOCKED         ${result.blocked.join(', ')}`);
 
   console.log(`\nproduct         ${files.length} file(s), ${summary.productBytes} bytes`);

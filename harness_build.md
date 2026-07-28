@@ -107,7 +107,11 @@ gates underneath, not one replacing the other.
 
 Phases are ordered so each one is provable before the next depends on it.
 
-### A · Mesh sessions are real and persistent  ← **current**
+### A · Mesh sessions are real and persistent  ✅ built
+
+Verified live: a run now writes `.pi/corp/team.json` naming every agent and the
+session file holding its conversation, and each role's turns append to that one
+file instead of building and discarding a session per message.
 
 The load-bearing change. Everything downstream assumes a role is somebody rather
 than a series of strangers.

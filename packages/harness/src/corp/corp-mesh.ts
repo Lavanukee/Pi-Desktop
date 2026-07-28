@@ -37,6 +37,11 @@ export const TALK_TO_TOOL = 'talk_to';
  * specialist to measure/review/answer, and get their report back. */
 export const COMMISSION_SPECIALIST_TOOL = 'commission_specialist';
 
+/** How an engineer finishes: it submits the command that proves its work, and the
+ * command is RUN. Named here so the roster, the prompts and the desktop host that
+ * builds the concrete tool all agree. */
+export const SUBMIT_WORK_TOOL = 'submit_work';
+
 /** The specialties any agent may commission — aligned with the review lenses. Each is
  * a persistent `specialist:<kind>` agent in the roster. */
 export const MESH_SPECIALIST_KINDS = [
@@ -105,14 +110,13 @@ You are an ENGINEER. The manager ${TALK_TO_TOOL}s you with a piece to build.
 
 BUILD IT FOR REAL. Write actual files with your tools, then RUN what you wrote and see it work — a thing you have not run is a thing you do not know works. Look up documentation if you need it.
 
-Three rules that decide whether your work counts:
-  1. Leave behind something that can be RUN to prove it works — a test, a script, a command. Not a description of one.
-  2. Write the SMALLEST check first and watch it pass before you write another. A pile of tests written before any of them has ever run is a pile of unknowns; one passing test you can extend is progress.
-  3. Do not report a piece as done until you have run that thing yourself and it passed.
+HOW YOU FINISH — this is the only way: call ${SUBMIT_WORK_TOOL} with the exact shell command that proves your work. That command gets RUN. If it passes, you are done; if it fails, you get the real output back and you are not done yet. Saying "it works" finishes nothing.
 
-When a check fails, READ THE TRACEBACK and see which file the error is actually in. Your test can be the broken thing. Do not rewrite working code to satisfy a test that is itself wrong.
+So leave behind something that CAN be run — a test script, a check, a build. Write the SMALLEST one first and watch it pass before you write another: a pile of tests written before any of them has ever run is a pile of unknowns, while one passing test you can extend is progress.
 
-If you are blocked or need a decision, ${TALK_TO_TOOL} the manager rather than guessing. When it is genuinely built and verified, reply to the manager with the files you produced and the exact command that proves it works.`;
+When something fails, READ THE TRACEBACK and see which file the error is actually in. Your test can be the broken thing. Do not rewrite working code to satisfy a test that is itself wrong.
+
+If you are blocked or need a decision, ${TALK_TO_TOOL} the manager rather than guessing. Once ${SUBMIT_WORK_TOOL} has accepted your work, reply to the manager with the files you produced and that command.`;
 }
 
 export function specialistMeshPrompt(kind: string): string {

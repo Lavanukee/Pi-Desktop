@@ -62,6 +62,27 @@ const DIST_RENDERER = path.join(__dirname, '../dist');
 const log = createLogger('desktop:main');
 const events = createIpcEventSender<AppEventMap>();
 
+/*
+ * HEADED, BUT NOT IN YOUR FACE (jedd: "is it possible for you to open the app in
+ * a non focus stealing background way but still headed window?").
+ *
+ * A probe run needs a real window — GPU rendering, honest screenshots — but it
+ * should not yank the keyboard away, repeatedly, for the length of a run.
+ *
+ * This has to happen HERE, at module scope, not in `whenReady`. macOS decides
+ * whether an app becomes the active application during launch, and by the time
+ * the ready event fires it already has: setting the policy there fixed the Dock
+ * tile and nothing else (measured — jedd: "that still stole focus"). 'accessory'
+ * set before ready means the app owns windows but never activates.
+ *
+ * Playwright still drives it normally: its input is synthesised into the
+ * webContents over CDP, not routed through the OS focus.
+ */
+if (process.platform === 'darwin' && process.env.PI_E2E_BACKGROUND === '1') {
+  app.setActivationPolicy?.('accessory');
+  app.dock?.hide();
+}
+
 // The `pd-preview://` canvas harness scheme must be registered privileged
 // BEFORE app 'ready' (Electron requirement); the handler is attached in
 // whenReady. The harness dir is resolved repo-relative in dev and
@@ -207,8 +228,15 @@ function createMainWindow(): BrowserWindow {
     trafficLightPosition: { x: 19, y: Math.round((46 - 14) / 2) },
     // Claude-dark bg-base; avoids a white flash before the renderer paints.
     backgroundColor: '#262624',
+    // Under PI_E2E_BACKGROUND the window is created hidden and then raised with
+    // showInactive() below — a window shown the ordinary way asks to become key,
+    // which pulls focus even under the 'accessory' activation policy.
+    ...(process.env.PI_E2E_BACKGROUND === '1' ? { show: false } : {}),
     webPreferences: SHARED_WEB_PREFERENCES,
   });
+  if (process.env.PI_E2E_BACKGROUND === '1') {
+    win.once('ready-to-show', () => win.showInactive());
+  }
 
   // Only IPC events from this window's main frame pass the invoke gates
   // (trusted-senders.ts); anything else that ever gets webContents is out.

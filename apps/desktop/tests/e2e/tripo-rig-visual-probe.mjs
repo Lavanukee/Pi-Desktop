@@ -14,11 +14,12 @@
  *
  * Exits non-zero if a model does not load, or loads without a skeleton.
  */
-import { mkdirSync, mkdtempSync, existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron as electron } from 'playwright-core';
+import { backgroundLaunch } from './_focus.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const RIGS = (process.env.RIGS ?? '').split(':').filter((p) => p.length > 0);
@@ -36,14 +37,24 @@ const fail = (m) => {
   failed = true;
 };
 
+const background = backgroundLaunch();
 const app = await electron.launch({
   executablePath: APP,
   args: [`--user-data-dir=${mkdtempSync(path.join(tmpdir(), 'pi-rigvis-udd-'))}`],
-  env: { ...process.env, HOME: homedir(), PI_E2E: '1', PI_DESKTOP_TRIPO: '1' },
+  env: {
+    ...process.env,
+    HOME: homedir(),
+    PI_E2E: '1',
+    PI_DESKTOP_TRIPO: '1',
+    // Headed, but never the active app: the window renders (real GPU, honest
+    // screenshots) without stealing focus mid-run. FOCUS=1 to opt out.
+    ...background.env,
+  },
 });
 
 try {
   const win = await app.firstWindow();
+  background.restore();
   await win.waitForSelector('[data-testid="tp-rightpanel"]', { timeout: 120_000 });
   await win.setViewportSize({ width: 1280, height: 860 });
 

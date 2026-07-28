@@ -225,6 +225,14 @@ function buildConversationPrefix(
   entries: readonly StoredEntryLike[],
   systemPrompt: string,
   currentPrompt: string,
+  /**
+   * Whether to guarantee `currentPrompt` is the last message. True for callers
+   * that run BEFORE the turn (pi may not have persisted the prompt as an entry
+   * yet). False for post-turn callers — after the turn the entries already end
+   * `[…user: prompt, assistant: reply]`, and appending the prompt again would
+   * send it twice.
+   */
+  ensureLastUser = true,
 ): ClassifyMessage[] {
   const messages: ClassifyMessage[] = [];
   if (systemPrompt.trim().length > 0) messages.push({ role: 'system', content: systemPrompt });
@@ -240,7 +248,7 @@ function buildConversationPrefix(
   // Ensure the current user prompt is the LAST message — pi may not have
   // persisted it as an entry yet when before_agent_start fires.
   const last = messages.at(-1);
-  if (!(last?.role === 'user' && last.content === currentPrompt)) {
+  if (ensureLastUser && !(last?.role === 'user' && last.content === currentPrompt)) {
     messages.push({ role: 'user', content: currentPrompt });
   }
   return messages;
@@ -552,20 +560,38 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
 
     setStage('reviewing', ctx);
     const task = runtime.lastPrompt;
+    // Ride the conversation's resident KV instead of evicting it. Same frozen
+    // system prompt, same tools in the same order, critique appended as one more
+    // user turn — the shape the post-turn naming already uses. Standalone, the
+    // reviewer's own {system:"You are a meticulous senior reviewer…"} request
+    // diverged at the first token, so llama-server dropped the whole
+    // conversation to prefill the critique and the user's NEXT message paid a
+    // full cold prefill. MEASURED on the shipped build: first message 274ms,
+    // follow-ups 4015-8096ms. This runs after EVERY turn from `medium` up, which
+    // is the default — so it was costing seconds on essentially every message.
+    const reviewContext = {
+      priorMessages: buildConversationPrefix(
+        getEntries(ctx),
+        runtime.canonicalSystemPrompt ?? '',
+        task,
+        false,
+      ),
+      tools: orderedToolDefs(runtime.activeTools),
+    };
     const issues: string[] = [];
     // Run up to `reviewPasses` reviewer passes so a higher effort really does run
     // more passes than a lower one (the knob was inert — medium/high/max all ran
     // exactly once). Stop at the first pass that flags something (it already has
     // the issues to fix); a clean pass proceeds to the next.
     for (let i = 0; i < knobs.reviewPasses; i++) {
-      const r = await reviewOutput(callModel, { task, output });
+      const r = await reviewOutput(callModel, { task, output, ...reviewContext });
       if (!r.ok) {
         issues.push(...r.issues);
         break;
       }
     }
     if (knobs.adversarialChecks) {
-      const a = await adversarialCheck(callModel, { task, output });
+      const a = await adversarialCheck(callModel, { task, output, ...reviewContext });
       if (!a.ok) issues.push(...a.issues);
     }
 

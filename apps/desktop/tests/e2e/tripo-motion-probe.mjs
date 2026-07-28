@@ -13,21 +13,34 @@
  *
  * Exits non-zero if the studio cannot produce an animated character.
  */
-import { mkdirSync, mkdtempSync, existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron as electron } from 'playwright-core';
+import { backgroundLaunch } from './_focus.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const GLB = process.env.TRIPO_MOTION_GLB ?? '';
 const PROMPT = process.env.MOTION_PROMPT ?? 'A person walks forward.';
-const OUT_DIR = process.env.OUT ?? path.resolve(here, '..', '..', '..', '..', '.corp-runs', 'tripo-motion');
+const OUT_DIR =
+  process.env.OUT ?? path.resolve(here, '..', '..', '..', '..', '.corp-runs', 'tripo-motion');
 const APP =
   process.env.TRIPO_MOTION_APP ??
-  path.resolve(here, '..', '..', 'release', 'mac-arm64', 'Bobble.app', 'Contents', 'MacOS', 'Bobble');
+  path.resolve(
+    here,
+    '..',
+    '..',
+    'release',
+    'mac-arm64',
+    'Bobble.app',
+    'Contents',
+    'MacOS',
+    'Bobble',
+  );
 
-if (GLB.length === 0 || !existsSync(GLB)) throw new Error('set TRIPO_MOTION_GLB to a humanoid mesh');
+if (GLB.length === 0 || !existsSync(GLB))
+  throw new Error('set TRIPO_MOTION_GLB to a humanoid mesh');
 mkdirSync(OUT_DIR, { recursive: true });
 
 let failed = false;
@@ -36,14 +49,24 @@ const fail = (m) => {
   failed = true;
 };
 
+const background = backgroundLaunch();
 const app = await electron.launch({
   executablePath: APP,
   args: [`--user-data-dir=${mkdtempSync(path.join(tmpdir(), 'pi-motion-udd-'))}`],
-  env: { ...process.env, HOME: homedir(), PI_E2E: '1', PI_DESKTOP_TRIPO: '1' },
+  env: {
+    ...process.env,
+    HOME: homedir(),
+    PI_E2E: '1',
+    PI_DESKTOP_TRIPO: '1',
+    // Headed, but never the active app: the window renders (real GPU, honest
+    // screenshots) without stealing focus mid-run. FOCUS=1 to opt out.
+    ...background.env,
+  },
 });
 
 try {
   const win = await app.firstWindow();
+  background.restore();
   await win.waitForSelector('[data-testid="tp-rightpanel"]', { timeout: 120_000 });
   win.on('console', (m) => {
     if (m.type() === 'error') console.log('[console error]', m.text().slice(0, 160));
@@ -51,9 +74,13 @@ try {
 
   console.log('1. importing the mesh');
   await win.setInputFiles('[data-testid="tp-upload-card-input"]', GLB);
-  await win.waitForFunction(() => document.querySelectorAll('.tp-asset-card').length > 0, undefined, {
-    timeout: 60_000,
-  });
+  await win.waitForFunction(
+    () => document.querySelectorAll('.tp-asset-card').length > 0,
+    undefined,
+    {
+      timeout: 60_000,
+    },
+  );
   await win.waitForTimeout(2000);
   await win.click('[data-testid="tp-rail-animate"]');
   await win.waitForTimeout(600);
@@ -81,7 +108,9 @@ try {
       if (s === null) return null;
       if (s.msg !== last && s.msg.length > 0) {
         last = s.msg;
-        console.log(`   [${Math.round((Date.now() - t) / 1000)}s] ${label}: ${s.msg.slice(0, 110)}`);
+        console.log(
+          `   [${Math.round((Date.now() - t) / 1000)}s] ${label}: ${s.msg.slice(0, 110)}`,
+        );
       }
       if (pred(s)) return s;
       await new Promise((r) => setTimeout(r, 2000));
@@ -116,11 +145,13 @@ try {
     // never reported humanoid proportions".
     rigStatus: document.querySelector('[data-testid="tp-rig-status"]')?.textContent ?? null,
     humanoidAttr:
-      document.querySelector('[data-testid="tp-rig-status"]')?.getAttribute('data-humanoid') ?? null,
+      document.querySelector('[data-testid="tp-rig-status"]')?.getAttribute('data-humanoid') ??
+      null,
   }));
   console.log(`   motion UI: ${JSON.stringify({ ...ui, mismatch: ui.mismatch !== null })}`);
   if (!ui.prompt || !ui.button) fail('the motion controls did not appear on a rigged humanoid');
-  if (ui.unavailable !== null) console.log(`   NOTE: ${ui.unavailable.replace(/\s+/g, ' ').trim()}`);
+  if (ui.unavailable !== null)
+    console.log(`   NOTE: ${ui.unavailable.replace(/\s+/g, ' ').trim()}`);
 
   // SkinTokens predicts its own skeleton, which ARDY cannot drive. On a machine
   // where it is installed the CORRECT outcome is an explained, disabled button

@@ -23,6 +23,7 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron as electron } from 'playwright-core';
+import { backgroundLaunch } from './_focus.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE = process.env.ENGINE ?? 'cube3d';
@@ -39,14 +40,24 @@ const note = (stage, outcome, detail = '') => {
   console.log(`[${outcome.toUpperCase()}] ${stage}${detail ? ` — ${detail}` : ''}`);
 };
 
+const background = backgroundLaunch();
 const app = await electron.launch({
   executablePath: APP,
   args: [`--user-data-dir=${mkdtempSync(path.join(tmpdir(), 'pi-chain-udd-'))}`],
-  env: { ...process.env, HOME: homedir(), PI_E2E: '1', PI_DESKTOP_TRIPO: '1' },
+  env: {
+    ...process.env,
+    HOME: homedir(),
+    PI_E2E: '1',
+    PI_DESKTOP_TRIPO: '1',
+    // Headed, but never the active app: the window renders (real GPU, honest
+    // screenshots) without stealing focus mid-run. FOCUS=1 to opt out.
+    ...background.env,
+  },
 });
 
 try {
   const win = await app.firstWindow();
+  background.restore();
   await win.waitForSelector('[data-testid="tp-rightpanel"]', { timeout: 120_000 });
   win.on('console', (m) => {
     const t = m.text();
@@ -174,7 +185,8 @@ try {
     // SKIP — the stage is not applicable to this model, and calling that a
     // failure buries the real ones.
     const why = (await snap())?.msg ?? '';
-    if (/no colour data|nothing to texture/i.test(why)) note('texture', 'skipped', why.slice(0, 110));
+    if (/no colour data|nothing to texture/i.test(why))
+      note('texture', 'skipped', why.slice(0, 110));
     else if (done === null) note('texture', 'failed', 'timed out');
     else if (done.failed) note('texture', 'failed', done.msg.slice(0, 120));
     else note('texture', 'ok', done.msg.slice(0, 90));

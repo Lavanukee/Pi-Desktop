@@ -74,7 +74,10 @@ def test_all_nan_output_is_not_a_successful_remesh(tmp_path: Path = Path("/tmp")
 
 def test_wireframe_indices_follow_the_bake(tmp_path: Path = Path("/tmp")) -> None:
     """Baking renumbers vertices; the quad wireframe has to come with them."""
-    _needs("numpy")
+    # trimesh too: importing retopo_worker pulls in _meshprep, which imports it
+    # at module scope — so this skips on the system interpreter like its siblings
+    # rather than failing there.
+    _needs("numpy", "trimesh")
     mod = _retopo_module()
 
     # xatlas hands back vertex_map[new] = old. Here old vertex 1 was split in

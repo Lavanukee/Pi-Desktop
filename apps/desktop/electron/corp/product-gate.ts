@@ -265,6 +265,13 @@ export function gateFeedback(result: GateResult): string {
       `it is inside the product, fix the product. Do not rewrite working code to`,
       `satisfy a test that is itself broken.`,
       ``,
+      `Two test bugs worth ruling out first, because both look exactly like product`,
+      `bugs from the outside:`,
+      `  - the test converts an input file it never created. Read it top to bottom and`,
+      `    check that every file it opens is one it actually wrote.`,
+      `  - the test asks for something the format cannot do — a value keeping its type`,
+      `    through CSV, which has none. Narrow it to what is actually possible.`,
+      ``,
       `Then make the check pass. Do not report the work as finished until this exact`,
       `command exits 0.`,
     ].join('\n');

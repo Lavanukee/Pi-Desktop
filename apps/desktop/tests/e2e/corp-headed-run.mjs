@@ -26,9 +26,8 @@
  * Exit code 0 means the run was DRIVEN, never that the product is good — the
  * verification is the hierarchy, and ultimately a human looking at the artifacts.
  */
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { _electron as electron } from 'playwright-core';
@@ -46,12 +45,41 @@ const arg = (name, fallback) => {
 };
 
 const TASK = process.env.TASK ?? arg('task', '');
+/** Words that say nothing about what is being built. */
+const STOPWORDS = new Set([
+  'build', 'make', 'create', 'write', 'real', 'the', 'and', 'for', 'with', 'that', 'this',
+  'into', 'from', 'like', 'any', 'all', 'can', 'has', 'have', 'them', 'they', 'you', 'your',
+  'able', 'must', 'need', 'want', 'please', 'app', 'application',
+]);
 const EFFORT = process.env.EFFORT ?? arg('effort', 'max');
 const MINUTES = Number(process.env.MINUTES ?? arg('minutes', '45'));
 const SHOT_MS = Number(process.env.SHOT_MS ?? 60_000);
 const OUT = process.env.OUT ?? path.join(repoRoot, '.corp-runs', 'corp-headed');
-const PROJECT =
-  process.env.PROJECT ?? arg('project', mkdtempSync(path.join('/tmp', 'corp-project-')));
+/*
+ * A REAL, NAMED FOLDER — never a temp path with a random suffix.
+ *
+ * The default used to be `mkdtemp('/tmp/corp-project-')`, which produces
+ * `/tmp/corp-project-Xk9fL2`. jedd, watching a run go into one: "that's just not
+ * going to work." He is right, and not only aesthetically. That directory means
+ * nothing to the person who has to open it afterwards, it is swept away by the
+ * OS, and the TEAM is keyed to its path — so a project whose folder is a random
+ * string is a team that can never be returned to, which is the one thing the
+ * hierarchy exists to provide.
+ */
+const requested = process.env.PROJECT ?? arg('project', '');
+const PROJECT = path.resolve(requested !== '' ? requested : defaultProjectDir());
+
+function defaultProjectDir() {
+  const slug =
+    TASK.toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+      .split(' ')
+      .filter((w) => w.length > 2 && !STOPWORDS.has(w))
+      .slice(0, 3)
+      .join('-') || 'corp-project';
+  return path.join(process.env.HOME ?? '/tmp', 'Desktop', slug);
+}
 
 if (TASK.trim() === '') {
   console.error('corp-headed-run: set TASK="..." (or --task "...")');

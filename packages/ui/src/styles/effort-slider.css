@@ -5,12 +5,12 @@
  * readout accent-lit up top beside a "?" help affordance, a horizontal track
  * flanked by "Faster" / "Smarter" end labels, and a subtle "Auto" toggle below.
  *
- * The track fill keeps the round-14 heat: a live temperature gradient blue
- * (cool/low) → red (hot/Max), interpolated by the inline `--pd-effort-heat`
- * (0..1) the component sets from the fill fraction, but now under a SUBTLE
- * DITHERED dot texture (a tiled radial-gradient) so it reads as a tactile,
- * printed-looking fill rather than a flat bar. Tokens only (styles-hygiene);
- * theme-aware (light + dark) + reduced-motion safe.
+ * The track fill is BLUE at every level (jedd), deepening slightly as effort
+ * climbs, under a subtle dithered dot texture (a tiled radial-gradient) so it
+ * reads as a tactile, printed-looking fill rather than a flat bar. It used to
+ * warm blue → red toward Max, which reads as a warning at exactly the setting
+ * you would choose deliberately. The knob is a circle. Tokens only
+ * (styles-hygiene); theme-aware (light + dark) + reduced-motion safe.
  */
 
 .pd-effort {
@@ -111,29 +111,29 @@
     0 0 0 3px var(--pd-status-info-bg);
 }
 
-/* The temperature fill that grows left→right with effort: blue (cool/low) → red
- * (hot/Max), interpolated by the inline `--pd-effort-heat` (0..1), under a tiled
- * dithered dot texture (a repeating radial-gradient in a translucent light tint)
- * so the fill reads as a printed/tactile surface, not a flat bar. A min-width
- * keeps a rounded nub (and the knob) visible at the "least" end; a heat-scaled
- * glow makes the pill feel like it's warming up as effort climbs. */
+/* The fill that grows left→right with effort. BLUE, at every level (jedd): the
+ * previous version warmed blue→red as effort climbed, which reads as a warning
+ * the higher you go — the opposite of what more effort means here. One accent
+ * colour, deepening slightly with effort so the change is still felt, under the
+ * same tiled dot texture that keeps it tactile rather than flat. A min-width
+ * keeps a rounded nub (and the knob) visible at the "least" end. */
 .pd-effort-fill {
   position: absolute;
   inset: 0 auto 0 0;
-  min-width: 18px;
+  min-width: 20px;
   border-radius: var(--pd-radius-full);
   background-color: color-mix(
     in srgb,
-    var(--pd-status-danger-fg) calc(var(--pd-effort-heat, 0) * 100%),
-    var(--pd-border-focus)
+    var(--pd-border-focus) calc(78% + var(--pd-effort-heat, 0) * 22%),
+    var(--pd-accent-primary)
   );
   background-image: radial-gradient(
-    color-mix(in srgb, var(--pd-text-on-accent) 34%, transparent) 0.5px,
+    color-mix(in srgb, var(--pd-text-on-accent) 30%, transparent) 0.5px,
     transparent 1.4px
   );
   background-size: 4px 4px;
-  box-shadow: 0 0 calc(2px + var(--pd-effort-heat, 0) * 8px)
-    color-mix(in srgb, var(--pd-status-danger-fg) calc(var(--pd-effort-heat, 0) * 70%), transparent);
+  box-shadow: 0 0 calc(2px + var(--pd-effort-heat, 0) * 6px)
+    color-mix(in srgb, var(--pd-border-focus) calc(var(--pd-effort-heat, 0) * 55%), transparent);
   transition:
     width var(--pd-duration-base) var(--pd-easing-standard),
     background-color var(--pd-duration-base) var(--pd-easing-standard),
@@ -141,21 +141,33 @@
 }
 
 /* The grab knob rides the fill's right edge (always visible via the fill nub): a
- * clean rounded white disc with a soft shadow + hairline ring, straddling the
- * slim track vertically so it reads as a tactile grip. */
+ * clean white CIRCLE with a soft shadow and a hairline ring, straddling the slim
+ * track vertically so it reads as something you can take hold of. Explicitly
+ * round rather than a rounded square — a circle is what a draggable point looks
+ * like, and it reads as grabbable at this size where a squircle reads as a chip. */
 .pd-effort-knob {
   position: absolute;
   top: 50%;
-  right: 2px;
-  width: 18px;
-  height: 18px;
+  right: 1px;
+  width: 16px;
+  height: 16px;
   transform: translateY(-50%);
-  border-radius: var(--pd-radius-full);
+  border-radius: 50%;
   background: var(--pd-bg-raised);
   box-shadow:
     var(--pd-shadow-md),
+    0 0 0 1px var(--pd-border-default);
+}
+
+/* Grabbing it: a touch larger, and a soft accent halo so the drag reads as live. */
+.pd-effort-track:active .pd-effort-knob,
+.pd-effort-track:focus-visible .pd-effort-knob {
+  width: 18px;
+  height: 18px;
+  box-shadow:
+    var(--pd-shadow-md),
     0 0 0 1px var(--pd-border-default),
-    inset 0 1px 0 var(--pd-border-subtle);
+    0 0 0 4px color-mix(in srgb, var(--pd-border-focus) 22%, transparent);
 }
 
 /* ── Footer: the Auto ↔ pinned-level toggle ───────────────────────────────── */

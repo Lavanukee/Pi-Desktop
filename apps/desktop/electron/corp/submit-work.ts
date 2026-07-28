@@ -36,6 +36,10 @@ export interface SubmittedWork {
   readonly summary: string;
   readonly command: string;
   readonly output: string;
+  /** Something wrong the engineer saw outside its own files, for the manager to
+   * route. Engineers are told to report rather than reach in — two people editing
+   * one file is how a build breaks, and the owner has context they do not. */
+  readonly noticed?: string;
 }
 
 export interface SubmitWorkOptions {
@@ -395,6 +399,13 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
           type: 'string',
           description: 'One line: what you built.',
         },
+        noticed: {
+          type: 'string',
+          description:
+            'OPTIONAL. Anything wrong you saw OUTSIDE the files you own — you are not to fix ' +
+            'those yourself. Say what is wrong, which file, and the fix you would make if it ' +
+            'were yours. This goes straight to the manager, who routes it to the owner.',
+        },
       },
       required: ['command', 'summary'],
     },
@@ -402,6 +413,7 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
       const p = (params ?? {}) as Record<string, unknown>;
       const command = typeof p.command === 'string' ? p.command.trim() : '';
       const summary = typeof p.summary === 'string' ? p.summary : '';
+      const noticed = typeof p.noticed === 'string' ? p.noticed.trim() : '';
       if (command === '') {
         return {
           content: [
@@ -486,7 +498,12 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
         return { content: [{ type: 'text', text: ephemeralProofReply(command) }], details: undefined };
       }
       const gate = await runGate(opts);
-      opts.onAccepted?.({ summary, command, output: result.output });
+      opts.onAccepted?.({
+        summary,
+        command,
+        output: result.output,
+        ...(noticed !== '' ? { noticed } : {}),
+      });
       if (gate !== undefined && gate.ran && !gate.ok) {
         return {
           content: [

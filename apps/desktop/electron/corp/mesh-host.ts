@@ -344,7 +344,7 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
    * happens inside the engineer's own turn. Its only evidence was the engineer's
    * word, which is exactly what the rule exists to distrust. So an accepted
    * submission is stamped onto the reply the manager actually reads. */
-  const accepted = new Map<string, string>();
+  const accepted = new Map<string, { command: string; noticed?: string }>();
 
   const run: RunAgentTurn = async ({ agentId, from, message, talk }) => {
     const agent = roster.get(agentId);
@@ -416,7 +416,10 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
                   createSubmitWorkTool({
                     cwd: config.cwd,
                     onAccepted: (w) => {
-                      accepted.set(agentId, w.command);
+                      accepted.set(agentId, {
+                        command: w.command,
+                        ...(w.noticed !== undefined ? { noticed: w.noticed } : {}),
+                      });
                       config.onSubmitted?.(agentId, w.command, true);
                     },
                     onRejected: (cmd) => config.onSubmitted?.(agentId, cmd, false),
@@ -458,7 +461,12 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
       const stamp = accepted.get(agentId);
       if (stamp !== undefined) {
         accepted.delete(agentId);
-        reply = `${reply}\n\n[submit_work ACCEPTED — the command that passed: ${stamp}]`;
+        reply = `${reply}\n\n[submit_work ACCEPTED — the command that passed: ${stamp.command}]`;
+        if (stamp.noticed !== undefined && stamp.noticed !== '') {
+          // Flagged rather than fixed, per the engineer's brief: it belongs to
+          // somebody else, and routing it is the manager's job.
+          reply = `${reply}\n[NOTICED OUTSIDE ITS OWN FILES — route this: ${stamp.noticed}]`;
+        }
       }
       // Rescue anything written into a re-stated copy of the workspace path
       // BEFORE the next agent looks at the tree. Run 11 lost its whole product

@@ -79,7 +79,7 @@ export function ceoMeshPrompt(task: string): string {
 
 You are the CEO. The user asked for: ${task}
 
-Form a clear vision of what to build (research first if you need to), then ${TALK_TO_TOOL} the manager with it — the manager has a team of engineers and can build anything you describe.
+YOUR FIRST ACTION IS TO ${TALK_TO_TOOL} THE MANAGER. Not to plan at length, not to look around — you have no editor, no shell and no file tools, so there is nothing here for you to do alone. Decide what the user actually wants and send the manager a clear brief. The manager has a team of engineers and can build anything you describe.
 
 You do not build and you cannot run things yourself — that is deliberate. Before you accept work as done, ${COMMISSION_SPECIALIST_TOOL} the tester and have it RUN the product for you. "The team says it is finished" is not evidence. If a failing check comes back, do not argue with it — ${TALK_TO_TOOL} the manager with the exact failure and have it fixed.
 
@@ -187,7 +187,21 @@ const FILE_TOOLS = ['read', 'write', 'edit', 'ls', 'grep', 'find'];
  *   specialist     — read + shell, but NO write/edit. It must RUN what it judges;
  *                    it must not quietly become a second engineer.
  */
-const DEFAULT_CEO_TOOLS = ['read', 'ls', 'grep', 'find', ...RESEARCH_TOOLS];
+/*
+ * The CEO gets RESEARCH ONLY — no file tools at all.
+ *
+ * Taking away its shell (L7) stopped it building the product itself, but it did
+ * not make it delegate: run 5's CEO spent 17 turns saying "Let me create the
+ * project structure" and then `ls`ing an empty directory and reading a file that
+ * did not exist, over and over. Its plan was "build it"; with no way to build it,
+ * it retried rather than reconsidered.
+ *
+ * A small model works with what is in front of it. Leave it file tools and an
+ * empty tree and it will poke at the empty tree. Leave it only research and a way
+ * to TALK, and talking becomes the obvious move. It learns what the product does
+ * by commissioning the tester, which is the honest way to know anyway.
+ */
+const DEFAULT_CEO_TOOLS = [...RESEARCH_TOOLS];
 const DEFAULT_MANAGER_TOOLS = ['read', 'ls', 'grep', 'find', ...RESEARCH_TOOLS];
 const DEFAULT_ENGINEER_TOOLS = [...FILE_TOOLS, 'bash', ...RESEARCH_TOOLS];
 const DEFAULT_SPECIALIST_TOOLS = ['read', 'ls', 'grep', 'find', 'bash', ...RESEARCH_TOOLS];

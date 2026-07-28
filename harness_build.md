@@ -296,6 +296,24 @@ The general form, and it belongs in the 4b rules: **when one agent writes both t
 product and its test, a broken test is indistinguishable from a broken product.**
 The harness has to name that possibility, because the model will not.
 
+**L11 · Removing a capability stops the behaviour; it does not redirect it.** The
+other half of L7, and I walked straight into it. With `bash` taken away, run 5's
+CEO did not start delegating — it spent 17 turns saying *"I'll build a
+file-conversion tool… Let me create the project structure"*, then `ls`ing an empty
+directory and reading a file that did not exist, over and over. Its plan was
+"build it"; with no way to build it, it **retried rather than reconsidered**.
+
+A small model works with whatever is in front of it. Leave it file tools and an
+empty tree and it will poke at the empty tree. So the CEO now has *only* research
+tools and the ability to talk, and its prompt opens with the imperative — "YOUR
+FIRST ACTION IS TO talk_to THE MANAGER" — rather than burying it after "form a
+clear vision". It finds out what the product does by commissioning the tester,
+which is the honest way to know anyway.
+
+Together L7 and L11 are one rule: **shape behaviour by making the RIGHT action the
+easiest available one.** Taking away the wrong tool is only half the job; something
+obvious has to be left in its place.
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

@@ -254,6 +254,11 @@ async function main() {
       cwd: WORKSPACE,
       engineerCount: ENGINEERS,
       signal: controller.signal,
+      onGate: (g, round) => {
+        const verdict = g.ok ? 'PASS' : g.ran ? `FAIL (exit ${g.exitCode})` : 'UNVERIFIABLE';
+        log(`GATE round ${round}: ${verdict} — ${g.how}${g.command ? ` [${g.command}]` : ''}`);
+        record({ kind: 'gate', round, ok: g.ok, ran: g.ran, how: g.how, command: g.command, output: g.output });
+      },
       onActivity: (agentId, r) => {
         const a = seen(agentId);
         if (r.kind === 'turn-start') {
@@ -284,6 +289,9 @@ async function main() {
   const files = productFiles(WORKSPACE);
   const summary = {
     task: TASK_NAME,
+    gate: result.gate,
+    blockedCapabilities: result.blocked,
+    capabilities: result.capabilities,
     wallSeconds: Math.round((Date.now() - t0) / 1000),
     turns: result.turns,
     hops: result.hops.length,
@@ -309,6 +317,14 @@ async function main() {
       .join(' ');
     console.log(`  ${a.id.padEnd(22)} turns ${String(a.turns).padStart(3)}  ${tools}`);
   }
+  const g = result.gate;
+  console.log(
+    `\nGATE            ${g.ok ? 'PASS' : g.ran ? 'FAIL' : 'UNVERIFIABLE'} · ${g.how}` +
+      `${g.command ? `\n                ${g.command}` : ''}`,
+  );
+  if (!g.ok) console.log(`                ${g.output.split('\n').slice(-6).join('\n                ')}`);
+  if (result.blocked.length > 0) console.log(`BLOCKED         ${result.blocked.join(', ')}`);
+
   console.log(`\nproduct         ${files.length} file(s), ${summary.productBytes} bytes`);
   for (const f of files.slice(0, 40)) console.log(`  ${f.bytes.toString().padStart(8)}  ${f.path}`);
   console.log(`\nartifacts       ${RUN_DIR}`);

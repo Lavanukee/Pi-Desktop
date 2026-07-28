@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SUBMIT_WORK_TOOL, cannotFailReply, createSubmitWorkTool, proofCannotFail, proofLooksHollow, runProof, submissionReply, type ProductCheck, type SubmitWorkOptions } from './submit-work';
+import { SUBMIT_WORK_TOOL, cannotFailReply, createSubmitWorkTool, proofCannotFail, proofLooksHollow, runProof, submissionReply, type ProductCheck, type SubmitWorkOptions, unchangedReply } from './submit-work';
 
 let dir: string;
 beforeEach(() => {
@@ -75,6 +75,67 @@ describe('the proof is run, not taken on trust', () => {
     const tool = createSubmitWorkTool({ cwd: dir });
     await expect(tool.execute(null, { command: 'exit 7', summary: 'x' })).resolves.toBeDefined();
     await expect(tool.execute(null, undefined)).resolves.toBeDefined();
+  });
+});
+
+describe('resubmitting into an unchanged tree', () => {
+  // Run 13's last twenty minutes: 1200 seconds, ZERO file writes, three
+  // submissions of a command already refused. Run 12: three byte-identical
+  // rejections. The rejection carries the real traceback and ends "Fix it and
+  // call submit_work again" — and the model reads the second half.
+  let ws: string;
+  beforeEach(() => {
+    ws = mkdtempSync(path.join(os.tmpdir(), 'pd-again-'));
+    writeFileSync(path.join(ws, 'verify.py'), 'raise SystemExit("6 failed, 11 passed")\n');
+  });
+  afterEach(() => {
+    rmSync(ws, { recursive: true, force: true });
+  });
+
+  const submit = async (tool: ReturnType<typeof createSubmitWorkTool>): Promise<string> => {
+    const res = (await tool.execute(undefined, {
+      command: 'python3 verify.py',
+      summary: 'converter',
+    })) as { content: Array<{ text: string }> };
+    return res.content[0]?.text ?? '';
+  };
+
+  it('runs the first failure, then refuses the identical retry without running it', async () => {
+    const tool = createSubmitWorkTool({ cwd: ws, timeoutMs: 60_000 });
+    const first = await submit(tool);
+    expect(first).toContain('NOT ACCEPTED');
+    expect(first).toContain('6 failed, 11 passed');
+
+    const second = await submit(tool);
+    expect(second).toContain('NOT RUN');
+    expect(second).toContain('NOTHING in the');
+  });
+
+  it('names what to change, including that the TEST may be the wrong thing', async () => {
+    const reply = unchangedReply('python3 -m pytest -q');
+    expect(reply).toContain('python3 -m pytest -q');
+    expect(reply).toContain('flat CSV cannot');
+    expect(reply).toContain('talk_to the manager');
+  });
+
+  it('lets the same command through once the product actually changes', async () => {
+    const tool = createSubmitWorkTool({ cwd: ws, timeoutMs: 60_000 });
+    expect(await submit(tool)).toContain('NOT ACCEPTED');
+    // The engineer fixes something — the tree is different, so the command runs.
+    writeFileSync(path.join(ws, 'verify.py'), 'print("17 passed")\n');
+    const third = await submit(tool);
+    expect(third).not.toContain('NOT RUN');
+    expect(third).toContain('ACCEPTED');
+  });
+
+  it('a NEW command is always run, even over an unchanged tree', async () => {
+    const tool = createSubmitWorkTool({ cwd: ws, timeoutMs: 60_000 });
+    expect(await submit(tool)).toContain('NOT ACCEPTED');
+    const res = (await tool.execute(undefined, {
+      command: 'python3 verify.py --verbose',
+      summary: 'converter',
+    })) as { content: Array<{ text: string }> };
+    expect(res.content[0]?.text ?? '').not.toContain('NOT RUN');
   });
 });
 

@@ -150,3 +150,33 @@ export function repairNote(moved: readonly RepairedFile[]): string {
     .filter((l) => l !== '')
     .join('\n');
 }
+
+/**
+ * A cheap signature of the product tree: every file's path, size and mtime.
+ *
+ * Exists to answer one question — "has anything actually changed since last
+ * time?" Run 13 spent its last twenty minutes (1200 of 1800 seconds) with ZERO
+ * file writes while an engineer submitted the same failing command three times,
+ * and run 12 produced three byte-identical rejections the same way. A rejection
+ * carrying the real error is worth nothing to a model that reads it as "try
+ * again" rather than "change something".
+ *
+ * Ignores the machinery: session files, caches, and compiled artefacts churn on
+ * their own and would make every fingerprint unique. Never throws.
+ */
+export function productFingerprint(cwd: string): string {
+  const skip = /(^|\/)(\.pi|\.pytest_cache|__pycache__|node_modules|\.git)(\/|$)/;
+  const root = path.resolve(cwd);
+  const items: string[] = [];
+  for (const file of walkFiles(root)) {
+    const rel = path.relative(root, file);
+    if (skip.test(rel)) continue;
+    try {
+      const st = statSync(file);
+      items.push(`${rel}:${st.size}:${Math.round(st.mtimeMs)}`);
+    } catch {
+      // vanished mid-walk — not worth failing over
+    }
+  }
+  return items.sort().join('|');
+}

@@ -647,6 +647,37 @@ The corollary for `check_product`: giving it to *every* role was wrong in the sa
 way. The manager needs it (L20), a specialist needs it, an engineer benefits. A
 CEO with it becomes a very slow debugger.
 
+**L24 · The run did not run out of time. It stopped working.** Run 13's file
+writes, by timestamp:
+
+```
+  45.4s → 592.3s     22 writes
+ 592.3s → 1800.0s    none
+```
+
+Twenty minutes — two-thirds of the run — in which nothing in the product changed.
+engineer:2 submitted at 865s, 1304s and 1788s, each time the same command it had
+already been refused, with no edit in between. Run 12 did it too: three
+byte-identical rejections. The rejection carries the real traceback and ends
+*"Fix it and call submit_work again"*, and the model reads the second half.
+
+I had been reading this as a time shortage, and it is not — 11 of 17 tests passed
+and the remaining six were one coherent problem. The team had twenty minutes to
+solve it and spent them re-running a known answer.
+
+So a resubmission is refused **without running anything** when the command is
+identical and the product's fingerprint (paths, sizes, mtimes, ignoring caches and
+session files) is unchanged. This is not a penalty — it is the only honest reply,
+because the result is already known. The refusal says what the rejection could
+not: decide which file is *actually* wrong, and if a test asks for something the
+format cannot do (a flat CSV will never round-trip a nested value), narrow the
+test and say so.
+
+The pattern across L14, L17, L20 and now this: **a rejection is information, and
+information is what these models are worst at acting on.** What works is removing
+the option. The gate they cannot reach becomes a tool; the check they will not run
+becomes automatic; the retry they will not stop becomes impossible.
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

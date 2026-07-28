@@ -26,6 +26,7 @@
 
 import { execFile } from 'node:child_process';
 import { runProductGate } from './product-gate';
+import { productFingerprint } from './workspace-paths';
 
 /** The name the prompts and the allowlist must agree on. */
 export const SUBMIT_WORK_TOOL = 'submit_work';
@@ -137,6 +138,26 @@ export function proofCannotFail(command: string): boolean {
   // `|| <something that succeeds>` — the classic failure-swallower.
   if (/\|\|\s*(true|:|exit\s+0|echo\b|printf\b)/.test(trimmed)) return true;
   return false;
+}
+
+/** What an engineer is told when it resubmits into an unchanged tree. */
+export function unchangedReply(command: string): string {
+  return [
+    `NOT RUN — you already submitted \`${command}\` and it failed, and NOTHING in the`,
+    `product has changed since. It will fail identically, so there is no point running`,
+    `it again.`,
+    ``,
+    `Change something first. Look at the error you were given and decide which file is`,
+    `actually wrong:`,
+    `  - the PRODUCT, if it does not do what the test asks — fix the product;`,
+    `  - the TEST, if it asks for something that cannot be done. A flat CSV cannot`,
+    `    hold a nested value, so a round-trip through it will never return one. That`,
+    `    is a broken test, not a broken converter: narrow it to what the format can`,
+    `    actually carry, and say in your reply that you did.`,
+    ``,
+    `If you genuinely cannot tell, talk_to the manager with the error rather than`,
+    `submitting again.`,
+  ].join('\n');
 }
 
 /** What an engineer is told when its proof would have passed regardless. */
@@ -275,6 +296,19 @@ interface ToolLike {
  * custom-tool shape; the caller casts it into its `ToolDefinition[]`.
  */
 export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
+  /*
+   * THE SAME COMMAND, OVER AN UNCHANGED TREE, FAILS THE SAME WAY.
+   *
+   * Run 13's last twenty minutes: 1200 seconds, zero file writes, three
+   * submissions of a command already refused. Run 12: three byte-identical
+   * rejections. The rejection carries the real traceback and ends "Fix it and
+   * call submit_work again" — and the model reads the second half.
+   *
+   * So a resubmission is refused WITHOUT running anything when the command is
+   * identical and nothing in the product has changed since. Not a penalty: it is
+   * the only honest answer, because the result is already known.
+   */
+  let lastFailure: { command: string; fingerprint: string } | undefined;
   return {
     name: SUBMIT_WORK_TOOL,
     label: SUBMIT_WORK_TOOL,
@@ -321,6 +355,16 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
           details: undefined,
         };
       }
+      if (lastFailure !== undefined && lastFailure.command === command) {
+        const now = productFingerprint(opts.cwd);
+        if (now === lastFailure.fingerprint) {
+          opts.onRejected?.(command, 'resubmitted unchanged — nothing in the product changed');
+          return {
+            content: [{ type: 'text', text: unchangedReply(command) }],
+            details: undefined,
+          };
+        }
+      }
       // Refuse a proof-by-nothing BEFORE running it: a command that would pass
       // regardless is worse than no command, because it records a false success.
       if (proofLooksHollow(command)) {
@@ -333,6 +377,7 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
       }
       const result = await runProof(command, opts);
       if (!result.ok) {
+        lastFailure = { command, fingerprint: productFingerprint(opts.cwd) };
         opts.onRejected?.(command, result.output);
         return {
           content: [{ type: 'text', text: submissionReply(command, result) }],
@@ -360,6 +405,7 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
       // fatal). Its own proof passed; that stands.
       const capabilityGap = gate !== undefined && !gate.ran && gate.how.includes('unavailable');
       if (gate !== undefined && !gate.ok && !capabilityGap) {
+        lastFailure = { command, fingerprint: productFingerprint(opts.cwd) };
         opts.onRejected?.(command, `product check failed: ${gate.output.slice(0, 300)}`);
         return {
           content: [{ type: 'text', text: productCheckReply(command, gate) }],

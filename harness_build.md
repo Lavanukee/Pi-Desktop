@@ -78,6 +78,29 @@ Concretely, that means:
 
 ## 3. Ground truth — where it actually is today
 
+### 3a. After the live runs (2026-07-28, runs 7–18)
+
+The table in §3b was written before the harness had ever finished a run. It is
+kept because it is what the rebuild started from; everything in it is now false.
+The current position, measured rather than claimed:
+
+| | |
+|---|---|
+| **Runs completed end to end** | 12 (runs 7–18), each 30–40 minutes on one 4B model slot |
+| **Best product** | run 16 — **6/6 conversions correct**, confirmed by the held-out check AND by hand through a full `json→csv→yaml→json→yaml→csv→json` cycle, all records intact |
+| **Best run VERDICT** | still INCOMPLETE. Run 16's own suite has one test that never writes the file it converts, so the team's gate is red on a working product |
+| **Spread across runs** | 6/6, 5/6, 2/6, and one run with no CLI at all. High variance is the headline finding, not an anomaly |
+| **What is now mechanical** | done is an exit code; a proof must exercise the product, must be able to fail, and must be about the artifact the gate judges; a resubmission over an unchanged tree is refused; the manager is handed the task text and the live product state on every message; work written to a mangled path is moved back; the CEO has no tools to misuse |
+| **What is still advisory** | which file is wrong when a check fails; whether a test covers what was asked; who owns which file |
+
+The honest summary: **the corp now produces real software often enough to be
+measured, and the measurement is the contribution.** Before run 7 there was no
+number. There is now a held-out check, a verdict that distinguishes DELIVERED from
+INCOMPLETE from NO PRODUCT, and twelve runs of evidence about where a 4B team
+actually breaks. It has not yet cleared its own bar twice in a row.
+
+### 3b. Before the rebuild (kept for the record)
+
 Verified by reading the code on 2026-07-28, not from memory. **The corp harness
 has never completed a run.** The individual modules are heavily unit-tested (pure
 functions behind injected seams); the *system* is unproven. `.corp-runs/` contains
@@ -711,6 +734,51 @@ This does not generalise to arbitrary tasks — you cannot pre-write acceptance 
 work you have not specified. It is exactly right for a benchmark, and it is how
 any coding agent gets evaluated. The honest reading: **the corp can now be
 measured, and the first measurement says five-sixths.**
+
+**L26 · Writing the held-out check is harder than it looks, and its errors all
+point the wrong way.** The acceptance script produced two false negatives before
+it produced a true one:
+
+- it required the literal string `argv` to recognise an entry point, and reported
+  *"no command-line entry point found"* for run 15 — whose `converter.py` uses
+  `argparse`, which reads `sys.argv` without ever naming it, and which converts
+  correctly when run by hand;
+- it invoked entry points positionally only, and scored run 16 **6 of 6 wrong**
+  with `error: the following arguments are required: --input, --output`. The task
+  said "a command-line entry point that takes an input file and an output file"
+  and said nothing about their form. Run 16 was in fact the best product any run
+  has produced.
+
+Both failed work that had actually been done. That asymmetry matters: a lenient
+gate costs you one bad run, and a strict one costs you the run *and* the fix you
+would have made, because you go looking for a bug that is in your instrument. The
+rule that fell out: **when the checker and the product disagree about the
+interface, try the other reasonable thing before believing the checker.** It now
+tries seven argument forms and decides by running, and the entry-point filter is
+"has a `__main__`, is not a test" — nothing cleverer.
+
+**L27 · The result is variance, and that is the finding.** Same task, same model,
+same harness, four consecutive runs:
+
+```
+run 14   5/6 conversions   CLI present, gate green on a suite that tested its own limitation
+run 15   2/6               CLI present, silently dropped the first CSV row
+run 16   6/6               CLI present, verified by hand — one broken test in its own suite
+run 17   no CLI at all     library + tests only, 22 of 28 failing
+```
+
+Nothing in the harness changed between 16 and 17 except prompts that should have
+helped. A 4B team is not a deterministic compiler with a bad day; it is a
+distribution, and the harness's job is to raise its floor and — more importantly —
+to *know which sample it got*. Every gate in §5 is floor-raising. The held-out
+check is the part that tells you where the sample landed, and without it run 14
+would have been recorded as a success and run 16 as a failure, which is precisely
+backwards.
+
+The practical consequence for anyone reading this later: **judge the harness on
+the distribution, never on one run**, and treat a single green as a hypothesis.
+The next thing worth building is not another gate — it is running the same task
+five times and reporting the spread.
 
 ## 6. Known-hard, deliberately deferred
 

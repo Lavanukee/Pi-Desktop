@@ -678,6 +678,40 @@ information is what these models are worst at acting on.** What works is removin
 the option. The gate they cannot reach becomes a tool; the check they will not run
 becomes automatic; the retry they will not stop becomes impossible.
 
+**L25 · A team that writes its own tests writes tests it passes.** Run 14's gate
+went GREEN — `python3 -m pytest -q`, 20 passed, which I re-ran independently. The
+product converts JSON→CSV, JSON→YAML, CSV→JSON, CSV→YAML and YAML→JSON correctly
+on inputs it had never seen. Driving the CLI myself on a sixth:
+
+```
+$ python3 cli/convert.py config.yaml out.csv
+Error: Conversion failed: YAML must contain a 'data' key for CSV conversion
+```
+
+Five of six. And the suite's only `yaml_to_csv` cases are a hand-made "wrapper"
+file that satisfies the limitation, plus one asserting failure for anything else.
+**The team encoded its own limitation as the specification and then tested that
+the limitation holds.** Nothing here is dishonest — the tests run, they pass, they
+are simply not the requirement, which said "any of the three to any other".
+
+This is the ceiling on everything in §5. L13, L16, L17 and L22 all make the gate
+harder to fool; none of them can help, because the gate is *made of the team's own
+tests* and can only ever ask "is this self-consistent?". The one question it
+cannot ask is "is this what was asked for?".
+
+So the benchmark targets get a **held-out check**: written by the harness, never
+shown to the team, run on inputs the product has never seen, testing exactly what
+the task text asked for and nothing more (flat records through all six ordered
+pairs — not nested data through CSV, which is ill-posed and was never requested).
+`DELIVERED` now requires the team's gate AND the held-out check. It was validated
+against a control both ways before being trusted: a minimal correct converter
+passes it, an empty tree fails it, and run 14 fails it for the one real reason.
+
+This does not generalise to arbitrary tasks — you cannot pre-write acceptance for
+work you have not specified. It is exactly right for a benchmark, and it is how
+any coding agent gets evaluated. The honest reading: **the corp can now be
+measured, and the first measurement says five-sixths.**
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

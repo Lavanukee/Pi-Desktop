@@ -23,7 +23,7 @@
  *
  * Kills the server on every exit path — no orphan.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   appendFileSync,
   existsSync,
@@ -97,7 +97,10 @@ const TRANSCRIPT = path.join(RUN_DIR, 'transcript.jsonl');
  * to RUN_DIR; only the product tree moves somewhere a small model can hold in
  * one piece.
  */
-const WORKSPACE = process.env.WORKSPACE ?? path.join(os.tmpdir(), `cw-${path.basename(RUN_DIR)}`);
+// `/tmp` LITERALLY, not os.tmpdir(): on macOS the latter is
+// /var/folders/4h/nq1c73q107v594j4g0lq6bw00000gn/T — an opaque 50-character path,
+// which is most of the problem again. /tmp resolves to /private/tmp.
+const WORKSPACE = process.env.WORKSPACE ?? path.join('/tmp', `cw-${path.basename(RUN_DIR)}`);
 mkdirSync(WORKSPACE, { recursive: true });
 
 const t0 = Date.now();
@@ -375,11 +378,38 @@ async function main() {
    * mode this whole rebuild exists to catch.
    */
   const nonTrivial = files.filter((f) => f.bytes > 64);
-  const verdict =
-    nonTrivial.length > 0 ? 'PRODUCED A PRODUCT' : 'NO PRODUCT — talked, built nothing';
+
+  /*
+   * THE HELD-OUT CHECK. The product gate runs the TEAM'S tests, so it can only ask
+   * "is this self-consistent?" — and run 14 went green while failing YAML->CSV,
+   * because the suite tested the limitation the team had built rather than the
+   * requirement it was given. For the named benchmark targets the harness keeps
+   * its own acceptance check, never shown to the team, run on inputs the product
+   * has never seen. DELIVERED means both agree.
+   */
+  const acceptanceScript = path.join(appRoot, 'tests/e2e/acceptance', `${TASK_NAME}-acceptance.py`);
+  let accepted;
+  if (existsSync(acceptanceScript)) {
+    const res = spawnSync('python3', [acceptanceScript, WORKSPACE], {
+      encoding: 'utf8',
+      timeout: 300_000,
+    });
+    const out = `${res.stdout ?? ''}${res.stderr ?? ''}`.trim();
+    accepted = res.status === 0;
+    console.log(`\nHELD-OUT CHECK  ${accepted ? 'PASS' : 'FAIL'}`);
+    if (out !== '') console.log(out.split('\n').map((l) => `                ${l}`).join('\n'));
+    record({ kind: 'acceptance', ok: accepted, output: out.slice(0, 4000) });
+  }
+
+  const delivered = nonTrivial.length > 0 && g.ok && accepted !== false;
+  const verdict = delivered
+    ? 'DELIVERED — the product exists, passes its own check, and passes the held-out check'
+    : nonTrivial.length > 0
+      ? `INCOMPLETE — built a product but ${!g.ok ? 'its own check fails' : 'it fails the held-out check'}`
+      : 'NO PRODUCT — talked, built nothing';
   console.log(`\nVERDICT: ${verdict}`);
   killServer();
-  process.exit(nonTrivial.length > 0 ? 0 : 1);
+  process.exit(delivered ? 0 : 1);
 }
 
 main().catch((e) => {

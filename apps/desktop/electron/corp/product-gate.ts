@@ -22,7 +22,7 @@
  * unfinished one.
  */
 
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -59,6 +59,20 @@ function readJson(file: string): Record<string, unknown> | undefined {
   }
 }
 
+/** Is pytest actually importable? Cached — this is called during discovery, which
+ * runs on every gate attempt. */
+let pytestAvailable: boolean | undefined;
+function hasPytest(): boolean {
+  if (pytestAvailable !== undefined) return pytestAvailable;
+  try {
+    execFileSync('python3', ['-c', 'import pytest'], { stdio: 'ignore', timeout: 15_000 });
+    pytestAvailable = true;
+  } catch {
+    pytestAvailable = false;
+  }
+  return pytestAvailable;
+}
+
 function listShallow(dir: string): string[] {
   try {
     return readdirSync(dir);
@@ -92,16 +106,31 @@ export function findGate(root: string): GateCandidate | undefined {
     }
   }
 
-  // 3. Python tests — the shape the converter task produces.
   const entries = listShallow(root);
-  const pyTests = entries.filter((f) => /^test_.*\.py$|^.*_test\.py$/.test(f));
-  if (pyTests.length > 0 || existsSync(path.join(root, 'tests'))) {
-    return { how: 'python tests', command: 'python3', args: ['-m', 'pytest', '-q'] };
-  }
-  // A single self-running test script, run directly (no pytest needed).
-  const selfTest = entries.find((f) => /^(test|tests|run_tests)\.py$/.test(f));
+
+  // 3. A standalone runner, run DIRECTLY — checked before pytest on purpose. A
+  //    small model reaches for `if __name__ == '__main__'` far more often than
+  //    for a test framework, and running the file needs nothing installed.
+  const selfTest = entries.find((f) => /^(test|tests|run_tests|check)\.py$/.test(f));
   if (selfTest !== undefined) {
     return { how: 'python test script', command: 'python3', args: [selfTest] };
+  }
+
+  // 4. test_*.py files. WHICH RUNNER MATTERS: pytest is not installed on this
+  //    machine's python3, and running `-m pytest` without it fails with "No
+  //    module named pytest" — which reads as a BROKEN PRODUCT when the truth is a
+  //    missing checker. That mistake costs a whole round of the team "fixing" code
+  //    that was never wrong. Use pytest only if it is actually importable; else
+  //    unittest, which is stdlib and always there.
+  const pyTests = entries.filter((f) => /^test_.*\.py$|^.*_test\.py$/.test(f));
+  if (pyTests.length > 0 || existsSync(path.join(root, 'tests'))) {
+    return hasPytest()
+      ? { how: 'pytest', command: 'python3', args: ['-m', 'pytest', '-q'] }
+      : {
+          how: 'unittest discover',
+          command: 'python3',
+          args: ['-m', 'unittest', 'discover', '-v'],
+        };
   }
 
   // 4. A Godot project — open it headless and see if it loads without erroring.

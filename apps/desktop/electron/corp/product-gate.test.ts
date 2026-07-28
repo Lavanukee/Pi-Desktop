@@ -34,7 +34,9 @@ describe('finding the product’s own check', () => {
   it('falls through package.json without a test script', () => {
     write('package.json', JSON.stringify({ name: 'x' }));
     write('test_convert.py', 'assert True');
-    expect(findGate(dir)?.how).toBe('python tests');
+    // pytest OR unittest depending on what is installed — never `-m pytest` on a
+    // machine without it, which would read as a broken product.
+    expect(['pytest', 'unittest discover']).toContain(findGate(dir)?.how);
   });
 
   it('finds a Makefile test target, a python test, and a godot project', () => {
@@ -43,7 +45,7 @@ describe('finding the product’s own check', () => {
     rmSync(path.join(dir, 'Makefile'));
 
     write('tests/test_a.py', 'assert True');
-    expect(findGate(dir)?.how).toBe('python tests');
+    expect(['pytest', 'unittest discover']).toContain(findGate(dir)?.how);
     rmSync(path.join(dir, 'tests'), { recursive: true });
 
     write('project.godot', '[application]');
@@ -59,19 +61,26 @@ describe('finding the product’s own check', () => {
 
 describe('running it decides, not the team', () => {
   it('a passing check passes', async () => {
-    write('test_ok.py', 'assert 1 + 1 == 2\nprint("converted fine")\n');
+    // A standalone runner needs nothing installed, so this must genuinely pass.
     write('run_tests.py', 'assert 1 + 1 == 2\nprint("converted fine")\n');
     const result = await runProductGate(dir, { timeoutMs: 60_000 });
-    // pytest may not be installed on every machine; either way it must have TRIED
-    // and must not claim success without a zero exit.
-    expect(result.command).not.toBe('');
-    if (result.ran) expect(result.ok).toBe(result.exitCode === 0);
+    expect(result.how).toBe('python test script');
+    expect(result.ran).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.output).toContain('converted fine');
+  });
+
+  it('prefers a standalone runner over a test framework that may not exist', () => {
+    write('run_tests.py', 'print("ok")');
+    write('test_a.py', 'assert True');
+    expect(findGate(dir)?.how).toBe('python test script');
   });
 
   it('a FAILING check fails, and the output is carried back', async () => {
     write('run_tests.py', 'raise SystemExit("conversion produced the wrong number of rows")\n');
     const result = await runProductGate(dir, { timeoutMs: 60_000 });
-    if (result.ran) {
+    expect(result.ran).toBe(true);
+    {
       expect(result.ok).toBe(false);
       expect(result.output).toContain('wrong number of rows');
       // The feedback must hand the team the COMMAND and the real output — that is

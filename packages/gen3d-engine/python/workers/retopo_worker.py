@@ -30,10 +30,12 @@ from _meshprep import (  # noqa: E402
     count_nonmanifold_edges,
     decimate_to,
     export_geometry_obj,
+    base_colour,
     heal_for_native_tool,
     load_concatenated,
 )
 from _progress import artifact, error, progress, stage_done  # noqa: E402
+from _texbake import bake  # noqa: E402
 
 STAGE = "retopo"
 TOTAL_STEPS = 6
@@ -231,6 +233,60 @@ def run_remesher(cmd: list[str], timeout_s: int) -> subprocess.CompletedProcess:
             )
 
 
+def remap_wire(wire: list[int], vertex_map, count: int) -> list[int]:
+    """Point the quad wireframe at the baked mesh's renumbered vertices.
+
+    `vertex_map[new] = old` is what xatlas hands back after it splits vertices
+    along the atlas seams it invents. Inverting it picks ONE new index per old
+    one, which is all the wireframe needs: every new vertex sharing an old index
+    sits at exactly the same position, so any representative draws the same line.
+    """
+    if vertex_map is None or len(wire) == 0:
+        return wire
+    import numpy as np
+
+    inverse = np.full(count, -1, dtype=np.int64)
+    inverse[np.asarray(vertex_map, dtype=np.int64)] = np.arange(len(vertex_map))
+    mapped = inverse[np.asarray(wire, dtype=np.int64)]
+    # An old vertex the unwrap dropped has no representative; drop that edge
+    # rather than draw a line to vertex 0.
+    pairs = mapped.reshape(-1, 2)
+    return pairs[(pairs >= 0).all(axis=1)].ravel().tolist()
+
+
+def remesh_usable(result: subprocess.CompletedProcess | None, out_obj: Path) -> bool:
+    """Did the remesher produce a mesh, or just a file?
+
+    EXIT 0 IS NOT ENOUGH. MEASURED on a TRELLIS character rebuilt through the
+    384³ voxel path: QuadriFlow ran to completion, exited 0, wrote a 18,649-vertex
+    OBJ — and every single vertex was `nan nan nan`. Its index-map solve had
+    given up ("wrong init 730 777!") without saying so in its status. Nothing
+    downstream noticed: the polygon count was healthy, the GLB wrote fine, and
+    the studio reported a successful retopology whose model is invisible and
+    whose bounding box is NaN, so every later stage inherits the poison.
+
+    Cheap to check, and it also routes the failure into the AutoRemesher
+    fallback instead of shipping the garbage.
+    """
+    if result is None or result.returncode != 0 or not out_obj.exists():
+        return False
+    finite = bad = 0
+    with out_obj.open() as fh:
+        for line in fh:
+            if not line.startswith("v "):
+                continue
+            try:
+                x, y, z = (float(t) for t in line.split()[1:4])
+            except ValueError:
+                bad += 1
+                continue
+            if x == x and y == y and z == z and abs(x) != float("inf"):
+                finite += 1
+            else:
+                bad += 1
+    return finite > 0 and bad == 0
+
+
 def failure_reason(result: subprocess.CompletedProcess | None) -> str:
     """A short, human reason for a failed remesh — never a wall of solver logs."""
     if result is None:
@@ -342,7 +398,7 @@ def main() -> None:
     # watertight mesh, and hangs indefinitely at smaller inputs. Its
     # parametrisation is also TBB-parallel and flakes nondeterministically, so
     # it gets one retry.
-    if (result is None or result.returncode != 0 or not out_obj.exists()) and args.cli:
+    if not remesh_usable(result, out_obj) and args.cli:
         engine = "AutoRemesher"
         cmd = [
             args.cli,
@@ -357,11 +413,11 @@ def main() -> None:
         progress(STAGE, "Trying the fallback remesher…", 3, TOTAL_STEPS)
         for attempt in (1, 2):
             result = run_remesher(cmd, args.timeout)
-            if result.returncode == 0 and out_obj.exists():
+            if remesh_usable(result, out_obj):
                 break
             if attempt == 1:
                 progress(STAGE, "Remesher stopped early — retrying…", 3, TOTAL_STEPS)
-    if result is None or result.returncode != 0 or not out_obj.exists():
+    if not remesh_usable(result, out_obj):
         error(f"could not remesh this mesh — {failure_reason(result)}")
         sys.exit(1)
     progress(STAGE, f"Remeshed with {engine}", 3, TOTAL_STEPS)
@@ -384,15 +440,33 @@ def main() -> None:
 
     holes = count_boundary_edges(remeshed)
 
-    wire = polygon_edges(polys)
+    # Repaint the new topology from the original. Baking splits vertices along
+    # the atlas seams it invents, so the counts below are taken from the quad
+    # mesh itself — they describe the topology, not the atlas.
+    quad_vertices = int(len(remeshed.vertices))
+    textured = False
+    vertex_map = None
+    if base_colour(source)[0] is not None:
+        painted = bake(source, remeshed, lambda m: progress(STAGE, m, 5, TOTAL_STEPS))
+        if painted is not None:
+            vertex_map = painted.metadata.pop("pd_vertex_map", None)
+            painted.metadata.update(remeshed.metadata)
+            remeshed = painted
+            textured = True
+
+    # The quad wireframe indexes the vertices the remesher produced. Baking
+    # renumbers them, so those indices have to be carried across or the
+    # wireframe draws as a scribble over the model.
+    wire = remap_wire(polygon_edges(polys), vertex_map, quad_vertices)
     topology = {
         "kind": "quad" if quads > tris + ngons else "mixed",
         "quads": quads,
         "tris": tris,
         "ngons": ngons,
         "polygons": total_polys,
-        "vertices": int(len(remeshed.vertices)),
+        "vertices": quad_vertices,
         "triangles": int(len(remeshed.faces)),
+        "textured": textured,
         "boundaryEdges": holes,
         "nonManifoldEdges": open_edges,
         "watertight": bool(holes == 0),
@@ -422,6 +496,7 @@ def main() -> None:
         f"{quads:,} quads ({quad_pct}% quad), {tris:,} tris"
         + (f", {ngons:,} n-gons" if ngons else "")
         + (", watertight" if holes == 0 else f", {holes:,} open edges")
+        + (", texture kept" if textured else "")
     )
     progress(STAGE, f"Retopology done — {summary}", TOTAL_STEPS, TOTAL_STEPS)
     stage_done(STAGE, summary)

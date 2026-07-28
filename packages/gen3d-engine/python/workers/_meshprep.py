@@ -88,6 +88,22 @@ def load_concatenated(path: str) -> trimesh.Trimesh:
     return loaded
 
 
+def base_colour(mesh: trimesh.Trimesh):
+    """The source's UVs and base-colour image, or (None, None).
+
+    Both have to be present and consistent to be worth carrying: UVs without an
+    image texture nothing, and an image without UVs has nowhere to land.
+    """
+    visual = getattr(mesh, "visual", None)
+    uv = getattr(visual, "uv", None)
+    if uv is None or len(uv) != len(mesh.vertices):
+        return None, None
+    image = getattr(getattr(visual, "material", None), "baseColorTexture", None)
+    if image is None:
+        return None, None
+    return np.asarray(uv, dtype=np.float64), image
+
+
 def heal_for_native_tool(
     mesh: trimesh.Trimesh,
     log: Callable[[str], None] | None = None,

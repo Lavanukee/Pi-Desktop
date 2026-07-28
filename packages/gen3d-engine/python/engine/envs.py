@@ -304,8 +304,19 @@ MESHTOOLS_PACKAGES = [
     # Quadric decimation — the retopo stage caps input density before handing
     # the mesh to AutoRemesher (see _meshprep.decimate_to for the measurement).
     "fast-simplification",
+    # UV unwrapping, so retopology can bake the original's texture onto the new
+    # topology instead of dropping it (see _texbake).
+    "xatlas",
 ]
-MESHTOOLS_IMPORTS = ["trimesh", "numpy", "PIL", "networkx", "scipy", "fast_simplification"]
+MESHTOOLS_IMPORTS = [
+    "trimesh",
+    "numpy",
+    "PIL",
+    "networkx",
+    "scipy",
+    "fast_simplification",
+    "xatlas",
+]
 
 
 #: What the ardy venv must import before it counts as provisioned.

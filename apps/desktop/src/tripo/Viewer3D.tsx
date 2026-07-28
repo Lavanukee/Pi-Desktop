@@ -748,10 +748,12 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       // whole point of the motion stage, and asking the user to find a play
       // control for it would be asking them to prove it worked.
       // (the previous model's mixer was already stopped in the teardown above)
-      if (clips.length > 0) {
+      // `clips[0]` is only undefined if the array is empty, but the index
+      // signature does not know that — and bailing out of the whole loader on it
+      // would skip the thumbnail and leave `loadingId` latched forever.
+      const first = clips[0];
+      if (first !== undefined) {
         importedMixer = new THREE.AnimationMixer(group);
-        const first = clips[0];
-        if (first === undefined) return;
         const action = importedMixer.clipAction(first);
         action.setLoop(THREE.LoopRepeat, Number.POSITIVE_INFINITY);
         action.play();
@@ -1126,6 +1128,23 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       const gridWas = grid.visible;
       ground.visible = false;
       grid.visible = false;
+      /*
+       * Shoot the model's OWN texture, whatever mode the viewport is in.
+       * `renderMode` starts at 'clay' and only flips to 'textured' while the
+       * user is on the texture stage, so a textured model that landed on any
+       * other stage got a grey clay tile — jedd: "textures don't show up often
+       * when available in the thumbnails". The mode is a viewing choice about
+       * the big viewport; a tile's job is to identify the asset, and it cannot
+       * do that in the one colour every asset shares.
+       */
+      const swapped: [InstanceType<typeof THREE.Mesh>, unknown][] = [];
+      for (const { mesh } of importedBodies) {
+        const own = originalMaterials.get(mesh);
+        if (own !== undefined && own !== mesh.material && hasTextureMaps(own)) {
+          swapped.push([mesh, mesh.material]);
+          mesh.material = own;
+        }
+      }
       const prevTarget = renderer.getRenderTarget();
       renderer.setRenderTarget(thumbTarget);
       renderer.render(scene, thumbCam);
@@ -1134,6 +1153,9 @@ export default function Viewer3D({ gizmoRef }: Viewer3DProps): JSX.Element {
       renderer.setRenderTarget(prevTarget);
       ground.visible = groundWas;
       grid.visible = gridWas;
+      for (const [mesh, was] of swapped) {
+        mesh.material = was as InstanceType<typeof THREE.Material>;
+      }
 
       const full = document.createElement('canvas');
       full.width = THUMB_RENDER;

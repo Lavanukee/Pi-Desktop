@@ -8,13 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import {
-  createSubmitWorkTool,
-  proofLooksHollow,
-  runProof,
-  SUBMIT_WORK_TOOL,
-  submissionReply,
-} from './submit-work';
+import { SUBMIT_WORK_TOOL, cannotFailReply, createSubmitWorkTool, proofCannotFail, proofLooksHollow, runProof, submissionReply } from './submit-work';
 
 let dir: string;
 beforeEach(() => {
@@ -81,6 +75,55 @@ describe('the proof is run, not taken on trust', () => {
     const tool = createSubmitWorkTool({ cwd: dir });
     await expect(tool.execute(null, { command: 'exit 7', summary: 'x' })).resolves.toBeDefined();
     await expect(tool.execute(null, undefined)).resolves.toBeDefined();
+  });
+});
+
+describe('a proof that cannot fail is refused before it runs', () => {
+  // Run 8's engineer:1, verbatim and ACCEPTED. The Python underneath was real —
+  // it converted files and asserted on the results. `; true` runs last, so the
+  // command exits 0 either way. Everything before the final four characters looks
+  // exactly like diligence, which is what makes it worse than `--help`.
+  const RUN_8 = `python3 << 'EOF' && rm -f *.json *.csv *.yaml 2>/dev/null; true`;
+
+  it('refuses run 8\u2019s accepted submission', () => {
+    expect(proofCannotFail(RUN_8)).toBe(true);
+  });
+
+  it.each([
+    'python3 run_tests.py; true',
+    'python3 run_tests.py ; true',
+    'make test || true',
+    'python3 run_tests.py || :',
+    './check.sh; exit 0',
+    'npm test || exit 0',
+    'python3 run_tests.py || echo "tests failed"',
+    'pytest -q && echo done; true',
+  ])('refuses %s', (cmd) => {
+    expect(proofCannotFail(cmd)).toBe(true);
+  });
+
+  it.each([
+    'python3 run_tests.py',
+    'make test',
+    'npm test',
+    './check.sh',
+    'python3 -m pytest -q',
+    // Hides OUTPUT, not the exit code — still a real verdict.
+    'python3 run_tests.py 2>/dev/null',
+    // Ends non-zero on failure: the verdict survives.
+    'python3 run_tests.py || exit 1',
+    // `true` appears, but not as the thing that decides the exit code.
+    'python3 -c "assert True"',
+    'python3 convert.py in.json out.csv && python3 verify.py out.csv',
+  ])('still accepts %s', (cmd) => {
+    expect(proofCannotFail(cmd)).toBe(false);
+  });
+
+  it('tells the engineer what to remove, and where cleanup belongs', () => {
+    const reply = cannotFailReply(RUN_8);
+    expect(reply).toContain('NOT ACCEPTED');
+    expect(reply).toContain('exits 0 whether your work is right or wrong');
+    expect(reply).toContain('INSIDE your script');
   });
 });
 

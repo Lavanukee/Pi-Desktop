@@ -412,6 +412,38 @@ in `$HOME`) is not free — redirecting the user base also hides the packages
 already there, `pyyaml` among them — so it is a task, not a one-liner. Recorded
 here rather than half-done, and jedd told what landed on his machine.
 
+**L16 · `; true`.** Run 8's first engineer submitted this, and it was ACCEPTED:
+
+```
+python3 << 'EOF' && rm -f *.json *.csv *.yaml 2>/dev/null; true
+import json, csv, os
+...
+```
+
+The Python underneath was real work — it converted files and asserted on the
+results. It made no difference. `; true` runs last, so the command exits 0
+whether the assertions held or blew up. The submission recorded a passing proof
+of code nobody had checked.
+
+This is worse than run 7's `--help`, and the reason is worth stating: `--help` is
+recognisably lazy, while this is 40 lines of genuine verification with its verdict
+deleted by the final four characters. Both L13's rule and this one survive; the
+hollow check asks *did anything run?*, this one asks *could it have failed?* A
+proof needs both. Refused now: a trailing `true` / `:` / `exit 0`, and any `||
+true`, `|| :`, `|| exit 0`, `|| echo …` that swallows a failure. Not refused:
+`2>/dev/null` (hides output, not the exit code) and `|| exit 1` (keeps it).
+
+The rejection tells the engineer where cleanup belongs — inside the script, before
+it exits with the verdict — because the `rm` is *why* the `; true` was there. It
+wanted the workspace tidy and reached for the shell idiom that guarantees the
+command "works". Refusing without answering that need just produces the next
+variant.
+
+Three runs, three ways to pass a gate without proving anything. That is not three
+mistakes; it is one property of gates. **Assume the current gate is passable and
+ask how, rather than waiting for a run to show you** — the answer has been cheap
+every time, and each discovery has cost thirty minutes of real work.
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

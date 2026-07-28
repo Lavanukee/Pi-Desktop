@@ -109,6 +109,48 @@ export function proofLooksHollow(command: string): boolean {
   });
 }
 
+/**
+ * Does this command throw its own verdict away?
+ *
+ * Run 8's first engineer submitted, and had ACCEPTED:
+ *
+ *     python3 << 'EOF' && rm -f *.json *.csv *.yaml 2>/dev/null; true
+ *
+ * The Python underneath was real — it converted files and asserted on the
+ * results. It did not matter. `; true` runs last, so the command exits 0 whether
+ * the assertions held or blew up. A proof that cannot fail is not a proof, and
+ * this one was more dangerous than run 7's `--help`, because everything before
+ * the last four characters looks exactly like diligence.
+ *
+ * The shapes that force success: a trailing `true`, `:` or `exit 0`, and any
+ * `|| true` / `|| : ` / `|| exit 0` / `|| echo ...` that swallows a failure
+ * mid-command. NOT flagged: `2>/dev/null` (hides output, not the exit code),
+ * `|| exit 1`, or any `||` that still ends non-zero — those keep the verdict.
+ */
+export function proofCannotFail(command: string): boolean {
+  const trimmed = command.trim().replace(/[;\s]+$/, '');
+  // A last word of `true` / `:` / `exit 0` reached by `;` or `&&`.
+  if (/(^|[;&])\s*(true|:|exit\s+0)$/.test(trimmed)) return true;
+  // `|| <something that succeeds>` — the classic failure-swallower.
+  if (/\|\|\s*(true|:|exit\s+0|echo\b|printf\b)/.test(trimmed)) return true;
+  return false;
+}
+
+/** What an engineer is told when its proof would have passed regardless. */
+export function cannotFailReply(command: string): string {
+  return [
+    `NOT ACCEPTED — \`${command}\` exits 0 whether your work is right or wrong.`,
+    ``,
+    `A trailing \`; true\`, \`|| true\` or \`|| echo ...\` throws away the exit code you`,
+    `just earned. Whatever ran before it, the command reports success — so it proves`,
+    `nothing, and I cannot tell your working code apart from broken code.`,
+    ``,
+    `Remove it and submit the command again. If it passes on its own, you are done;`,
+    `if it fails, you get the real output back and you will know what to fix. Clean up`,
+    `temp files INSIDE your script, before it exits with the verdict.`,
+  ].join('\n');
+}
+
 /** What an engineer is told when its proof would not have proved anything. */
 export function hollowProofReply(command: string): string {
   return [
@@ -182,7 +224,9 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
           description:
             'The exact shell command that proves the work, run from the workspace root — ' +
             'e.g. `python3 run_tests.py`. It must USE the product on real input and exit ' +
-            'non-zero when the result is wrong. `--help` and `echo` prove nothing and are refused.',
+            'non-zero when the result is wrong. `--help` and `echo` prove nothing and are refused, ' +
+            'and so is anything ending `; true` or `|| true` — that throws away the exit code and ' +
+            'reports success either way. Clean up temp files inside your script, not after it.',
         },
         summary: {
           type: 'string',
@@ -213,6 +257,10 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
       if (proofLooksHollow(command)) {
         opts.onRejected?.(command, 'hollow proof — the command exercises nothing');
         return { content: [{ type: 'text', text: hollowProofReply(command) }], details: undefined };
+      }
+      if (proofCannotFail(command)) {
+        opts.onRejected?.(command, 'proof cannot fail — the exit code is forced to 0');
+        return { content: [{ type: 'text', text: cannotFailReply(command) }], details: undefined };
       }
       const result = await runProof(command, opts);
       if (result.ok) opts.onAccepted?.({ summary, command, output: result.output });

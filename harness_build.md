@@ -78,7 +78,7 @@ Concretely, that means:
 
 ## 3. Ground truth — where it actually is today
 
-### 3a. After the live runs (2026-07-28, runs 7–18)
+### 3a. After the live runs (2026-07-28, runs 7–19)
 
 The table in §3b was written before the harness had ever finished a run. It is
 kept because it is what the rebuild started from; everything in it is now false.
@@ -86,11 +86,12 @@ The current position, measured rather than claimed:
 
 | | |
 |---|---|
-| **Runs completed end to end** | 12 (runs 7–18), each 30–40 minutes on one 4B model slot |
+| **Runs completed end to end** | 13 (runs 7–19), each 5–40 minutes on one 4B model slot |
 | **First DELIVERED** | run 18, in **293 seconds** — product exists, its own check passes, the held-out check passes. The bar this rebuild set, cleared |
 | **Best product** | run 16 — the only one that converts all six pairs AND can re-read everything it writes. Run 18 fails four of six round trips (it emits an `items:` envelope it cannot parse back) |
 | **The irony worth keeping** | run 16's verdict was INCOMPLETE, for a test in its own suite that never writes the file it converts. The best product scored worst |
-| **Spread across runs** | 6/6, 5/6, 2/6, one run with no CLI at all, and one DELIVERED in five minutes. High variance is the headline finding, not an anomaly |
+| **Spread across runs** | run 14 5/6 · run 15 2/6 · run 16 6/6 **+ read-back** · run 17 no CLI at all · run 18 6/6 **DELIVERED in 293s** · run 19 5/6. High variance is the headline finding, not an anomaly |
+| **Cleared the FINAL bar (pairs + read-back + own gate)** | **not yet, in one run.** Run 16 has the product for it and a broken test; run 18 has the verdict and cannot re-read its own output |
 | **What is now mechanical** | done is an exit code; a proof must exercise the product, must be able to fail, and must be about the artifact the gate judges; a resubmission over an unchanged tree is refused; the manager is handed the task text and the live product state on every message; work written to a mangled path is moved back; the CEO has no tools to misuse |
 | **What is still advisory** | which file is wrong when a check fails; whether a test covers what was asked; who owns which file |
 
@@ -98,7 +99,8 @@ The honest summary: **the corp now produces real software often enough to be
 measured, and the measurement is the contribution.** Before run 7 there was no
 number. There is now a held-out check, a verdict that distinguishes DELIVERED from
 INCOMPLETE from NO PRODUCT, and twelve runs of evidence about where a 4B team
-actually breaks. It has not yet cleared its own bar twice in a row.
+actually breaks. It has cleared its own bar once, and the bar moved once — for a
+reason the artifact showed me, not to deny the result.
 
 ### 3b. Before the rebuild (kept for the record)
 

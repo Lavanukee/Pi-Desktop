@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  applySamplingMode,
   BASH_OUTPUT_CAP,
+  SAMPLING_MODES,
+  SAVE_GRACE,
+  TOOL_SEARCH_NAME,
+  applySamplingMode,
   bashDenylistGate,
   collectFilesWritten,
   countAssistantTurns,
@@ -9,16 +12,14 @@ import {
   deriveTerminatedReason,
   fileWriteActivity,
   maxTurnOutputTokens,
-  type RoleAgentToolCall,
   roleActiveTools,
-  SAMPLING_MODES,
-  type SamplingMode,
-  type StripMessage,
   settleActivitiesOnEnd,
   stepCapReason,
   stripPriorThinking,
-  TOOL_SEARCH_NAME,
   toolResultText,
+  type RoleAgentToolCall,
+  type SamplingMode,
+  type StripMessage,
 } from './role-agent';
 
 describe('roleActiveTools — full-harness parity starting active set', () => {
@@ -175,6 +176,48 @@ describe('applySamplingMode — the payload merge per mode', () => {
   });
 });
 
+describe('saving work is not doing more work', () => {
+  // Run 9, from the engineer's own thinking: "I've hit my step budget 24 times.
+  // I need to finish by submitting my work. Let me create a simple test script
+  // that proves the converter works." The write was blocked, so it submitted with
+  // nothing runnable and was refused for exactly that — twice.
+  it('lets a spent role land the file it was in the middle of', () => {
+    const cap = createStepCapCounter(2, ['submit_work']);
+    expect(cap.charge('bash')).toBeUndefined();
+    expect(cap.charge('bash')).toBeUndefined();
+    expect(cap.charge('bash')?.block).toBe(true);
+    // ...but write and edit still go through, a bounded number of times.
+    expect(cap.charge('write')).toBeUndefined();
+    expect(cap.charge('edit')).toBeUndefined();
+    expect(cap.charge('write')).toBeUndefined();
+  });
+
+  it('the grace is finite — it cannot become a second budget', () => {
+    const cap = createStepCapCounter(1, [], 2);
+    expect(cap.charge('bash')).toBeUndefined();
+    expect(cap.charge('write')).toBeUndefined();
+    expect(cap.charge('write')).toBeUndefined();
+    expect(cap.charge('write')?.block).toBe(true);
+    expect(cap.charge('edit')?.block).toBe(true);
+  });
+
+  it('tells the role it may still save, and how many times', () => {
+    const cap = createStepCapCounter(1, ['submit_work'], 2);
+    cap.charge('bash');
+    expect(cap.charge('bash')?.reason).toContain('write or edit 2 more times');
+    cap.charge('write');
+    expect(cap.charge('bash')?.reason).toContain('write or edit 1 more time');
+    cap.charge('write');
+    const spent = cap.charge('bash')?.reason ?? '';
+    expect(spent).not.toContain('write or edit');
+    expect(spent).toContain('submit_work');
+  });
+
+  it('never mentions saving when no grace is left to offer', () => {
+    expect(stepCapReason(5, [], 0)).not.toContain('write or edit');
+  });
+});
+
 describe('createStepCapCounter — the hard tool-call cap', () => {
   it('allows up to maxSteps calls, blocks past it, and records the hit', () => {
     const cap = createStepCapCounter(3);
@@ -184,7 +227,7 @@ describe('createStepCapCounter — the hard tool-call cap', () => {
     expect(cap.hit).toBe(false);
     const blocked = cap.charge(); // 4 — over the cap
     expect(blocked?.block).toBe(true);
-    expect(blocked?.reason).toBe(stepCapReason(3, []));
+    expect(blocked?.reason).toBe(stepCapReason(3, [], SAVE_GRACE));
     expect(cap.hit).toBe(true);
     expect(cap.count).toBe(4);
   });
@@ -237,7 +280,7 @@ describe('createStepCapCounter — the hard tool-call cap', () => {
   it('defaults to a cap of 20', () => {
     const cap = createStepCapCounter();
     for (let i = 0; i < 20; i++) expect(cap.charge()).toBeUndefined();
-    expect(cap.charge()?.reason).toBe(stepCapReason(20, []));
+    expect(cap.charge()?.reason).toBe(stepCapReason(20, [], SAVE_GRACE));
   });
 });
 

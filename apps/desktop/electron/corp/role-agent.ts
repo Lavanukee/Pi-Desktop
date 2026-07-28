@@ -257,17 +257,34 @@ export interface StepCapCounter {
   readonly hit: boolean;
 }
 
+/** Tools that RECORD work rather than do more of it. Blocked past the cap like
+ * anything else, but only after a small grace allowance — see {@link SAVE_GRACE}. */
+export const SAVE_TOOLS = ['write', 'edit'] as const;
+
+/** How many `write`/`edit` calls a role may still make after its budget runs out.
+ * Enough to land the file it was in the middle of, not enough to resume working. */
+export const SAVE_GRACE = 3;
+
 /** How a role is told its budget ran out. Tools it can still reach are named,
  * because "stop" without "do this instead" leaves a small model with nowhere to
  * go — it re-tries the blocked call until the run dies. */
-export function stepCapReason(maxSteps: number, exempt: readonly string[]): string {
+export function stepCapReason(
+  maxSteps: number,
+  exempt: readonly string[],
+  saveLeft = 0,
+): string {
   const base = `step budget (${maxSteps} tool calls) reached — this call did not run`;
+  const canSave =
+    saveLeft > 0
+      ? ` You may also still write or edit ${saveLeft} more time${saveLeft === 1 ? '' : 's'} — ` +
+        `use that to SAVE work you have already done, not to start more.`
+      : '';
   if (exempt.length === 0) {
-    return `${base}. Stop calling tools and reply in text: what works, what does not, what you need.`;
+    return `${base}.${canSave} Stop calling tools and reply in text: what works, what does not, what you need.`;
   }
   return (
-    `${base}. You may still call: ${exempt.join(', ')}. ` +
-    `Use one of them now — finish if your work runs, otherwise say plainly what is ` +
+    `${base}. You may still call: ${exempt.join(', ')}.${canSave} ` +
+    `Finish if your work runs, otherwise say plainly what is ` +
     `blocking you. Do not retry the blocked tool.`
   );
 }
@@ -282,20 +299,50 @@ export function stepCapReason(maxSteps: number, exempt: readonly string[]): stri
  * turn — so `submit_work` was never called, and nothing came back to the manager.
  * A budget fixes the grinding, but a budget that also blocks the FINISHING tools
  * just moves the dead end: the model is stopped with no legal way to report. So
- * the budget governs WORK (bash, write, read, …) while `submit_work` / `talk_to`
- * stay open forever. Running out of budget becomes a prompt to conclude.
+ * the budget governs WORK (bash, read, …) while `submit_work` / `talk_to` stay
+ * open forever. Running out of budget becomes a prompt to conclude.
+ *
+ * WHY `write`/`edit` GET A GRACE. Run 9, from the engineer's own thinking:
+ *
+ *     "I've hit my step budget 24 times. I need to finish by submitting my work.
+ *      Let me create a simple test script that proves the converter works."
+ *
+ * It did exactly what the budget asked — and the `write` was blocked, because
+ * only the communication tools were exempt. So "conclude" meant "conclude
+ * empty-handed": it submitted with no test file, and the product gate refused it
+ * for having nothing runnable, twice, while the file that would have satisfied
+ * both sat unwritten in its context. The budget and the acceptance rule were
+ * telling it opposite things.
+ *
+ * Saving is not working. A few `write`/`edit` calls stay available past the cap —
+ * enough to land what is already in hand, not enough to start again.
  */
-export function createStepCapCounter(maxSteps = 20, exempt: readonly string[] = []): StepCapCounter {
+export function createStepCapCounter(
+  maxSteps = 20,
+  exempt: readonly string[] = [],
+  saveGrace = SAVE_GRACE,
+): StepCapCounter {
   let count = 0;
   let hit = false;
+  let saved = 0;
   const free = new Set(exempt);
+  const saves = new Set<string>(SAVE_TOOLS);
   return {
     charge(toolName?: string): StepCapBlock | undefined {
       if (toolName !== undefined && free.has(toolName)) return undefined;
       count += 1;
       if (count > maxSteps) {
         hit = true;
-        return { block: true, reason: stepCapReason(maxSteps, exempt) };
+        // Landing work already done is not more work. Bounded, so the grace
+        // cannot become a second budget.
+        if (toolName !== undefined && saves.has(toolName) && saved < saveGrace) {
+          saved += 1;
+          return undefined;
+        }
+        return {
+          block: true,
+          reason: stepCapReason(maxSteps, exempt, Math.max(0, saveGrace - saved)),
+        };
       }
       return undefined;
     },

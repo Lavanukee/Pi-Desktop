@@ -476,6 +476,39 @@ action available is not the same as making it unavoidable. `check_product` stays
 because the manager and the specialist genuinely need it, but delivery cannot
 depend on anyone electing to be careful.
 
+**L18 · Two rules, each correct, that together said "do the impossible".** Run 9's
+engineer, from its own session:
+
+> *"I've hit my step budget 24 times. I need to finish by submitting my work. Let
+> me create a simple test script that proves the converter works."*
+
+That is the budget (L12) working perfectly: told to stop, it decided to conclude,
+and reached for the right thing. The `write` was **blocked** — only `talk_to`,
+`commission_specialist` and `submit_work` were exempt. So it submitted with no
+test file, and the acceptance rule (L17) refused it for having nothing runnable.
+Twice. The file that would have satisfied both sat unwritten in its context, and
+the workspace ended the run with two files in it.
+
+Neither rule is wrong. L12 says *stop working when the budget is gone*; L17 says
+*you are not done until a runnable artifact exists*. Between them was a state
+with no legal move, and a 4B model in a state with no legal move does not
+complain — it does the closest illegal thing and gets refused. Nothing errored;
+the transcript showed only `write` calls that started and never finished, which
+is what a blocked call looks like from outside.
+
+The fix names a distinction the budget was missing: **saving is not working.**
+`write`/`edit` get a small grace (3 calls) past the cap — enough to land what is
+already in hand, not enough to start again — and the block message says so, with
+the count. The grace is finite by construction so it cannot quietly become a
+second budget.
+
+The general lesson is about how these rules get added. Each of L12, L13, L16 and
+L17 was written against a specific observed failure, in isolation, and was right
+in isolation. The deadlock only exists in the intersection, and no test of either
+rule could have found it — the run found it in eleven minutes. **When you add a
+constraint, enumerate the states the previous constraints already forbid**, and
+check that something legal remains in each.
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

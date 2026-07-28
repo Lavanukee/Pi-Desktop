@@ -1,33 +1,13 @@
-  /*
-   * THE VERDICT IS THE CEO'S. Nothing here decides whether the work is good.
-   *
-   * This used to run a discovered check and print DELIVERED / INCOMPLETE from its
-   * exit code, plus a held-out acceptance script. That is a coding-shaped
-   * assumption, and the harness has to run a project that is a film or a document
-   * just as well — where there is nothing to execute and an automated verdict is
-   * either meaningless or wrong. The chain that judges is the hierarchy: the
-   * manager uses the product and hunts for what is broken, an auditor traces it,
-   * the CEO checks it against what the user actually asked for.
-   *
-   * What a run reports, then, is what happened: what the CEO concluded, what the
-   * team produced, and how the work moved. An artifact list is not a verdict — it
-   * is there so a human can go and look, which is the only real check there is.
-   */
-  console.log(`\n${'─'.repeat(60)}`);
-  console.log('THE CEO SAYS:\n');
-  console.log(result.reply.trim() || '(no reply)');
-  console.log(`${'─'.repeat(60)}`);
-  console.log(`\nGo and look for yourself:  ${WORKSPACE}`);
-  console.log(`Artifacts + transcript:    ${RUN_DIR}`);
-
 /**
  * THE CORP MESH RUN — the real thing, end to end, against a real model.
  *
  * Starts the app's own llama-server and runs `runCorpMeshTask` on a task: the CEO
  * is prompted, talks to the manager, the manager talks to engineers and
  * specialists, everyone works in ONE shared tree, and a product either exists at
- * the end or it does not. Nothing about the outcome is a model's opinion — the
- * gate at the bottom looks at the FILES.
+ * the end or it does not. NOTHING HERE JUDGES IT: the run reports what the CEO
+ * concluded and where the artifacts are, because the verification is the
+ * hierarchy — the manager uses the product, the auditor traces what is wrong, the
+ * CEO checks it against what the user asked for.
  *
  * It is also the diagnostic instrument. A failed run here is the only place the
  * real lessons live, so everything needed to trace one is written to disk:
@@ -396,14 +376,7 @@ async function main() {
       .join(' ');
     console.log(`  ${a.id.padEnd(22)} turns ${String(a.turns).padStart(3)}  ${tools}`);
   }
-  const g = result.gate;
-  console.log(
-    `\nGATE            ${g.ok ? 'PASS' : g.ran ? 'FAIL' : 'UNVERIFIABLE'} · ${g.how}` +
-      `${g.command ? `\n                ${g.command}` : ''}`,
-  );
-  if (!g.ok)
-    console.log(`                ${g.output.split('\n').slice(-6).join('\n                ')}`);
-  if (result.blocked.length > 0) console.log(`BLOCKED         ${result.blocked.join(', ')}`);
+  if (result.blocked.length > 0) console.log(`\nBLOCKED         ${result.blocked.join(', ')}`);
 
   console.log(`\nproduct         ${files.length} file(s), ${summary.productBytes} bytes`);
   for (const f of files.slice(0, 40)) console.log(`  ${f.bytes.toString().padStart(8)}  ${f.path}`);

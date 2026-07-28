@@ -258,6 +258,13 @@ async function main() {
         log(`  ${agentId} SUBMIT ${accepted ? 'ACCEPTED' : 'REJECTED'}: ${command.slice(0, 90)}`);
         record({ kind: 'submit', agentId, command, accepted });
       },
+      onChecked: (agentId, ok, command) => {
+        // The team running the REAL acceptance check on itself. Watching this
+        // number climb while `ok` flips to true is what convergence looks like;
+        // a run with zero of these is a team working blind.
+        log(`  ${agentId} CHECK ${ok ? 'PASS' : 'fail'}${command ? ` [${command}]` : ''}`);
+        record({ kind: 'check', agentId, ok, command });
+      },
       onGate: (g, round) => {
         const verdict = g.ok ? 'PASS' : g.ran ? `FAIL (exit ${g.exitCode})` : 'UNVERIFIABLE';
         log(`GATE round ${round}: ${verdict} — ${g.how}${g.command ? ` [${g.command}]` : ''}`);

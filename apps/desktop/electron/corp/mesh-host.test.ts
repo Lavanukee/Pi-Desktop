@@ -52,6 +52,11 @@ describe('what a run hands through to its host', () => {
     expect(hostPassthrough({})).toEqual({});
   });
 
+  it('carries the acceptance-check observer too', () => {
+    const onChecked = (): void => {};
+    expect(hostPassthrough({ onChecked })).toEqual({ onChecked });
+  });
+
   it('lists the keys once, where they can be read', () => {
     expect([...PASSTHROUGH_KEYS]).toEqual([
       'maxTokens',
@@ -59,6 +64,7 @@ describe('what a run hands through to its host', () => {
       'maxStepsPerMessage',
       'onActivity',
       'onSubmitted',
+      'onChecked',
     ]);
   });
 });

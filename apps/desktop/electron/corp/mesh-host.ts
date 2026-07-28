@@ -47,6 +47,7 @@ import {
 } from './capabilities';
 import { type GateResult, gateFeedback, runProductGate } from './product-gate';
 import type { CorpModelHandle } from './role-agent';
+import { CHECK_PRODUCT_TOOL, createCheckProductTool } from './check-product';
 import { createSubmitWorkTool, SUBMIT_WORK_TOOL } from './submit-work';
 import { TeamBook } from './team-record';
 
@@ -156,6 +157,7 @@ export const PASSTHROUGH_KEYS = [
   'maxStepsPerMessage',
   'onActivity',
   'onSubmitted',
+  'onChecked',
 ] as const;
 
 /** Copy the passthrough settings that were actually supplied. `undefined` is left
@@ -201,6 +203,9 @@ export interface MeshAgentHostConfig {
   readonly onSessionFile?: (agentId: string, file: string) => void;
   /** An engineer submitted work and its proof command was run. */
   readonly onSubmitted?: (agentId: string, command: string, accepted: boolean) => void;
+  /** Observe every `check_product` — the team running the real acceptance check on
+   * itself. In the transcript this is what convergence looks like. */
+  readonly onChecked?: (agentId: string, ok: boolean, command: string) => void;
 }
 
 /** A mesh host, plus the pool behind it (for lifecycle + telemetry). */
@@ -289,10 +294,22 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
             ...agent.tools,
             TALK_TO_TOOL,
             COMMISSION_SPECIALIST_TOOL,
+            CHECK_PRODUCT_TOOL,
             ...(agent.role === 'engineer' ? [SUBMIT_WORK_TOOL] : []),
           ],
           customTools: [
             ...communicationTools(agent, talkThrough(agentId)),
+            // EVERYONE gets the acceptance check. It used to fire once, at the
+            // end, where the team could not reach it — so they built toward a
+            // guess of what "working" meant. Run 7 failed on a test helper
+            // defined in the wrong class, which the first whole-file run would
+            // have caught; the only thing that ran the file whole was the gate.
+            createCheckProductTool({
+              cwd: config.cwd,
+              ...(config.onChecked !== undefined
+                ? { onChecked: (r) => config.onChecked?.(agentId, r.ok, r.command) }
+                : {}),
+            }) as unknown as ToolDefinition,
             // ENGINEERS ONLY. Finishing is not something they can assert: the
             // command they submit as proof is RUN, and the submission is refused
             // with the real output if it fails. Four runs in a row produced
@@ -396,6 +413,9 @@ export async function runCorpMeshTask(opts: {
    * a run had ever produced — left no trace in the transcript, and the run read as
    * though the tool had never fired. */
   readonly onSubmitted?: (agentId: string, command: string, accepted: boolean) => void;
+  /** Observe every `check_product` — the team running the real acceptance check on
+   * itself. In the transcript this is what convergence looks like. */
+  readonly onChecked?: (agentId: string, ok: boolean, command: string) => void;
   /** How many WORK tool calls one message may spend before the role is pushed to
    * conclude ({@link DEFAULT_STEPS_PER_MESSAGE}). */
   readonly maxStepsPerMessage?: number;

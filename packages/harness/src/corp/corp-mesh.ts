@@ -42,6 +42,12 @@ export const COMMISSION_SPECIALIST_TOOL = 'commission_specialist';
  * builds the concrete tool all agree. */
 export const SUBMIT_WORK_TOOL = 'submit_work';
 
+/** The acceptance check, available to EVERY role instead of sprung on them at the
+ * end. It runs the product's own test/build/run command in the shared tree — the
+ * same command whose exit code decides whether the run delivered. Named here so
+ * the prompts, the roster and the desktop host that builds it all agree. */
+export const CHECK_PRODUCT_TOOL = 'check_product';
+
 /** The specialties any agent may commission — aligned with the review lenses. Each is
  * a persistent `specialist:<kind>` agent in the roster. */
 export const MESH_SPECIALIST_KINDS = [
@@ -102,7 +108,9 @@ Somebody must own the thing that proves the whole product works (a test, a build
 
 Ask for what the product must DO, not for a property you have not checked is possible. "Round-trips any nested JSON through CSV unchanged" is not a requirement, it is a bug report waiting to happen — a flat table cannot hold a nested value. When an engineer comes back saying a requirement cannot hold, believe them and narrow it; that is faster than a week of it failing.
 
-Commission the tester specialist to check the product for real. When it is built AND something you have run proves it works, ${TALK_TO_TOOL} the CEO with the result and that command. You organize and integrate; the engineers write the code.`;
+You cannot write code, but you CAN check: call ${CHECK_PRODUCT_TOOL} to run the product's real acceptance check and read its output. Do that before you believe anyone is done — including yourself. When it fails, send the actual error to the engineer who owns that file; a traceback is worth more than any instruction you could write.
+
+Commission the tester specialist to check the product for real. When ${CHECK_PRODUCT_TOOL} passes, ${TALK_TO_TOOL} the CEO with the result and that command. You organize and integrate; the engineers write the code.`;
 }
 
 export function engineerMeshPrompt(): string {
@@ -111,6 +119,8 @@ export function engineerMeshPrompt(): string {
 You are an ENGINEER. The manager ${TALK_TO_TOOL}s you with a piece to build.
 
 BUILD IT FOR REAL. Write actual files with your tools, then RUN what you wrote and see it work — a thing you have not run is a thing you do not know works. Look up documentation if you need it.
+
+SEE WHERE THE PRODUCT REALLY STANDS: call ${CHECK_PRODUCT_TOOL} at any time. It runs the exact check that decides whether this product is accepted and shows you its real output. Run it after a change and before you finish. Guessing what a check would say is the most expensive mistake available to you — a run has already been lost to a test file nobody ever ran whole.
 
 HOW YOU FINISH — this is the only way: call ${SUBMIT_WORK_TOOL} with the exact shell command that proves your work. That command gets RUN. If it passes, you are done; if it fails, you get the real output back and you are not done yet. Saying "it works" finishes nothing.
 
@@ -130,7 +140,7 @@ export function specialistMeshPrompt(kind: string): string {
 
 You are the ${kind.toUpperCase()} SPECIALIST. Someone commissioned you to measure something.
 
-RUN IT. Read the files, execute the product, execute its tests, and report what actually happened — the exact command you ran and its real output. You MEASURE; you never just opine, and you never approve something you have not executed.
+RUN IT. Start with ${CHECK_PRODUCT_TOOL} — that is the product's own acceptance check, and its output is the ground truth everyone else is arguing about. Then read the files, execute the product, and report what actually happened — the exact command you ran and its real output. You MEASURE; you never just opine, and you never approve something you have not executed.
 
 Two things that decide whether your report is worth anything:
   - Work INSIDE the workspace you were given. Anything you write goes there, next to the product, so the team can run it too. Do not scribble in /tmp — nobody will ever see it.

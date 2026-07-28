@@ -360,6 +360,58 @@ This is the same shape as L9 one level down. Making "done" mechanical does not
 finish the job — the mechanism has to be pointed at behaviour, or the model will
 satisfy the letter of it. Every gate that can be passed trivially eventually is.
 
+**L14 · The gate was a hidden oracle, so the team built toward a guess.** Run 7
+reached the gate — the first run that did — and failed on this:
+
+```
+AttributeError: 'TestRoundTripJSONCSV' object has no attribute '_compare_dicts'
+```
+
+A helper called from three tests and defined inside a *different class* at the
+bottom of the file. Not a hard bug; a bug that dies the instant anyone runs the
+file whole. Nobody ever did. The engineers verified their work the way engineers
+had in every previous run — converting a file by hand in `bash` and reading the
+output — and the one thing that would have run `tests/test_converter.py` as
+written was the gate they could not reach. Thirty minutes of work lost to a
+five-second command.
+
+The gate ran **once, at the end, unreachable**. So it became a tool: `check_product`
+runs `runProductGate` over the same tree and returns the same verdict, and *every*
+role has it. Same function, same command, no second implementation to drift.
+Engineers run it before submitting; the manager — which has no editor and no shell
+on purpose — can now verify instead of believing reports, which is L11 discharged
+properly: taking the shell away left it blind, and this is the obvious thing put
+back in its place.
+
+The general form: **anything that decides whether the work counts must be
+runnable by the people doing the work.** A verdict they can only receive is a
+verdict they can only guess at, and a 4B model guesses badly. Give it eyes,
+pointed at acceptance.
+
+**L15 · A capability ledger is a snapshot, and an agent with a shell can falsify
+it.** Run 7's ledger probed pytest at t=0, correctly found it absent, and told the
+team *"Do NOT depend on pytest."* At **t=115s** engineer:1 ran `pip3 install
+pytest`. It did not replan around the constraint — it deleted the constraint, by
+changing the machine.
+
+Two costs, and the second is worse than the first. It mutated jedd's home
+(`~/Library/Python/3.9/`) with packages he never sanctioned, which is precisely
+what the ledger's own header says must not happen at 4am. And it made the ledger
+*wrong for the rest of the run*: every downstream decision was planned against
+"no pytest" while the gate later judged the product **with** pytest — a team told
+to avoid a tool, graded by it. It also explains the shape of the wreckage. The
+tests `import pytest` and use pytest-style classes because that is what a Python
+test looks like; the team was told to write plain scripts; the file that resulted
+was neither, and could not be run by its authors under either story.
+
+Neither probe was buggy. Both were right when they ran. **The fact changed
+underneath a value that was measured once and then trusted forever** — the same
+class of bug as a cached `stat`, with a shell as the mutator. The containment fix
+(a run-private `PYTHONUSERBASE` so installs land in the run directory rather than
+in `$HOME`) is not free — redirecting the user base also hides the packages
+already there, `pyyaml` among them — so it is a task, not a one-liner. Recorded
+here rather than half-done, and jedd told what landed on his machine.
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

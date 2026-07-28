@@ -106,3 +106,32 @@ describe('the critique rides the conversation prefix instead of evicting it', ()
     expect(r.issues).toContain('missing test');
   });
 });
+
+/**
+ * The user outranks everything running behind them. The critique sits on the
+ * single llama-server slot, so a follow-up typed the instant a reply finished
+ * queues behind it — MEASURED at 1255ms against 256ms for the chat's first
+ * message. before_agent_start aborts it; this is the wiring that makes that
+ * abort actually reach the request.
+ */
+describe('the critique yields to the user', () => {
+  it('passes the abort signal down to the model call', async () => {
+    const calls: Parameters<CallModel>[0][] = [];
+    const callModel: CallModel = vi.fn(async (req) => {
+      calls.push(req);
+      return '{"ok":true,"issues":[]}';
+    });
+    const controller = new AbortController();
+    await reviewOutput(callModel, { task: 't', output: 'o', signal: controller.signal });
+    expect(calls[0]?.signal).toBe(controller.signal);
+  });
+
+  it('fails open when the call is aborted — never a spurious revision', async () => {
+    const callModel: CallModel = vi.fn(async () => {
+      throw new DOMException('aborted', 'AbortError');
+    });
+    const r = await reviewOutput(callModel, { task: 't', output: 'o' });
+    expect(r.ok).toBe(true);
+    expect(r.issues).toEqual([]);
+  });
+});

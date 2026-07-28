@@ -166,6 +166,12 @@ export interface WireHarnessOptions {
     /** Detect the project check for a cwd. Default: {@link detectProjectCheck}. */
     readonly detectCheck?: (cwd: string) => ProjectCheck | null;
   };
+  /**
+   * How long to wait after a reply before post-turn work (naming, the reviewer)
+   * may touch the model. Default {@link POST_TURN_DELAY_MS}; tests pass 0 to run
+   * it immediately.
+   */
+  readonly postTurnDelayMs?: number;
 }
 
 /** A handle returned by {@link wireHarness} for tests + programmatic wiring. */
@@ -289,6 +295,20 @@ function countRepairFailures(entries: readonly StoredEntryLike[]): Record<string
   return counts;
 }
 
+/**
+ * How long after a reply lands before post-turn work (naming, the reviewer) may
+ * touch the model.
+ *
+ * It shares ONE llama-server slot with the chat, so anything running here is
+ * something the user's next message waits behind. Aborting on send is not enough
+ * on its own: by then the request is already on the server, which finishes the
+ * batch it started. A short pause first means a fast follow-up — jedd's case,
+ * "I typed a really quick follow up message and it took 1.5 seconds" — arrives
+ * while nothing is running at all, and the work is simply cancelled before it
+ * ever begins.
+ */
+const POST_TURN_DELAY_MS = 2500;
+
 /** Join the assistant text across a turn's messages (for the reviewer pass). */
 function extractAssistantText(messages: readonly unknown[]): string {
   const parts: string[] = [];
@@ -367,6 +387,11 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
   // that changed nothing doesn't re-push the ~7k-char system + tool schemas).
   let publishedPrefillSystem: string | null = null;
   let publishedPrefillTools: string | null = null;
+  /** In-flight post-turn background work (naming, reviewer). Aborted the moment
+   * the user starts a new turn — see the agent_end block for why. */
+  let postTurnWork: AbortController | null = null;
+  /** Timer for the deliberate pause before post-turn work starts. */
+  let postTurnTimer: ReturnType<typeof setTimeout> | null = null;
   const asyncClassifier: AsyncClassifier | undefined =
     callModel !== undefined ? createClassifierEscalation(callModel) : undefined;
 
@@ -549,7 +574,11 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
    * Effort-gated reviewer + adversarial passes over a finished turn's output.
    * Returns true when a revision was triggered. Fail-open: no callModel → false.
    */
-  async function reviewTurn(output: string, ctx: ExtensionContext): Promise<boolean> {
+  async function reviewTurn(
+    output: string,
+    ctx: ExtensionContext,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
     if (callModel === undefined || output.trim().length === 0) return false;
     if (runtime.suppressNextReview) {
       runtime.suppressNextReview = false;
@@ -557,7 +586,6 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     }
     const knobs = effortKnobs(runtime.config.effort);
     if (knobs.reviewPasses <= 0 && !knobs.adversarialChecks) return false;
-
     setStage('reviewing', ctx);
     const task = runtime.lastPrompt;
     // Ride the conversation's resident KV instead of evicting it. Same frozen
@@ -577,6 +605,7 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
         false,
       ),
       tools: orderedToolDefs(runtime.activeTools),
+      ...(signal !== undefined ? { signal } : {}),
     };
     const issues: string[] = [];
     // Run up to `reviewPasses` reviewer passes so a higher effort really does run
@@ -584,16 +613,20 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     // exactly once). Stop at the first pass that flags something (it already has
     // the issues to fix); a clean pass proceeds to the next.
     for (let i = 0; i < knobs.reviewPasses; i++) {
+      if (signal?.aborted === true) return false;
       const r = await reviewOutput(callModel, { task, output, ...reviewContext });
       if (!r.ok) {
         issues.push(...r.issues);
         break;
       }
     }
-    if (knobs.adversarialChecks) {
+    if (knobs.adversarialChecks && signal?.aborted !== true) {
       const a = await adversarialCheck(callModel, { task, output, ...reviewContext });
       if (!a.ok) issues.push(...a.issues);
     }
+    // A critique the user overtook is not a verdict — it is a truncated request
+    // about a turn they have already moved on from. Never steer a revision off it.
+    if (signal?.aborted === true) return false;
 
     pi.appendEntry(HARNESS_REVIEW_ENTRY, {
       effort: runtime.config.effort,
@@ -1012,6 +1045,17 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
   // utility model is configured, ambiguous heuristics escalate to a tier-2
   // double-check (classifyWithEscalation); otherwise the pure heuristic stands.
   pi.on('before_agent_start', async (event, ctx) => {
+    // FIRST, before anything else: give the user the slot. Post-turn naming and
+    // the reviewer share the single llama-server, and until they stop this
+    // message is queued behind them. Cancelling the PENDING timer is the case
+    // that actually matters — a fast follow-up lands inside POST_TURN_DELAY_MS,
+    // so nothing has been sent yet and there is nothing to wait for. The abort
+    // covers a slower one that catches work already in flight; both are
+    // fire-and-forget, and naming retries at the next turn end.
+    if (postTurnTimer !== null) clearTimeout(postTurnTimer);
+    postTurnTimer = null;
+    postTurnWork?.abort();
+    postTurnWork = null;
     runtime.turnIndex += 1;
     runtime.currentCtx = ctx;
     runtime.lastPrompt = event.prompt;
@@ -1075,17 +1119,27 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     runtime.currentCtx = ctx;
     runtime.taskStart = null;
     publishStatus(ctx);
-    // Auto-name the conversation AFTER the first turn concludes (jedd) — now that
+    // THE USER OUTRANKS EVERYTHING BEHIND THEM. Naming and the reviewer both run
+    // on the single llama-server slot, so while either is in flight the user's
+    // next message queues behind it — MEASURED, a follow-up typed the instant a
+    // reply finished took 1255ms against 256ms for the chat's first message.
+    // before_agent_start aborts this, so sending anything reclaims the slot.
+    if (postTurnTimer !== null) clearTimeout(postTurnTimer);
+    postTurnWork?.abort();
+    const work = new AbortController();
+    postTurnWork = work;
+    /** Set below when this turn should be named; run after the quiet pause. */
+    let nameLater: (() => void) | null = null;
+    // Auto-name the conversation after a turn concludes (jedd) — now that
     // classification is gone from the turn path, naming is a post-turn background
     // pass so it NEVER blocks the reply. Reuses the cache-sharing {title,class}
     // piggyback (the just-run turn's KV is resident, so only the tiny title
     // instruction + answer are new); we keep only the title. Fire-and-forget.
-    if (
-      runtime.turnIndex === 1 &&
-      runtime.title === null &&
-      asyncClassifier !== undefined &&
-      runtime.lastPrompt !== null
-    ) {
+    //
+    // Gated on the title still being MISSING rather than on turn 1: a fast typist
+    // aborts the first attempt, and a chat that never gets a name because the
+    // user replied quickly is worse than naming it one turn later.
+    if (runtime.title === null && asyncClassifier !== undefined && runtime.lastPrompt !== null) {
       const namePrompt = runtime.lastPrompt;
       // Use the SAME frozen system prompt the turn ran on so the naming request
       // shares the conversation's resident KV (cheap) instead of re-prefilling.
@@ -1095,7 +1149,7 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
       const input: ClassifyInput = {
         prompt: namePrompt,
         turnIndex: 1,
-        priorMessages: buildConversationPrefix(getEntries(ctx), sys, namePrompt),
+        priorMessages: buildConversationPrefix(getEntries(ctx), sys, namePrompt, false),
         // Same tools the turn ran with (in the same order) so the naming request's
         // prefix matches the resident slot — cheap and non-evicting (see below).
         tools: orderedToolDefs(runtime.activeTools),
@@ -1103,10 +1157,13 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
         // if the reasoning model spends a few seconds before the tiny JSON (the
         // 5s default was clipping it → null title).
         timeoutMs: 30000,
+        // The user's next message cancels this; it retries at the next turn end.
+        signal: work.signal,
       };
-      void asyncClassifier(input, classify(input)).then((r) => {
-        if (r?.title !== undefined) setTitle(r.title, ctx);
-      });
+      nameLater = () =>
+        void asyncClassifier(input, classify(input)).then((r) => {
+          if (r?.title !== undefined && work.signal.aborted !== true) setTitle(r.title, ctx);
+        });
     }
     const output = extractAssistantText(event.messages);
     const settled: HarnessStage = output.length > 0 ? 'done' : 'idle';
@@ -1125,26 +1182,39 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     // verifyTurn/reviewTurn — it just starts as a visible follow-up turn instead of
     // silently holding the turn open.
     const turnAtEnd = runtime.turnIndex;
-    void (async () => {
-      try {
-        // 1) Effort high/max → run the project's REAL checks on coding/file-ops
-        //    turns. If it steers a fix, skip the LLM reviewer this cycle (don't
-        //    double-steer the same revision — the reviewer runs on the fixed
-        //    result next time).
-        const fixRequested = await verifyTurn(ctx);
-        // 2) Otherwise → reviewer + adversarial critique of the produced result.
-        const revisionRequested = fixRequested || (await reviewTurn(output, ctx));
-        // Stage bookkeeping, but ONLY while this turn is still the current one:
-        // verifyTurn/reviewTurn move the stage to 'verifying'/'reviewing', and a
-        // NEW user turn may have started while they ran — never stomp its
-        // 'working' stage with this turn's leftovers.
-        if (runtime.turnIndex !== turnAtEnd) return;
-        setStage(revisionRequested ? 'revising' : settled, ctx);
-      } catch {
-        // Post-turn work is best-effort: never surface as a turn failure.
-        if (runtime.turnIndex === turnAtEnd) setStage(settled, ctx);
-      }
-    })();
+    // WAIT before touching the model. Everything below shares the chat's single
+    // llama-server slot, and a fast follow-up sent while it runs waits behind it.
+    // The pause gives the user a window in which nothing is running at all, and
+    // before_agent_start clears this timer — so a quick reply cancels the work
+    // before it is ever sent, rather than racing it. See POST_TURN_DELAY_MS.
+    postTurnTimer = setTimeout(() => {
+      postTurnTimer = null;
+      if (work.signal.aborted) return;
+      nameLater?.();
+      void (async () => {
+        try {
+          // 1) Effort high/max → run the project's REAL checks on coding/file-ops
+          //    turns. If it steers a fix, skip the LLM reviewer this cycle (don't
+          //    double-steer the same revision — the reviewer runs on the fixed
+          //    result next time).
+          const fixRequested = await verifyTurn(ctx);
+          // 2) Otherwise → reviewer + adversarial critique of the produced result.
+          const revisionRequested = fixRequested || (await reviewTurn(output, ctx, work.signal));
+          // Stage bookkeeping, but ONLY while this turn is still the current one:
+          // verifyTurn/reviewTurn move the stage to 'verifying'/'reviewing', and a
+          // NEW user turn may have started while they ran — never stomp its
+          // 'working' stage with this turn's leftovers.
+          if (runtime.turnIndex !== turnAtEnd) return;
+          setStage(revisionRequested ? 'revising' : settled, ctx);
+        } catch {
+          // Post-turn work is best-effort: never surface as a turn failure.
+          if (runtime.turnIndex === turnAtEnd) setStage(settled, ctx);
+        }
+      })();
+    }, options.postTurnDelayMs ?? POST_TURN_DELAY_MS);
+    // Node keeps the process alive for a pending timer; this one must never be
+    // the reason a CLI pi lingers after its work is done.
+    (postTurnTimer as { unref?: () => void }).unref?.();
   });
 
   // Loop / no-progress breaking (fix #3), plus touched-file tracking for the

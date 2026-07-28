@@ -34,13 +34,30 @@ export interface ReviewInput {
    * resident: it prefills only its own instruction, and leaves the conversation
    * in the slot for the next turn.
    */
-  readonly priorMessages?: readonly { readonly role: 'system' | 'user' | 'assistant'; readonly content: string }[];
+  readonly priorMessages?: readonly {
+    readonly role: 'system' | 'user' | 'assistant';
+    readonly content: string;
+  }[];
   /**
    * The tools the turn ran with, in the SAME order. Chat templates render tools
    * at the START of the prompt, so omitting them diverges the prefix just as
    * surely as a different system message would.
    */
-  readonly tools?: readonly { readonly name: string; readonly description?: string; readonly parameters?: unknown }[];
+  readonly tools?: readonly {
+    readonly name: string;
+    readonly description?: string;
+    readonly parameters?: unknown;
+  }[];
+  /**
+   * Cancels the critique.
+   *
+   * This runs on the SAME single-slot server the chat uses, so while it is in
+   * flight the user's next message queues behind it — MEASURED, a follow-up sent
+   * the instant a reply finished took 1255ms against 256ms for the first
+   * message. It is background work about a turn that is already over, so the
+   * moment the user sends something they win and this gives up.
+   */
+  readonly signal?: AbortSignal;
 }
 
 export interface ReviewResult {
@@ -125,6 +142,7 @@ async function runPass(
       // running. Servers that don't understand the flag just ignore it.
       maxTokens: MAX_REVIEW_TOKENS,
       extraBody: { chat_template_kwargs: { enable_thinking: false } },
+      ...(input.signal !== undefined ? { signal: input.signal } : {}),
     });
   } catch {
     return OK_RESULT;

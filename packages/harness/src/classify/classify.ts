@@ -122,6 +122,15 @@ export interface ClassifyInput {
    * the title. Unset ⇒ the callModel default applies.
    */
   readonly timeoutMs?: number;
+  /**
+   * Cancels the tier-2 piggyback's model call.
+   *
+   * Post-turn work runs on the SAME single-slot server the chat uses, so while
+   * it is in flight the user's next message queues behind it. It is background
+   * work about a turn that is already over — the moment the user sends
+   * something, they win and this gives up (the caller retries next turn).
+   */
+  readonly signal?: AbortSignal;
 }
 
 export interface ClassifyResult {

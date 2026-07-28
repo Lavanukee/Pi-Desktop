@@ -179,6 +179,9 @@ export function createClassifierEscalation(callModel: CallModel): AsyncClassifie
         // Fire-and-forget naming opts into a longer timeout than the tight default
         // (a warm reasoning model can still spend a few seconds before the JSON).
         ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
+        // The user sending their next message cancels this — it is background
+        // work about a finished turn, and it is sitting on the only slot.
+        ...(input.signal !== undefined ? { signal: input.signal } : {}),
       });
     } catch {
       return undefined;

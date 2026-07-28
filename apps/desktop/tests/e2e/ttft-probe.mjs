@@ -34,6 +34,14 @@ const MESSAGES = (process.env.MESSAGES ?? 'hi||what is the capital of France?').
 const PASTE = Number(process.env.PASTE ?? 0);
 const WAIT_MS = Number(process.env.WAIT_MS ?? 14_000);
 const SLOW_MS = Number(process.env.SLOW_MS ?? 1200);
+/**
+ * Idle between a turn finishing and the next send. THE MOST IMPORTANT KNOB HERE:
+ * post-turn background work (the reviewer, the namer) sits on the single slot
+ * for a while after the reply ends, so a generous gap hides exactly the stall a
+ * fast typist hits. jedd types the follow-up immediately — 0 is his case, and
+ * the default.
+ */
+const GAP_MS = Number(process.env.GAP_MS ?? 0);
 const OUT = process.env.OUT ?? path.resolve(here, '..', '..', '..', '..', '.corp-runs', 'ttft');
 const APP = process.env.APP ?? '/Applications/Bobble.app/Contents/MacOS/Bobble';
 
@@ -76,6 +84,16 @@ try {
     await window.piDesktop.invoke('pi:restart', {});
     await window.piDesktop.invoke('pi:set-model', { provider: 'llamacpp', modelId });
   }, MODEL);
+
+  // EFFORT=low turns the post-turn reviewer off (reviewPasses: 0), which is how
+  // you isolate what the critique costs from what the turn itself costs.
+  if (process.env.EFFORT !== undefined) {
+    await win.evaluate(async (level) => {
+      await window.piDesktop.invoke('pi:prompt', { message: `/harness effort ${level}` });
+    }, process.env.EFFORT);
+    await win.waitForTimeout(4000);
+    console.log(`  effort → ${process.env.EFFORT}`);
+  }
 
   // The warm-up is fire-and-forget and takes a moment on a ~3k-token prefix.
   // This is exactly the "after model load" window jedd is describing.
@@ -154,8 +172,19 @@ try {
         { timeout: 180_000 },
       )
       .catch(() => {});
-    await win.waitForTimeout(1500);
+    if (GAP_MS > 0) await win.waitForTimeout(GAP_MS);
   }
+
+  // Post-turn naming is deliberately cancelled by a fast follow-up and retried
+  // at the next quiet turn end, so check the chat still ends up named — a
+  // latency fix that silently left every chat "Untitled" would be a bad trade.
+  await win.waitForTimeout(6000);
+  const title = await win.evaluate(
+    () => window.__pi_store().getState().extensionStatus?.['harness-title'] ?? null,
+  );
+  console.log(
+    `\nchat title: ${title === null ? 'NONE — naming never landed' : JSON.stringify(title)}`,
+  );
 
   await win.screenshot({ path: path.join(OUT, 'ttft.png'), fullPage: true });
 } catch (err) {

@@ -204,7 +204,11 @@ describe('wireHarness', () => {
       reviewCalled = true;
       return new Promise<string>(() => {}); // never resolves
     });
-    wireHarness(f.pi, { callModel });
+    // postTurnDelayMs 0: the reviewer normally waits a moment so a fast
+    // follow-up can cancel it (see POST_TURN_DELAY_MS), which would keep it from
+    // ever starting inside this test. What is under test is that agent_end does
+    // not AWAIT it, so run it immediately and check the ordering.
+    wireHarness(f.pi, { callModel, postTurnDelayMs: 0 });
     const { ctx, setStatus } = makeCtx(f.entries);
     await f.fire('session_start', { type: 'session_start', reason: 'startup' }, ctx);
     await f.fire(
@@ -219,6 +223,11 @@ describe('wireHarness', () => {
       { type: 'agent_end', messages: [{ role: 'assistant', content: 'the answer' }] },
       ctx,
     );
+
+    // The post-turn work is deferred by a timer (0ms here) and reaches
+    // 'reviewing' only once verifyTurn resolves. This block runs on FAKE timers,
+    // so advance them — a real `await setTimeout` would simply never fire.
+    await vi.advanceTimersByTimeAsync(20);
 
     const stages = setStatus.mock.calls
       .filter((c) => c[0] === 'harness')

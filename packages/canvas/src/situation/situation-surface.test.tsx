@@ -93,25 +93,6 @@ describe('SituationRoomSurface', () => {
     await unmount();
   });
 
-  it('enables "peek" only once an artifact exists, and routes it', async () => {
-    let peeked: string | undefined;
-    const early = await render(<SituationRoomSurface state={foldTo(10_000)} onPeek={() => {}} />);
-    const earlyButton = early.container.querySelector('button.pd-btn') as HTMLButtonElement;
-    expect(earlyButton.disabled).toBe(true);
-    await early.unmount();
-
-    const later = await render(
-      <SituationRoomSurface state={foldTo(30_000)} onPeek={(a) => (peeked = a.id)} />,
-    );
-    const button = [...later.container.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('Peek'),
-    ) as HTMLButtonElement;
-    expect(button.disabled).toBe(false);
-    button.click();
-    expect(peeked).toBe('build-v01');
-    await later.unmount();
-  });
-
   it('lists subagents active-first with the chat wording, and routes clicks', async () => {
     const onSelectNode = vi.fn();
     const state = reduceSituation(initialSituation('t1'), LIVE_CHART_EVENT);
@@ -166,7 +147,10 @@ describe('SituationRoomSurface', () => {
       <SituationRoomSurface state={foldTo(Number.POSITIVE_INFINITY)} />,
     );
     expect(container.querySelector('.pd-sitroom')?.getAttribute('data-status')).toBe('done');
-    expect(container.textContent).toContain('View the build');
+    // No "View the build" button any more (jedd) — the artifacts are reachable
+    // from the canvas tabs, and the header was carrying a second way in.
+    expect(container.textContent).not.toContain('View the build');
+    expect(container.textContent).not.toContain('Peek at the build');
     await unmount();
   });
 });

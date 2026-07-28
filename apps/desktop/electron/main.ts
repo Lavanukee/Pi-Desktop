@@ -278,6 +278,9 @@ function createMainWindow(): BrowserWindow {
   // both without toggling the persisted settings. No env ⇒ no param ⇒ default app.
   const devQuery: Record<string, string> = {};
   if (process.env.PI_DESKTOP_CORP === '1') devQuery.corp = '1';
+  // Testing only: force the first message of a chat into a corporation, so a probe
+  // can exercise a corp run without depending on the model choosing to promote.
+  if (process.env.PI_DESKTOP_CORP_FORCE === '1') devQuery.corpForce = '1';
   if (process.env.PI_DESKTOP_GEN === '1') devQuery.gen = '1';
   // Separate opt-in for the live activity HUD (CorpDebugHud) — decoupled from the
   // corp feature flag so a normal `PI_DESKTOP_CORP=1` run shows no debug overlay.

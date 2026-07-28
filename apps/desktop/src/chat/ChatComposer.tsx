@@ -33,7 +33,7 @@ import {
 } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { assessCurrentSend, useQueueExplainer } from '../state/running-chats';
-import { productionHarnessEnabled } from '../state/settings-store';
+import { corpForceEnabled, productionHarnessEnabled } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
 import { ComposerBar } from './ComposerBar';
 import { ComposerFooter } from './ComposerFooter';
@@ -583,18 +583,39 @@ export function ChatComposer({
     const echo =
       raw.length > 0 ? raw : textFiles.length > 0 ? textFiles.map((a) => a.name).join(', ') : raw;
 
-    // EXPERIMENTAL production harness (flag / env on): drive the CorpEngine +
-    // situation room instead of the normal pi turn. Bash mode (`!`) still runs
-    // locally. When off, this branch is never taken and the app is byte-for-byte
-    // its current self.
-    if (onCorpSubmit !== undefined && productionHarnessEnabled()) {
-      // A1/A4 — once a production exists in this chat, a follow-up is ANSWERED by the
-      // CEO (from its retained context) rather than starting a fresh vision ceremony.
-      if (onCorpFollowUp !== undefined && useCorpStore.getState().taskId !== null) {
-        onCorpFollowUp(echo);
-      } else {
-        onCorpSubmit(echo, imageUris);
-      }
+    /*
+     * THE CORP IS SOMETHING THE MODEL ASKS FOR — NOT WHERE EVERY MESSAGE GOES.
+     *
+     * This used to route EVERY submit into the corporation whenever the harness
+     * flag was on, so "create a file called notes.txt with three lines in it"
+     * stood up a manager, four engineers and eight specialists, and took two and
+     * a half minutes to write three lines. jedd, watching it: "shouldn't be
+     * always doing this whole mesh system."
+     *
+     * The design already says so, in promote-tool.ts: the corp is "an OPTION the
+     * model opts into at high/max effort — still just a tool — not a mode that
+     * hijacks every prompt". `create_production_hierarchy` is in the normal chat
+     * toolset at those levels; when the model decides a job needs a team it calls
+     * it, and ChatApp's promote listener launches the run. A small ask just gets
+     * answered.
+     *
+     * What remains here is the FOLLOW-UP case: once a production exists in this
+     * chat, the next message is answered by the CEO from its retained context
+     * rather than starting a fresh vision ceremony.
+     */
+    if (
+      onCorpFollowUp !== undefined &&
+      productionHarnessEnabled() &&
+      useCorpStore.getState().taskId !== null
+    ) {
+      onCorpFollowUp(echo);
+      return;
+    }
+    // Testing only: force a corporation for the very first message, so a run can
+    // be driven deterministically without relying on the model choosing to
+    // promote. Never set in a normal launch.
+    if (onCorpSubmit !== undefined && productionHarnessEnabled() && corpForceEnabled()) {
+      onCorpSubmit(echo, imageUris);
       return;
     }
 

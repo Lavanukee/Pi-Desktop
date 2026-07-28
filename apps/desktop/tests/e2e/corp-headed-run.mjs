@@ -111,12 +111,23 @@ const app = await electron.launch({
   args: [appRoot, `--user-data-dir=${userDataDir}`],
   // PI_E2E exposes the store for observation. There is no mock here: this is the
   // real local model, because a corp run against a fixture proves nothing.
-  env: { ...process.env, PI_E2E: '1', PI_DESKTOP_CORP: '1' },
+  env: {
+    ...process.env,
+    PI_E2E: '1',
+    PI_DESKTOP_CORP: '1',
+    // The corp is now something the MODEL asks for, so a probe that wants to
+    // exercise one cannot wait and hope. FORCE is testing-only and never set in a
+    // normal launch. Unset it to watch whether the model promotes on its own.
+    ...(process.env.NO_FORCE === '1' ? {} : { PI_DESKTOP_CORP_FORCE: '1' }),
+  },
 });
 
 try {
   const page = await app.firstWindow();
-  await page.waitForFunction(() => typeof window.__pi_store === 'function', { timeout: 30_000 });
+  await page.waitForFunction(
+    () => typeof window.__pi_store === 'function' && typeof window.__pi_project === 'function',
+    { timeout: 30_000 },
+  );
   await page.waitForSelector('[data-testid="composer-input"]', { timeout: 30_000 });
   log('app up · project:', PROJECT);
 
@@ -152,7 +163,11 @@ try {
    * this project, nothing downstream is trustworthy.
    */
   await page.evaluate(async (dir) => {
-    await window.piDesktop.invoke('project:set', { path: dir }).catch(() => null);
+    // Through the STORE, not the IPC. Calling `project:set` directly switches the
+    // project in the main process and leaves the renderer none the wiser — and the
+    // renderer's store is what corp-connect reads when it starts a run, so the
+    // work went to the previous session's folder while the log said otherwise.
+    await window.__pi_project?.().getState().selectPath(dir);
   }, PROJECT);
   await page.waitForTimeout(2500);
   const chip = (await page.textContent('.pd-project-chip').catch(() => null)) ?? '';

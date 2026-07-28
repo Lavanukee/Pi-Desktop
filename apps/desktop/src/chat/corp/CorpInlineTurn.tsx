@@ -271,13 +271,11 @@ export function CorpInlineTurn({
               setExpanded((v) => !v);
             }}
           >
+            {/* One tick, not two: the gem to the left already turns into a check
+                when the run lands, and a second one beside the label read as
+                "✓ ✓ Finished with a team of 14". */}
             {terminal ? (
               <span className="pd-corpturn-summary-text" data-testid="corp-inline-done">
-                {delivered ? (
-                  <span className="pd-corpturn-donecheck" aria-hidden>
-                    <IconCheck size={12} />
-                  </span>
-                ) : null}
                 {terminalLabel}
               </span>
             ) : (

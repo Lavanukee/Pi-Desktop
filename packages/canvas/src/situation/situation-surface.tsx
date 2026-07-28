@@ -154,7 +154,6 @@ export function SituationRoomSurface({
   const progress = contractProgress(state);
   const live = LIVE_STATUSES.has(state.status);
   const eta = live ? formatEta(state.eta) : '';
-  const peekTarget = latestArtifact(state);
 
   // Adaptive layout: the room watches its OWN width (it lives in a resizable
   // rail) and restacks/auto-collapses sections to stay legible at any size.
@@ -280,18 +279,6 @@ export function SituationRoomSurface({
             {eta}
           </span>
         ) : null}
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={peekTarget === undefined}
-          title={peekTarget?.title}
-          onClick={() => {
-            if (peekTarget && onPeek) onPeek(peekTarget);
-          }}
-        >
-          <IconEye size={13} />
-          {state.status === 'done' ? 'View the build' : 'Peek at the build'}
-        </Button>
       </header>
 
       <div

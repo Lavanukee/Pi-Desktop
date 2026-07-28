@@ -304,6 +304,20 @@ function corpEnvOverrideEnabled(): boolean {
  * submitted prompt drives the CorpEngine instead of the normal pi turn. Imperative
  * (reads the current store state) so a submit handler can call it inline.
  */
+/**
+ * TESTING ONLY — force the first message of a chat into a corporation.
+ *
+ * The corp is normally something the MODEL asks for (`create_production_hierarchy`
+ * at high/max effort); a probe that wants to exercise a corp run end to end cannot
+ * depend on a small local model choosing to promote. This flag exists for that,
+ * and for nothing else: it is never set in a normal launch.
+ */
+export function corpForceEnabled(): boolean {
+  return (
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('corpForce')
+  );
+}
+
 export function productionHarnessEnabled(): boolean {
   return (
     corpEnvOverrideEnabled() || useSettingsStore.getState().settings.experimentalProductionHarness

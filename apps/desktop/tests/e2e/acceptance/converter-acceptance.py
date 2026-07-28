@@ -191,6 +191,58 @@ def try_entry(entry, ws, tmp, style):
     return len(failures) == 0, failures
 
 
+def try_readback(entry, ws, tmp, style):
+    """Can the product read what it WROTE? Returns (passed, failures).
+
+    Run 18 passed all six pairs and still could not do this: it writes an
+    `items:` envelope around its output, and feeding that YAML back produced a
+    one-column CSV holding a stringified Python list. Each pair was correct in
+    isolation because this checker only ever fed it CANONICAL inputs it had
+    written itself — the product's own output never became an input.
+
+    This is not an extra requirement invented after the fact. The task says
+    "converts between JSON, CSV and YAML, any of the three to any other", and the
+    files it emits ARE JSON, CSV and YAML; a converter that cannot re-read its own
+    output cannot do the job it was asked for. Kept as a SEPARATE phase so the
+    report can say which of the two a product managed.
+    """
+    failures = []
+    want = [{str(k): str(v) for k, v in r.items()} for r in RECORDS]
+    for a in FORMATS:
+        for b in FORMATS:
+            if a == b:
+                continue
+            src = os.path.join(tmp, f"rt_{a}_{b}.{a}")
+            mid = os.path.join(tmp, f"rt_{a}_{b}_mid.{b}")
+            back = os.path.join(tmp, f"rt_{a}_{b}_back.{a}")
+            for f in (mid, back):
+                if os.path.exists(f):
+                    os.remove(f)
+            write_input(src, a)
+            try:
+                if run(entry, ws, src, mid, style).returncode != 0:
+                    failures.append(f"{a}->{b}: failed on the way out")
+                    continue
+                proc = run(entry, ws, mid, back, style)
+            except subprocess.TimeoutExpired:
+                failures.append(f"{a}->{b}->{a}: timed out")
+                continue
+            if proc.returncode != 0:
+                err = (proc.stderr or proc.stdout or "").strip().splitlines()
+                failures.append(
+                    f"{a}->{b}->{a}: cannot re-read its own {b} — {err[-1] if err else 'no output'}"
+                )
+                continue
+            try:
+                got = read_records(back, a)
+            except Exception as exc:  # noqa: BLE001
+                failures.append(f"{a}->{b}->{a}: its own output came back unreadable: {exc}")
+                continue
+            if got != want:
+                failures.append(f"{a}->{b}->{a}: records changed — got {str(got)[:160]}")
+    return len(failures) == 0, failures
+
+
 def main():
     if len(sys.argv) != 2:
         print("usage: converter-acceptance.py <workspace>")
@@ -209,7 +261,14 @@ def main():
                 ok, failures = try_entry(entry, ws, tmp, style)
                 if ok:
                     print(f"ACCEPTANCE PASS: {rel} converts all six pairs correctly")
-                    return 0
+                    rt_ok, rt_failures = try_readback(entry, ws, tmp, style)
+                    if rt_ok:
+                        print("READ-BACK PASS: it can also re-read everything it writes")
+                        return 0
+                    print(f"READ-BACK FAIL: {len(rt_failures)} of 6 — it cannot re-read its own output")
+                    for f in rt_failures:
+                        print(f"  {f}")
+                    return 1
                 # Keep whatever got furthest — that is the real product and its
                 # real argument form, not the first thing that happened to fail.
                 if best is None or len(failures) < len(best[1]):

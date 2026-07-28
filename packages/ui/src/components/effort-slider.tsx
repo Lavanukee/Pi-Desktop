@@ -80,6 +80,13 @@ export function EffortSlider({
   const max = Math.max(1, steps - 1);
   const pct = `${clamp01(fill) * 100}%`;
 
+  /* Which way the readout should slide. Remembering the previous fill (not
+   * `value`, which stays put while Auto tracks a tier) means the word moves the
+   * way the slider just moved: up for more effort, down for less. */
+  const prevFill = useRef(fill);
+  const dir = fill < prevFill.current ? 'down' : 'up';
+  prevFill.current = fill;
+
   const setFromClientX = useCallback(
     (clientX: number) => {
       const el = trackRef.current;
@@ -138,8 +145,12 @@ export function EffortSlider({
     >
       {/* Header: the active readout (accent-lit) + a "?" help affordance. */}
       <div className="pd-effort-head">
+        {/* Keyed by the label so React REMOUNTS it on every change — that is what
+            replays the slide; a plain text swap would animate nothing. */}
         <span
+          key={label}
           className="pd-effort-name"
+          data-dir={dir}
           data-testid={testId !== undefined ? `${testId}-value` : undefined}
         >
           {label}

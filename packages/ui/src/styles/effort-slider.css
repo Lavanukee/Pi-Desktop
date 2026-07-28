@@ -30,7 +30,12 @@
 }
 
 /* The live readout ("Effort · Auto" / "Effort · High"), lit in the accent so the
- * current effort reads at a glance — the panel's title. */
+ * current effort reads at a glance — the panel's title.
+ *
+ * It SLIDES in the direction the value moved: up when effort increases, down
+ * when it decreases, so the word confirms the drag you just made instead of
+ * silently swapping. React remounts it on each change (keyed by the label), which
+ * is what replays the animation. */
 .pd-effort-name {
   min-width: 0;
   overflow: hidden;
@@ -39,6 +44,39 @@
   font-weight: var(--pd-font-weight-semibold);
   white-space: nowrap;
   text-overflow: ellipsis;
+  animation: pd-effort-name-up var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-effort-name[data-dir='down'] {
+  animation-name: pd-effort-name-down;
+}
+
+@keyframes pd-effort-name-up {
+  from {
+    opacity: 0;
+    transform: translateY(0.5em);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes pd-effort-name-down {
+  from {
+    opacity: 0;
+    transform: translateY(-0.5em);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-effort-name {
+    animation: none;
+  }
 }
 
 /* A small round "?" — muted at rest, accent-lit on hover/focus. */
@@ -111,33 +149,27 @@
     0 0 0 3px var(--pd-status-info-bg);
 }
 
-/* The fill that grows left→right with effort. BLUE, at every level (jedd): the
- * previous version warmed blue→red as effort climbed, which reads as a warning
- * the higher you go — the opposite of what more effort means here. One accent
- * colour, deepening slightly with effort so the change is still felt, under the
- * same tiled dot texture that keeps it tactile rather than flat. A min-width
- * keeps a rounded nub (and the knob) visible at the "least" end. */
+/* The fill that grows left→right with effort. BLUE, flat, and contained.
+ *
+ * Three things deliberately absent (jedd, looking at it running): no dot
+ * texture, no glow, and nothing at all past the knob. The glow was the worst of
+ * them — a box-shadow spreads in every direction, so the "fill" bled colour to
+ * the RIGHT of the control, past the end of the track, which makes the value
+ * look higher than it is and the control look broken at Max. A slider should end
+ * exactly where the value ends. */
 .pd-effort-fill {
   position: absolute;
   inset: 0 auto 0 0;
   min-width: 20px;
   border-radius: var(--pd-radius-full);
-  background-color: color-mix(
+  background: color-mix(
     in srgb,
-    var(--pd-border-focus) calc(78% + var(--pd-effort-heat, 0) * 22%),
+    var(--pd-border-focus) calc(80% + var(--pd-effort-heat, 0) * 20%),
     var(--pd-accent-primary)
   );
-  background-image: radial-gradient(
-    color-mix(in srgb, var(--pd-text-on-accent) 30%, transparent) 0.5px,
-    transparent 1.4px
-  );
-  background-size: 4px 4px;
-  box-shadow: 0 0 calc(2px + var(--pd-effort-heat, 0) * 6px)
-    color-mix(in srgb, var(--pd-border-focus) calc(var(--pd-effort-heat, 0) * 55%), transparent);
   transition:
     width var(--pd-duration-base) var(--pd-easing-standard),
-    background-color var(--pd-duration-base) var(--pd-easing-standard),
-    box-shadow var(--pd-duration-base) var(--pd-easing-standard);
+    background var(--pd-duration-base) var(--pd-easing-standard);
 }
 
 /* The grab knob rides the fill's right edge (always visible via the fill nub): a
@@ -159,15 +191,15 @@
     0 0 0 1px var(--pd-border-default);
 }
 
-/* Grabbing it: a touch larger, and a soft accent halo so the drag reads as live. */
+/* Grabbing it: a touch larger and a firmer ring. No halo — a soft spread here
+ * reads as the same colour leak the fill was just cured of. */
 .pd-effort-track:active .pd-effort-knob,
 .pd-effort-track:focus-visible .pd-effort-knob {
   width: 18px;
   height: 18px;
   box-shadow:
     var(--pd-shadow-md),
-    0 0 0 1px var(--pd-border-default),
-    0 0 0 4px color-mix(in srgb, var(--pd-border-focus) 22%, transparent);
+    0 0 0 1.5px var(--pd-border-focus);
 }
 
 /* ── Footer: the Auto ↔ pinned-level toggle ───────────────────────────────── */

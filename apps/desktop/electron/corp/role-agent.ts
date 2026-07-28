@@ -825,6 +825,16 @@ export interface OpenRoleSession {
   readonly sessionFile: string | undefined;
   /** How full this role's context is (0..100), when readable. */
   contextPercent(): number | undefined;
+  /**
+   * Cut this role's turn short RIGHT NOW.
+   *
+   * The mesh's own abort only refuses NEW talks — it cannot reach inside an
+   * agent that is already mid-turn, and an agent loop is deliberately unbounded
+   * (it runs until it submits). MEASURED: a tester specialist churned for three
+   * more turns after the run's budget was spent, writing a new differently-named
+   * test file each time. Something has to be able to reach in.
+   */
+  abort(): void;
   /** Close the session and clean up its agent dir. */
   dispose(): void;
 }
@@ -1235,6 +1245,13 @@ export async function openRoleSession(
     prompt: promptOnce,
     sessionFile: sessionManager.getSessionFile(),
     contextPercent: () => readContextPercent(),
+    abort: () => {
+      try {
+        void session.abort();
+      } catch {
+        // aborting an idle session is a no-op, never an error
+      }
+    },
     dispose: () => {
       try {
         session.dispose();

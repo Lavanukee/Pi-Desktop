@@ -145,6 +145,22 @@ export class AgentPool {
     }
   }
 
+  /**
+   * Stop every agent that is mid-turn, immediately. Sessions stay OPEN (and their
+   * files intact) — this cuts the work, it does not end the conversation. The
+   * mesh's own abort only refuses new talks; without this, an agent already
+   * looping keeps looping long past the run's budget.
+   */
+  abortAll(): void {
+    for (const agent of this.live.values()) {
+      try {
+        agent.open.abort();
+      } catch {
+        // a failing abort must never break teardown
+      }
+    }
+  }
+
   /** Close every open session (end of run / app quit). Files are kept. */
   disposeAll(): void {
     for (const id of [...this.live.keys()]) this.evict(id);

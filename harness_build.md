@@ -201,6 +201,43 @@ Godot", where most of the work is looking things up and modifying what exists,
 that is not a limitation, it is a hard stop. Roles now carry the full working
 set: file tools + shell + research, with `tool_search` on top.
 
+**L3 · The team built a working converter and wrote no test.** Run 2 (converter,
+2 engineers): CEO → manager → engineer, the engineer wrote `converter.py` (3.2 KB)
+and `cli.py` (4.6 KB), and verified them BY HAND with `bash` — round-tripping real
+JSON/CSV/YAML files and checking the output. Genuinely good work. And then it
+reported "done" having left nothing behind that anyone could run. The verification
+happened, and then evaporated. Fix is two-sided: the gate now demands a runnable
+check (`ran: false` is not a pass), and the manager is told to ASSIGN ownership of
+the thing that proves the product works.
+
+**L4 · The tester specialist churned in `/tmp` because nothing owned the test.**
+With no test in the product, the commissioned tester started inventing its own —
+`1_test_cli.py`, `focused_tests.py`, `detailed_tests.py`, `final_tests.py`,
+`final_analysis.py`, each in `/tmp/test_conversion/`, none in the workspace. Two
+distinct failures in one behaviour: work written where nobody will ever find it,
+and the small-model habit of *starting again with a new name* instead of
+converging. The specialist prompt now says measure what EXISTS, report a missing
+test rather than quietly inventing one, and never write outside the workspace.
+
+**L5 · The budget could not stop an agent that was already working.** The run's
+12-minute budget fired at 720s; the tester started fresh turns at 757s and 810s
+and was still going when I killed it. `mesh.abort()` only refuses NEW talks — an
+agent loop is deliberately unbounded (it runs until it submits), so nothing could
+reach inside a turn in progress. For an overnight run that is the difference
+between "stopped at dawn" and "burned the night in a loop". `OpenRoleSession` now
+exposes `abort()`, the pool can `abortAll()`, and a stop hits BOTH layers: the
+mesh refuses new talks and the host cuts what is already running.
+
+**L6 · A missing checker must never read as a broken product.** Nearly shipped:
+the gate ran `python3 -m pytest -q` whenever it saw `test_*.py`, and **pytest is
+not installed on this machine's python3**. The team would have been handed "No
+module named pytest" and sent off to fix code that was never wrong — a whole
+wasted round, and the kind of failure that looks like the model being stupid.
+Discovery now prefers a standalone runner (which needs nothing installed), uses
+pytest only when it actually imports, and falls back to stdlib unittest. The
+general rule: **distinguish "the product failed" from "I could not check it"**,
+always, and never let the second masquerade as the first.
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

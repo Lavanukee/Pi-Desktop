@@ -154,6 +154,8 @@ export interface MeshAgentHostConfig {
 export type MeshAgentHost = RunAgentTurn & {
   /** The live/resumable agent sessions this host is driving. */
   readonly pool: AgentPool;
+  /** Cut every in-flight agent turn short. Sessions stay open. */
+  abort(): void;
   /** Close every open session. Their files are kept — they resume on next use. */
   dispose(): void;
 };
@@ -235,6 +237,7 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
 
   return Object.assign(run, {
     pool,
+    abort: () => pool.abortAll(),
     dispose: () => pool.disposeAll(),
   });
 }
@@ -301,9 +304,16 @@ export async function runCorpMeshTask(opts: {
     onSessionFile: (id, file) => team.remember(id, roleOf.get(id) ?? 'engineer', file),
   });
   const mesh = new AgentMesh(host, roster);
+  // A stop must reach BOTH layers: the mesh refuses new talks, and the host cuts
+  // whatever is already running. Only one of those existed before, so a spent
+  // budget left the in-flight agent churning.
+  const stop = () => {
+    mesh.abort();
+    host.abort();
+  };
   if (opts.signal !== undefined) {
-    if (opts.signal.aborted) mesh.abort();
-    else opts.signal.addEventListener('abort', () => mesh.abort(), { once: true });
+    if (opts.signal.aborted) stop();
+    else opts.signal.addEventListener('abort', stop, { once: true });
   }
   try {
     let reply = await mesh.run('ceo', opts.task);

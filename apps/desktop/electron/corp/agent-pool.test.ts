@@ -32,6 +32,7 @@ const spec: AgentSpec = {
 function fakeOpener() {
   const opened: RoleSessionConfig[] = [];
   const disposed: string[] = [];
+  const aborted: string[] = [];
   let serial = 0;
   const open = async (_h: CorpModelHandle, config: RoleSessionConfig): Promise<OpenRoleSession> => {
     opened.push(config);
@@ -60,10 +61,13 @@ function fakeOpener() {
             ? path.join(config.session.dir, `${id}.jsonl`)
             : undefined,
       contextPercent: () => 12,
-      dispose: () => disposed.push(id),
+      abort: () => aborted.push(id),
+      dispose: () => {
+        disposed.push(id);
+      },
     };
   };
-  return { open, opened, disposed };
+  return { open, opened, disposed, aborted };
 }
 
 let dir: string;
@@ -196,7 +200,19 @@ describe('teardown', () => {
     expect(pool.isLive('a')).toBe(false);
   });
 
-  it('a throwing dispose can never break the run', async () => {
+  it('abortAll cuts every in-flight turn but keeps the sessions open', async () => {
+    const fake = fakeOpener();
+    const pool = new AgentPool({ handle, openSession: fake.open });
+    await pool.talk('a', spec, '1');
+    await pool.talk('b', spec, '1');
+    pool.abortAll();
+    expect(fake.aborted).toHaveLength(2);
+    // Aborting cuts the WORK, it does not end the conversation.
+    expect(pool.isLive('a')).toBe(true);
+    expect(fake.disposed).toHaveLength(0);
+  });
+
+  it('a throwing dispose or abort can never break the run', async () => {
     const pool = new AgentPool({
       handle,
       openSession: async () => ({
@@ -205,12 +221,16 @@ describe('teardown', () => {
         },
         sessionFile: undefined,
         contextPercent: () => undefined,
+        abort: () => {
+          throw new Error('abort exploded');
+        },
         dispose: () => {
           throw new Error('dispose exploded');
         },
       }),
     });
     await pool.talk('a', spec, '1').catch(() => undefined);
+    expect(() => pool.abortAll()).not.toThrow();
     expect(() => pool.disposeAll()).not.toThrow();
   });
 });

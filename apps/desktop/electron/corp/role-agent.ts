@@ -30,6 +30,7 @@
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { shellWrites } from './shell-writes';
 // TYPE-ONLY import of the pi SDK — erased at build, so it emits NO runtime code.
 // `AuthStorage`/`ModelRegistry` double as VALUE constructors; they are pulled from
 // the dynamic loader below at runtime, and named here only for the type positions
@@ -381,6 +382,48 @@ export function bashDenylistGate(toolName: string, input: unknown): StepCapBlock
   return reason !== null ? { block: true, reason: `blocked by denylist: ${reason}` } : undefined;
 }
 
+/**
+ * A role that may RUN but may not WRITE — role separation made mechanical.
+ *
+ * The manager was given `bash` because without it, it used an engineer as a
+ * remote terminal (nine "run this and paste the stderr" exchanges in run 15).
+ * With it, on jedd's real task, it wrote FOUR contracts to four engineers — good
+ * ones, with owned files and acceptance commands — and then built the entire
+ * product itself in the same turn: 52 bash calls, a GUI, an engine, an app
+ * bundle, and an installer it ran against /Applications. Then it told the CEO
+ * the product was "verified working", while every engineer it had briefed had
+ * done nothing at all.
+ *
+ * Its prompt asked it not to. Prompts do not decide this; tools do — the fifth
+ * time tonight. So the cut goes exactly where the role boundary is: it can run
+ * anything, and it can write nothing. `shellWrites` finds the heredocs and
+ * redirects; the refusal names the engineer's job so the next move is obvious.
+ */
+export function bashWriteGate(
+  toolName: string,
+  input: unknown,
+  mayWrite: boolean,
+): StepCapBlock | undefined {
+  if (mayWrite || toolName !== 'bash') return undefined;
+  const command =
+    input !== null &&
+    typeof input === 'object' &&
+    typeof (input as { command?: unknown }).command === 'string'
+      ? (input as { command: string }).command
+      : '';
+  const writes = shellWrites(command);
+  if (writes.length === 0) return undefined;
+  const names = writes.map((w) => w.path).join(', ');
+  return {
+    block: true,
+    reason:
+      `this command writes to ${names}, and writing files is not your job — it did not run. ` +
+      `You can run anything that does not write: execute the product, run the tests, read an ` +
+      `error. To CHANGE a file, message the engineer who owns it with exactly what to change ` +
+      `and why. If nobody owns it yet, give it to an engineer and let them build it.`,
+  };
+}
+
 /** One captured tool call the model made (esp. custom-tool / promotion calls). */
 export interface RoleAgentToolCall {
   readonly name: string;
@@ -529,6 +572,38 @@ export function collectFilesWritten(
  * size is stat'd off `cwd`, and `linesAdded` is counted from the write content
  * when present. Never throws.
  */
+/**
+ * The file-writes a `bash` call performed — heredocs, redirects, `tee`, and
+ * python heredocs that open files. Reported exactly like a `write` tool call,
+ * because that is what they are.
+ *
+ * Run 19's manager built an entire product with `cat > converter.py << 'EOF'`
+ * and the run recorded `files: []` for every agent. A shell is how people write
+ * files; a ledger that only counts the tool call is a ledger that can be walked
+ * around without meaning to.
+ */
+export function shellWriteActivities(
+  toolName: string,
+  args: unknown,
+  cwd: string,
+  statBytes: (absPath: string) => number | undefined,
+): RoleAgentActivity[] {
+  if (toolName !== 'bash') return [];
+  const rec = argsRecord(args as RoleAgentToolCall['arguments']);
+  const command = typeof rec?.command === 'string' ? rec.command : undefined;
+  if (command === undefined) return [];
+  return shellWrites(command).map((w) => {
+    const abs = path.isAbsolute(w.path) ? w.path : path.join(cwd, w.path);
+    const bytes = statBytes(abs);
+    return {
+      kind: 'file-write' as const,
+      toolName: w.append ? 'bash(append)' : 'bash',
+      path: w.path,
+      ...(bytes !== undefined ? { bytes } : {}),
+    };
+  });
+}
+
 export function fileWriteActivity(
   toolName: string,
   args: unknown,
@@ -772,6 +847,9 @@ export interface RoleAgentConfig {
   /** Tools the budget never charges and never blocks — the ways a role FINISHES
    * (`submit_work`, `talk_to`). See {@link createStepCapCounter}. */
   readonly freeTools?: readonly string[];
+  /** May this role create or change files? Default true. `false` makes a role
+   * run-only: bash still works, but a command that writes is refused. */
+  readonly mayWriteFiles?: boolean;
   /** Per-individual-CALL network-abort (spec §197): the max time ONE provider HTTP
    * request may take to return a response before it is treated as a hung socket and
    * aborted (degraded to empty). This is a network-hang guard on a SINGLE request —
@@ -897,6 +975,9 @@ export interface RoleTurnOptions {
   /** Tools the budget never charges and never blocks — the ways a role FINISHES
    * (`submit_work`, `talk_to`). See {@link createStepCapCounter}. */
   readonly freeTools?: readonly string[];
+  /** May this role create or change files? Default true. `false` makes a role
+   * run-only: bash still works, but a command that writes is refused. */
+  readonly mayWriteFiles?: boolean;
 }
 
 /** A role session that stays OPEN between turns. */
@@ -1088,6 +1169,8 @@ export async function openRoleSession(
       }
       const denied = bashDenylistGate(e.toolName, e.input);
       if (denied !== undefined) return denied;
+      const cannotWrite = bashWriteGate(e.toolName, e.input, config.mayWriteFiles !== false);
+      if (cannotWrite !== undefined) return cannotWrite;
       return turn.stepCap?.charge(e.toolName);
     });
     // Turn boundaries carry the session's live context fullness (when readable)
@@ -1130,6 +1213,11 @@ export async function openRoleSession(
       if (e.isError) return undefined;
       const fileWrite = fileWriteActivity(e.toolName, e.input, config.cwd, safeStatBytes);
       if (fileWrite !== undefined) emit(fileWrite);
+      // A heredoc IS a file write. Emitted after the bash record above, so the
+      // transcript shows the command and then what it produced.
+      for (const w of shellWriteActivities(e.toolName, e.input, config.cwd, safeStatBytes)) {
+        emit(w);
+      }
       return undefined;
     });
     // THE LIVE STREAM — the model producing text / reasoning token by token.

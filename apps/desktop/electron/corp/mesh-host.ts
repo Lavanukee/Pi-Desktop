@@ -412,6 +412,11 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
           // and so never submitted anything. Running out of budget now reads as
           // "conclude", which is the one thing a 4B model needs said out loud.
           maxSteps: config.maxStepsPerMessage ?? DEFAULT_STEPS_PER_MESSAGE,
+          // RUN, DO NOT WRITE — for everyone whose job is not building. The
+          // manager needs a shell to see a failure with its own eyes; it does not
+          // need one to write `gui_app.py`, which is what it did the moment it had
+          // one. Engineers keep the ability to write; nobody else has it.
+          mayWriteFiles: agent.role === 'engineer',
           freeTools: [
             TALK_TO_TOOL,
             COMMISSION_SPECIALIST_TOOL,

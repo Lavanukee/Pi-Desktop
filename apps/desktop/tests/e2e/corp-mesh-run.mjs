@@ -63,6 +63,26 @@ const TASKS = {
     'an output file and does the conversion. It must RUN with no network access and ' +
     'no paid services. Include a test that converts a real file each way and checks ' +
     'the result, and make sure that test passes before you call the work done.',
+  /*
+   * THE REAL TARGET (jedd, 2026-07-28). The `converter` task above is a hundred
+   * lines of Python; a manager that one-shots it is not misbehaving, it is
+   * correct, and a benchmark that cannot tell a good manager from a bad one is
+   * not a benchmark. THIS is the task that was actually asked for, and it cannot
+   * be done by one agent in one turn: a GUI, a packaged app, an install step, and
+   * a dozen independent format backends that different people can own.
+   */
+  desktop:
+    'Build a real macOS desktop application for converting files, and install it into ' +
+    '/Applications so it can be launched from Finder like any other app. It needs a ' +
+    'GUI in the shape of CloudConvert: drop files in (or browse for them), pick the ' +
+    'output format from what is actually possible for that input, watch progress, and ' +
+    'get the converted file back. Support the breadth CloudConvert does — documents, ' +
+    'spreadsheets, presentations, images, audio, video, archives, ebooks and fonts — ' +
+    'using whatever converters this machine has (ffmpeg, sips, and anything else you ' +
+    'find); where a format genuinely cannot be handled, say so in the UI rather than ' +
+    'failing silently. It must run offline with no paid services. Leave behind a way ' +
+    'to check it that RUNS: something that converts real files in several formats and ' +
+    'exits non-zero when a conversion is wrong.',
   godot:
     'Build a 3D flight-combat game in Godot 4: command a fleet, create units, direct ' +
     'them on a 3D map against an enemy, with capturable bases and outposts, buildable ' +

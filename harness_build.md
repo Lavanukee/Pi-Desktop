@@ -238,6 +238,25 @@ pytest only when it actually imports, and falls back to stdlib unittest. The
 general rule: **distinguish "the product failed" from "I could not check it"**,
 always, and never let the second masquerade as the first.
 
+**L7 · CAPABILITY DETERMINES BEHAVIOUR. This is the big one.** I gave the CEO
+`bash` in the tool-surface fix, reasoning "the CEO reads the product and checks it
+runs". Run 3: the CEO built the ENTIRE product itself with `cat > file << EOF`
+heredocs — 23 bash calls, 14 turns, **not a single `talk_to`**. It never spoke to
+the manager. The prompt said "the team handles the technical work"; the toolset
+said "you have hands"; the toolset won, and it was not close.
+
+This is my own regression and it is the most useful thing learned so far. For a
+small model, **role separation must be enforced by the TOOLSET, not the prompt.**
+A role that CAN do the work will do the work rather than delegate. So: CEO and
+manager are read-only (inspect + research, no shell, no editor) and must
+commission the tester to find out whether anything runs; engineers get full file
+tools and a shell; specialists get a shell but no editor, so they measure without
+quietly becoming a second engineer.
+
+The generalisation for anything built on a 4B model: **you cannot instruct a
+capability away.** If two roles must behave differently, give them different
+tools.
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

@@ -81,7 +81,7 @@ You are the CEO. The user asked for: ${task}
 
 Form a clear vision of what to build (research first if you need to), then ${TALK_TO_TOOL} the manager with it — the manager has a team of engineers and can build anything you describe.
 
-Before you accept the work as done, satisfy yourself that it RUNS: commission the tester, or run it yourself. "The team says it is finished" is not evidence. If someone hands you back a failing check, do not argue with it — ${TALK_TO_TOOL} the manager with the exact failure and have it fixed.
+You do not build and you cannot run things yourself — that is deliberate. Before you accept work as done, ${COMMISSION_SPECIALIST_TOOL} the tester and have it RUN the product for you. "The team says it is finished" is not evidence. If a failing check comes back, do not argue with it — ${TALK_TO_TOOL} the manager with the exact failure and have it fixed.
 
 You focus on the user's actual intent; the team handles the technical work. When it genuinely works, reply with what was built and how to run it.`;
 }
@@ -91,7 +91,7 @@ export function managerMeshPrompt(): string {
 
 You are the MANAGER. The CEO ${TALK_TO_TOOL}s you with a vision.
 
-Break it into concrete pieces and ${TALK_TO_TOOL} an engineer for each one. A piece of work is a clear message: what to build, WHICH FILES it owns, and what command will prove it works. Give different engineers different files — two people editing one file is how a build breaks.
+You do not write code yourself — you have no editor and no shell, on purpose. Break the vision into concrete pieces and ${TALK_TO_TOOL} an engineer for each one. A piece of work is a clear message: what to build, WHICH FILES it owns, and what command will prove it works. Give different engineers different files — two people editing one file is how a build breaks.
 
 Somebody must own the thing that proves the whole product works (a test, a build, a runnable entry point). If nobody owns it, the product cannot be shown to work and the work does not count. Assign it explicitly.
 
@@ -164,13 +164,29 @@ const RESEARCH_TOOLS = ['web_search', 'web_fetch'];
 /** Everything needed to work in a real tree: see it, search it, read it, change it. */
 const FILE_TOOLS = ['read', 'write', 'edit', 'ls', 'grep', 'find'];
 
-/** The CEO reads the product and checks it runs; it does not write code. */
-const DEFAULT_CEO_TOOLS = ['read', 'ls', 'grep', 'find', 'bash', ...RESEARCH_TOOLS];
-/** The manager reads the tree to write sensible contracts, and looks things up. */
+/**
+ * WHO CAN DO WHAT — and this is the load-bearing part, not the prompts.
+ *
+ * MEASURED, painfully: giving the CEO `bash` "so it can check the product runs"
+ * produced a run in which the CEO built the ENTIRE product itself with
+ * `cat > file << EOF` heredocs — 23 bash calls, 14 turns, and not one `talk_to`.
+ * It never spoke to the manager at all. The prompt said "the team handles the
+ * technical work"; the toolset said "you have hands"; the toolset won.
+ *
+ * For a small model, CAPABILITY DETERMINES BEHAVIOUR far more than instruction.
+ * If a role can do the work, it will do the work instead of delegating. So role
+ * separation is enforced HERE:
+ *
+ *   ceo / manager  — read-only. They can inspect the tree and look things up, and
+ *                    that is all. To find out whether the product runs they must
+ *                    commission the tester, which is what specialists are for.
+ *   engineer       — full file tools + a shell. They build.
+ *   specialist     — read + shell, but NO write/edit. It must RUN what it judges;
+ *                    it must not quietly become a second engineer.
+ */
+const DEFAULT_CEO_TOOLS = ['read', 'ls', 'grep', 'find', ...RESEARCH_TOOLS];
 const DEFAULT_MANAGER_TOOLS = ['read', 'ls', 'grep', 'find', ...RESEARCH_TOOLS];
-/** An engineer works: full file tools, a shell, and the ability to look things up. */
 const DEFAULT_ENGINEER_TOOLS = [...FILE_TOOLS, 'bash', ...RESEARCH_TOOLS];
-/** A specialist MEASURES — it must be able to run the thing it is judging. */
 const DEFAULT_SPECIALIST_TOOLS = ['read', 'ls', 'grep', 'find', 'bash', ...RESEARCH_TOOLS];
 
 /**

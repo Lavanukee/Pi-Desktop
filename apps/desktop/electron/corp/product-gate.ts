@@ -87,6 +87,29 @@ function listShallow(dir: string): string[] {
  * anything.
  */
 export function findGate(root: string): GateCandidate | undefined {
+  /*
+   * 0. THE TEAM DECLARED ITS OWN CHECK. This is the path that matters, and the
+   *    only one that generalises.
+   *
+   *    Everything below is a convention for a stack somebody thought of in
+   *    advance, and that list can never keep up — Rust, Go, CMake, Xcode, a
+   *    shell pipeline, a thing with no ecosystem at all. A project the gate
+   *    cannot grade is worse than untested: the engineer that cannot be graded
+   *    will invent a check the gate DOES recognise, and quietly become the
+   *    acceptance criterion for the whole team.
+   *
+   *    So the harness asks for one thing instead of guessing at hundreds: leave
+   *    an executable `check` at the root that exits 0 when the product works.
+   *    Any language, any stack, any shape of product — the team decides what
+   *    proving it means, and the harness only insists that it be RUNNABLE.
+   */
+  for (const name of ['check', 'check.sh', 'verify.sh', 'run_checks.sh']) {
+    const declared = path.join(root, name);
+    if (existsSync(declared)) {
+      return { how: `declared check (${name})`, command: '/bin/sh', args: [declared] };
+    }
+  }
+
   // 1. The project SAYS how to test itself. Always believe it first.
   const pkg = readJson(path.join(root, 'package.json'));
   const scripts = (pkg?.scripts ?? {}) as Record<string, unknown>;
@@ -136,13 +159,9 @@ export function findGate(root: string): GateCandidate | undefined {
 
   // 4. A Godot project — open it headless and see if it loads without erroring.
   /*
-   * A SWIFT PACKAGE. Added because the gate was blind to it: on a macOS GUI task
-   * the discovery list (run_tests.py, package.json, Makefile, test_*.py, godot)
-   * matches nothing a Swift app contains, so the engineer building the GUI has no
-   * way to be graded — and the tempting fix, from its side, is to plant a
-   * `run_tests.py` at the root and silently become the acceptance check for all
-   * four engineers. `swift build` is a real check: it fails on any type error in
-   * the package.
+   * Ecosystem fallbacks, for a team that declared nothing. Useful, never
+   * sufficient: each one is a stack somebody remembered, and the DECLARED check
+   * above is what makes this work for a project nobody anticipated.
    */
   if (existsSync(path.join(root, 'Package.swift'))) {
     return { how: 'swift build', command: 'swift', args: ['build'] };

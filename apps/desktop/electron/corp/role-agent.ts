@@ -269,6 +269,37 @@ export const SAVE_GRACE = 3;
 /** How a role is told its budget ran out. Tools it can still reach are named,
  * because "stop" without "do this instead" leaves a small model with nowhere to
  * go — it re-tries the blocked call until the run dies. */
+/**
+ * WHAT RUNNING OUT SOUNDS LIKE.
+ *
+ * jedd's framing, and it is better than a budget message: what an engineer that
+ * has been heads-down too long actually needs is its manager putting a head
+ * round the door — "status, ETA, what's going on down there?" — because that is
+ * a question with a useful answer whether the work is nearly done, stuck, or
+ * quietly building the wrong thing. A "budget exceeded" notice invites a
+ * shrug; a check-in invites a report, and the report goes back up to somebody
+ * who can redirect.
+ *
+ * Measured need: run 13 spent its last 1200 seconds with ZERO file writes while
+ * an engineer resubmitted the same failing command three times. Nobody asked.
+ */
+export function checkInReason(spent: string, exempt: readonly string[], saveLeft = 0): string {
+  const may =
+    exempt.length > 0
+      ? ` Reply by finishing (${exempt.join(', ')}) — not by carrying on.`
+      : ` Stop calling tools and answer in text.`;
+  const save =
+    saveLeft > 0
+      ? ` You can still write or edit ${saveLeft} more time${saveLeft === 1 ? '' : 's'} to save work already done.`
+      : '';
+  return (
+    `MANAGER CHECKING IN — you have been at this for ${spent} without reporting back, so this ` +
+    `call did not run. Where are you: what works, what does not, and how much longer? If you ` +
+    `are stuck, or this is bigger than the brief, say so plainly — that is far more useful than ` +
+    `another attempt.${save}${may}`
+  );
+}
+
 export function stepCapReason(
   maxSteps: number,
   exempt: readonly string[],
@@ -342,7 +373,11 @@ export function createStepCapCounter(
         }
         return {
           block: true,
-          reason: stepCapReason(maxSteps, exempt, Math.max(0, saveGrace - saved)),
+          reason: checkInReason(
+            `${count} tool call${count === 1 ? '' : 's'}`,
+            exempt,
+            Math.max(0, saveGrace - saved),
+          ),
         };
       }
       return undefined;

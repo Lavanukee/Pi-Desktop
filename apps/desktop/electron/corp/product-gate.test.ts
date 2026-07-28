@@ -25,6 +25,20 @@ const write = (rel: string, body: string) => {
 };
 
 describe('finding the product’s own check', () => {
+  it('believes a declared `check` above everything — the stack-agnostic path', () => {
+    // The point: a project in a language nobody put in the discovery list is
+    // still gradable, because the TEAM says what proving it means.
+    write('check', '#!/bin/sh\nexit 0\n');
+    write('package.json', JSON.stringify({ scripts: { test: 'vitest run' } }));
+    write('Package.swift', '// swift-tools-version:5.9');
+    expect(findGate(dir)?.how).toBe('declared check (check)');
+  });
+
+  it('accepts the other declared spellings', () => {
+    write('verify.sh', '#!/bin/sh\nexit 0\n');
+    expect(findGate(dir)?.how).toBe('declared check (verify.sh)');
+  });
+
   it('believes a declared test script first', () => {
     write('package.json', JSON.stringify({ scripts: { test: 'vitest run' } }));
     write('test_x.py', 'assert True');

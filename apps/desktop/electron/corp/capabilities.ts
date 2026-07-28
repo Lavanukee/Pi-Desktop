@@ -51,7 +51,7 @@ const PROBES: readonly Probe[] = [
     command: 'python3',
     args: ['--version'],
     relevantTo: [],
-    ifMissing: 'Write the product in a language this machine does have.',
+    ifMissing: 'Install it, or write the product in a language this machine does have.',
   },
   {
     name: 'node',
@@ -65,7 +65,7 @@ const PROBES: readonly Probe[] = [
     command: 'python3',
     args: ['-c', 'import yaml, sys; sys.stdout.write(yaml.__version__)'],
     relevantTo: ['yaml', 'yml'],
-    ifMissing: 'Parse and emit YAML yourself rather than depending on a library that is not here.',
+    ifMissing: 'Install it (`pip3 install pyyaml`) — that is faster and safer than hand-rolling a YAML parser.',
   },
   {
     name: 'pytest',
@@ -73,7 +73,7 @@ const PROBES: readonly Probe[] = [
     args: ['-c', 'import pytest, sys; sys.stdout.write(pytest.__version__)'],
     relevantTo: ['test', 'python'],
     ifMissing:
-      'Write tests as a plain script that runs with `python3 <file>` and exits non-zero on failure. Do NOT depend on pytest.',
+      'Install it (`pip3 install pytest`) if you want it, or just write tests as a plain script that runs with `python3 <file>` and exits non-zero on failure. Either is fine.',
   },
   {
     name: 'godot',
@@ -88,7 +88,7 @@ const PROBES: readonly Probe[] = [
     command: 'ffmpeg',
     args: ['-version'],
     relevantTo: ['convert', 'video', 'audio', 'media'],
-    ifMissing: 'Handle the formats you can without it, and name the ones you cannot.',
+    ifMissing: 'Install it if you can (`brew install ffmpeg`); otherwise handle the formats you can and name the ones you cannot.',
   },
   {
     name: 'git',

@@ -6,6 +6,7 @@ import {
   TOOL_SEARCH_NAME,
   applySamplingMode,
   bashDenylistGate,
+  checkInReason,
   collectFilesWritten,
   countAssistantTurns,
   createStepCapCounter,
@@ -176,6 +177,24 @@ describe('applySamplingMode — the payload merge per mode', () => {
   });
 });
 
+describe('running out reads as a manager looking in, not a budget notice', () => {
+  // jedd: an engineer heads-down too long needs "status, ETA, what's going on
+  // down there?" — a question with a useful answer whether it is nearly done,
+  // stuck, or building the wrong thing. Run 13 spent 1200 seconds with zero file
+  // writes and nobody asked.
+  it('asks for a status, an ETA, and permission to say it is stuck', () => {
+    const r = checkInReason('24 tool calls', ['submit_work', 'talk_to']);
+    expect(r).toContain('MANAGER CHECKING IN');
+    expect(r).toContain('how much longer');
+    expect(r).toContain('stuck');
+    expect(r).toContain('submit_work');
+  });
+
+  it('with nothing exempt, asks for an answer in text', () => {
+    expect(checkInReason('20 tool calls', [])).toContain('answer in text');
+  });
+});
+
 describe('saving work is not doing more work', () => {
   // Run 9, from the engineer's own thinking: "I've hit my step budget 24 times.
   // I need to finish by submitting my work. Let me create a simple test script
@@ -227,7 +246,7 @@ describe('createStepCapCounter — the hard tool-call cap', () => {
     expect(cap.hit).toBe(false);
     const blocked = cap.charge(); // 4 — over the cap
     expect(blocked?.block).toBe(true);
-    expect(blocked?.reason).toBe(stepCapReason(3, [], SAVE_GRACE));
+    expect(blocked?.reason).toContain('MANAGER CHECKING IN');
     expect(cap.hit).toBe(true);
     expect(cap.count).toBe(4);
   });
@@ -261,10 +280,10 @@ describe('createStepCapCounter — the hard tool-call cap', () => {
   it('tells a blocked role what it may still do, so it concludes instead of retrying', () => {
     const cap = createStepCapCounter(0, ['submit_work', 'talk_to']);
     const reason = cap.charge('bash')?.reason ?? '';
-    expect(reason).toContain('step budget (0 tool calls) reached');
+    expect(reason).toContain('MANAGER CHECKING IN');
     expect(reason).toContain('this call did not run');
     expect(reason).toContain('submit_work');
-    expect(reason).toContain('Do not retry the blocked tool');
+    expect(reason).toContain('not by carrying on');
   });
 
   it('with nothing exempt, tells the role to answer in text', () => {
@@ -280,7 +299,7 @@ describe('createStepCapCounter — the hard tool-call cap', () => {
   it('defaults to a cap of 20', () => {
     const cap = createStepCapCounter();
     for (let i = 0; i < 20; i++) expect(cap.charge()).toBeUndefined();
-    expect(cap.charge()?.reason).toBe(stepCapReason(20, [], SAVE_GRACE));
+    expect(cap.charge()?.reason).toContain('MANAGER CHECKING IN');
   });
 });
 

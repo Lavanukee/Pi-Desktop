@@ -509,6 +509,55 @@ rule could have found it — the run found it in eleven minutes. **When you add 
 constraint, enumerate the states the previous constraints already forbid**, and
 check that something legal remains in each.
 
+**L19 · A rewrite that runs out of output budget lands half a file, silently.**
+Run 10's `cli.py`, by write size:
+
+```
+232.2s  write  5557 bytes / 172 lines   built
+281.5s  edit   5567 bytes               fixed
+570.4s  edit   5548 bytes               fixed
+685.0s  write  2731 bytes / 100 lines   rewrote — and came out half-length
+```
+
+The last one regenerated the whole file, ran out of generation budget partway
+through, and wrote what it had: 100 lines ending mid-statement, `SyntaxError:
+unexpected EOF while parsing` at line 101. Nothing failed. The tool call
+succeeded, the bytes hit disk, and every one of the seven tests then failed for
+the same reason.
+
+`maxTokens` is 8192 and thinking shares it, so a 172-line regeneration plus
+reasoning is genuinely near the edge — which is the mechanical half of why "use
+`edit`, do not rewrite" is in the engineer prompt. The other half is L12's: a
+rewrite discards what already worked. This is the same rule earning its keep a
+second way, and worth saying in the prompt as a concrete cost rather than a style
+preference.
+
+**L20 · The manager repeated a diagnosis for eleven minutes after it stopped
+being true.** Run 10's manager measured the product once, at 920s, saw the
+truncated `cli.py`, and then sent engineer:1 four near-identical messages:
+
+> *"The cli.py file is truncated/corrupted — it ends mid-function at `def
+> convert(args` on line 101…"*
+
+By the third of those the file had been repaired and five of the seven tests were
+passing. It was reasoning from memory about a mutable world, and every repeat
+sent its only working engineer to fix something already fixed. The run ended
+`PRODUCED A PRODUCT` — two failures short of green, both of them bugs in the
+*test* rather than the product.
+
+Three things fell out of the same cause, all visible in the summary: the manager
+never messaged engineer:2 **once** in thirty minutes, it burned 41 turns on `ls`,
+`read` and `tool_search`, and it pasted a complete `cli.py` implementation into a
+chat message — a role with no editor expressing itself by dictating code. A
+manager without current facts substitutes activity for information.
+
+So the manager's incoming messages now carry the product's verdict, **measured at
+delivery**. Not offered, not available on request — attached. This is L17's
+lesson one level up: `check_product` was reachable the entire run and the manager
+called it exactly once, so the answer goes in front of it instead of waiting to be
+asked for. The prompt change alone would not have done it; run 8 proved that
+availability is not adoption.
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

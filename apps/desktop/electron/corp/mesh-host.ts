@@ -124,6 +124,43 @@ function communicationTools(agent: MeshAgent, talk: TalkFn): ToolDefinition[] {
   return tools as unknown as ToolDefinition[];
 }
 
+/** How much of the failing output to staple to a manager's message. Enough to
+ * name the failing test and its error; not enough to bury the message itself. */
+const STATUS_OUTPUT_CHARS = 700;
+
+/**
+ * The product's CURRENT state, as a short block appended to what the manager is
+ * told. Measured at delivery time, so it can never be the stale memory that cost
+ * run 10 its second half. Never throws — a broken probe must not stop a message.
+ */
+export async function productStatusNote(cwd: string): Promise<string> {
+  try {
+    const gate = await runProductGate(cwd, { timeoutMs: 120_000 });
+    if (!gate.ran) {
+      return [
+        `--- PRODUCT CHECK (measured just now) ---`,
+        `NOTHING RUNNABLE YET: ${gate.output.split('\n')[0] ?? ''}`,
+        `Until something in the workspace can be run, nothing here counts as delivered.`,
+      ].join('\n');
+    }
+    if (gate.ok) {
+      return [
+        `--- PRODUCT CHECK (measured just now) ---`,
+        `PASSES: \`${gate.command}\` exits 0. This is the check that decides the run.`,
+      ].join('\n');
+    }
+    return [
+      `--- PRODUCT CHECK (measured just now) ---`,
+      `FAILS: \`${gate.command}\``,
+      gate.output.slice(-STATUS_OUTPUT_CHARS),
+      `This is the product as it stands RIGHT NOW — not what anyone told you earlier.`,
+      `Send this error to whoever owns the file it names.`,
+    ].join('\n');
+  } catch {
+    return '';
+  }
+}
+
 /** Map a mesh role to a corp turn purpose (for sampling + telemetry). */
 const ROLE_PURPOSE: Record<string, string> = {
   ceo: 'ceo',
@@ -281,7 +318,19 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
     // NO REPLAYED TRANSCRIPT. The agent's session is still open (or resumes from
     // its file), so it already remembers everything it has done and been told —
     // this is just the next thing said to it.
-    const incoming = `Message from ${from}:\n${message}`;
+    //
+    // ...except the ONE fact that goes stale between messages. Run 10's manager
+    // measured the product once, at 920s, and then sent the same diagnosis to the
+    // same engineer four times — "cli.py is truncated at line 101" — long after
+    // the file had been repaired. It was reasoning from memory about a mutable
+    // world. So the manager, whose whole job is integrating other people's work,
+    // gets the CURRENT verdict stapled to every message it receives. It is the
+    // same lesson as L17 one level up: a check the model must decide to run is a
+    // check that does not get run, so put the answer in front of it instead.
+    const incoming =
+      agent.role === 'manager'
+        ? `Message from ${from}:\n${message}\n\n${await productStatusNote(config.cwd)}`
+        : `Message from ${from}:\n${message}`;
     let reply = '';
     try {
       const result = await pool.talk(

@@ -8,8 +8,16 @@
  * observer is silent, and silence is what makes it expensive: you go looking for
  * a wiring bug that isn't there.
  */
-import { describe, expect, it } from 'vitest';
-import { DEFAULT_STEPS_PER_MESSAGE, hostPassthrough, PASSTHROUGH_KEYS } from './mesh-host';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  DEFAULT_STEPS_PER_MESSAGE,
+  hostPassthrough,
+  PASSTHROUGH_KEYS,
+  productStatusNote,
+} from './mesh-host';
 
 describe('what a run hands through to its host', () => {
   it('carries every passthrough setting that was supplied', () => {
@@ -66,6 +74,47 @@ describe('what a run hands through to its host', () => {
       'onSubmitted',
       'onChecked',
     ]);
+  });
+});
+
+describe('what the manager is told about the product, every time', () => {
+  // Run 10's manager measured once at 920s and then sent the same engineer the
+  // same diagnosis four times — "cli.py is truncated at line 101" — long after
+  // the file had been repaired. It was reasoning from memory about a mutable
+  // world, so the current verdict is stapled to every message it receives.
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'pd-status-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('says PASSES when the product passes', async () => {
+    writeFileSync(path.join(dir, 'run_tests.py'), 'print("all three formats round-tripped")\n');
+    const note = await productStatusNote(dir);
+    expect(note).toContain('measured just now');
+    expect(note).toContain('PASSES');
+  });
+
+  it('carries the real failing output, so the manager forwards evidence not opinion', async () => {
+    writeFileSync(
+      path.join(dir, 'run_tests.py'),
+      'raise SystemExit("cli.py line 101: SyntaxError: unexpected EOF while parsing")\n',
+    );
+    const note = await productStatusNote(dir);
+    expect(note).toContain('FAILS');
+    expect(note).toContain('unexpected EOF');
+    expect(note).toContain('RIGHT NOW');
+  });
+
+  it('says so plainly when there is nothing to run yet', async () => {
+    const note = await productStatusNote(dir);
+    expect(note).toContain('NOTHING RUNNABLE YET');
+  });
+
+  it('never throws — a broken probe must not stop a message', async () => {
+    await expect(productStatusNote('/definitely/not/a/directory')).resolves.toBeTypeOf('string');
   });
 });
 

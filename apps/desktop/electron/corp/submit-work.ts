@@ -160,6 +160,20 @@ interface ToolLike {
 
 /** Build the `submit_work` tool for one engineer. */
 export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
+  /*
+   * ONE SUBMISSION PER TURN.
+   *
+   * When this refused bad proofs it also, incidentally, ended things: a rejection
+   * gave the engineer something to do next. Take the refusals away and there is
+   * no terminal state at all — run 21's engineer:2 submitted the SAME summary
+   * eleven times in a row, because "Recorded" reads as an acknowledgement rather
+   * than a finish, and nothing said otherwise.
+   *
+   * This tool is built fresh for each message, so the counter is per turn: the
+   * first submission goes through, and a second one says plainly that the work is
+   * already with the manager and the way to finish is to reply.
+   */
+  let submissionsThisTurn = 0;
   return {
     name: SUBMIT_WORK_TOOL,
     label: SUBMIT_WORK_TOOL,
@@ -202,6 +216,25 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
       required: ['summary', 'verification'],
     },
     execute: async (_id: unknown, params: unknown) => {
+      if (submissionsThisTurn > 0) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: [
+                `Already submitted — your work and its evidence are with the manager.`,
+                ``,
+                `Submitting again does not add anything and does not finish your turn. If you`,
+                `have more to say, END YOUR TURN and say it in your reply: that is what the`,
+                `manager reads next. If you have more to BUILD, build it and submit once more`,
+                `when it is actually different.`,
+              ].join('\n'),
+            },
+          ],
+          details: undefined,
+        };
+      }
+      submissionsThisTurn += 1;
       const p = (params ?? {}) as Record<string, unknown>;
       const summary = typeof p.summary === 'string' ? p.summary.trim() : '';
       const verification = typeof p.verification === 'string' ? p.verification.trim() : '';

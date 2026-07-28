@@ -908,6 +908,41 @@ history and asking what it would do. That is worth keeping as a practice: **the
 people who can see this class of bug are the ones who have not been staring at
 it**, which is also, exactly, the argument for the auditor.
 
+**L31 · The synchronous mesh cannot carry a report UPWARD, and that is the one
+direction the flow needs.** Run 21, the first run of the new verification chain:
+
+```
+manager -> ceo  refused=busy   "REPORT: Product build status…"
+manager -> ceo  refused=busy   "MANAGER REPORT: File Converter Product Status…"
+manager -> ceo  refused=busy   "MANAGER CONFIRMATION — ARCHITECTURE DECISIONS…"
+manager -> ceo  refused=busy   "confirmed. All scope is correct…"
+engineer:1 -> manager refused=busy   (×2)
+engineer:2 -> manager refused=busy
+```
+
+Seven attempts to report up, seven refusals, and the run ended `CEO said: (no
+reply)` — because the CEO's turn never completed. L30 caught this for engineers
+and I fixed it there; the manager was still told "go to the CEO", which it reads
+as `talk_to`, which is refused for exactly the same reason. **A fix applied to
+one role is not a fix**: the property belongs to the runtime, so every role above
+the leaves had it.
+
+The shape that works, and both sides now say so: your REPLY is the message back
+to whoever called you. It is not a workaround — in a call tree it is the only
+upward channel there is.
+
+**L32 · Removing the refusals removed the only terminal state.** Same run:
+engineer:2 called `submit_work` **twenty-two times**, eleven of them with a
+byte-identical summary. Nothing was wrong with the work; there was simply nothing
+to stop it. The old gate refused bad proofs, and a refusal *incidentally* gave the
+model its next move — take the refusals away and "Recorded" reads as an
+acknowledgement rather than a finish.
+
+So submissions are one per turn now, and the second one says what actually
+finishes: end the turn and reply. The general form is worth keeping: **when you
+remove a constraint, check what it was doing besides constraining.** This one was
+also the period at the end of the sentence.
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

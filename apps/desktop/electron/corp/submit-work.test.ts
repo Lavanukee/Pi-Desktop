@@ -111,6 +111,41 @@ describe('any form of verification is acceptable', () => {
   });
 });
 
+describe('one submission per turn', () => {
+  // Run 21's engineer:2 submitted the SAME summary eleven times. Refusing bad
+  // proofs used to end things incidentally; with the refusals gone there was no
+  // terminal state at all, and "Recorded" reads as an acknowledgement.
+  it('records the first and tells the second how to actually finish', async () => {
+    const seen: SubmittedWork[] = [];
+    const tool = createSubmitWorkTool({ cwd: ws, onSubmitted: (w) => seen.push(w) });
+    const call = async (): Promise<string> => {
+      const res = (await tool.execute(undefined, {
+        summary: 'the converter',
+        verification: 'ran it',
+      })) as { content: Array<{ text: string }> };
+      return res.content[0]?.text ?? '';
+    };
+    expect(await call()).toContain('Recorded');
+    const second = await call();
+    expect(second).toContain('Already submitted');
+    expect(second).toContain('END YOUR TURN');
+    expect(seen).toHaveLength(1); // the manager is not spammed
+  });
+
+  it('a NEW turn gets a fresh submission — the tool is rebuilt per message', async () => {
+    const first = createSubmitWorkTool({ cwd: ws });
+    const next = createSubmitWorkTool({ cwd: ws });
+    const call = async (t: ReturnType<typeof createSubmitWorkTool>): Promise<string> => {
+      const res = (await t.execute(undefined, { summary: 'x', verification: 'y' })) as {
+        content: Array<{ text: string }>;
+      };
+      return res.content[0]?.text ?? '';
+    };
+    await call(first);
+    expect(await call(next)).toContain('Recorded');
+  });
+});
+
 describe('what the manager is handed', () => {
   it('carries the summary, the claimed check, and the REAL output', () => {
     const note = submissionNote('engineer:2', {

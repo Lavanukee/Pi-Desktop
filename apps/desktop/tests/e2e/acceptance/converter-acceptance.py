@@ -130,14 +130,33 @@ def find_entry_points(ws):
     return named + other
 
 
-def run(entry, ws, src, dst):
+# How a CLI might take "an input file and an output file". The task named the two
+# arguments and said nothing about their form, so every one of these satisfies it.
+#
+# THE SECOND FALSE NEGATIVE THIS FILE HAS PRODUCED. Run 16's `convert.py` used
+# `--input`/`--output` and was scored 6-of-6 WRONG by a checker that only tried
+# positional arguments. An acceptance test that fails work for an interface choice
+# the task never constrained is not measuring the team, it is measuring my
+# assumptions. When in doubt, try the other reasonable thing.
+ARG_STYLES = (
+    lambda src, dst: [src, dst],
+    lambda src, dst: ["--input", src, "--output", dst],
+    lambda src, dst: ["-i", src, "-o", dst],
+    lambda src, dst: ["--in", src, "--out", dst],
+    lambda src, dst: [f"--input={src}", f"--output={dst}"],
+    lambda src, dst: ["--input-file", src, "--output-file", dst],
+    lambda src, dst: ["convert", src, dst],
+)
+
+
+def run(entry, ws, src, dst, style):
     return subprocess.run(
-        [sys.executable, entry, src, dst],
+        [sys.executable, entry, *style(src, dst)],
         cwd=ws, capture_output=True, text=True, timeout=60,
     )
 
 
-def try_entry(entry, ws, tmp):
+def try_entry(entry, ws, tmp, style):
     """Run all six ordered pairs through `entry`. Returns (passed, failures)."""
     failures = []
     for a in FORMATS:
@@ -150,7 +169,7 @@ def try_entry(entry, ws, tmp):
                 os.remove(dst)
             write_input(src, a)
             try:
-                proc = run(entry, ws, src, dst)
+                proc = run(entry, ws, src, dst, style)
             except subprocess.TimeoutExpired:
                 failures.append(f"{a}->{b}: timed out")
                 continue
@@ -185,14 +204,16 @@ def main():
     best = None
     with tempfile.TemporaryDirectory() as tmp:
         for entry in entries:
-            ok, failures = try_entry(entry, ws, tmp)
             rel = os.path.relpath(entry, ws)
-            if ok:
-                print(f"ACCEPTANCE PASS: {rel} converts all six pairs correctly")
-                return 0
-            # Keep the entry point that got furthest — that is the real product.
-            if best is None or len(failures) < len(best[1]):
-                best = (rel, failures)
+            for style in ARG_STYLES:
+                ok, failures = try_entry(entry, ws, tmp, style)
+                if ok:
+                    print(f"ACCEPTANCE PASS: {rel} converts all six pairs correctly")
+                    return 0
+                # Keep whatever got furthest — that is the real product and its
+                # real argument form, not the first thing that happened to fail.
+                if best is None or len(failures) < len(best[1]):
+                    best = (rel, failures)
 
     rel, failures = best
     print(f"ACCEPTANCE FAIL: {rel} — {len(failures)} of 6 conversions wrong")

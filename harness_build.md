@@ -35,13 +35,46 @@ and the engineer — already holding the context of the module it owns — think
 *"right, I need to regenerate this sample and swap the path on line 40 of
 audio_bus.gd"*, and does it.
 
-**The mesh is the runtime, the ledger is the truth.**
+**The mesh is the runtime, and the HIERARCHY is the verification.**
 
 Roles talk to each other freely (`talk_to`, `commission_specialist`) — that part
 should be emergent, because asking for help is exactly the thing you cannot
-schedule in advance. But **what counts as done is never a conversation outcome.**
-Completion is a command exiting 0. The conversation is free; the bookkeeping is
-code.
+schedule in advance.
+
+What counts as done is decided the way it is decided by people, because that is
+the only mechanism that works for every kind of project:
+
+1. The **engineer** builds its piece and hands it back when it believes it is
+   done, with evidence — whatever evidence fits the work. A run's output. A
+   screenshot. A log. What it tried and what happened. The manager may ask for a
+   particular kind in the contract; that is a request, not a rule.
+2. The **manager** USES the product, looking for what is broken rather than for
+   reassurance. Every contract it wrote is one it must now find fulfilled.
+3. When something is wrong and the cause is not obvious, it sends in the
+   **auditor**: an agent with the whole project, which traces the failure to
+   where it *originates* rather than where it surfaced, and names the file and
+   the engineer.
+4. That engineer gets a **new contract** — this did not work, this is what it
+   must do, make it work before you come back — and fixes its own file.
+5. The manager tests **again, itself**, and loops until using the product turns
+   up nothing wrong.
+6. The **CEO** then asks the only question that finally matters: is this what the
+   user actually asked for? It goes through the request item by item, sends the
+   tester at each named capability and the visual specialist at anything on a
+   screen, and pushes back as many times as it takes.
+
+**Nothing automated decides anything.** No test framework, no exit code, no
+discovered check. That was tried and it is the wrong shape: it welds a coding
+assumption into a harness that must be able to make a film, a document, a
+dataset — things with no suite to run and no exit code to read. Worse, an
+automated check that is WRONG holds up a product that is fine, and there is
+nobody to appeal to.
+
+The manager and the CEO are end users with authority. That is the mechanism, and
+implemented properly it is complete: the only failure it cannot catch is a model
+that hallucinates having looked — which is answered by making them look for real
+(the visual specialist, the auditor) and by biasing both toward finding fault,
+not by handing the decision to a script.
 
 **The model calls for help; help is never forced on it.**
 
@@ -78,7 +111,17 @@ Concretely, that means:
 
 ## 3. Ground truth — where it actually is today
 
-### 3a. After the live runs (2026-07-28, runs 7–19)
+### 3a. After the live runs (2026-07-28, runs 7–20)
+
+> **READ THIS TABLE AS HISTORY, NOT AS CURRENT EVIDENCE.** Every figure below was
+> produced by a gate that no longer exists: runs 7–20 were judged by an automated
+> check (`pytest`, a discovered `run_tests.py`, a held-out acceptance script) that
+> has since been removed entirely, because deciding done by exit code is a
+> coding-shaped assumption this harness cannot afford. The runs remain the best
+> evidence there is for *where a 4B team breaks* — which is what §5 is made of —
+> and they say nothing about whether the current verification chain works. That is
+> unmeasured.
+
 
 The table in §3b was written before the harness had ever finished a run. It is
 kept because it is what the rebuild started from; everything in it is now false.
@@ -820,6 +863,50 @@ before the run, and that stands. And the deeper one: *every* acceptance criterio
 here has been provisional, and each has been sharpened by looking at an actual
 artifact rather than at a number. The gates in §5 stop the team lying to itself.
 Nothing except opening the file stops **me** from doing it.
+
+**L29 · "Done is an exit code" was mine, and it was the wrong shape for this
+system.** L9 and C2 made completion mechanical, and against a coding task it
+worked: it ended narrative sign-off, and the refusal ladder in `submit_work`
+(hollow proof → forced exit code → wrong artifact → unchanged retry) closed a
+real dodge each time.
+
+Then jedd read it back and the assumption was obvious. The harness has to be able
+to run a project that is a film, a document, a dataset, a piece of music. None of
+those has a suite to run or an exit code to read, and a gate that can only accept
+work it knows how to execute is a harness that only does software. Worse in the
+other direction: an automated check that is WRONG holds up a product that is
+fine, and there is no appeal — the exact opposite of the failure it was built to
+prevent, and harder to see, because a red gate looks like diligence.
+
+Every one of those refusals is now gone. Verification is whatever suits the work,
+the manager may ask for a form of it in the contract as a request, and what
+decides is the hierarchy: the manager uses the thing and hunts for faults, the
+auditor traces what it finds, the CEO asks whether it is what was asked for.
+
+The lesson underneath is about where a constraint comes from. L12–L28 were all
+derived from observed failures, and every one of them was *locally* correct. This
+one was too — and it was still wrong, because it was fitted to the only task I
+had been measuring against. **A rule earned from evidence is only as general as
+the evidence it was earned from**, and eighteen runs of a JSON/CSV converter is a
+narrow place to learn what "done" means.
+
+**L30 · The one upward edge in the mesh was permanently refused, and nobody
+noticed for fourteen runs.** `deliver` marks a recipient active *before* awaiting
+its turn, so whoever called you is on the stack for as long as you run. An
+engineer messaging its manager therefore hits the busy guard 100% of the time —
+and the engineer prompt offered exactly that route, twice, as its only escape for
+"I am blocked" and "this requirement is impossible".
+
+Measured across every run tonight: **two attempts, two refusals.** The guard was
+written against deadlock and it is correct; the prompt was written against
+grinding and it is correct; together they told a small model to do the one thing
+the runtime always refuses, and the refusal said "check back later" — advice that
+can never succeed.
+
+It was found by handing the harness's own prompts and code to a reader with no
+history and asking what it would do. That is worth keeping as a practice: **the
+people who can see this class of bug are the ones who have not been staring at
+it**, which is also, exactly, the argument for the auditor.
 
 ## 6. Known-hard, deliberately deferred
 

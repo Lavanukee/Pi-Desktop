@@ -8,7 +8,13 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createSubmitWorkTool, runProof, SUBMIT_WORK_TOOL, submissionReply } from './submit-work';
+import {
+  createSubmitWorkTool,
+  proofLooksHollow,
+  runProof,
+  SUBMIT_WORK_TOOL,
+  submissionReply,
+} from './submit-work';
 
 let dir: string;
 beforeEach(() => {
@@ -75,6 +81,56 @@ describe('the proof is run, not taken on trust', () => {
     const tool = createSubmitWorkTool({ cwd: dir });
     await expect(tool.execute(null, { command: 'exit 7', summary: 'x' })).resolves.toBeDefined();
     await expect(tool.execute(null, undefined)).resolves.toBeDefined();
+  });
+});
+
+describe('a proof that proves nothing is refused before it runs', () => {
+  // Run 7, engineer:2, verbatim. It exited 0 and nothing had been converted.
+  const RUN_7 = 'python3 convert.py --help && ./convert.sh --help && echo "CLI interfaces working"';
+
+  it('catches the run-7 submission', () => {
+    expect(proofLooksHollow(RUN_7)).toBe(true);
+  });
+
+  it('catches the other shapes of proof-by-nothing', () => {
+    for (const c of [
+      'echo done',
+      'ls -la src/',
+      'true',
+      'python3 convert.py --version',
+      'cat src/converter.py | head -20',
+      'which python3 && echo ok',
+    ]) {
+      expect(proofLooksHollow(c), c).toBe(true);
+    }
+  });
+
+  it('leaves real proofs alone, including ones that mention --help in passing', () => {
+    for (const c of [
+      'python3 run_tests.py',
+      'make test',
+      'python3 convert.py --help && python3 run_tests.py',
+      'python3 -c "import converter; assert converter.to_csv({}) == \'\'"',
+      'npm test',
+      './check.sh',
+    ]) {
+      expect(proofLooksHollow(c), c).toBe(false);
+    }
+  });
+
+  it('refuses without running, and says what a proof has to do', async () => {
+    // No file is created — if this ran anything at all it would have to fail.
+    const rejected: string[] = [];
+    const tool = createSubmitWorkTool({ cwd: dir, onRejected: (c) => rejected.push(c) });
+    const reply = textOf(await tool.execute(null, { command: RUN_7, summary: 'CLI done' }));
+    expect(reply).toContain('NOT ACCEPTED');
+    expect(reply).toContain('would pass without your work doing anything');
+    expect(reply).toContain('compare the output');
+    expect(rejected).toEqual([RUN_7]);
+  });
+
+  it('an empty command is hollow too', () => {
+    expect(proofLooksHollow('   ')).toBe(true);
   });
 });
 

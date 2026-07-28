@@ -15,6 +15,7 @@ import {
   type SamplingMode,
   type StripMessage,
   settleActivitiesOnEnd,
+  stepCapReason,
   stripPriorThinking,
   TOOL_SEARCH_NAME,
   toolResultText,
@@ -182,7 +183,8 @@ describe('createStepCapCounter — the hard tool-call cap', () => {
     expect(cap.charge()).toBeUndefined(); // 3
     expect(cap.hit).toBe(false);
     const blocked = cap.charge(); // 4 — over the cap
-    expect(blocked).toEqual({ block: true, reason: 'step cap (3) reached' });
+    expect(blocked?.block).toBe(true);
+    expect(blocked?.reason).toBe(stepCapReason(3, []));
     expect(cap.hit).toBe(true);
     expect(cap.count).toBe(4);
   });
@@ -195,10 +197,47 @@ describe('createStepCapCounter — the hard tool-call cap', () => {
     expect(cap.count).toBe(3);
   });
 
+  // The budget exists to stop a role GRINDING, not to strand it. Run 7's engineer
+  // made thirty-odd calls in one message and never finished its turn; a cap that
+  // also blocked `submit_work` would have replaced grinding with a dead end.
+  it('never charges or blocks the finishing tools', () => {
+    const cap = createStepCapCounter(2, ['submit_work', 'talk_to']);
+    expect(cap.charge('submit_work')).toBeUndefined();
+    expect(cap.charge('talk_to')).toBeUndefined();
+    expect(cap.count).toBe(0); // free calls cost nothing
+
+    expect(cap.charge('bash')).toBeUndefined();
+    expect(cap.charge('write')).toBeUndefined();
+    expect(cap.charge('bash')?.block).toBe(true); // work is over budget
+
+    // …and the way out is still open, after the budget is gone.
+    expect(cap.charge('submit_work')).toBeUndefined();
+    expect(cap.charge('talk_to')).toBeUndefined();
+  });
+
+  it('tells a blocked role what it may still do, so it concludes instead of retrying', () => {
+    const cap = createStepCapCounter(0, ['submit_work', 'talk_to']);
+    const reason = cap.charge('bash')?.reason ?? '';
+    expect(reason).toContain('step budget (0 tool calls) reached');
+    expect(reason).toContain('this call did not run');
+    expect(reason).toContain('submit_work');
+    expect(reason).toContain('Do not retry the blocked tool');
+  });
+
+  it('with nothing exempt, tells the role to answer in text', () => {
+    expect(stepCapReason(5, [])).toContain('reply in text');
+  });
+
+  it('an un-named call is charged, so the old callers still cap', () => {
+    const cap = createStepCapCounter(1, ['submit_work']);
+    expect(cap.charge()).toBeUndefined();
+    expect(cap.charge()?.block).toBe(true);
+  });
+
   it('defaults to a cap of 20', () => {
     const cap = createStepCapCounter();
     for (let i = 0; i < 20; i++) expect(cap.charge()).toBeUndefined();
-    expect(cap.charge()?.reason).toBe('step cap (20) reached');
+    expect(cap.charge()?.reason).toBe(stepCapReason(20, []));
   });
 });
 

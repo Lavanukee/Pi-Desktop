@@ -318,6 +318,48 @@ Together L7 and L11 are one rule: **shape behaviour by making the RIGHT action t
 easiest available one.** Taking away the wrong tool is only half the job; something
 obvious has to be left in its place.
 
+**L12 · A message with no budget never ends, and a message that never ends never
+reports.** Run 7's first engineer passed forty-eight `bash` calls *inside a single
+message* — rewriting the whole of `src/converter.py` eight times, each rewrite
+throwing away the parts that already worked — and it was still going when the run
+was cut. It never finished its turn, so it never called `submit_work`, and the
+manager never heard a word back. Nothing was hung and nothing errored; the work
+simply had no end.
+
+The cause was a gap, not a bug: `maxSteps` was documented as "the seam never sets
+this" and the mesh host duly never set it, so `stepCap` was `undefined` and there
+was no bound of any kind on a single message.
+
+A bare cap would have been the wrong fix — it converts grinding into a dead end,
+stopping the model with no legal way to report. So the budget governs **work**
+(`bash`, `write`, `read`, …) at 24 calls per message, while the tools that END a
+message — `submit_work`, `talk_to`, `commission_specialist` — are never charged
+and never blocked. Running out now *reads as an instruction to conclude*, and the
+block text names exactly which tools are still open and says not to retry the
+blocked one. Two prompt fixes ride along: change files with `edit` (a rewrite
+discards what already worked), and if a requirement cannot hold — this engineer
+was chasing a nested-JSON→CSV round-trip that no flat table can survive — say so
+to the manager instead of grinding, with the manager told to believe it and narrow
+the requirement.
+
+**L13 · `--help` exits 0.** The same run's second engineer *did* call
+`submit_work`, which is the first time a run reached that point at all — and
+submitted `python3 convert.py --help && ./convert.sh --help && echo "CLI
+interfaces working"`. It passed. Usage text printed, an echo echoed, exit code 0,
+submission accepted: a recorded proof in which not one byte had been converted.
+
+An exit code is only as honest as the command behind it. So a proof whose *every*
+segment is a smoke check — `--help`, `--version`, `echo`, `ls`, `which`, `cat |
+head` — is refused **before** it runs, with the rejection explaining what a proof
+has to do: make a real input, run the product on it, compare the output, exit
+non-zero when it is wrong. Only *every* segment counts, so a real check that
+happens to print usage on one line still passes; the target is proof-by-nothing,
+not command style.
+
+This is the same shape as L9 one level down. Making "done" mechanical does not
+finish the job — the mechanism has to be pointed at behaviour, or the model will
+satisfy the letter of it. Every gate that can be passed trivially eventually is.
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

@@ -248,27 +248,54 @@ export interface StepCapBlock {
 
 /** The step-cap counter's live state (read after the run for `terminatedReason`). */
 export interface StepCapCounter {
-  /** Charge one tool call; returns a block decision once past `maxSteps`. */
-  charge(): StepCapBlock | undefined;
+  /** Charge one tool call; returns a block decision once past `maxSteps`. Pass the
+   * tool's name so the EXEMPT finishing tools are neither charged nor blocked. */
+  charge(toolName?: string): StepCapBlock | undefined;
   /** How many calls have been charged. */
   readonly count: number;
   /** Whether the cap was ever hit. */
   readonly hit: boolean;
 }
 
+/** How a role is told its budget ran out. Tools it can still reach are named,
+ * because "stop" without "do this instead" leaves a small model with nowhere to
+ * go — it re-tries the blocked call until the run dies. */
+export function stepCapReason(maxSteps: number, exempt: readonly string[]): string {
+  const base = `step budget (${maxSteps} tool calls) reached — this call did not run`;
+  if (exempt.length === 0) {
+    return `${base}. Stop calling tools and reply in text: what works, what does not, what you need.`;
+  }
+  return (
+    `${base}. You may still call: ${exempt.join(', ')}. ` +
+    `Use one of them now — finish if your work runs, otherwise say plainly what is ` +
+    `blocking you. Do not retry the blocked tool.`
+  );
+}
+
 /**
  * Count tool calls and refuse them past `maxSteps` (a hard stop on a model that
  * keeps calling tools forever). Pure closure — unit-tested. Default cap 20.
+ *
+ * WHY `exempt` EXISTS. Run 7 was lost to an engineer that made thirty-odd bash
+ * calls inside a single message, rewriting the same file over and over to satisfy
+ * a round-trip requirement that could not hold, and never reached the end of its
+ * turn — so `submit_work` was never called, and nothing came back to the manager.
+ * A budget fixes the grinding, but a budget that also blocks the FINISHING tools
+ * just moves the dead end: the model is stopped with no legal way to report. So
+ * the budget governs WORK (bash, write, read, …) while `submit_work` / `talk_to`
+ * stay open forever. Running out of budget becomes a prompt to conclude.
  */
-export function createStepCapCounter(maxSteps = 20): StepCapCounter {
+export function createStepCapCounter(maxSteps = 20, exempt: readonly string[] = []): StepCapCounter {
   let count = 0;
   let hit = false;
+  const free = new Set(exempt);
   return {
-    charge(): StepCapBlock | undefined {
+    charge(toolName?: string): StepCapBlock | undefined {
+      if (toolName !== undefined && free.has(toolName)) return undefined;
       count += 1;
       if (count > maxSteps) {
         hit = true;
-        return { block: true, reason: `step cap (${maxSteps}) reached` };
+        return { block: true, reason: stepCapReason(maxSteps, exempt) };
       }
       return undefined;
     },
@@ -688,11 +715,16 @@ export interface RoleAgentConfig {
   readonly samplingMode: SamplingMode;
   /** Optional per-turn output cap (sent as `max_tokens`/`max_completion_tokens`). */
   readonly maxTokens?: number;
-  /** Optional hard cap on tool calls. UNSET → NO step cap: the role runs FULLY
-   * autonomously (any tools, as much as it wants) until IT submits, bounded only by
-   * the global RunBudget. The spec has no per-agent step cap; the seam never sets
-   * this. Kept only for deterministic unit tests. */
+  /** Optional budget on WORK tool calls PER MESSAGE. UNSET → unbounded: the role
+   * runs until it stops on its own. That was the run-7 failure — an engineer made
+   * thirty-odd bash calls inside one message and never reached the end of its turn,
+   * so it never submitted and the manager never heard back. Set this together with
+   * {@link freeTools} so running out of budget pushes the role to CONCLUDE rather
+   * than simply stopping it dead. */
   readonly maxSteps?: number;
+  /** Tools the budget never charges and never blocks — the ways a role FINISHES
+   * (`submit_work`, `talk_to`). See {@link createStepCapCounter}. */
+  readonly freeTools?: readonly string[];
   /** Per-individual-CALL network-abort (spec §197): the max time ONE provider HTTP
    * request may take to return a response before it is treated as a hung socket and
    * aborted (degraded to empty). This is a network-hang guard on a SINGLE request —
@@ -815,6 +847,9 @@ export interface RoleTurnOptions {
   readonly bump?: BumpConfig;
   readonly onActivity?: (record: RoleAgentActivity) => void;
   readonly maxSteps?: number;
+  /** Tools the budget never charges and never blocks — the ways a role FINISHES
+   * (`submit_work`, `talk_to`). See {@link createStepCapCounter}. */
+  readonly freeTools?: readonly string[];
 }
 
 /** A role session that stays OPEN between turns. */
@@ -850,12 +885,17 @@ interface TurnState {
   callTimedOut: boolean;
 }
 
-function newTurnState(options: RoleTurnOptions, fallbackSteps?: number): TurnState {
+function newTurnState(
+  options: RoleTurnOptions,
+  fallbackSteps?: number,
+  fallbackFree?: readonly string[],
+): TurnState {
   const steps = options.maxSteps ?? fallbackSteps;
+  const free = options.freeTools ?? fallbackFree ?? [];
   return {
     toolCalls: [],
     onActivity: options.onActivity,
-    stepCap: steps !== undefined ? createStepCapCounter(steps) : undefined,
+    stepCap: steps !== undefined ? createStepCapCounter(steps, free) : undefined,
     samplingCalls: 0,
     sentSampling: undefined,
     callTimedOut: false,
@@ -1001,7 +1041,7 @@ export async function openRoleSession(
       }
       const denied = bashDenylistGate(e.toolName, e.input);
       if (denied !== undefined) return denied;
-      return turn.stepCap?.charge();
+      return turn.stepCap?.charge(e.toolName);
     });
     // Turn boundaries carry the session's live context fullness (when readable)
     // so the app's context ring fills from the RUN's real usage.
@@ -1171,7 +1211,7 @@ export async function openRoleSession(
     userPrompt: string,
     options: RoleTurnOptions = {},
   ): Promise<RoleAgentResult> => {
-    turn = newTurnState(options, config.maxSteps);
+    turn = newTurnState(options, config.maxSteps, config.freeTools);
     // Message-count BEFORE this turn: the session accumulates across turns now, so
     // "how many turns ran" and "the biggest single turn" must be measured over the
     // NEW tail, not the whole conversation.

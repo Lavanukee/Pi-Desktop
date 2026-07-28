@@ -94,13 +94,17 @@ describe('running it decides, not the team', () => {
 
   it('a check that ran ZERO tests is NOT a pass', async () => {
     // `unittest discover` over an empty tests/ prints "Ran 0 tests ... OK" and
-    // exits 0. Trusting the exit code alone would green-light a product nobody
+    // EXITS 0. Trusting the exit code alone would green-light a product nobody
     // tested — the exact narrative sign-off this gate exists to end.
+    //
+    // Which runner answers depends on whether pytest is importable on the machine
+    // running these tests, and the two disagree about the exit code (unittest says
+    // 0, pytest says 5). So this pins the BEHAVIOUR — an empty run never counts —
+    // rather than a number that says more about the box than about the gate.
     mkdirSync(path.join(dir, 'tests'), { recursive: true });
     const result = await runProductGate(dir, { timeoutMs: 60_000 });
     expect(result.ran).toBe(true);
-    expect(result.exitCode).toBe(0); // it "succeeded"…
-    expect(result.ok).toBe(false); // …and it still does not count
+    expect(result.ok).toBe(false);
     expect(result.output).toContain('ZERO tests');
   });
 

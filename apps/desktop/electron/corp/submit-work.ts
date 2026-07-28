@@ -77,6 +77,52 @@ export async function runProof(
   });
 }
 
+/**
+ * Does this command prove nothing even if it exits 0?
+ *
+ * Run 7's second engineer submitted `python3 convert.py --help && ./convert.sh
+ * --help && echo "CLI interfaces working"`. It passed, because printing usage
+ * text is exactly the thing a program does when it has not been asked to do
+ * anything. The submission was accepted, the run recorded a proof, and not one
+ * byte had been converted.
+ *
+ * So a command whose EVERY segment is a smoke check is refused before it runs.
+ * Only "every" — a real check that happens to start with `--help` on one line is
+ * still a real check, and the point is to catch proof-by-nothing, not to police
+ * command style.
+ */
+export function proofLooksHollow(command: string): boolean {
+  const segments = command
+    .split(/&&|\|\||;|\|/)
+    .map((s) => s.trim())
+    .filter((s) => s !== '');
+  if (segments.length === 0) return true;
+  return segments.every((segment) => {
+    // Prints its own usage/version — says nothing about behaviour.
+    if (/(^|\s)(--help|-h|--version|-V|--usage)(\s|$)/.test(segment)) return true;
+    // Commands that only ever report on the shell or the filesystem.
+    const head = segment.split(/\s+/)[0] ?? '';
+    const base = head.replace(/^.*\//, '');
+    return /^(echo|true|:|ls|pwd|cd|which|type|printf|whoami|date|stat|file|head|tail|cat|wc)$/.test(
+      base,
+    );
+  });
+}
+
+/** What an engineer is told when its proof would not have proved anything. */
+export function hollowProofReply(command: string): string {
+  return [
+    `NOT ACCEPTED — \`${command}\` would pass without your work doing anything.`,
+    ``,
+    `Printing usage text, echoing a message or listing a directory succeeds whether or`,
+    `not the product works. That is not proof, it is a program starting up.`,
+    ``,
+    `Submit something that USES it on real input and CHECKS the result: make a small`,
+    `input file, run the product on it, and compare the output to what it should be —`,
+    `exiting non-zero when it is wrong. Then submit the command that runs that.`,
+  ].join('\n');
+}
+
 /** The reply an engineer gets back from a submission. Pure, so the wording is
  * testable without running anything. */
 export function submissionReply(
@@ -135,7 +181,8 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
           type: 'string',
           description:
             'The exact shell command that proves the work, run from the workspace root — ' +
-            'e.g. `python3 run_tests.py`. It must exit 0 when the work is correct.',
+            'e.g. `python3 run_tests.py`. It must USE the product on real input and exit ' +
+            'non-zero when the result is wrong. `--help` and `echo` prove nothing and are refused.',
         },
         summary: {
           type: 'string',
@@ -160,6 +207,12 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
           ],
           details: undefined,
         };
+      }
+      // Refuse a proof-by-nothing BEFORE running it: a command that would pass
+      // regardless is worse than no command, because it records a false success.
+      if (proofLooksHollow(command)) {
+        opts.onRejected?.(command, 'hollow proof — the command exercises nothing');
+        return { content: [{ type: 'text', text: hollowProofReply(command) }], details: undefined };
       }
       const result = await runProof(command, opts);
       if (result.ok) opts.onAccepted?.({ summary, command, output: result.output });

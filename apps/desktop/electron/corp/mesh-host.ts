@@ -131,6 +131,15 @@ const ROLE_PURPOSE: Record<string, string> = {
   specialist: 'review',
 };
 
+/**
+ * Work tool calls one message may spend. Generous — a real piece of work is a
+ * dozen reads, a few writes and several test runs — but finite, because the
+ * failure it guards against is not slowness, it is a role that never stops and
+ * therefore never reports. Measured against run 7, where an engineer passed
+ * thirty calls inside one message and was still going.
+ */
+export const DEFAULT_STEPS_PER_MESSAGE = 24;
+
 /** Config for {@link createMeshAgentHost}. */
 export interface MeshAgentHostConfig {
   /** The resolved corp model (registry/auth/model) every agent runs on. */
@@ -142,6 +151,10 @@ export interface MeshAgentHostConfig {
   readonly roster: readonly MeshAgent[];
   /** Per-turn generation cap (default the model's own). */
   readonly maxTokens?: number;
+  /** How many WORK tool calls one message may spend before the role is pushed to
+   * conclude. The finishing tools are exempt — see the `freeTools` wiring below.
+   * Default {@link DEFAULT_STEPS_PER_MESSAGE}. */
+  readonly maxStepsPerMessage?: number;
   /** Live activity sink for the situation room, tagged with the emitting agent. */
   readonly onActivity?: (agentId: string, record: RoleAgentActivity) => void;
   /** The project whose `.pi/corp/sessions/` holds the team's conversations, so a
@@ -267,6 +280,19 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
           cwd: config.cwd,
           thinking: true,
           samplingMode: 'thinking-general',
+          // A BUDGET ON WORK, NOT ON FINISHING. One message gets a bounded number
+          // of real tool calls; the tools that END a message — submitting proof,
+          // replying to a colleague — are never charged and never blocked. Run 7
+          // died in the gap this closes: an engineer spent thirty-odd bash calls
+          // inside a single message rewriting one file, never finished its turn,
+          // and so never submitted anything. Running out of budget now reads as
+          // "conclude", which is the one thing a 4B model needs said out loud.
+          maxSteps: config.maxStepsPerMessage ?? DEFAULT_STEPS_PER_MESSAGE,
+          freeTools: [
+            TALK_TO_TOOL,
+            COMMISSION_SPECIALIST_TOOL,
+            ...(agent.role === 'engineer' ? [SUBMIT_WORK_TOOL] : []),
+          ],
           ...(config.maxTokens !== undefined ? { maxTokens: config.maxTokens } : {}),
         },
         incoming,

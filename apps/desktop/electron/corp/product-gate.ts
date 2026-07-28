@@ -116,12 +116,13 @@ export function findGate(root: string): GateCandidate | undefined {
     return { how: 'python test script', command: 'python3', args: [selfTest] };
   }
 
-  // 4. test_*.py files. WHICH RUNNER MATTERS: pytest is not installed on this
-  //    machine's python3, and running `-m pytest` without it fails with "No
-  //    module named pytest" — which reads as a BROKEN PRODUCT when the truth is a
-  //    missing checker. That mistake costs a whole round of the team "fixing" code
-  //    that was never wrong. Use pytest only if it is actually importable; else
-  //    unittest, which is stdlib and always there.
+  // 4. test_*.py files. WHICH RUNNER MATTERS: on a machine without pytest,
+  //    `-m pytest` fails with "No module named pytest" — which reads as a BROKEN
+  //    PRODUCT when the truth is a missing checker, and costs a whole round of the
+  //    team "fixing" code that was never wrong. So probe rather than assume: pytest
+  //    only if it actually imports, else unittest, which is stdlib and always there.
+  //    (Never bare `pytest` — the module is importable here while the console
+  //    script is not on PATH, and that combination is common.)
   const pyTests = entries.filter((f) => /^test_.*\.py$|^.*_test\.py$/.test(f));
   if (pyTests.length > 0 || existsSync(path.join(root, 'tests'))) {
     return hasPytest()

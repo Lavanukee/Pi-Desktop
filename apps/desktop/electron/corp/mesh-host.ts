@@ -39,6 +39,12 @@ import {
   type TalkFn,
 } from '@pi-desktop/harness/corp';
 import { AgentPool } from './agent-pool';
+import {
+  blockedCapabilities,
+  type Capability,
+  capabilityBriefing,
+  probeCapabilities,
+} from './capabilities';
 import { type GateResult, gateFeedback, runProductGate } from './product-gate';
 import type { CorpModelHandle } from './role-agent';
 import { TeamBook } from './team-record';
@@ -196,6 +202,25 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
       return live(from, to, msg);
     };
 
+  /*
+   * TELL THEM WHERE THEY ARE.
+   *
+   * MEASURED: an engineer whose cwd was `<run>/ws` wrote its files to
+   * `ws/converter.py` — creating `<run>/ws/ws/`, a whole second copy of the
+   * project one level down, invisible to the gate and to everyone else. It had
+   * seen the workspace's absolute path in a relayed message and half-applied it.
+   *
+   * A small model given no anchor invents one. So every agent is told its
+   * directory outright, and told that it is already the shell's cwd.
+   */
+  const workspaceNote = [
+    ``,
+    `YOUR WORKING DIRECTORY is ${config.cwd}`,
+    `It is already the current directory for your shell and your file tools. Use paths`,
+    `RELATIVE to it — \`converter.py\`, \`src/converter.py\`, \`tests/test_convert.py\`.`,
+    `Never prefix a path with the workspace's own folder name, and never write outside it.`,
+  ].join('\n');
+
   const run: RunAgentTurn = async ({ agentId, from, message, talk }) => {
     const agent = roster.get(agentId);
     if (agent === undefined) return { reply: `(there is no ${agentId} on this team.)` };
@@ -211,7 +236,7 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
         agentId,
         {
           purpose: ROLE_PURPOSE[agent.role] ?? 'engineer',
-          systemPrompt: agent.systemPrompt,
+          systemPrompt: `${agent.systemPrompt}\n${workspaceNote}`,
           // The comm-tool NAMES must be in the allowlist or the SDK never offers them.
           tools: [...agent.tools, TALK_TO_TOOL, COMMISSION_SPECIALIST_TOOL],
           customTools: communicationTools(agent, talkThrough(agentId)),
@@ -253,6 +278,10 @@ export interface CorpMeshRunResult {
   /** What happened when the product's own check was RUN. `ok` is the only honest
    * "it works" in the whole result — everything else is what people said. */
   readonly gate: GateResult;
+  /** What the machine was probed to have before the team was briefed. */
+  readonly capabilities: readonly Capability[];
+  /** Named toolchains that were missing — what a human needs to look at. */
+  readonly blocked: readonly string[];
 }
 
 /**
@@ -281,7 +310,24 @@ export async function runCorpMeshTask(opts: {
   readonly maxGateRounds?: number;
   /** Observe each gate attempt (logging / the situation room). */
   readonly onGate?: (result: GateResult, round: number) => void;
+  /** Skip the capability probe (tests — it shells out). */
+  readonly skipCapabilityProbe?: boolean;
 }): Promise<CorpMeshRunResult> {
+  /*
+   * WHAT THIS MACHINE ACTUALLY HAS, measured before anyone is prompted.
+   *
+   * Not a permission gate — a PLANNING input. A manager that writes twenty pieces
+   * of work against Godot on a machine with no Godot has wasted the night, and a
+   * team that discovers pyyaml is missing on its last turn has wasted it
+   * differently. Present things become facts the team can rely on; absent ones
+   * become a named gap it must work around and report, rather than a run that
+   * dies at 4am with nobody awake to fix it.
+   */
+  const capabilities: Capability[] =
+    opts.skipCapabilityProbe === true ? [] : probeCapabilities(opts.task);
+  const briefing = capabilityBriefing(capabilities);
+  const openingMessage = briefing === '' ? opts.task : `${opts.task}\n\n${briefing}`;
+
   const roster = buildCorpRoster({
     task: opts.task,
     ...(opts.engineerCount !== undefined ? { engineerCount: opts.engineerCount } : {}),
@@ -316,7 +362,7 @@ export async function runCorpMeshTask(opts: {
     else opts.signal.addEventListener('abort', stop, { once: true });
   }
   try {
-    let reply = await mesh.run('ceo', opts.task);
+    let reply = await mesh.run('ceo', openingMessage);
 
     /*
      * THE GATE. The conversation is free; DONE is not a conversation outcome.
@@ -340,7 +386,14 @@ export async function runCorpMeshTask(opts: {
       gate = await runProductGate(opts.cwd);
     }
     opts.onGate?.(gate, rounds);
-    return { reply, hops: mesh.hops, turns: mesh.turns, gate };
+    return {
+      reply,
+      hops: mesh.hops,
+      turns: mesh.turns,
+      gate,
+      capabilities,
+      blocked: blockedCapabilities(capabilities),
+    };
   } finally {
     // Close the live sessions; their FILES stay, so the next run resumes them.
     host.dispose();

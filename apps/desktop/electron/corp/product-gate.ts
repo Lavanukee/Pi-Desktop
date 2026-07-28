@@ -177,13 +177,25 @@ export async function runProductGate(
         const output = `${stdout ?? ''}${stderr ?? ''}`.slice(-MAX_OUTPUT);
         const timedOut = (error as { killed?: boolean } | null)?.killed === true;
         const exitCode = error === null ? 0 : ((error as { code?: number | null }).code ?? null);
+        /*
+         * A CHECK THAT CHECKED NOTHING IS NOT A PASS.
+         *
+         * `python3 -m unittest discover` in a tree with an empty `tests/` prints
+         * "Ran 0 tests ... OK" and EXITS 0 — a green light for a product nobody
+         * tested. MEASURED on a live run whose real work had landed one directory
+         * deeper, leaving an empty tests/ at the top. Exit code alone would have
+         * called that success, which is exactly the narrative sign-off this gate
+         * exists to end.
+         */
+        const ranNothing = /\bRan 0 tests\b|\bno tests ran\b|collected 0 items/i.test(output);
         resolve({
           ran: true,
-          ok: error === null,
+          ok: error === null && !ranNothing,
           command,
           how: candidate.how,
-          output:
-            output.trim() === ''
+          output: ranNothing
+            ? `${output}\n\n(This ran ZERO tests. An empty test run is not a passing one — there is nothing here that checks the product.)`
+            : output.trim() === ''
               ? error === null
                 ? '(passed, no output)'
                 : `(no output; ${String(error?.message ?? 'failed')})`

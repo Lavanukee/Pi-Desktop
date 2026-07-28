@@ -92,6 +92,18 @@ describe('running it decides, not the team', () => {
     }
   });
 
+  it('a check that ran ZERO tests is NOT a pass', async () => {
+    // `unittest discover` over an empty tests/ prints "Ran 0 tests ... OK" and
+    // exits 0. Trusting the exit code alone would green-light a product nobody
+    // tested — the exact narrative sign-off this gate exists to end.
+    mkdirSync(path.join(dir, 'tests'), { recursive: true });
+    const result = await runProductGate(dir, { timeoutMs: 60_000 });
+    expect(result.ran).toBe(true);
+    expect(result.exitCode).toBe(0); // it "succeeded"…
+    expect(result.ok).toBe(false); // …and it still does not count
+    expect(result.output).toContain('ZERO tests');
+  });
+
   it('an unverifiable product is NOT a pass', async () => {
     write('README.md', '# The converter is production ready.');
     write('notes.txt', 'everything works');

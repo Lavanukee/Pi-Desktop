@@ -45,10 +45,15 @@ import {
   capabilityBriefing,
   probeCapabilities,
 } from './capabilities';
-import { type GateResult, gateFeedback, runProductGate } from './product-gate';
+import { runProductGate } from './product-gate';
 import type { CorpModelHandle } from './role-agent';
 import { CHECK_PRODUCT_TOOL, createCheckProductTool } from './check-product';
-import { createSubmitWorkTool, SUBMIT_WORK_TOOL } from './submit-work';
+import {
+  createSubmitWorkTool,
+  SUBMIT_WORK_TOOL,
+  type SubmittedWork,
+  submissionNote,
+} from './submit-work';
 import { TeamBook } from './team-record';
 import { repairNote, repairShadowTree } from './workspace-paths';
 import { mkdirSync } from 'node:fs';
@@ -255,7 +260,7 @@ export interface MeshAgentHostConfig {
   /** Record where an agent's conversation landed, so it can be found next time. */
   readonly onSessionFile?: (agentId: string, file: string) => void;
   /** An engineer submitted work and its proof command was run. */
-  readonly onSubmitted?: (agentId: string, command: string, accepted: boolean) => void;
+  readonly onSubmitted?: (agentId: string, work: SubmittedWork) => void;
   /** Observe every `check_product` — the team running the real acceptance check on
    * itself. In the transcript this is what convergence looks like. */
   readonly onChecked?: (agentId: string, ok: boolean, command: string) => void;
@@ -344,7 +349,7 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
    * happens inside the engineer's own turn. Its only evidence was the engineer's
    * word, which is exactly what the rule exists to distrust. So an accepted
    * submission is stamped onto the reply the manager actually reads. */
-  const accepted = new Map<string, { command: string; noticed?: string }>();
+  const submitted = new Map<string, SubmittedWork>();
 
   const run: RunAgentTurn = async ({ agentId, from, message, talk }) => {
     const agent = roster.get(agentId);
@@ -415,14 +420,10 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
               ? [
                   createSubmitWorkTool({
                     cwd: config.cwd,
-                    onAccepted: (w) => {
-                      accepted.set(agentId, {
-                        command: w.command,
-                        ...(w.noticed !== undefined ? { noticed: w.noticed } : {}),
-                      });
-                      config.onSubmitted?.(agentId, w.command, true);
+                    onSubmitted: (w) => {
+                      submitted.set(agentId, w);
+                      config.onSubmitted?.(agentId, w);
                     },
-                    onRejected: (cmd) => config.onSubmitted?.(agentId, cmd, false),
                   }) as unknown as ToolDefinition,
                 ]
               : []),
@@ -458,15 +459,13 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
         },
       );
       reply = result.finalText.trim();
-      const stamp = accepted.get(agentId);
-      if (stamp !== undefined) {
-        accepted.delete(agentId);
-        reply = `${reply}\n\n[submit_work ACCEPTED — the command that passed: ${stamp.command}]`;
-        if (stamp.noticed !== undefined && stamp.noticed !== '') {
-          // Flagged rather than fixed, per the engineer's brief: it belongs to
-          // somebody else, and routing it is the manager's job.
-          reply = `${reply}\n[NOTICED OUTSIDE ITS OWN FILES — route this: ${stamp.noticed}]`;
-        }
+      const work = submitted.get(agentId);
+      if (work !== undefined) {
+        submitted.delete(agentId);
+        // The manager reads the evidence, not the engineer's summary of it — and
+        // anything the engineer noticed outside its own files rides along, because
+        // routing that is the manager's job and nobody else's.
+        reply = `${reply}\n\n${submissionNote(agentId, work)}`;
       }
       // Rescue anything written into a re-stated copy of the workspace path
       // BEFORE the next agent looks at the tree. Run 11 lost its whole product
@@ -503,7 +502,6 @@ export interface CorpMeshRunResult {
   readonly turns: number;
   /** What happened when the product's own check was RUN. `ok` is the only honest
    * "it works" in the whole result — everything else is what people said. */
-  readonly gate: GateResult;
   /** What the machine was probed to have before the team was briefed. */
   readonly capabilities: readonly Capability[];
   /** Named toolchains that were missing — what a human needs to look at. */
@@ -532,15 +530,11 @@ export async function runCorpMeshTask(opts: {
   readonly teamDir?: string | null;
   readonly maxLiveAgents?: number;
   /** How many times a failing product check is handed back to the team before the
-   * failing verdict stands. Default 2. */
-  readonly maxGateRounds?: number;
-  /** Observe each gate attempt (logging / the situation room). */
-  readonly onGate?: (result: GateResult, round: number) => void;
   /** Observe every `submit_work`, accepted or refused. This was declared on the
    * host and NOT forwarded here, so run 7's one successful submission — the first
    * a run had ever produced — left no trace in the transcript, and the run read as
    * though the tool had never fired. */
-  readonly onSubmitted?: (agentId: string, command: string, accepted: boolean) => void;
+  readonly onSubmitted?: (agentId: string, work: SubmittedWork) => void;
   /** Observe every `check_product` — the team running the real acceptance check on
    * itself. In the transcript this is what convergence looks like. */
   readonly onChecked?: (agentId: string, ok: boolean, command: string) => void;
@@ -600,35 +594,33 @@ export async function runCorpMeshTask(opts: {
     else opts.signal.addEventListener('abort', stop, { once: true });
   }
   try {
-    let reply = await mesh.run('ceo', openingMessage);
-
     /*
-     * THE GATE. The conversation is free; DONE is not a conversation outcome.
+     * THE RUN ENDS WHEN THE CEO SAYS THE VISION IS MET. Nothing automated decides.
      *
-     * The team says it has finished, and then the product's own check is RUN. If
-     * it fails, the failure output goes straight back to the CEO as the next
-     * message — and because the CEO's session is persistent, that is a follow-up
-     * to the same person who just told us it was done, not a fresh briefing. A
-     * concrete failing command with its real output is the single most useful
-     * thing you can hand a small model; "please improve the code" is the least.
+     * This used to run a discovered check and hand its failure back to the CEO,
+     * bounded by `maxGateRounds`, and the run's verdict was that check's exit
+     * code. jedd's correction, and it is the right one: that is a coding-shaped
+     * assumption welded into a harness that has to be able to make a film, a
+     * document, a dataset — things with no test suite and no exit code. Worse, an
+     * automated check that is WRONG holds up a product that is fine, and there is
+     * no appeal.
      *
-     * Bounded: after `maxGateRounds` the honest failing verdict stands rather
-     * than looping forever.
+     * The verification is the hierarchy itself, which is how it works with people:
+     * the engineer says it is done, the manager USES the thing and looks for what
+     * is broken, an auditor traces anything wrong back to whoever owns it, that
+     * engineer is sent a fresh contract, and the manager re-checks. When the
+     * manager is satisfied it goes to the CEO, who asks the only question that
+     * finally matters — is this what was actually asked for? — and either accepts
+     * it or sends it back down with what is missing.
+     *
+     * So this awaits one thing: the CEO's answer. Everything else is the team's
+     * own business, and the loops live where the judgement lives.
      */
-    const rounds = opts.maxGateRounds ?? 2;
-    let gate = await runProductGate(opts.cwd);
-    for (let round = 0; !gate.ok && round < rounds && !mesh.exhausted; round += 1) {
-      if (opts.signal?.aborted === true) break;
-      opts.onGate?.(gate, round);
-      reply = await mesh.run('ceo', gateFeedback(gate));
-      gate = await runProductGate(opts.cwd);
-    }
-    opts.onGate?.(gate, rounds);
+    const reply = await mesh.run('ceo', openingMessage);
     return {
       reply,
       hops: mesh.hops,
       turns: mesh.turns,
-      gate,
       capabilities,
       blocked: blockedCapabilities(capabilities),
     };

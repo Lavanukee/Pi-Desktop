@@ -9,7 +9,9 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  cwdFromSessionPath,
   ensureSandboxDir,
+  isHomeDir,
   resolveSessionCwd,
   sandboxBaseDir,
   sandboxPathFor,
@@ -137,8 +139,62 @@ describe('resolveSessionCwd — projectless conversation lands in its sandbox', 
     expect(fs.existsSync(sandboxPathFor('fresh', home))).toBe(false);
   });
 
-  it('returns undefined when there is nothing to root at (pi HOME fallback)', () => {
-    expect(resolveSessionCwd({}, home)).toBeUndefined();
+  it('falls back to a shared sandbox, NEVER pi’s HOME default, with nothing to root at', () => {
+    // This used to return undefined, which hands pi its own
+    // `existsSync(cwd) ? cwd : os.homedir()` fallback — i.e. the agent works in
+    // `~` and writes files there. 40 such sessions accumulated on jedd's machine
+    // and the sidebar grouped every one of them into a folder called `~`.
+    const cwd = resolveSessionCwd({}, home);
+    expect(cwd).toBe(path.join(sandboxBaseDir(home), 'default'));
+    expect(cwd?.startsWith(home)).toBe(true);
+    expect(cwd).not.toBe(home);
+  });
+
+  it('recognises HOME itself, but not folders inside it', () => {
+    expect(isHomeDir(home, home)).toBe(true);
+    expect(isHomeDir(`${home}/`, home)).toBe(true);
+    expect(isHomeDir(path.join(home, 'work'), home)).toBe(false);
+    expect(isHomeDir(undefined, home)).toBe(false);
+    expect(isHomeDir('', home)).toBe(false);
+  });
+
+  it('refuses an explicit HOME cwd and sandboxes instead', () => {
+    expect(resolveSessionCwd({ cwd: home, conversationId: 'c1' }, home)).toBe(
+      sandboxPathFor('c1', home),
+    );
+    // Trailing slash is the same directory, and must be refused the same way.
+    expect(resolveSessionCwd({ cwd: `${home}/`, conversationId: 'c1' }, home)).toBe(
+      sandboxPathFor('c1', home),
+    );
+  });
+
+  it('re-roots a resumed session whose recorded cwd is HOME', () => {
+    // A session recorded under HOME must NOT be resumed there — re-opening one
+    // would go on writing into `~` forever.
+    const write = (name: string, cwd: string) => {
+      const file = path.join(home, name);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `${JSON.stringify({ type: 'session', cwd })}\n{"type":"x"}\n`);
+      return file;
+    };
+    const homeSession = write('sessions/home/s.jsonl', home);
+    expect(resolveSessionCwd({ sessionPath: homeSession, conversationId: 'c2' }, home)).toBe(
+      sandboxPathFor('c2', home),
+    );
+
+    // A session recorded in a REAL folder still defers to pi as before — and the
+    // cwd is read from the FILE, so a folder name containing hyphens (which pi's
+    // directory encoding cannot round-trip) is still read correctly.
+    const realSession = write('sessions/work/s.jsonl', '/Users/jedd/my-work-dir');
+    expect(
+      resolveSessionCwd({ sessionPath: realSession, conversationId: 'c3' }, home),
+    ).toBeUndefined();
+    expect(cwdFromSessionPath(realSession)).toBe('/Users/jedd/my-work-dir');
+
+    // An unreadable session is not assumed to be HOME — defer to pi as before.
+    expect(
+      resolveSessionCwd({ sessionPath: '/nope/missing.jsonl', conversationId: 'c4' }, home),
+    ).toBeUndefined();
   });
 
   it('integration: a projectless spawn hands pi the sandbox as its cwd', () => {

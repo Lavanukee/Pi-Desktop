@@ -59,6 +59,48 @@ export function ensureSandboxDir(conversationId: string, home: string = os.homed
   return dir;
 }
 
+/**
+ * True when `p` IS the user's home directory (not merely inside it).
+ *
+ * HOME is never an acceptable working directory for an agent: a bare "make me a
+ * file" drops it straight into `~`, and the sidebar's directory grouping then
+ * invents a project literally called `~` that swallows every such chat (the
+ * folder name is the cwd label's last segment). jedd asked for both to stop.
+ * Trailing slashes are tolerated so `/Users/x/` and `/Users/x` both match.
+ */
+export function isHomeDir(p: string | undefined | null, home: string = os.homedir()): boolean {
+  if (typeof p !== 'string' || p.length === 0) return false;
+  const strip = (s: string) => (s.length > 1 && s.endsWith(path.sep) ? s.slice(0, -1) : s);
+  return path.resolve(strip(p)) === path.resolve(strip(home));
+}
+
+/**
+ * The cwd a session was recorded under, from its own first line —
+ * `{"type":"session",…,"cwd":"/Users/x"}`. Returns null when it cannot be read.
+ *
+ * From the FILE, not the directory name. pi also encodes the cwd into the
+ * folder (`--Users-jedd-work--`) by replacing `/` with `-`, but that mapping is
+ * lossy: it does not escape hyphens already in the path, so any real folder with
+ * a `-` in its name decodes back wrong. One short read is cheap enough to do per
+ * spawn and it is exact.
+ */
+export function cwdFromSessionPath(sessionPath: string): string | null {
+  try {
+    const fd = fs.openSync(sessionPath, 'r');
+    try {
+      const buf = Buffer.alloc(4096);
+      const read = fs.readSync(fd, buf, 0, buf.length, 0);
+      const line = buf.toString('utf8', 0, read).split('\n', 1)[0] ?? '';
+      const parsed = JSON.parse(line) as { cwd?: unknown };
+      return typeof parsed.cwd === 'string' && parsed.cwd.length > 0 ? parsed.cwd : null;
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null; // unreadable / not JSON / truncated — treat as unknown
+  }
+}
+
 /** True when `p` resolves to an existing directory on disk. */
 function directoryExists(p: string): boolean {
   try {
@@ -104,12 +146,29 @@ export function resolveSessionCwd(
   home: string = os.homedir(),
 ): string | undefined {
   const cwdRequested = typeof req.cwd === 'string' && req.cwd.length > 0;
-  if (cwdRequested && directoryExists(req.cwd as string)) return req.cwd;
-  if (!cwdRequested && typeof req.sessionPath === 'string' && req.sessionPath.length > 0) {
-    return undefined;
+  // An explicit HOME is refused like a missing folder: nothing should ever root
+  // an agent at `~`, however it was asked for.
+  if (cwdRequested && !isHomeDir(req.cwd, home) && directoryExists(req.cwd as string)) {
+    return req.cwd;
   }
-  if (typeof req.conversationId === 'string' && req.conversationId.length > 0) {
-    return ensureSandboxDir(req.conversationId, home);
+  const resuming = !cwdRequested && typeof req.sessionPath === 'string' && req.sessionPath.length > 0;
+  if (resuming) {
+    // Defer to the session's own recorded cwd — UNLESS that cwd is HOME. Those
+    // sessions exist (40 of them on this machine): anything that reached pi
+    // without a usable cwd got pi's own `existsSync(cwd) ? cwd : os.homedir()`
+    // fallback, and re-opening one would go on writing into `~` forever. Re-root
+    // those at the conversation sandbox instead.
+    const recorded = cwdFromSessionPath(req.sessionPath as string);
+    if (!isHomeDir(recorded, home)) return undefined;
   }
-  return undefined;
+  // No usable cwd anywhere. A conversation id gives this chat its own sandbox;
+  // WITHOUT one we still must not return undefined, because pi's fallback for
+  // "no cwd" is HOME — the exact thing this module exists to prevent. A shared
+  // `default` sandbox is a poor working folder but it is not the user's home.
+  return ensureSandboxDir(
+    typeof req.conversationId === 'string' && req.conversationId.length > 0
+      ? req.conversationId
+      : 'default',
+    home,
+  );
 }

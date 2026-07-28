@@ -45,12 +45,22 @@ export function classificationHover(activeClass: string | null | undefined): str
  * is. Used by {@link usesSandbox} to detect the missing-project fallback. */
 const SANDBOX_CWD = /(^|\/)\.pi\/desktop\/sandbox(\/|$)/;
 
-/** True when a working dir is (inside) the per-conversation sandbox — such chats
- * are NOT auto-grouped into a folder (jedd: sandbox chats stay ungrouped unless
- * manually assigned). Empty/unknown cwds are treated as sandbox-like (ungrouped). */
+/** A working dir that is the user's HOME, in either raw or `~`-labelled form.
+ * Sessions recorded there exist — anything that reached pi without a usable cwd
+ * got pi's own `existsSync(cwd) ? cwd : os.homedir()` fallback. */
+const HOME_CWD = /^(~|\/Users\/[^/]+|\/home\/[^/]+)$/;
+
+/** True when a working dir means "no project": the per-conversation sandbox, an
+ * unknown/empty cwd, or the user's HOME.
+ *
+ * Such chats are NOT auto-grouped into a folder (jedd: they stay ungrouped
+ * unless manually assigned). HOME belongs here because grouping by directory
+ * names the folder after the cwd's last segment — so a HOME-rooted chat invented
+ * a project literally called `~` and every other one joined it. It is also not a
+ * project in any sense the user means. */
 export function isSandboxCwd(cwd: string | null | undefined): boolean {
   if (cwd === null || cwd === undefined || cwd === '') return true;
-  return SANDBOX_CWD.test(cwd);
+  return SANDBOX_CWD.test(cwd) || HOME_CWD.test(cwd.replace(/\/+$/, ''));
 }
 
 /**

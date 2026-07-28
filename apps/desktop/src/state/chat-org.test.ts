@@ -98,3 +98,44 @@ describe('displayTitle', () => {
     expect(displayTitle(s, { ...EMPTY, titles: { a: 'Launch plan' } })).toBe('Launch plan');
   });
 });
+
+/**
+ * HOME is not a project. Sessions recorded at `~` exist (40 of them on jedd's
+ * machine — anything that reached pi without a usable cwd got pi's own
+ * `existsSync(cwd) ? cwd : os.homedir()` fallback), and directory grouping names
+ * a folder after the cwd label's last segment — so they invented a project
+ * literally called `~` and every one of them joined it. jedd asked for that to
+ * stop, and for those chats to be treated as "no project".
+ */
+describe('a HOME-rooted chat is not a project', () => {
+  const at = (file: string, cwd: string): SessionSummary =>
+    ({
+      file,
+      id: file,
+      cwd,
+      cwdLabel: cwd.replace('/Users/jedd', '~'),
+      startedAt: '2026-07-27T00:00:00Z',
+      modifiedAt: '2026-07-27T00:00:00Z',
+      messageCount: 2,
+      firstUserText: 'hi',
+      title: 'hi',
+    }) as SessionSummary;
+
+  it('leaves HOME chats ungrouped and invents no `~` folder', () => {
+    const org = { projects: [], assignments: {}, pinned: [], titles: {}, hidden: [] };
+    const grouped = groupChats(
+      [at('a.jsonl', '/Users/jedd'), at('b.jsonl', '/Users/jedd/work')],
+      org as never,
+    );
+    expect(grouped.ungrouped.map((s) => s.file)).toEqual(['a.jsonl']);
+    expect(grouped.projects.map((p) => p.project.name)).toEqual(['work']);
+    expect(grouped.projects.some((p) => p.project.name === '~')).toBe(false);
+  });
+
+  it('still groups a real folder that merely lives inside HOME', () => {
+    const org = { projects: [], assignments: {}, pinned: [], titles: {}, hidden: [] };
+    const grouped = groupChats([at('c.jsonl', '/Users/jedd/Desktop/OSS-harness')], org as never);
+    expect(grouped.ungrouped).toEqual([]);
+    expect(grouped.projects[0]?.project.name).toBe('OSS-harness');
+  });
+});

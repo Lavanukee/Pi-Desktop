@@ -155,7 +155,10 @@ function ProjectRegion() {
       }}
       onNew={() => void newProject()}
       onClear={() => void clearProject()}
-      placeholder={orgProjectName ?? (sandbox ? 'Sandbox' : 'No project')}
+      /* "Sandbox" and "No project" were two labels for one state — a chat with
+         no working folder, whose files go to its own private folder. jedd: call
+         it "No project". The distinction only ever mattered internally. */
+      placeholder={orgProjectName ?? 'No project'}
     />
   );
 }

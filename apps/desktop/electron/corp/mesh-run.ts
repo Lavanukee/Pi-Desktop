@@ -172,6 +172,8 @@ export function startMeshTask(opts: {
    * absent the team is written beside the work, which is only right for a
    * throwaway run. */
   readonly teamDir?: string;
+  /** Tool registrars (web, browser) for every role's session. */
+  readonly extensionFactories?: unknown[];
   readonly maxTokens?: number;
 }): TaskHandle & { readonly abort: () => void } {
   const stream = new MeshEventStream();
@@ -212,6 +214,9 @@ export function startMeshTask(opts: {
     signal: controller.signal,
     ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
     ...(opts.teamDir !== undefined ? { teamDir: opts.teamDir } : {}),
+    ...(opts.extensionFactories !== undefined
+      ? { extensionFactories: opts.extensionFactories as never }
+      : {}),
     onActivity: (agentId, record) => {
       if (record.kind === 'turn-start') {
         states.set(agentId, 'working');

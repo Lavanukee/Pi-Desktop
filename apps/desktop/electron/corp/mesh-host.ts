@@ -24,7 +24,7 @@
  * is verified end-to-end only on a LIVE run — no unit test exercises a real model.
  */
 
-import type { ToolDefinition } from '@mariozechner/pi-coding-agent';
+import type { ExtensionFactory, ToolDefinition } from '@mariozechner/pi-coding-agent';
 import {
   AgentMesh,
   buildCorpRoster,
@@ -208,6 +208,11 @@ export interface MeshAgentHostConfig {
   readonly cwd: string;
   /** The user's task, verbatim — restated to the manager with every message. */
   readonly task?: string;
+  /** Extra tool registrars for every role's session — the web and browser
+   * factories the desktop host owns. Without these the names in a role's
+   * allowlist (web_search, browser_*) resolve to nothing, which is what the mesh
+   * path did: it declared them and wired neither. */
+  readonly extensionFactories?: ExtensionFactory[];
   /** The roster (to look up each agent's system prompt / peers / built-in tools). */
   readonly roster: readonly MeshAgent[];
   /** Per-turn generation cap (default the model's own). */
@@ -396,6 +401,9 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
           // need one to write `gui_app.py`, which is what it did the moment it had
           // one. Engineers keep the ability to write; nobody else has it.
           mayWriteFiles: agent.role === 'engineer',
+          ...(config.extensionFactories !== undefined
+            ? { extensionFactories: config.extensionFactories }
+            : {}),
           freeTools: [
             TALK_TO_TOOL,
             COMMISSION_SPECIALIST_TOOL,
@@ -480,6 +488,8 @@ export async function runCorpMeshTask(opts: {
    * product workspace, so a project's agents live with the code they work on.
    * Explicit `null` runs an anonymous, in-memory team (tests). */
   readonly teamDir?: string | null;
+  /** Tool registrars for every role — see MeshAgentHostConfig.extensionFactories. */
+  readonly extensionFactories?: ExtensionFactory[];
   readonly maxLiveAgents?: number;
   /** How many times a failing product check is handed back to the team before the
   /** Observe every `submit_work`, accepted or refused. This was declared on the
@@ -525,6 +535,9 @@ export async function runCorpMeshTask(opts: {
     cwd: opts.cwd,
     roster,
     task: opts.task,
+    ...(opts.extensionFactories !== undefined
+      ? { extensionFactories: opts.extensionFactories }
+      : {}),
     ...(teamDir !== undefined ? { projectDir: teamDir } : {}),
     ...hostPassthrough(opts),
     sessionFileFor: (id) => team.sessionFileFor(id),

@@ -136,6 +136,8 @@ export interface MeshHop {
   readonly depth: number;
   /** Present when the talk was refused (no agent turn ran). */
   readonly refused?: TalkRefusal;
+  /** True when the recipient was mid-task, so this was left for its next turn. */
+  readonly queued?: boolean;
 }
 
 /**
@@ -148,6 +150,8 @@ export interface MeshHop {
 export class AgentMesh {
   private readonly agents = new Map<string, MeshAgent>();
   private readonly active = new Set<string>();
+  /** Messages that arrived while an agent was mid-task, waiting for its next turn. */
+  private readonly pending = new Map<string, string[]>();
   private turnsUsed = 0;
   private aborted = false;
   /** The ordered transcript of every talk (including refusals). */
@@ -204,7 +208,40 @@ export class AgentMesh {
   /** Route one message from `from` to `to`, enforcing the peer allowlist, the
    * re-entrancy/busy guard, and the depth + turn budgets. Records the hop. Never
    * throws — a refusal or a seam error becomes the reply text. */
+  /**
+   * MESSAGES TO SOMEONE MID-TASK ARE QUEUED, NOT REFUSED.
+   *
+   * This used to answer "busy, check back later", which is advice that can never
+   * succeed: whoever called you is on the stack for as long as you run, so an
+   * engineer messaging its manager — or a manager reporting to the CEO — was
+   * refused 100% of the time. Seven such refusals in one live run, and the run
+   * ended with the CEO never hearing anything.
+   *
+   * There was never a use case for the refusal. The only real constraint is that
+   * a pi session cannot be re-prompted while it is mid-turn, and queueing
+   * respects that exactly: the message waits, and is handed over the moment that
+   * agent is next prompted. The sender is told it was delivered and carries on,
+   * which is what "sending a message to a colleague" should have meant all along.
+   */
+  private queued(to: string): string {
+    const waiting = this.pending.get(to);
+    if (waiting === undefined || waiting.length === 0) return '';
+    this.pending.delete(to);
+    return `${waiting.join('\n\n')}\n\n`;
+  }
+
   private async deliver(from: string, to: string, message: string, depth: number): Promise<string> {
+    // Mid-task: queue it for their next turn rather than bouncing it.
+    if (this.agents.has(to) && this.active.has(to) && !this.aborted) {
+      const waiting = this.pending.get(to) ?? [];
+      waiting.push(`[message from ${from}, sent while you were working]\n${message}`);
+      this.pending.set(to, waiting);
+      this.hops.push({ from, to, message, reply: '(queued)', depth, queued: true });
+      return (
+        `(Delivered. ${to} is mid-task, so it will read this the moment it next picks ` +
+        `up work — you do not need to wait or resend.)`
+      );
+    }
     const refusal = this.refuse(from, to, depth);
     if (refusal !== undefined) {
       const reply = refusalNote(refusal, to);
@@ -217,7 +254,9 @@ export class AgentMesh {
     let reply: string;
     try {
       const talk: TalkFn = (f, t, m) => this.deliver(f, t, m, depth + 1);
-      const out = await this.runTurn({ agentId: to, from, message, talk });
+      // Anything that arrived while this agent was busy goes in front of the new
+      // message, so it is read before being asked to do the next thing.
+      const out = await this.runTurn({ agentId: to, from, message: `${this.queued(to)}${message}`, talk });
       reply = out.reply;
     } catch (err) {
       // A seam that throws is the agent's failure to report, not a mesh crash.
@@ -239,9 +278,7 @@ export class AgentMesh {
     if (from !== ROOT_SENDER && this.agents.get(from)?.peers.includes(to) !== true) {
       return 'not-a-peer';
     }
-    // An agent already mid-turn on the call stack can't be re-prompted (its session is
-    // busy) — report "busy" rather than deadlock.
-    if (this.active.has(to)) return 'busy';
+    // NOTE: an agent mid-turn is handled ABOVE, by queueing — never refused.
     if (depth > this.budget.maxDepth) return 'too-deep';
     if (this.turnsUsed >= this.budget.maxTurns) return 'out-of-turns';
     return undefined;

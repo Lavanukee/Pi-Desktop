@@ -178,7 +178,9 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
     name: SUBMIT_WORK_TOOL,
     label: SUBMIT_WORK_TOOL,
     description:
-      'Hand your finished piece back to the manager, with evidence that it works. Evidence is ' +
+      'Hand your finished piece back to the manager, with evidence that it works. Call it TWICE: ' +
+      'the first call asks you to take a last look at your own work, the second hands it over ' +
+      'exactly as you send it. Evidence is ' +
       'whatever actually suits what you built — the output of running it, a screenshot of it on ' +
       'screen, a log, what you tried and what happened. If your manager asked for a particular ' +
       'kind of evidence, give that. Nothing here refuses your work; the manager will use what ' +
@@ -216,25 +218,44 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
       required: ['summary', 'verification'],
     },
     execute: async (_id: unknown, params: unknown) => {
-      if (submissionsThisTurn > 0) {
+      submissionsThisTurn += 1;
+      /*
+       * THE FIRST CALL IS A PAUSE, THE SECOND IS THE HANDOVER.
+       *
+       * jedd's shape, and it does two jobs at once. It puts one deliberate
+       * last-look between "I think I am done" and the manager's time — the moment
+       * an engineer is most likely to notice the thing it forgot — and it gives
+       * the tool a terminal state again, which it lost when the refusals went.
+       * (Without one, run 21's engineer submitted the same summary eleven times:
+       * "Recorded" reads as an acknowledgement, not as a finish.)
+       *
+       * The second call is accepted whatever it says. This is not a gate — it is
+       * the pause a person takes before pressing send.
+       */
+      if (submissionsThisTurn === 1) {
         return {
           content: [
             {
               type: 'text',
               text: [
-                `Already submitted — your work and its evidence are with the manager.`,
+                `Before this goes to the manager — take one last look at your own work.`,
                 ``,
-                `Submitting again does not add anything and does not finish your turn. If you`,
-                `have more to say, END YOUR TURN and say it in your reply: that is what the`,
-                `manager reads next. If you have more to BUILD, build it and submit once more`,
-                `when it is actually different.`,
+                `  - Run it again, the way somebody else would, not the way you know works.`,
+                `  - If any of it is visible, LOOK at it. A thing that builds is not a thing`,
+                `    that appears.`,
+                `  - Try the case you would be least surprised to see fail.`,
+                `  - Check what it produced, not that it produced something.`,
+                `  - Re-read what you were asked for and make sure it is all actually there.`,
+                ``,
+                `Fix anything you find, then call ${SUBMIT_WORK_TOOL} again. That second call`,
+                `hands it over exactly as you send it — no further checks, no refusals. If you`,
+                `looked and it is right, just call it again now.`,
               ].join('\n'),
             },
           ],
           details: undefined,
         };
       }
-      submissionsThisTurn += 1;
       const p = (params ?? {}) as Record<string, unknown>;
       const summary = typeof p.summary === 'string' ? p.summary.trim() : '';
       const verification = typeof p.verification === 'string' ? p.verification.trim() : '';

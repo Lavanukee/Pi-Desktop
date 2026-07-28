@@ -39,6 +39,7 @@ const submit = async (
     timeoutMs: 60_000,
     ...(onSubmitted !== undefined ? { onSubmitted } : {}),
   });
+  await tool.execute(undefined, params); // first call = the last-look prompt
   const res = (await tool.execute(undefined, params)) as { content: Array<{ text: string }> };
   return res.content[0]?.text ?? '';
 };
@@ -111,38 +112,52 @@ describe('any form of verification is acceptable', () => {
   });
 });
 
-describe('one submission per turn', () => {
-  // Run 21's engineer:2 submitted the SAME summary eleven times. Refusing bad
-  // proofs used to end things incidentally; with the refusals gone there was no
-  // terminal state at all, and "Recorded" reads as an acknowledgement.
-  it('records the first and tells the second how to actually finish', async () => {
+describe('the first call is a last look, the second hands it over', () => {
+  // jedd's shape. It puts one deliberate pause between "I think I am done" and
+  // the manager's time, and it gives the tool a terminal state again — which it
+  // lost when the refusals went, after which run 21's engineer submitted the same
+  // summary eleven times because "Recorded" reads as an acknowledgement.
+  const raw = async (
+    tool: ReturnType<typeof createSubmitWorkTool>,
+    params: Record<string, string>,
+  ): Promise<string> => {
+    const res = (await tool.execute(undefined, params)) as { content: Array<{ text: string }> };
+    return res.content[0]?.text ?? '';
+  };
+
+  it('asks for a last look first, and submits nothing yet', async () => {
     const seen: SubmittedWork[] = [];
     const tool = createSubmitWorkTool({ cwd: ws, onSubmitted: (w) => seen.push(w) });
-    const call = async (): Promise<string> => {
-      const res = (await tool.execute(undefined, {
-        summary: 'the converter',
-        verification: 'ran it',
-      })) as { content: Array<{ text: string }> };
-      return res.content[0]?.text ?? '';
-    };
-    expect(await call()).toContain('Recorded');
-    const second = await call();
-    expect(second).toContain('Already submitted');
-    expect(second).toContain('END YOUR TURN');
-    expect(seen).toHaveLength(1); // the manager is not spammed
+    const first = await raw(tool, { summary: 'the converter', verification: 'ran it' });
+    expect(first).toContain('one last look');
+    expect(first).toContain('LOOK at it');
+    expect(seen).toHaveLength(0); // nothing has reached the manager
   });
 
-  it('a NEW turn gets a fresh submission — the tool is rebuilt per message', async () => {
-    const first = createSubmitWorkTool({ cwd: ws });
-    const next = createSubmitWorkTool({ cwd: ws });
-    const call = async (t: ReturnType<typeof createSubmitWorkTool>): Promise<string> => {
-      const res = (await t.execute(undefined, { summary: 'x', verification: 'y' })) as {
-        content: Array<{ text: string }>;
-      };
-      return res.content[0]?.text ?? '';
-    };
-    await call(first);
-    expect(await call(next)).toContain('Recorded');
+  it('hands it over on the second call, whatever it says', async () => {
+    const seen: SubmittedWork[] = [];
+    const tool = createSubmitWorkTool({ cwd: ws, onSubmitted: (w) => seen.push(w) });
+    await raw(tool, { summary: 'x', verification: 'y' });
+    const second = await raw(tool, { summary: 'the converter', verification: 'looked again, fine' });
+    expect(second).toContain('Recorded');
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.verification).toBe('looked again, fine');
+  });
+
+  it('lets the engineer change its mind between the two calls', async () => {
+    // The point of the pause: what it submits second can differ from the first.
+    const seen: SubmittedWork[] = [];
+    const tool = createSubmitWorkTool({ cwd: ws, onSubmitted: (w) => seen.push(w) });
+    await raw(tool, { summary: 'done', verification: 'it works' });
+    await raw(tool, { summary: 'done, after fixing the empty-input crash', verification: 'retried' });
+    expect(seen[0]?.summary).toContain('empty-input crash');
+  });
+
+  it('a NEW turn starts the pause again — the tool is rebuilt per message', async () => {
+    const seen: SubmittedWork[] = [];
+    const next = createSubmitWorkTool({ cwd: ws, onSubmitted: (w) => seen.push(w) });
+    expect(await raw(next, { summary: 'x', verification: 'y' })).toContain('one last look');
+    expect(seen).toHaveLength(0);
   });
 });
 

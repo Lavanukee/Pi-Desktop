@@ -320,6 +320,27 @@ const DEFAULT_ENGINEERS = 4;
  * Python is not a tool name: it runs through `bash`, which every working role has.
  */
 const RESEARCH_TOOLS = ['web_search', 'web_fetch'];
+/*
+ * DRIVING A SCREEN. These reach the same visible browser the user can see, so a
+ * role can open something, look at the page's structure, click, type and capture
+ * it. Named in the allowlists because a role only gets what its list requests —
+ * the factory that implements them is injected by the desktop host, and where no
+ * host provides one these names simply resolve to nothing.
+ *
+ * They matter most for the roles that have to CHECK a product rather than build
+ * it: a manager testing as a user, and the visual specialist, which otherwise has
+ * no way to establish that anything appears at all.
+ */
+const BROWSER_TOOLS = [
+  'browser_navigate',
+  'browser_read',
+  'browser_snapshot',
+  'browser_click',
+  'browser_key',
+  'browser_scroll',
+  'browser_screenshot',
+  'browser_back',
+];
 /** Everything needed to work in a real tree: see it, search it, read it, change it. */
 const FILE_TOOLS = ['read', 'write', 'edit', 'ls', 'grep', 'find'];
 
@@ -388,9 +409,25 @@ const DEFAULT_CEO_TOOLS: readonly string[] = [];
  * out — that is the separation that actually matters — and the prompt says
  * plainly that typing a heredoc means it has taken someone else's job.
  */
-const DEFAULT_MANAGER_TOOLS = ['read', 'ls', 'grep', 'find', 'bash', ...RESEARCH_TOOLS];
-const DEFAULT_ENGINEER_TOOLS = [...FILE_TOOLS, 'bash', ...RESEARCH_TOOLS];
-const DEFAULT_SPECIALIST_TOOLS = ['read', 'ls', 'grep', 'find', 'bash', ...RESEARCH_TOOLS];
+const DEFAULT_MANAGER_TOOLS = [
+  'read',
+  'ls',
+  'grep',
+  'find',
+  'bash',
+  ...RESEARCH_TOOLS,
+  ...BROWSER_TOOLS,
+];
+const DEFAULT_ENGINEER_TOOLS = [...FILE_TOOLS, 'bash', ...RESEARCH_TOOLS, ...BROWSER_TOOLS];
+const DEFAULT_SPECIALIST_TOOLS = [
+  'read',
+  'ls',
+  'grep',
+  'find',
+  'bash',
+  ...RESEARCH_TOOLS,
+  ...BROWSER_TOOLS,
+];
 
 /**
  * Assemble the corp roster: the CEO, the manager, a pool of engineers, and one

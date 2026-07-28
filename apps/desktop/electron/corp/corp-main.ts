@@ -249,6 +249,17 @@ async function handleStart(
       taskId: meshTaskId,
       cwd,
       teamDir: hierarchy.dir,
+      /*
+       * THE TOOLS THE MESH ROLES WERE PROMISED. Their allowlists have always
+       * named web_search / web_fetch, and now browser_*, but the mesh path wired
+       * no factory behind any of them — so a manager told to "look it up" or to
+       * open the product had names that resolved to nothing. These are the same
+       * registrars the solo path uses, driving the same visible browser.
+       */
+      extensionFactories: [
+        (pi: never) => registerWebTools(pi, browserSearch !== undefined ? { browserSearch } : {}),
+        (pi: never) => registerBrowserUseTools(pi, { bridge: browserBridge }),
+      ],
     });
     handle = meshHandle;
     abortMesh = meshHandle.abort;

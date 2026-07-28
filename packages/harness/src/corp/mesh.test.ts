@@ -155,25 +155,52 @@ describe('AgentMesh — bounds (an emergent loop must never run away)', () => {
     expect(mesh.turns).toBe(0);
   });
 
-  it('reports a re-entrant talk to a busy (mid-turn) agent instead of deadlocking', async () => {
-    // ceo prompts manager; while manager is mid-turn it tries to talk BACK to ceo,
-    // who is still on the stack → "busy".
-    let sawBusy = '';
+  it('QUEUES a message to someone mid-task, and they read it on their next turn', async () => {
+    // There was never a use case for refusing this. A pi session cannot be
+    // re-prompted while it is mid-turn — that is the whole constraint — and
+    // queueing respects it exactly. Refusing meant an engineer could never reach
+    // its manager, and a manager could never report to the CEO, because the
+    // caller is on the stack for as long as the callee runs.
+    let sendersAnswer = '';
+    const seenByCeo: string[] = [];
+    let ceoTurns = 0;
+    const mesh = scriptedMesh([agent('ceo', ['manager']), agent('manager', ['ceo'])], {
+      ceo: async (req) => {
+        ceoTurns += 1;
+        seenByCeo.push(req.message);
+        if (ceoTurns === 1) return req.talk('ceo', 'manager', 'go and build it');
+        return 'ceo read the report';
+      },
+      manager: async (req) => {
+        sendersAnswer = await req.talk('manager', 'ceo', 'REPORT: the product is built');
+        return 'manager done';
+      },
+    });
+    await mesh.run('ceo', 'start');
+
+    // The sender is told it landed, and is not asked to wait or resend.
+    expect(sendersAnswer).toContain('Delivered');
+    expect(sendersAnswer).not.toContain('busy');
+
+    // And the CEO actually receives it — prepended to its next prompt.
+    await mesh.run('ceo', 'anything else?');
+    expect(seenByCeo[1]).toContain('REPORT: the product is built');
+    expect(seenByCeo[1]).toContain('while you were working');
+  });
+
+  it('records a queued hop so a transcript shows it was delivered, not lost', async () => {
     const mesh = scriptedMesh([agent('ceo', ['manager']), agent('manager', ['ceo'])], {
       ceo: (req) => req.talk('ceo', 'manager', req.message),
       manager: async (req) => {
-        sawBusy = await req.talk('manager', 'ceo', 'quick question');
-        return 'done anyway';
+        await req.talk('manager', 'ceo', 'a question');
+        return 'done';
       },
     });
-    const out = await mesh.run('ceo', 'go');
-    expect(out).toBe('done anyway');
-    // The refusal must name the route that WORKS. This message is 100% of what an
-    // agent messaging its caller will ever receive — `deliver` marks the recipient
-    // active before awaiting, so the caller is on the stack for the whole turn —
-    // and it used to say "check back later", which can never succeed.
-    expect(sawBusy).toContain('mid-turn');
-    expect(sawBusy).toContain('put it in your reply');
+    await mesh.run('ceo', 'go');
+    const queued = mesh.hops.filter((h) => h.queued === true);
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.from).toBe('manager');
+    expect(queued[0]?.to).toBe('ceo');
   });
 
   it('a throwing seam becomes the agent’s reply, never a mesh crash', async () => {

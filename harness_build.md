@@ -257,6 +257,45 @@ The generalisation for anything built on a 4B model: **you cannot instruct a
 capability away.** If two roles must behave differently, give them different
 tools.
 
+**L8 · An agent with no anchor invents one.** An engineer whose cwd was
+`<run>/ws` wrote to `ws/converter.py`, creating `<run>/ws/ws/` — a second copy of
+the project one level down, invisible to the gate. It had seen the workspace's
+absolute path in a message the manager relayed and half-applied it. Every agent is
+now told its working directory outright, and told it is already the shell's cwd.
+Worth noting for the 4b question: the engineer later spotted the nesting on its own
+and `mv`d everything back up. Small models are not the problem; ambiguity is.
+
+**L9 · `Ran 0 tests ... OK` exits 0.** With the real work sitting one directory
+down, the top-level `tests/` was empty, and `unittest discover` reported success
+over nothing at all. Exit code alone would have green-lit a product nobody tested —
+the same narrative sign-off in a new costume. A check that checked nothing is now a
+failure, and the team is told so.
+
+**L10 · A model that writes its own tests will chase its own bad tests.** THE most
+instructive failure so far. Run 4's engineer built a working converter package,
+wrote 16 tests, and then spent **45 turns** failing to make them pass. The tests
+were the broken thing:
+
+    self.assertEqual(len(parsed['id']), 2)   →  TypeError: list indices must be
+                                                integers, not str
+    yaml_module.dump({...}, f)               →  NameError: 'yaml_module' is not
+                                                defined
+
+Both tracebacks point squarely at the test file. The model never drew the
+conclusion, because "the check is failing" reads as "the product is wrong" — and
+nothing in the loop had ever suggested otherwise. So it kept rewriting working
+code to satisfy tests that could not pass.
+
+Two fixes, both cheap: the gate feedback now says in as many words that the bug may
+be in the TEST, tells the model to read which file each error points at, and warns
+it not to rewrite working code for a broken test. And the engineer is told to write
+the SMALLEST check first and watch it pass before writing another — sixteen tests
+authored before any of them has ever run is sixteen unknowns.
+
+The general form, and it belongs in the 4b rules: **when one agent writes both the
+product and its test, a broken test is indistinguishable from a broken product.**
+The harness has to name that possibility, because the model will not.
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

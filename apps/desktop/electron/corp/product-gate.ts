@@ -236,8 +236,14 @@ export function gateFeedback(result: GateResult): string {
       `Output:`,
       result.output,
       ``,
-      `Fix the cause of this failure and make the check pass. Do not report the work`,
-      `as finished until this exact command exits 0.`,
+      `READ THE TRACEBACK BEFORE YOU CHANGE ANYTHING. The bug is not always in the`,
+      `product — a failing check can mean the TEST is wrong. Look at which file and`,
+      `line each error points at. If the error is inside the test, fix the test. If`,
+      `it is inside the product, fix the product. Do not rewrite working code to`,
+      `satisfy a test that is itself broken.`,
+      ``,
+      `Then make the check pass. Do not report the work as finished until this exact`,
+      `command exits 0.`,
     ].join('\n');
   }
   return [

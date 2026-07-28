@@ -50,6 +50,7 @@ import type { CorpModelHandle } from './role-agent';
 import { CHECK_PRODUCT_TOOL, createCheckProductTool } from './check-product';
 import { createSubmitWorkTool, SUBMIT_WORK_TOOL } from './submit-work';
 import { TeamBook } from './team-record';
+import { repairNote, repairShadowTree } from './workspace-paths';
 
 /** A pi tool result carrying a single text block (the reply the calling agent reads). */
 function textResult(text: string): {
@@ -195,6 +196,7 @@ export const PASSTHROUGH_KEYS = [
   'onActivity',
   'onSubmitted',
   'onChecked',
+  'onRepaired',
 ] as const;
 
 /** Copy the passthrough settings that were actually supplied. `undefined` is left
@@ -243,6 +245,8 @@ export interface MeshAgentHostConfig {
   /** Observe every `check_product` — the team running the real acceptance check on
    * itself. In the transcript this is what convergence looks like. */
   readonly onChecked?: (agentId: string, ok: boolean, command: string) => void;
+  /** Observe files rescued out of a mangled nested path (see workspace-paths). */
+  readonly onRepaired?: (agentId: string, count: number) => void;
 }
 
 /** A mesh host, plus the pool behind it (for lifecycle + telemetry). */
@@ -400,6 +404,17 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
         },
       );
       reply = result.finalText.trim();
+      // Rescue anything written into a re-stated copy of the workspace path
+      // BEFORE the next agent looks at the tree. Run 11 lost its whole product
+      // this way: the engineer built it four levels down in `ws/private/tmp/…/ws`
+      // and then submitted `python3 run_tests.py` eight times, refused every time
+      // with "No such file or directory". Cheap (a handful of stats) and silent
+      // when there is nothing to move, which is almost always.
+      const rescued = repairShadowTree(config.cwd);
+      if (rescued.length > 0) {
+        config.onRepaired?.(agentId, rescued.length);
+        reply = `${reply}\n\n${repairNote(rescued)}`;
+      }
     } catch (err) {
       reply = `(${agentId} hit a problem: ${err instanceof Error ? err.message : String(err)})`;
     }
@@ -465,6 +480,8 @@ export async function runCorpMeshTask(opts: {
   /** Observe every `check_product` — the team running the real acceptance check on
    * itself. In the transcript this is what convergence looks like. */
   readonly onChecked?: (agentId: string, ok: boolean, command: string) => void;
+  /** Observe files rescued out of a mangled nested path (see workspace-paths). */
+  readonly onRepaired?: (agentId: string, count: number) => void;
   /** How many WORK tool calls one message may spend before the role is pushed to
    * conclude ({@link DEFAULT_STEPS_PER_MESSAGE}). */
   readonly maxStepsPerMessage?: number;

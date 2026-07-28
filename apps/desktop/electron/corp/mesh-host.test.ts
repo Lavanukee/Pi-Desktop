@@ -73,6 +73,7 @@ describe('what a run hands through to its host', () => {
       'onActivity',
       'onSubmitted',
       'onChecked',
+      'onRepaired',
     ]);
   });
 });

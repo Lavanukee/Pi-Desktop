@@ -13,7 +13,8 @@
  *   <run>/server.log      the llama-server log (prefill/cache/slot behaviour)
  *   <run>/transcript.jsonl every hop and every activity record, in order
  *   <run>/summary.json    per-agent turn counts, tools used, files written
- *   <run>/ws/             the product itself, plus .pi/corp/ (team + sessions)
+ *   the workspace         the product itself, plus .pi/corp/ (team + sessions).
+ *                         Deliberately OUTSIDE <run>, on a short path — see below.
  *
  *   node tests/e2e/corp-mesh-run.mjs --task converter   # the small green-run target
  *   node tests/e2e/corp-mesh-run.mjs --task memory      # A8: does an agent remember?
@@ -85,7 +86,18 @@ const ROLE_AGENT_TS = path.join(appRoot, 'electron', 'corp', 'role-agent.ts');
 const RUN_DIR = process.env.RUN_DIR ?? mkdtempSync(path.join(os.tmpdir(), 'corp-mesh-'));
 const SERVER_LOG = path.join(RUN_DIR, 'server.log');
 const TRANSCRIPT = path.join(RUN_DIR, 'transcript.jsonl');
-const WORKSPACE = path.join(RUN_DIR, 'ws');
+/*
+ * DELIBERATELY SHORT, and NOT under RUN_DIR.
+ *
+ * Runs 9 and 11 were both lost to an agent re-stating the workspace path as a
+ * relative one — `private/tmp/claude-501/<uuid>/scratchpad/mesh11/ws/src/cli.py`
+ * — which resolves into a nested shadow copy the gate cannot see. The harness now
+ * repairs that (workspace-paths.ts), but the cause is that there was 120
+ * characters of UUID-laden path to mangle in the first place. Artifacts still go
+ * to RUN_DIR; only the product tree moves somewhere a small model can hold in
+ * one piece.
+ */
+const WORKSPACE = process.env.WORKSPACE ?? path.join(os.tmpdir(), `cw-${path.basename(RUN_DIR)}`);
 mkdirSync(WORKSPACE, { recursive: true });
 
 const t0 = Date.now();
@@ -257,6 +269,13 @@ async function main() {
       onSubmitted: (agentId, command, accepted) => {
         log(`  ${agentId} SUBMIT ${accepted ? 'ACCEPTED' : 'REJECTED'}: ${command.slice(0, 90)}`);
         record({ kind: 'submit', agentId, command, accepted });
+      },
+      onRepaired: (agentId, count) => {
+        // Files rescued out of a re-stated workspace path. Loud on purpose: this
+        // is the harness papering over a model mistake, and a run where it fires
+        // constantly is a run to go and look at.
+        log(`  ${agentId} REPAIRED ${count} file(s) written to a nested workspace path`);
+        record({ kind: 'repair', agentId, count });
       },
       onChecked: (agentId, ok, command) => {
         // The team running the REAL acceptance check on itself. Watching this

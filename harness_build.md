@@ -558,6 +558,63 @@ called it exactly once, so the answer goes in front of it instead of waiting to 
 asked for. The prompt change alone would not have done it; run 8 proved that
 availability is not adoption.
 
+**L21 · The agents re-state the workspace path as a relative one, and build a
+shadow product.** Twice, in two shapes, both fatal:
+
+```
+run 9   cwd  …/scratchpad/mesh9/ws
+        wrote `scratchpad/mesh9/ws/test_converter.py`
+        → …/ws/scratchpad/mesh9/ws/… — parents missing, the write FAILED, no file
+          appeared anywhere, and the transcript showed only a `write` that started
+          and never ended
+
+run 11  cwd  /private/tmp/claude-501/<uuid>/scratchpad/mesh11/ws
+        wrote `private/tmp/claude-501/<uuid>/…/ws/src/cli.py`
+        → a complete SHADOW COPY of the product four levels down, invisible to the
+          gate. The engineer then submitted `python3 run_tests.py` EIGHT times and
+          was refused eight times with "No such file or directory", while the real
+          tree held three files
+```
+
+One mistake both times: the model reads the absolute path out of a shell prompt
+or an `ls`, drops some leading part of it, and hands the rest to a file tool that
+resolves relative paths against that very directory. The prompt has told them to
+use bare relative names since run 8. It does not help, and it was never going to
+— this is not a comprehension failure, it is 120 characters of UUID-laden path
+being retyped by a 4B model.
+
+Fixed at both ends. The **cause**: the live driver puts the product tree on a
+short path (`/tmp/cw-<run>`) instead of burying it under the session scratchpad —
+less path, less to mangle. The **damage**: after every turn the host looks for a
+directory inside the workspace whose components are a *suffix* of the workspace's
+own, and moves what it finds back into place, telling the team what moved. The
+rule is exact, not heuristic (two components minimum, so a project legitimately
+containing a folder named like the workspace's last one is untouched), and
+non-destructive — a file whose destination already exists is left as an orphan
+rather than overwriting real work at 4am with nobody awake.
+
+**L22 · A check that prints FAIL and exits 0 is the only true false green.** Run
+11's `run_tests.py`:
+
+```
+$ python3 run_tests.py
+FAIL JSON->CSV: No module named mesh_converter.main
+$ echo $?
+0
+```
+
+A hand-rolled runner that collects results, prints them, and never makes the exit
+code depend on them. Had the import been fixed, the gate would have run it, seen
+exit 0, and declared the run DELIVERED on a product whose own test said FAIL.
+
+Every other lesson here refuses to bless work that was *never checked*. This one
+blesses work that *was checked and failed* — strictly worse, because a red run
+costs a night and a false green costs the trust in every green after it. The gate
+now refuses exit 0 when the output carries a line starting `FAIL`/`FAILED`/`ERROR`
+or a top-level `Traceback`. Deliberately narrow: `7 passed, 0 failed` and a test
+named `test_fails_on_bad_input` both still pass, because a gate that cries wolf
+gets worked around.
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

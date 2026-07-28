@@ -189,18 +189,40 @@ export async function runProductGate(
          * exists to end.
          */
         const ranNothing = /\bRan 0 tests\b|\bno tests ran\b|collected 0 items/i.test(output);
+        /*
+         * A CHECK THAT REPORTED FAILURE IS NOT A PASS, WHATEVER IT EXITED.
+         *
+         * Run 11's `run_tests.py` printed `FAIL JSON->CSV: No module named
+         * mesh_converter.main` and EXITED 0 — a hand-rolled runner that collects
+         * results, prints them, and forgets to make the exit code depend on them.
+         * That is the most dangerous shape the gate can meet: not a red run, a
+         * FALSE GREEN. Every other lesson here is about refusing to bless work
+         * that was never checked; this one blesses work that was checked and
+         * FAILED.
+         *
+         * Deliberately narrow, because a false positive here would refuse a
+         * genuinely passing product: a traceback (an exception that reached the
+         * top and was swallowed), or a line that STARTS with FAIL/FAILED/ERROR,
+         * which is what a runner prints per failing case. A test whose name
+         * merely contains "fail" does not match.
+         */
+        const saidItFailed =
+          /^(FAIL(ED)?|ERROR)\b/m.test(output) || /^Traceback \(most recent call last\)/m.test(output);
+        const falseGreen = error === null && saidItFailed;
         resolve({
           ran: true,
-          ok: error === null && !ranNothing,
+          ok: error === null && !ranNothing && !falseGreen,
           command,
           how: candidate.how,
           output: ranNothing
             ? `${output}\n\n(This ran ZERO tests. An empty test run is not a passing one — there is nothing here that checks the product.)`
-            : output.trim() === ''
-              ? error === null
-                ? '(passed, no output)'
-                : `(no output; ${String(error?.message ?? 'failed')})`
-              : output,
+            : falseGreen
+              ? `${output}\n\n(This printed a FAILURE and then exited 0. The check is not reporting its own result — make the exit code depend on whether the tests passed, e.g. \`sys.exit(1)\` when any of them fail. Until then nothing here can be trusted as a pass.)`
+              : output.trim() === ''
+                ? error === null
+                  ? '(passed, no output)'
+                  : `(no output; ${String(error?.message ?? 'failed')})`
+                : output,
           exitCode: typeof exitCode === 'number' ? exitCode : null,
           timedOut,
         });

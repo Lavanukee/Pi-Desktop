@@ -108,6 +108,43 @@ describe('running it decides, not the team', () => {
     expect(result.output).toContain('ZERO tests');
   });
 
+  it('a check that PRINTS a failure and exits 0 is not a pass', async () => {
+    // Run 11's run_tests.py, exactly: a hand-rolled runner that collects results,
+    // prints them, and forgets to make the exit code depend on them. This is the
+    // only shape that produces a FALSE GREEN — work that was checked and FAILED,
+    // blessed. Everything else here refuses work that was never checked at all.
+    write(
+      'run_tests.py',
+      'print("FAIL JSON->CSV: No module named mesh_converter.main")\n',
+    );
+    const result = await runProductGate(dir, { timeoutMs: 60_000 });
+    expect(result.ran).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.ok).toBe(false);
+    expect(result.output).toContain('exited 0');
+  });
+
+  it('a swallowed traceback is not a pass either', async () => {
+    write(
+      'run_tests.py',
+      'import traceback\ntry:\n    raise ValueError("csv rows lost")\nexcept Exception:\n    traceback.print_exc()\n',
+    );
+    const result = await runProductGate(dir, { timeoutMs: 60_000 });
+    expect(result.exitCode).toBe(0);
+    expect(result.ok).toBe(false);
+  });
+
+  it('does NOT refuse a passing run that merely mentions failure', async () => {
+    // The narrowness matters: a test named for what it guards against, or a
+    // summary line reading "0 failed", must still pass.
+    write(
+      'run_tests.py',
+      'print("test_fails_on_bad_input: ok")\nprint("7 passed, 0 failed")\n',
+    );
+    const result = await runProductGate(dir, { timeoutMs: 60_000 });
+    expect(result.ok).toBe(true);
+  });
+
   it('an unverifiable product is NOT a pass', async () => {
     write('README.md', '# The converter is production ready.');
     write('notes.txt', 'everything works');

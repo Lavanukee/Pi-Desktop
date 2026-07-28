@@ -135,6 +135,18 @@ export function findGate(root: string): GateCandidate | undefined {
   }
 
   // 4. A Godot project — open it headless and see if it loads without erroring.
+  /*
+   * A SWIFT PACKAGE. Added because the gate was blind to it: on a macOS GUI task
+   * the discovery list (run_tests.py, package.json, Makefile, test_*.py, godot)
+   * matches nothing a Swift app contains, so the engineer building the GUI has no
+   * way to be graded — and the tempting fix, from its side, is to plant a
+   * `run_tests.py` at the root and silently become the acceptance check for all
+   * four engineers. `swift build` is a real check: it fails on any type error in
+   * the package.
+   */
+  if (existsSync(path.join(root, 'Package.swift'))) {
+    return { how: 'swift build', command: 'swift', args: ['build'] };
+  }
   if (existsSync(path.join(root, 'project.godot'))) {
     return {
       how: 'godot headless import',

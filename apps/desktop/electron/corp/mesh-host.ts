@@ -51,6 +51,8 @@ import { CHECK_PRODUCT_TOOL, createCheckProductTool } from './check-product';
 import { createSubmitWorkTool, SUBMIT_WORK_TOOL } from './submit-work';
 import { TeamBook } from './team-record';
 import { repairNote, repairShadowTree } from './workspace-paths';
+import { mkdirSync } from 'node:fs';
+import nodePath from 'node:path';
 
 /** A pi tool result carrying a single text block (the reply the calling agent reads). */
 function textResult(text: string): {
@@ -326,6 +328,24 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
     `Never prefix a path with the workspace's own folder name, and never write outside it.`,
   ].join('\n');
 
+  // The run-only roles get a corner they CAN write in, so "test it like a user"
+  // is possible at all. Created up front: a manager that finds no such directory
+  // will decide it was told wrong and write into the product instead.
+  try {
+    mkdirSync(nodePath.join(config.cwd, '.scratch'), { recursive: true });
+  } catch {
+    // a workspace we cannot prepare is one the run will fail on anyway
+  }
+
+  /* WHAT THE MANAGER CANNOT OTHERWISE SEE.
+   *
+   * The manager is told an engineer has not finished until `submit_work` has
+   * ACCEPTED its work — and it has no way to observe that, because acceptance
+   * happens inside the engineer's own turn. Its only evidence was the engineer's
+   * word, which is exactly what the rule exists to distrust. So an accepted
+   * submission is stamped onto the reply the manager actually reads. */
+  const accepted = new Map<string, string>();
+
   const run: RunAgentTurn = async ({ agentId, from, message, talk }) => {
     const agent = roster.get(agentId);
     if (agent === undefined) return { reply: `(there is no ${agentId} on this team.)` };
@@ -395,7 +415,10 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
               ? [
                   createSubmitWorkTool({
                     cwd: config.cwd,
-                    onAccepted: (w) => config.onSubmitted?.(agentId, w.command, true),
+                    onAccepted: (w) => {
+                      accepted.set(agentId, w.command);
+                      config.onSubmitted?.(agentId, w.command, true);
+                    },
                     onRejected: (cmd) => config.onSubmitted?.(agentId, cmd, false),
                   }) as unknown as ToolDefinition,
                 ]
@@ -432,6 +455,11 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
         },
       );
       reply = result.finalText.trim();
+      const stamp = accepted.get(agentId);
+      if (stamp !== undefined) {
+        accepted.delete(agentId);
+        reply = `${reply}\n\n[submit_work ACCEPTED — the command that passed: ${stamp}]`;
+      }
       // Rescue anything written into a re-stated copy of the workspace path
       // BEFORE the next agent looks at the tree. Run 11 lost its whole product
       // this way: the engineer built it four levels down in `ws/private/tmp/…/ws`

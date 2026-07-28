@@ -52,6 +52,14 @@ describe('finding the product’s own check', () => {
     expect(findGate(dir)?.how).toBe('godot headless import');
   });
 
+  it('finds a Swift package — the gate was blind to macOS GUI work', () => {
+    // Discovery matched nothing a Swift app contains, so the GUI engineer could
+    // not be graded, and its tempting fix was to plant a run_tests.py at the root
+    // and become everyone else's acceptance check.
+    write('Package.swift', '// swift-tools-version:5.9');
+    expect(findGate(dir)?.how).toBe('swift build');
+  });
+
   it('finds nothing in an empty or prose-only product', () => {
     expect(findGate(dir)).toBeUndefined();
     write('README.md', '# we built it, trust us');

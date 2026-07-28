@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SUBMIT_WORK_TOOL, cannotFailReply, createSubmitWorkTool, proofCannotFail, proofLooksHollow, runProof, submissionReply, type ProductCheck, type SubmitWorkOptions, unchangedReply } from './submit-work';
+import { SUBMIT_WORK_TOOL, cannotFailReply, createSubmitWorkTool, productStillRedNote, proofCannotFail, proofLooksHollow, proofRunsAFile, runProof, submissionReply, type SubmitWorkOptions, type SubmittedWork, unchangedReply } from './submit-work';
 
 let dir: string;
 beforeEach(() => {
@@ -139,124 +139,75 @@ describe('resubmitting into an unchanged tree', () => {
   });
 });
 
-describe('the product\u2019s own check has to pass too', () => {
-  // Run 8, measured: engineer:1 made 41 bash calls and not one ran the test file
-  // it had written itself, which had carried a SyntaxError for ten minutes. Its
-  // private heredoc passed, so it was accepted. The artifact the run is judged on
-  // had never been executed by anyone.
-  const gate = (over: Partial<ProductCheck>): (() => Promise<ProductCheck>) => {
-    const base: ProductCheck = {
-      ran: true,
-      ok: true,
-      command: 'python3 -m pytest -q',
-      output: 'ok',
-      how: 'pytest',
-    };
-    return async () => ({ ...base, ...over });
-  };
-  // Two real workspaces, so the engineer's own proof is genuinely run: `verify.py`
-  // passes in one and fails in the other.
-  let passing: string;
-  let failing: string;
+describe('a proof must outlive the conversation, but need not fix the whole product', () => {
+  // Run 8's engineer proved its work with a heredoc and left a broken test file
+  // behind. Requiring the WHOLE product to pass fixed that and built something
+  // worse: with four engineers on four pieces, whoever finishes first is refused
+  // for the three pieces nobody has written yet, so nobody can ever be first.
+  let ws: string;
   beforeEach(() => {
-    passing = mkdtempSync(path.join(os.tmpdir(), 'pd-submit-pass-'));
-    failing = mkdtempSync(path.join(os.tmpdir(), 'pd-submit-fail-'));
-    writeFileSync(path.join(passing, 'verify.py'), 'print("converted 3 rows")\n');
-    writeFileSync(path.join(failing, 'verify.py'), 'raise SystemExit("wrong row count")\n');
+    ws = mkdtempSync(path.join(os.tmpdir(), 'pd-proof-'));
+    writeFileSync(path.join(ws, 'check_gui.py'), 'print("gui ok")\n');
   });
   afterEach(() => {
-    rmSync(passing, { recursive: true, force: true });
-    rmSync(failing, { recursive: true, force: true });
+    rmSync(ws, { recursive: true, force: true });
   });
 
-  const run = async (opts: Partial<SubmitWorkOptions> & { cwd: string }): Promise<string> => {
-    const tool = createSubmitWorkTool(opts as SubmitWorkOptions);
-    const res = (await tool.execute(undefined, {
-      command: 'python3 verify.py',
-      summary: 'converter',
-    })) as { content: Array<{ text: string }> };
+  const submit = async (command: string, extra = {}): Promise<string> => {
+    const tool = createSubmitWorkTool({ cwd: ws, timeoutMs: 60_000, ...extra } as SubmitWorkOptions);
+    const res = (await tool.execute(undefined, { command, summary: 'gui' })) as {
+      content: Array<{ text: string }>;
+    };
     return res.content[0]?.text ?? '';
   };
 
-  it('refuses when the product\u2019s test file does not even parse', async () => {
-    const rejected: string[] = [];
-    const text = await run({
-      cwd: passing,
-      checkProduct: gate({
-        ok: false,
-        output: "SyntaxError: closing parenthesis ']' does not match opening parenthesis '('",
-      }),
-      onRejected: (_c, why) => rejected.push(why),
-    });
+  it('refuses a heredoc — it runs nothing that will still exist', async () => {
+    const text = await submit("python3 << 'EOF'\nassert 1 == 1\nEOF");
     expect(text).toContain('NOT ACCEPTED');
-    expect(text).toContain('SyntaxError');
-    expect(text).toContain('python3 -m pytest -q');
-    expect(rejected).toHaveLength(1);
+    expect(text).toContain('does not run anything that exists');
   });
 
-  it('tells them to route a file they do not own, rather than edit around it', async () => {
-    const text = await run({ cwd: passing, checkProduct: gate({ ok: false, output: 'boom' }) });
-    expect(text).toContain('talk_to');
-    expect(text).toContain('someone');
+  it('accepts a command that runs a real file in the workspace', async () => {
+    expect(await submit('python3 check_gui.py')).toContain('ACCEPTED');
   });
 
-  it('refuses when nothing runnable was left behind at all', async () => {
-    const text = await run({
-      cwd: passing,
-      checkProduct: gate({
-        ran: false,
-        ok: false,
-        command: '',
-        how: 'nothing runnable found',
-        output: 'No test, no build, no runnable entry point was found.',
-      }),
-    });
-    expect(text).toContain('NOT ACCEPTED');
-    expect(text).toContain('does not live in the product');
+  it('recognises build tools with no path, and rejects inline code', () => {
+    expect(proofRunsAFile('make test', ws)).toBe('make test');
+    expect(proofRunsAFile('swift build && swift test', ws)).toBeDefined();
+    expect(proofRunsAFile('python3 -c "assert True"', ws)).toBeUndefined();
+    expect(proofRunsAFile('python3 check_gui.py', ws)).toBe('check_gui.py');
   });
 
-  it('does NOT punish an engineer for a toolchain this machine lacks', async () => {
-    // D3: blocked work is routed around, never fatal. No godot here is not the
-    // engineer\u2019s failure, and refusing over it would strand working code.
+  it('ACCEPTS a piece whose own check passes while the product is still red', async () => {
+    // The whole point: engineer:1 must be able to finish before engineers 2-4 exist.
     const accepted: string[] = [];
-    const text = await run({
-      cwd: passing,
-      checkProduct: gate({
-        ran: false,
+    const text = await submit('python3 check_gui.py', {
+      onAccepted: (w: SubmittedWork) => accepted.push(w.command),
+      checkProduct: async () => ({
+        ran: true,
         ok: false,
-        how: 'godot headless import (unavailable)',
-        output: 'Could not run `godot` — the tool is not installed on this machine.',
+        command: 'python3 -m pytest -q',
+        output: 'ModuleNotFoundError: no module named converter_engine',
+        how: 'pytest',
       }),
-      onAccepted: (w) => accepted.push(w.command),
     });
     expect(text).toContain('ACCEPTED');
-    expect(text).not.toContain('NOT ACCEPTED');
-    expect(accepted).toEqual(['python3 verify.py']);
+    expect(accepted).toEqual(['python3 check_gui.py']);
+    // ...and it is TOLD, so it knows the product is red without being blocked by it.
+    expect(text).toContain('does not pass yet');
+    expect(text).toContain('converter_engine');
   });
 
-  it('accepts when both the proof and the product check pass', async () => {
-    const accepted: string[] = [];
-    const text = await run({
-      cwd: passing,
-      checkProduct: gate({}),
-      onAccepted: (w) => accepted.push(w.command),
+  it('tells them to route a failure in someone else’s file', () => {
+    const note = productStillRedNote({
+      ran: true,
+      ok: false,
+      command: 'python3 -m pytest -q',
+      output: 'boom',
+      how: 'pytest',
     });
-    expect(text).toContain('ACCEPTED');
-    expect(text).not.toContain('NOT ACCEPTED');
-    expect(accepted).toEqual(['python3 verify.py']);
-  });
-
-  it('never reaches the product check when the engineer\u2019s own proof failed', async () => {
-    let checked = false;
-    const text = await run({
-      cwd: failing,
-      checkProduct: async () => {
-        checked = true;
-        return { ran: true, ok: true, command: 'x', output: '', how: 'pytest' };
-      },
-    });
-    expect(text).toContain('NOT ACCEPTED');
-    expect(checked).toBe(false);
+    expect(note).toContain('tell the manager');
+    expect(note).toContain('do not go and edit around it');
   });
 });
 

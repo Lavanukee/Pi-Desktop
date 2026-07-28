@@ -25,6 +25,8 @@
  */
 
 import { execFile } from 'node:child_process';
+import { statSync } from 'node:fs';
+import path from 'node:path';
 import { runProductGate } from './product-gate';
 import { productFingerprint } from './workspace-paths';
 
@@ -281,6 +283,65 @@ export function productCheckReply(command: string, gate: ProductCheck): string {
   ].join('\n');
 }
 
+/**
+ * The workspace file this proof actually runs, or `undefined` if it runs nothing
+ * that will still exist tomorrow.
+ *
+ * Run 8's engineer proved its work with a `python3 << 'EOF'` heredoc: real code,
+ * really executed, and gone the moment the conversation moved on, while the
+ * `test_converter.py` it had left behind carried a SyntaxError nobody had ever
+ * triggered. A proof has to be repeatable by somebody who is not in the room.
+ */
+export function proofRunsAFile(command: string, cwd: string): string | undefined {
+  // `make test`, `npm test`, `pytest`, `cargo test`, `swift build` — a build tool
+  // reading its own manifest is a real, repeatable check even with no path in it.
+  if (/\b(make|npm|yarn|pnpm|pytest|cargo|swift|xcodebuild|go|gradle|mvn)\b/.test(command)) {
+    return command.trim();
+  }
+  // Otherwise SOME token has to name a file that is really there.
+  for (const raw of command.split(/[\s;|&()]+/)) {
+    const token = raw.replace(/^['"]|['"]$/g, '');
+    if (token === '' || token.startsWith('-')) continue;
+    if (!/[./]/.test(token)) continue;
+    const abs = path.isAbsolute(token) ? token : path.join(cwd, token);
+    try {
+      if (statSync(abs).isFile()) return token;
+    } catch {
+      // not a file — keep looking
+    }
+  }
+  return undefined;
+}
+
+/** What an engineer is told when its proof leaves nothing behind. */
+export function ephemeralProofReply(command: string): string {
+  return [
+    `NOT ACCEPTED — \`${command}\` does not run anything that exists in the workspace.`,
+    ``,
+    `A heredoc, or a command typed inline, disappears the moment this conversation`,
+    `moves on. The next person cannot re-run it, and neither can the check that`,
+    `decides this product ships.`,
+    ``,
+    `Put the same code in a FILE next to your work — \`tests/test_gui.py\`,`,
+    `\`scripts/check_engine.sh\` — run that file, and submit the command that runs it.`,
+  ].join('\n');
+}
+
+/** Appended to an ACCEPTED submission when the product as a whole is still red.
+ * Information, not a refusal: the other pieces may simply not exist yet. */
+export function productStillRedNote(gate: ProductCheck): string {
+  return [
+    `Note — your piece is accepted, but the PRODUCT as a whole does not pass yet:`,
+    ``,
+    `  ${gate.command}`,
+    gate.output.slice(-800),
+    ``,
+    `If that failure is in a file you own, it is yours to fix. If it names someone`,
+    `else's file, or a piece nobody has built yet, tell the manager what you see —`,
+    `do not go and edit around it.`,
+  ].join('\n');
+}
+
 /** A pi `ToolDefinition` shape — kept structural so this module needs no SDK import. */
 interface ToolLike {
   name: string;
@@ -399,20 +460,46 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
        * down is not what was verified". So finishing now requires BOTH: the
        * engineer's own proof, and the check that actually judges the product.
        */
-      const gate = await runGate(opts);
-      // A toolchain this machine does not have is NOT the engineer's failure, and
-      // refusing over it would strand the work (D3: blocked is routed around, never
-      // fatal). Its own proof passed; that stands.
-      const capabilityGap = gate !== undefined && !gate.ran && gate.how.includes('unavailable');
-      if (gate !== undefined && !gate.ok && !capabilityGap) {
+      /*
+       * THE PROOF MUST LIVE IN THE WORKSPACE — but the WHOLE product need not
+       * pass yet.
+       *
+       * Requiring the product gate here was right when the product was one file
+       * and one engineer. On jedd's real task the manager splits the work four
+       * ways, and then engineer:1 finishing the GUI is refused because the
+       * converter engine, the format library and the test suite do not exist yet
+       * — work that belongs to three other people who are ALSO blocked, by each
+       * other. Nobody can ever be first. That is L18's deadlock rebuilt: two
+       * correct rules whose intersection has no legal move.
+       *
+       * What actually stopped run 8's evaporation was not "everything passes", it
+       * was "the thing you proved has to be the thing you left behind". So that is
+       * what is enforced: the proof must RUN A FILE that exists in the workspace,
+       * not a heredoc that vanishes with the conversation. The product's state is
+       * still measured and still reported — as information, in the acceptance —
+       * because an engineer should know the product is red even when its own piece
+       * is green. The whole-product verdict belongs to the run's gate and to the
+       * manager, who are the only ones who can see all the pieces.
+       */
+      const proofFile = proofRunsAFile(command, opts.cwd);
+      if (proofFile === undefined) {
         lastFailure = { command, fingerprint: productFingerprint(opts.cwd) };
-        opts.onRejected?.(command, `product check failed: ${gate.output.slice(0, 300)}`);
+        opts.onRejected?.(command, 'proof runs nothing that exists in the workspace');
+        return { content: [{ type: 'text', text: ephemeralProofReply(command) }], details: undefined };
+      }
+      const gate = await runGate(opts);
+      opts.onAccepted?.({ summary, command, output: result.output });
+      if (gate !== undefined && gate.ran && !gate.ok) {
         return {
-          content: [{ type: 'text', text: productCheckReply(command, gate) }],
+          content: [
+            {
+              type: 'text',
+              text: `${submissionReply(command, result)}\n\n${productStillRedNote(gate)}`,
+            },
+          ],
           details: undefined,
         };
       }
-      opts.onAccepted?.({ summary, command, output: result.output });
       return {
         content: [{ type: 'text', text: submissionReply(command, result) }],
         details: undefined,

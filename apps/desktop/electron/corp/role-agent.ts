@@ -399,6 +399,16 @@ export function bashDenylistGate(toolName: string, input: unknown): StepCapBlock
  * anything, and it can write nothing. `shellWrites` finds the heredocs and
  * redirects; the refusal names the engineer's job so the next move is obvious.
  */
+/** Where a run-only role IS allowed to write: its own scratch corner.
+ *
+ * Without this the rule is self-contradicting, and the simulation caught it
+ * before a run did: the manager is told to test as an end user — "convert a real
+ * file the way somebody actually would" — and every conversion writes a file. A
+ * manager that cannot produce an output file cannot check anything, which is the
+ * one thing it is for. So it may write in `.scratch/`, and nowhere else: the
+ * product tree stays the engineers'. */
+export const SCRATCH_DIR = '.scratch';
+
 export function bashWriteGate(
   toolName: string,
   input: unknown,
@@ -411,16 +421,20 @@ export function bashWriteGate(
     typeof (input as { command?: unknown }).command === 'string'
       ? (input as { command: string }).command
       : '';
-  const writes = shellWrites(command);
-  if (writes.length === 0) return undefined;
-  const names = writes.map((w) => w.path).join(', ');
+  const outside = shellWrites(command).filter(
+    (w) => !w.path.startsWith(`${SCRATCH_DIR}/`) && w.path !== SCRATCH_DIR,
+  );
+  if (outside.length === 0) return undefined;
+  const names = outside.map((w) => w.path).join(', ');
   return {
     block: true,
     reason:
-      `this command writes to ${names}, and writing files is not your job — it did not run. ` +
-      `You can run anything that does not write: execute the product, run the tests, read an ` +
-      `error. To CHANGE a file, message the engineer who owns it with exactly what to change ` +
-      `and why. If nobody owns it yet, give it to an engineer and let them build it.`,
+      `this command writes to ${names}, which is the product — it did not run. ` +
+      `Write into \`${SCRATCH_DIR}/\` instead and it will work: that is your corner, for ` +
+      `test inputs and converted outputs, so you can use the product like a user and see what ` +
+      `it does. Everything else you can already do — run the product, run the tests, read an ` +
+      `error. To CHANGE the product, message the engineer who owns that file with what to ` +
+      `change and what you saw go wrong.`,
   };
 }
 

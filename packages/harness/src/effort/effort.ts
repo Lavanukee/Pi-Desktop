@@ -28,9 +28,23 @@ export interface EffortKnobs {
    * longer before terminating. (Observable knob wired into the repair rungs.)
    */
   readonly abortThreshold: number;
-  /** Extra self-review passes after producing an answer/edit. */
+  /**
+   * Extra self-review passes after producing an answer/edit.
+   *
+   * ZERO AT EVERY LEVEL (jedd): "we don't by default want any reviews/adversarial
+   * or anything, especially if the user is just saying hi or asking for some file
+   * operation." A forced critique after every turn is a whole extra model call on
+   * the one slot for a turn that may have nothing reviewable in it, and at the
+   * default effort it fired on literally every message — including "hi".
+   *
+   * Help is now something the model ASKS FOR: it escalates when it judges it
+   * needs to (the corp channel, a specialist), rather than having a reviewer
+   * imposed on work that did not need one. The knob and the machinery stay, so a
+   * caller can still ask for passes deliberately.
+   */
   readonly reviewPasses: number;
-  /** Whether to run adversarial checks (e.g. try to break the produced output). */
+  /** Whether to run adversarial checks (e.g. try to break the produced output).
+   * Off everywhere, for the same reason as {@link reviewPasses}. */
   readonly adversarialChecks: boolean;
   /**
    * Hard per-turn tool-call cap — a generous backstop the loop detector aborts
@@ -92,7 +106,7 @@ const KNOBS: Record<EffortLevel, EffortKnobs> = {
     level: 'medium',
     repairAttempts: 2,
     abortThreshold: 3,
-    reviewPasses: 1,
+    reviewPasses: 0,
     adversarialChecks: false,
     maxTurnSteps: 40,
     wanderSteerAfter: 6,
@@ -105,8 +119,8 @@ const KNOBS: Record<EffortLevel, EffortKnobs> = {
     level: 'high',
     repairAttempts: 3,
     abortThreshold: 4,
-    reviewPasses: 2,
-    adversarialChecks: true,
+    reviewPasses: 0,
+    adversarialChecks: false,
     maxTurnSteps: 60,
     wanderSteerAfter: 8,
     wanderAbortAfter: 14,
@@ -118,8 +132,8 @@ const KNOBS: Record<EffortLevel, EffortKnobs> = {
     level: 'max',
     repairAttempts: 5,
     abortThreshold: 6,
-    reviewPasses: 3,
-    adversarialChecks: true,
+    reviewPasses: 0,
+    adversarialChecks: false,
     maxTurnSteps: 100,
     wanderSteerAfter: 10,
     wanderAbortAfter: 18,

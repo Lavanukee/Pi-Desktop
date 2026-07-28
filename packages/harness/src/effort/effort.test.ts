@@ -27,11 +27,17 @@ describe('effortKnobs', () => {
     }
   });
 
-  it('enables adversarial checks only at high and max', () => {
-    expect(effortKnobs('low').adversarialChecks).toBe(false);
-    expect(effortKnobs('medium').adversarialChecks).toBe(false);
-    expect(effortKnobs('high').adversarialChecks).toBe(true);
-    expect(effortKnobs('max').adversarialChecks).toBe(true);
+  it('forces NO review or adversarial pass at ANY effort', () => {
+    // jedd: "we don't by default want any reviews/adversarial or anything,
+    // especially if the user is just saying hi or asking for some file
+    // operation." A critique after every turn is a whole extra model call on the
+    // one slot, and at the default effort it fired on literally every message.
+    // Help is asked for now, not imposed — reviewTurn still honours an explicit
+    // request, it is just never forced.
+    for (const level of ['low', 'medium', 'high', 'max'] as const) {
+      expect(effortKnobs(level).reviewPasses).toBe(0);
+      expect(effortKnobs(level).adversarialChecks).toBe(false);
+    }
   });
 
   it('enables the REAL verify only at high and max (with a bounded fix budget)', () => {

@@ -183,7 +183,14 @@ export interface HarnessHandle {
   /** The live repair deps currently pushed to the provider (for tests/telemetry). */
   buildRepairDeps(): LiveRepairDeps;
   /** Run the reviewer/adversarial passes for a finished turn (effort-gated). */
-  reviewTurn(output: string, ctx: ExtensionContext): Promise<boolean>;
+  /** Critique the output and steer a revision if it finds real problems. Never
+   * forced by an effort level any more — pass `request` to actually run passes. */
+  reviewTurn(
+    output: string,
+    ctx: ExtensionContext,
+    signal?: AbortSignal,
+    request?: { readonly passes?: number; readonly adversarial?: boolean },
+  ): Promise<boolean>;
   /**
    * Run the effort-gated REAL verify for a finished coding/file-ops turn. Returns
    * true when it steered a fix back to the model (bounded per turn).
@@ -574,17 +581,36 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
    * Effort-gated reviewer + adversarial passes over a finished turn's output.
    * Returns true when a revision was triggered. Fail-open: no callModel → false.
    */
+  /**
+   * Critique the turn's output and, if it finds real problems, steer a revision.
+   *
+   * NOT run by default any more, at any effort (jedd: "we don't by default want
+   * any reviews/adversarial or anything, especially if the user is just saying hi
+   * or asking for some file operation"). The effort knobs are all zero, so the
+   * post-turn path calls this and it returns immediately.
+   *
+   * It survives as something that can be ASKED FOR — `request` overrides the
+   * knobs — which is the shape help should take: the model escalates when it
+   * judges it needs a second opinion, instead of having one imposed on work that
+   * did not need one.
+   */
   async function reviewTurn(
     output: string,
     ctx: ExtensionContext,
     signal?: AbortSignal,
+    request?: { readonly passes?: number; readonly adversarial?: boolean },
   ): Promise<boolean> {
     if (callModel === undefined || output.trim().length === 0) return false;
     if (runtime.suppressNextReview) {
       runtime.suppressNextReview = false;
       return false;
     }
-    const knobs = effortKnobs(runtime.config.effort);
+    const base = effortKnobs(runtime.config.effort);
+    const knobs = {
+      ...base,
+      ...(request?.passes !== undefined ? { reviewPasses: request.passes } : {}),
+      ...(request?.adversarial !== undefined ? { adversarialChecks: request.adversarial } : {}),
+    };
     if (knobs.reviewPasses <= 0 && !knobs.adversarialChecks) return false;
     setStage('reviewing', ctx);
     const task = runtime.lastPrompt;

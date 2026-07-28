@@ -241,13 +241,17 @@ describe('effort-gated reviewer pass', () => {
     expect(rig.sentUserMessages).toHaveLength(0);
   });
 
-  it('effort=high reviews, catches the bad result, and triggers a revision', async () => {
+  it('a REQUESTED review catches the bad result and triggers a revision', async () => {
     const callModel = vi.fn(badReview);
     const rig = makeRig({ effort: 'high', callModel });
     await startSession(rig);
-    const triggered = await rig.handle.reviewTurn('some result', rig.ctx);
+    // Explicitly requested — no effort level forces a review any more, but the
+    // machinery must still work when someone asks for it.
+    const triggered = await rig.handle.reviewTurn('some result', rig.ctx, undefined, {
+      passes: 2,
+      adversarial: true,
+    });
     expect(triggered).toBe(true);
-    // reviewPasses(2)>0 + adversarialChecks(true) → both passes ran.
     expect(callModel).toHaveBeenCalled();
     expect(rig.sentUserMessages).toHaveLength(1);
     const steer = (rig.sentUserMessages[0] ?? '').toLowerCase();
@@ -279,26 +283,22 @@ describe('reviewPasses knob is real (round-9): passes scale with effort', () => 
   // of reviewOutput calls equals reviewPasses (+ one adversarialCheck when on).
   const okModel = () => vi.fn(async () => '{"ok":true,"issues":[]}');
 
-  it('medium runs exactly 1 reviewer pass; high runs more; max more still', async () => {
-    const m = okModel();
-    const rigM = makeRig({ effort: 'medium', callModel: m });
-    await startSession(rigM);
-    await rigM.handle.reviewTurn('result', rigM.ctx);
-    expect(m.mock.calls.length).toBe(1); // reviewPasses 1 + adversarial off
+  it('NO effort level forces a reviewer pass — not even max', async () => {
+    for (const effort of ['low', 'medium', 'high', 'max'] as const) {
+      const model = okModel();
+      const rig = makeRig({ effort, callModel: model });
+      await startSession(rig);
+      await rig.handle.reviewTurn('result', rig.ctx);
+      expect(model.mock.calls.length, `${effort} must not review`).toBe(0);
+    }
+  });
 
-    const h = okModel();
-    const rigH = makeRig({ effort: 'high', callModel: h });
-    await startSession(rigH);
-    await rigH.handle.reviewTurn('result', rigH.ctx);
-    expect(h.mock.calls.length).toBe(3); // reviewPasses 2 + adversarial on
-    expect(h.mock.calls.length).toBeGreaterThan(m.mock.calls.length);
-
-    const x = okModel();
-    const rigX = makeRig({ effort: 'max', callModel: x });
-    await startSession(rigX);
-    await rigX.handle.reviewTurn('result', rigX.ctx);
-    expect(x.mock.calls.length).toBe(4); // reviewPasses 3 + adversarial on
-    expect(x.mock.calls.length).toBeGreaterThan(h.mock.calls.length);
+  it('an explicit request still runs exactly the passes it asked for', async () => {
+    const model = okModel();
+    const rig = makeRig({ effort: 'low', callModel: model });
+    await startSession(rig);
+    await rig.handle.reviewTurn('result', rig.ctx, undefined, { passes: 3 });
+    expect(model.mock.calls.length).toBe(3);
   });
 });
 
@@ -573,7 +573,8 @@ describe('HarnessStatus.stage transitions publish at the seams', () => {
     const rig = makeRig({ effort: 'high', callModel: bad });
     await startSession(rig);
     await startTurn(rig);
-    expect(await rig.handle.reviewTurn('result', rig.ctx)).toBe(true);
+    // Requested, since no effort forces a review any more.
+    expect(await rig.handle.reviewTurn('result', rig.ctx, undefined, { passes: 1 })).toBe(true);
     const stages = rig.publishedStages();
     expect(stages).toContain('reviewing');
     expect(stages).toContain('revising');

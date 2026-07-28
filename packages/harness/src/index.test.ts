@@ -191,7 +191,7 @@ describe('wireHarness', () => {
     expect(tools).toContain('python_run');
   });
 
-  it('agent_end settles the turn WITHOUT awaiting the post-turn reviewer', async () => {
+  it('agent_end settles the turn WITHOUT awaiting post-turn work', async () => {
     // Regression (jedd: "the stop/pause buttons persist a few seconds after
     // generation is complete"). pi delivers agent_end to the app only after every
     // extension handler resolves, and the composer's Stop button is driven by that
@@ -232,11 +232,12 @@ describe('wireHarness', () => {
     const stages = setStatus.mock.calls
       .filter((c) => c[0] === 'harness')
       .map((c) => JSON.parse(c[1] as string).stage as string);
-    // The turn settled ('done') BEFORE the reviewer moved the stage to
-    // 'reviewing' — i.e. completion was published up front, not after the pass.
+    // Completion is published UP FRONT. The reviewer's callModel here never
+    // resolves, so if agent_end awaited post-turn work this test would hang
+    // rather than reach this line at all — that hang IS the assertion.
     expect(stages).toContain('done');
-    expect(stages.indexOf('done')).toBeLessThan(stages.lastIndexOf('reviewing'));
-    // ...and the post-turn work really did start (it's detached, not skipped).
+    // Post-turn work still runs, detached: the naming pass fires on this turn
+    // (no title yet) and shares the same never-resolving callModel.
     expect(reviewCalled).toBe(true);
   });
 

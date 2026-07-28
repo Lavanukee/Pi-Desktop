@@ -99,7 +99,7 @@ describe('the tool itself', () => {
   });
 
   it('runs the product’s real check and reports a pass', async () => {
-    write('run_tests.py', 'assert 1 + 1 == 2\nprint("all conversions round-tripped")\n');
+    write('check', 'echo "all cases passed"\nexit 0\n');
     const seen: Array<{ ok: boolean; command: string }> = [];
     const tool = createCheckProductTool({
       cwd: dir,
@@ -108,13 +108,13 @@ describe('the tool itself', () => {
     });
     const { text } = await runTool(tool);
     expect(text).toContain('PASSES');
-    expect(text).toContain('all conversions round-tripped');
+    expect(text).toContain('all cases passed');
     expect(seen).toHaveLength(1);
     expect(seen[0]?.ok).toBe(true);
   });
 
   it('reports a failure with its output, and tells the observer', async () => {
-    write('run_tests.py', 'raise SystemExit("csv_to_yaml wrote a YAML line into a CSV cell")\n');
+    write('check', 'echo "the widget came back empty" >&2\nexit 1\n');
     const seen: boolean[] = [];
     const tool = createCheckProductTool({
       cwd: dir,
@@ -122,14 +122,14 @@ describe('the tool itself', () => {
       onChecked: (r) => seen.push(r.ok),
     });
     const { text } = await runTool(tool);
-    expect(text).toContain('csv_to_yaml wrote a YAML line into a CSV cell');
+    expect(text).toContain('the widget came back empty');
     expect(seen).toEqual([false]);
   });
 
   it('agrees with the gate — same tree, same verdict', async () => {
     // The whole point. If these could ever disagree, the tool would be teaching
     // the team to build toward the wrong target.
-    write('run_tests.py', 'raise SystemExit(3)\n');
+    write('check', 'exit 3\n');
     const gate = await runProductGate(dir, { timeoutMs: 60_000 });
     const { text } = await runTool(createCheckProductTool({ cwd: dir, timeoutMs: 60_000 }));
     expect(gate.ok).toBe(false);

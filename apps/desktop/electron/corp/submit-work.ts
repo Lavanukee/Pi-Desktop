@@ -25,8 +25,6 @@
  */
 
 import { execFile } from 'node:child_process';
-import { statSync } from 'node:fs';
-import path from 'node:path';
 import { runProductGate } from './product-gate';
 import { productFingerprint } from './workspace-paths';
 
@@ -152,10 +150,10 @@ export function unchangedReply(command: string): string {
     `Change something first. Look at the error you were given and decide which file is`,
     `actually wrong:`,
     `  - the PRODUCT, if it does not do what the test asks — fix the product;`,
-    `  - the TEST, if it asks for something that cannot be done. A flat CSV cannot`,
-    `    hold a nested value, so a round-trip through it will never return one. That`,
-    `    is a broken test, not a broken converter: narrow it to what the format can`,
-    `    actually carry, and say in your reply that you did.`,
+    `  - the TEST, if it demands something that cannot be done at all. A test can be`,
+    `    wrong about what is possible, and no amount of fixing the product will`,
+    `    satisfy it: narrow it to what can actually be guaranteed, and say so in your`,
+    `    reply.`,
     ``,
     `If you genuinely cannot tell, talk_to the manager with the error rather than`,
     `submitting again.`,
@@ -225,8 +223,8 @@ export interface ProductCheck {
   readonly ok: boolean;
   readonly command: string;
   readonly output: string;
-  /** How the gate decided to check — `pytest`, `nothing runnable found`,
-   * `godot headless import (unavailable)`. The last shape is a CAPABILITY gap. */
+  /** How the check was found — which declared check, or that none exists. A
+   * `(unavailable)` suffix means it could not be executed at all: a CAPABILITY gap. */
   readonly how: string;
 }
 
@@ -292,25 +290,26 @@ export function productCheckReply(command: string, gate: ProductCheck): string {
  * `test_converter.py` it had left behind carried a SyntaxError nobody had ever
  * triggered. A proof has to be repeatable by somebody who is not in the room.
  */
-export function proofRunsAFile(command: string, cwd: string): string | undefined {
-  // `make test`, `npm test`, `pytest`, `cargo test`, `swift build` — a build tool
-  // reading its own manifest is a real, repeatable check even with no path in it.
-  if (/\b(make|npm|yarn|pnpm|pytest|cargo|swift|xcodebuild|go|gradle|mvn)\b/.test(command)) {
-    return command.trim();
-  }
-  // Otherwise SOME token has to name a file that is really there.
-  for (const raw of command.split(/[\s;|&()]+/)) {
-    const token = raw.replace(/^['"]|['"]$/g, '');
-    if (token === '' || token.startsWith('-')) continue;
-    if (!/[./]/.test(token)) continue;
-    const abs = path.isAbsolute(token) ? token : path.join(cwd, token);
-    try {
-      if (statSync(abs).isFile()) return token;
-    } catch {
-      // not a file — keep looking
-    }
-  }
-  return undefined;
+export function proofIsEphemeral(command: string): boolean {
+  /*
+   * ONE QUESTION, ASKED WITHOUT KNOWING THE STACK: could somebody else run this
+   * tomorrow?
+   *
+   * The first version of this carried a list — make, npm, pytest, cargo, swift,
+   * gradle — which is the harness deciding what a real check looks like, the same
+   * mistake as the gate's discovery list. It is also unnecessary. By the time we
+   * get here the command has already RUN and PASSED, so it cannot be naming a
+   * file that does not exist. The only way a passing command can still be
+   * worthless is if the thing it ran was typed INTO it and vanishes with the
+   * conversation: a heredoc, or code passed inline on the command line.
+   *
+   * So that is the whole test. `make test`, `swift build`, `cargo test`,
+   * `./check`, `node run.js`, `dotnet test` — all fine, none of them named here.
+   */
+  if (/<<-?\s*['"]?\w+/.test(command)) return true; // heredoc
+  if (/(^|\s)-(c|e)(\s|$)/.test(command)) return true; // inline code: -c / -e
+  if (/(^|\s)--(eval|command|execute)(\s|=)/.test(command)) return true;
+  return false;
 }
 
 /** What an engineer is told when its proof leaves nothing behind. */
@@ -322,8 +321,8 @@ export function ephemeralProofReply(command: string): string {
     `moves on. The next person cannot re-run it, and neither can the check that`,
     `decides this product ships.`,
     ``,
-    `Put the same code in a FILE next to your work — \`tests/test_gui.py\`,`,
-    `\`scripts/check_engine.sh\` — run that file, and submit the command that runs it.`,
+    `Put the same code in a FILE next to your work, run that file, and submit the`,
+    `command that runs it.`,
   ].join('\n');
 }
 
@@ -481,8 +480,7 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
        * is green. The whole-product verdict belongs to the run's gate and to the
        * manager, who are the only ones who can see all the pieces.
        */
-      const proofFile = proofRunsAFile(command, opts.cwd);
-      if (proofFile === undefined) {
+      if (proofIsEphemeral(command)) {
         lastFailure = { command, fingerprint: productFingerprint(opts.cwd) };
         opts.onRejected?.(command, 'proof runs nothing that exists in the workspace');
         return { content: [{ type: 'text', text: ephemeralProofReply(command) }], details: undefined };

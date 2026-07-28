@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { SUBMIT_WORK_TOOL, cannotFailReply, createSubmitWorkTool, productStillRedNote, proofCannotFail, proofLooksHollow, proofRunsAFile, runProof, submissionReply, type SubmitWorkOptions, type SubmittedWork, unchangedReply } from './submit-work';
+import { SUBMIT_WORK_TOOL, cannotFailReply, createSubmitWorkTool, productStillRedNote, proofCannotFail, proofLooksHollow, proofIsEphemeral, runProof, submissionReply, type SubmitWorkOptions, type SubmittedWork, unchangedReply } from './submit-work';
 
 let dir: string;
 beforeEach(() => {
@@ -114,7 +114,7 @@ describe('resubmitting into an unchanged tree', () => {
   it('names what to change, including that the TEST may be the wrong thing', async () => {
     const reply = unchangedReply('python3 -m pytest -q');
     expect(reply).toContain('python3 -m pytest -q');
-    expect(reply).toContain('flat CSV cannot');
+    expect(reply).toContain('cannot be done at all');
     expect(reply).toContain('talk_to the manager');
   });
 
@@ -171,11 +171,23 @@ describe('a proof must outlive the conversation, but need not fix the whole prod
     expect(await submit('python3 check_gui.py')).toContain('ACCEPTED');
   });
 
-  it('recognises build tools with no path, and rejects inline code', () => {
-    expect(proofRunsAFile('make test', ws)).toBe('make test');
-    expect(proofRunsAFile('swift build && swift test', ws)).toBeDefined();
-    expect(proofRunsAFile('python3 -c "assert True"', ws)).toBeUndefined();
-    expect(proofRunsAFile('python3 check_gui.py', ws)).toBe('check_gui.py');
+  it('asks only whether someone else could run it tomorrow — no stack knowledge', () => {
+    // Anything repeatable passes, whatever the ecosystem, with nothing listed.
+    for (const ok of [
+      'make test',
+      'swift build && swift test',
+      'cargo test',
+      './check',
+      'node run.js',
+      'dotnet test',
+      'python3 check_gui.py',
+    ]) {
+      expect(proofIsEphemeral(ok)).toBe(false);
+    }
+    // Only what vanishes with the conversation is refused.
+    for (const gone of ['python3 -c "assert True"', "node -e 'process.exit(0)'", "sh << 'EOF'\nexit 0\nEOF"]) {
+      expect(proofIsEphemeral(gone)).toBe(true);
+    }
   });
 
   it('ACCEPTS a piece whose own check passes while the product is still red', async () => {

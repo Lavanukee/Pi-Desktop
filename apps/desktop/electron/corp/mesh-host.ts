@@ -323,9 +323,9 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
   const workspaceNote = [
     ``,
     `YOUR WORKING DIRECTORY is ${config.cwd}`,
-    `It is already the current directory for your shell and your file tools. Use paths`,
-    `RELATIVE to it — \`converter.py\`, \`src/converter.py\`, \`tests/test_convert.py\`.`,
-    `Never prefix a path with the workspace's own folder name, and never write outside it.`,
+    `It is already the current directory for your shell and your file tools. Address`,
+    `everything RELATIVE to it — a bare filename, or a path below it. Never prefix a`,
+    `path with the workspace's own directories, and never write outside it.`,
   ].join('\n');
 
   // The run-only roles get a corner they CAN write in, so "test it like a user"

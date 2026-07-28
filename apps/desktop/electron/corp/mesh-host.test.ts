@@ -92,7 +92,7 @@ describe('what the manager is told about the product, every time', () => {
   });
 
   it('says PASSES when the product passes', async () => {
-    writeFileSync(path.join(dir, 'run_tests.py'), 'print("all three formats round-tripped")\n');
+    writeFileSync(path.join(dir, 'check'), 'echo "all cases passed"\nexit 0\n');
     const note = await productStatusNote(dir);
     expect(note).toContain('measured just now');
     expect(note).toContain('PASSES');
@@ -100,12 +100,12 @@ describe('what the manager is told about the product, every time', () => {
 
   it('carries the real failing output, so the manager forwards evidence not opinion', async () => {
     writeFileSync(
-      path.join(dir, 'run_tests.py'),
-      'raise SystemExit("cli.py line 101: SyntaxError: unexpected EOF while parsing")\n',
+      path.join(dir, 'check'),
+      'echo "cli line 101: unexpected end of input" >&2\nexit 1\n',
     );
     const note = await productStatusNote(dir);
     expect(note).toContain('FAILS');
-    expect(note).toContain('unexpected EOF');
+    expect(note).toContain('unexpected end of input');
     expect(note).toContain('RIGHT NOW');
   });
 
@@ -118,14 +118,14 @@ describe('what the manager is told about the product, every time', () => {
     // Run 17 shipped a library with no command-line entry point — a sentence of
     // its own in the brief — while the manager watched the tests fail for forty
     // minutes, twenty exchanges after it last saw that sentence.
-    writeFileSync(path.join(dir, 'run_tests.py'), 'print("ok")\n');
+    writeFileSync(path.join(dir, 'check'), 'exit 0\n');
     const note = await productStatusNote(dir, 'Provide a command-line entry point.');
     expect(note).toContain('WHAT WAS ASKED FOR');
     expect(note).toContain('Provide a command-line entry point.');
   });
 
   it('says nothing extra when there is no task to restate', async () => {
-    writeFileSync(path.join(dir, 'run_tests.py'), 'print("ok")\n');
+    writeFileSync(path.join(dir, 'check'), 'exit 0\n');
     const note = await productStatusNote(dir);
     expect(note).not.toContain('WHAT WAS ASKED FOR');
   });

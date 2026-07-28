@@ -13,17 +13,17 @@
  * to judge its own work is the least robust thing you can ask; handing it a
  * failing command and its output is the most.
  *
- * DISCOVERY is deliberately dumb and ordered — the first check that exists wins.
- * A project that declares its own test is believed; otherwise we look for the
- * obvious runnable thing. No model in the loop, no heuristics over prose.
+ * DISCOVERY is one rule: the team leaves an executable check at the root, and it
+ * is run. The harness never decides what testing looks like — no framework, no
+ * ecosystem, no language. No model in the loop, no heuristics over prose.
  *
  * Node child_process + fs only (electron-main). Never throws: a gate that cannot
  * run reports `ran: false`, which is NOT a pass — an unverifiable product is an
  * unfinished one.
  */
 
-import { execFile, execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { accessSync, constants as fsConstants, existsSync } from 'node:fs';
 import path from 'node:path';
 
 /** What the gate found and what happened when it ran it. */
@@ -34,7 +34,7 @@ export interface GateResult {
   readonly ok: boolean;
   /** The command we ran, for the record and for telling the team what failed. */
   readonly command: string;
-  /** Why we chose it (`package.json test script`, `pytest`, …). */
+  /** Why we chose it — which declared check was found. */
   readonly how: string;
   /** Combined stdout+stderr, truncated — this is what gets handed back to the team. */
   readonly output: string;
@@ -51,129 +51,56 @@ export interface GateCandidate {
 
 const MAX_OUTPUT = 6000;
 
-function readJson(file: string): Record<string, unknown> | undefined {
-  try {
-    return JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
-}
 
-/** Is pytest actually importable? Cached — this is called during discovery, which
- * runs on every gate attempt. */
-let pytestAvailable: boolean | undefined;
-function hasPytest(): boolean {
-  if (pytestAvailable !== undefined) return pytestAvailable;
-  try {
-    execFileSync('python3', ['-c', 'import pytest'], { stdio: 'ignore', timeout: 15_000 });
-    pytestAvailable = true;
-  } catch {
-    pytestAvailable = false;
-  }
-  return pytestAvailable;
-}
 
-function listShallow(dir: string): string[] {
-  try {
-    return readdirSync(dir);
-  } catch {
-    return [];
-  }
-}
+
+/** The names a team may leave its check under. First one that exists wins. */
+export const DECLARED_CHECKS = ['check', 'check.sh', 'verify.sh', 'run_checks.sh'] as const;
 
 /**
- * Find the product's own check, in preference order. Pure apart from reading the
- * tree — exported so the choice is inspectable and unit-testable without running
- * anything.
+ * Find the check the TEAM declared. That is the only thing this looks for.
+ *
+ * It used to guess: a package.json test script, a Makefile test target, a
+ * run_tests.py, test_*.py through pytest or unittest, a Swift package, a Godot
+ * project. Every one of those is the harness deciding what testing looks like,
+ * and jedd's objection is the right one — this has to work for any project, and
+ * a list of remembered ecosystems never will. Worse, the guessing had teeth: a
+ * project the list did not recognise was ungradable, and an engineer that cannot
+ * be graded will invent a check the list DOES recognise and quietly become the
+ * acceptance criterion for everyone else.
+ *
+ * So the harness enforces no testing mechanism at all. It asks for one thing: an
+ * executable check at the root that exits 0 when the product works. Shell,
+ * python, a compiler invocation, a binary — the team decides what proving it
+ * means, in whatever language they built it in. If they leave none, the product
+ * is unverifiable, which is not a pass; that is honest, and the team is told
+ * plainly what to leave.
+ *
+ * Pure apart from reading the tree — exported so the choice is inspectable.
  */
 export function findGate(root: string): GateCandidate | undefined {
-  /*
-   * 0. THE TEAM DECLARED ITS OWN CHECK. This is the path that matters, and the
-   *    only one that generalises.
-   *
-   *    Everything below is a convention for a stack somebody thought of in
-   *    advance, and that list can never keep up — Rust, Go, CMake, Xcode, a
-   *    shell pipeline, a thing with no ecosystem at all. A project the gate
-   *    cannot grade is worse than untested: the engineer that cannot be graded
-   *    will invent a check the gate DOES recognise, and quietly become the
-   *    acceptance criterion for the whole team.
-   *
-   *    So the harness asks for one thing instead of guessing at hundreds: leave
-   *    an executable `check` at the root that exits 0 when the product works.
-   *    Any language, any stack, any shape of product — the team decides what
-   *    proving it means, and the harness only insists that it be RUNNABLE.
-   */
-  for (const name of ['check', 'check.sh', 'verify.sh', 'run_checks.sh']) {
+  for (const name of DECLARED_CHECKS) {
     const declared = path.join(root, name);
-    if (existsSync(declared)) {
-      return { how: `declared check (${name})`, command: '/bin/sh', args: [declared] };
-    }
-  }
-
-  // 1. The project SAYS how to test itself. Always believe it first.
-  const pkg = readJson(path.join(root, 'package.json'));
-  const scripts = (pkg?.scripts ?? {}) as Record<string, unknown>;
-  if (typeof scripts.test === 'string' && scripts.test.trim() !== '') {
-    return { how: 'package.json test script', command: 'npm', args: ['test', '--silent'] };
-  }
-
-  // 2. A Makefile with a `test` target.
-  const makefile = path.join(root, 'Makefile');
-  if (existsSync(makefile)) {
+    if (!existsSync(declared)) continue;
+    /*
+     * RUN IT THE WAY THE TEAM WROTE IT. If the file is executable we exec it
+     * directly, so its own shebang decides the interpreter — the check may be
+     * python, node, a compiled binary, anything. Only when it is NOT executable
+     * do we fall back to `sh`, which is the common case of someone writing a
+     * shell script and forgetting `chmod +x`. Assuming `sh` unconditionally would
+     * break every check that is not shell, which is most of them.
+     */
+    let executable = false;
     try {
-      if (/^test:/m.test(readFileSync(makefile, 'utf8'))) {
-        return { how: 'Makefile test target', command: 'make', args: ['test'] };
-      }
+      accessSync(declared, fsConstants.X_OK);
+      executable = true;
     } catch {
-      /* unreadable → fall through */
+      executable = false;
     }
+    return executable
+      ? { how: `declared check (${name})`, command: declared, args: [] }
+      : { how: `declared check (${name})`, command: '/bin/sh', args: [declared] };
   }
-
-  const entries = listShallow(root);
-
-  // 3. A standalone runner, run DIRECTLY — checked before pytest on purpose. A
-  //    small model reaches for `if __name__ == '__main__'` far more often than
-  //    for a test framework, and running the file needs nothing installed.
-  const selfTest = entries.find((f) => /^(test|tests|run_tests|check)\.py$/.test(f));
-  if (selfTest !== undefined) {
-    return { how: 'python test script', command: 'python3', args: [selfTest] };
-  }
-
-  // 4. test_*.py files. WHICH RUNNER MATTERS: on a machine without pytest,
-  //    `-m pytest` fails with "No module named pytest" — which reads as a BROKEN
-  //    PRODUCT when the truth is a missing checker, and costs a whole round of the
-  //    team "fixing" code that was never wrong. So probe rather than assume: pytest
-  //    only if it actually imports, else unittest, which is stdlib and always there.
-  //    (Never bare `pytest` — the module is importable here while the console
-  //    script is not on PATH, and that combination is common.)
-  const pyTests = entries.filter((f) => /^test_.*\.py$|^.*_test\.py$/.test(f));
-  if (pyTests.length > 0 || existsSync(path.join(root, 'tests'))) {
-    return hasPytest()
-      ? { how: 'pytest', command: 'python3', args: ['-m', 'pytest', '-q'] }
-      : {
-          how: 'unittest discover',
-          command: 'python3',
-          args: ['-m', 'unittest', 'discover', '-v'],
-        };
-  }
-
-  // 4. A Godot project — open it headless and see if it loads without erroring.
-  /*
-   * Ecosystem fallbacks, for a team that declared nothing. Useful, never
-   * sufficient: each one is a stack somebody remembered, and the DECLARED check
-   * above is what makes this work for a project nobody anticipated.
-   */
-  if (existsSync(path.join(root, 'Package.swift'))) {
-    return { how: 'swift build', command: 'swift', args: ['build'] };
-  }
-  if (existsSync(path.join(root, 'project.godot'))) {
-    return {
-      how: 'godot headless import',
-      command: 'godot',
-      args: ['--headless', '--quit-after', '2', '--path', root],
-    };
-  }
-
   return undefined;
 }
 
@@ -212,12 +139,11 @@ export async function runProductGate(
         /*
          * A CHECK THAT CHECKED NOTHING IS NOT A PASS.
          *
-         * `python3 -m unittest discover` in a tree with an empty `tests/` prints
-         * "Ran 0 tests ... OK" and EXITS 0 — a green light for a product nobody
-         * tested. MEASURED on a live run whose real work had landed one directory
-         * deeper, leaving an empty tests/ at the top. Exit code alone would have
-         * called that success, which is exactly the narrative sign-off this gate
-         * exists to end.
+         * A runner over an empty suite prints "Ran 0 tests ... OK" and EXITS 0 — a
+         * green light for a product nobody tested. MEASURED on a live run whose
+         * real work had landed one directory deeper, leaving nothing for the check
+         * to find. Exit code alone would have called that success, which is exactly
+         * the narrative sign-off this gate exists to end.
          */
         const ranNothing = /\bRan 0 tests\b|\bno tests ran\b|collected 0 items/i.test(output);
         /*
@@ -260,7 +186,7 @@ export async function runProductGate(
       },
     );
     child.on('error', () => {
-      // The tool itself is missing (no python3, no godot) — that is a CAPABILITY
+      // The check itself could not be executed at all — that is a CAPABILITY
       // gap, not a product failure, and it must be reported as such rather than
       // silently passing.
       resolve({
@@ -300,8 +226,8 @@ export function gateFeedback(result: GateResult): string {
       `bugs from the outside:`,
       `  - the test converts an input file it never created. Read it top to bottom and`,
       `    check that every file it opens is one it actually wrote.`,
-      `  - the test asks for something the format cannot do — a value keeping its type`,
-      `    through CSV, which has none. Narrow it to what is actually possible.`,
+      `  - the test demands something that is not actually possible for what was built.`,
+      `    Narrow it to what can be guaranteed, and say that you did.`,
       ``,
       `Then make the check pass. Do not report the work as finished until this exact`,
       `command exits 0.`,

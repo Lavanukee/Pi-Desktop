@@ -347,9 +347,20 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
             ...agent.tools,
             TALK_TO_TOOL,
             COMMISSION_SPECIALIST_TOOL,
-            CHECK_PRODUCT_TOOL,
+            // NOT the CEO. It called check_product five times in run 12 and then
+            // went looking for a way to read Python files — a role handed an
+            // instrument it has no use for will use it anyway.
+            ...(agent.role === 'ceo' ? [] : [CHECK_PRODUCT_TOOL]),
             ...(agent.role === 'engineer' ? [SUBMIT_WORK_TOOL] : []),
           ],
+          /*
+           * TOOL SEARCH IS FOR ROLES THAT DO WORK. Run 12's CEO spent 23 of its 31
+           * turns in `tool_search`, on one model slot, while the engineer that was
+           * a single missing import from a passing gate ran out of budget. The CEO
+           * needs exactly two verbs — brief the manager, answer questions — and a
+           * search tool is only an invitation to find a third.
+           */
+          enableToolSearch: agent.role !== 'ceo',
           customTools: [
             ...communicationTools(agent, talkThrough(agentId)),
             // EVERYONE gets the acceptance check. It used to fire once, at the
@@ -357,12 +368,12 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
             // guess of what "working" meant. Run 7 failed on a test helper
             // defined in the wrong class, which the first whole-file run would
             // have caught; the only thing that ran the file whole was the gate.
-            createCheckProductTool({
+            ...(agent.role === 'ceo' ? [] : [createCheckProductTool({
               cwd: config.cwd,
               ...(config.onChecked !== undefined
                 ? { onChecked: (r) => config.onChecked?.(agentId, r.ok, r.command) }
                 : {}),
-            }) as unknown as ToolDefinition,
+            }) as unknown as ToolDefinition]),
             // ENGINEERS ONLY. Finishing is not something they can assert: the
             // command they submit as proof is RUN, and the submission is refused
             // with the real output if it fails. Four runs in a row produced

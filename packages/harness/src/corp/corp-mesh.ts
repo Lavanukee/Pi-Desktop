@@ -225,7 +225,23 @@ const FILE_TOOLS = ['read', 'write', 'edit', 'ls', 'grep', 'find'];
  * to TALK, and talking becomes the obvious move. It learns what the product does
  * by commissioning the tester, which is the honest way to know anyway.
  */
-const DEFAULT_CEO_TOOLS = [...RESEARCH_TOOLS];
+/*
+ * THE CEO GETS NO WORK TOOLS. MEASURED, run 12:
+ *
+ *   ceo   31 turns   tool_search × 23,  check_product × 5,  talk_to × 2
+ *
+ * Thirty-one turns to send two messages. On one model slot a turn is the scarce
+ * resource, and the CEO spent a third of the run searching for tools to use on a
+ * job that was never its job — while the engineer that was one missing `import
+ * yaml` from a green gate ran out of time.
+ *
+ * This is L7/L11 for the third time: a role with a capability and no work for it
+ * will find work for it. The CEO's entire job is to turn the user's request into
+ * a brief, hand it to the manager, and answer questions afterwards. `talk_to` and
+ * `commission_specialist` are added by the host; nothing else belongs here — not
+ * research, not the product check, not tool_search.
+ */
+const DEFAULT_CEO_TOOLS: readonly string[] = [];
 const DEFAULT_MANAGER_TOOLS = ['read', 'ls', 'grep', 'find', ...RESEARCH_TOOLS];
 const DEFAULT_ENGINEER_TOOLS = [...FILE_TOOLS, 'bash', ...RESEARCH_TOOLS];
 const DEFAULT_SPECIALIST_TOOLS = ['read', 'ls', 'grep', 'find', 'bash', ...RESEARCH_TOOLS];

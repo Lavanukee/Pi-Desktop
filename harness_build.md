@@ -615,6 +615,38 @@ or a top-level `Traceback`. Deliberately narrow: `7 passed, 0 failed` and a test
 named `test_fails_on_bad_input` both still pass, because a gate that cries wolf
 gets worked around.
 
+**L23 · The prompt described the role; the toolset decided it.** Run 12's CEO,
+measured:
+
+```
+ceo         31 turns   tool_search × 23,  check_product × 5,  talk_to × 2
+manager      8 turns   talk_to × 5
+engineer:1  66 turns   bash × 53, submit_work × 3 (all rejected, all identical)
+engineer:2  33 turns   read × 14, bash × 10, files written: 0
+```
+
+Thirty-one turns to send two messages. Its prompt has said this since the mesh
+was built:
+
+> *"you have no editor, no shell and no file tools, so there is nothing here for
+> you to do alone"*
+
+It was false. `DEFAULT_CEO_TOOLS` was `[...RESEARCH_TOOLS]`, `tool_search` was on
+by default for every role, and I had just handed `check_product` to everybody. So
+the CEO went looking for something to do and found twenty-three ways to look.
+Meanwhile the engineer that was **one missing `import yaml`** from a passing gate
+ran out of budget.
+
+On a single model slot a turn is *the* scarce resource, and this is the third time
+the same rule has bitten (L7, L11, now this): **a role with a capability and no
+work for it will find work for it.** The CEO's tools are now empty — `talk_to`
+and `commission_specialist` come from the host — and `tool_search` is off for it.
+The prompt finally describes the role the toolset creates.
+
+The corollary for `check_product`: giving it to *every* role was wrong in the same
+way. The manager needs it (L20), a specialist needs it, an engineer benefits. A
+CEO with it becomes a very slow debugger.
+
 ## 6. Known-hard, deliberately deferred
 
 Recorded so they are decisions rather than surprises.

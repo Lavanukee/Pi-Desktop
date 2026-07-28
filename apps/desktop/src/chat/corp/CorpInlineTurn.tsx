@@ -206,10 +206,28 @@ export function CorpInlineTurn({
       : (state.statusDetail ??
         (state.status === 'starting' ? 'Getting started' : 'Forming a plan'));
 
+  /*
+   * A COUNT WE DO NOT HAVE IS NOT REPORTED AS ZERO.
+   *
+   * "Delivered 0 tasks with a team of 14" is what this said after a run in which
+   * fourteen agents worked for a quarter of an hour and left a source tree, an
+   * app bundle and converted files on disk. `progress.total` comes from the plan
+   * checklist, which the mesh never emits — so the number was not "nothing was
+   * delivered", it was "nobody counted", and the screen stated it as fact.
+   *
+   * jedd, reading it: "it said that 0/14 tasks were done but everyone finished?"
+   * — which is exactly the confusion a false zero causes. With no checklist we
+   * say what we actually know: the team finished, and here is how many worked.
+   */
+  const counted = progress.total > 0;
   const terminalLabel = delivered
-    ? `Delivered ${progress.total} tasks with a team of ${agentCount}`
+    ? counted
+      ? `Delivered ${progress.total} tasks with a team of ${agentCount}`
+      : `Finished with a team of ${agentCount} — see what they built below`
     : state.status === 'aborted'
-      ? `Stopped after ${progress.done} of ${progress.total} tasks`
+      ? counted
+        ? `Stopped after ${progress.done} of ${progress.total} tasks`
+        : `Stopped, with a team of ${agentCount}`
       : (state.result?.error ?? 'Something went wrong');
 
   return (

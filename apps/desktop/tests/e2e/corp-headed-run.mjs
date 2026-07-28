@@ -142,18 +142,29 @@ try {
   }
   log('effort:', effortNow);
 
-  // The project the chat works in — and therefore the project the TEAM belongs to.
-  const project = await page.evaluate(async (dir) => {
-    try {
-      // `project:set` with a path is what the folder picker calls.
-      const r = await window.piDesktop.invoke('project:set', { path: dir });
-      return r?.activePath ?? r?.path ?? dir;
-    } catch {
-      return null;
-    }
+  /*
+   * THE PROJECT — set it, then CONFIRM IT ON SCREEN.
+   *
+   * The previous attempt called `project:set` and believed the value it got
+   * back. The app kept the project from the last session, the run went to that
+   * old folder, and I reported it as landing in the new one. The composer's
+   * folder chip is the same thing a user reads, so read that: if it does not say
+   * this project, nothing downstream is trustworthy.
+   */
+  await page.evaluate(async (dir) => {
+    await window.piDesktop.invoke('project:set', { path: dir }).catch(() => null);
   }, PROJECT);
-  log('project:', project ?? `(not set — the run will use the app default)`);
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(2500);
+  const chip = (await page.textContent('.pd-project-chip').catch(() => null)) ?? '';
+  const want = path.basename(PROJECT);
+  if (!chip.includes(want)) {
+    console.error(`corp-headed-run: the folder chip reads "${chip.trim()}", not "${want}".`);
+    console.error('Refusing to start — the run would go somewhere other than the project you');
+    console.error('asked for, and the team is keyed to that path.');
+    await app.close().catch(() => {});
+    process.exit(4);
+  }
+  log('project confirmed on screen:', chip.trim());
 
   await page.click('[data-testid="composer-input"]');
   await page.keyboard.insertText(TASK);

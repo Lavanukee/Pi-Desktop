@@ -92,28 +92,40 @@ try {
   await page.waitForSelector('[data-testid="composer-input"]', { timeout: 30_000 });
   log('app up · project:', PROJECT);
 
-  // EFFORT FIRST — the corporation is gated behind the top levels, and below them
-  // the same prompt runs as one solo agent with no hierarchy at all. Setting it
-  // after sending would be setting it too late.
-  const effortSet = await page.evaluate((level) => {
-    const s = window.__pi_settings_store?.() ?? window.__pi_store?.();
+  /*
+   * EFFORT FIRST, AND VERIFIED. The corporation is gated behind the top levels;
+   * below them the same prompt runs as ONE solo agent with no hierarchy at all.
+   * The first version of this set it through a store call wrapped in a try/catch,
+   * which silently did nothing — and the run that followed was a lone agent
+   * flailing in a directory that did not exist, with `Effort · Low` sitting in the
+   * corner of the screenshot. Set it through the real IPC, then READ IT BACK.
+   */
+  const effortNow = await page.evaluate(async (level) => {
+    const s = await window.piDesktop.invoke('settings:set', {
+      patch: { effort: level, effortMode: 'level' },
+    });
+    return s?.effort ?? null;
+  }, EFFORT);
+  if (effortNow !== EFFORT) {
+    console.error(`corp-headed-run: effort is "${effortNow}", wanted "${EFFORT}" — refusing to`);
+    console.error('start, because below the top levels there is no corporation to observe.');
+    await app.close().catch(() => {});
+    process.exit(3);
+  }
+  log('effort:', effortNow);
+
+  // The project the chat works in — and therefore the project the TEAM belongs to.
+  const project = await page.evaluate(async (dir) => {
     try {
-      s?.getState?.().update?.({ effort: level, effortMode: 'manual' });
-      return s?.getState?.().settings?.effort ?? null;
+      // `project:set` with a path is what the folder picker calls.
+      const r = await window.piDesktop.invoke('project:set', { path: dir });
+      return r?.activePath ?? r?.path ?? dir;
     } catch {
       return null;
     }
-  }, EFFORT);
-  log('effort:', effortSet ?? `(could not set — wanted ${EFFORT})`);
-
-  await page.evaluate((dir) => {
-    const s = window.__pi_store?.();
-    try {
-      s?.getState?.().setCwd?.(dir);
-    } catch {
-      /* the chat may root itself elsewhere; the run still proceeds */
-    }
   }, PROJECT);
+  log('project:', project ?? `(not set — the run will use the app default)`);
+  await page.waitForTimeout(2000);
 
   await page.click('[data-testid="composer-input"]');
   await page.keyboard.insertText(TASK);

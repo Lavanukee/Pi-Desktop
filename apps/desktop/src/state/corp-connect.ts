@@ -9,6 +9,7 @@
  * that race ahead of `corp:start`'s response are never lost: a fresh consumer
  * flushes the buffer, then tails live events to the terminal `done`.
  */
+import { useProjectStore } from './project-store';
 import type {
   CoordinationEvent,
   OrgChartView,
@@ -109,9 +110,27 @@ export async function startCorpTask(prompt: string, ctx?: TaskContext): Promise<
   const activeTier =
     parseHarnessStatus(usePiStore.getState().extensionStatus.harness)?.activeTier ?? null;
   const effort = resolveEffort(useSettingsStore.getState().settings, activeTier);
+  /*
+   * THE CORP WORKS IN THE CHAT'S OWN PROJECT.
+   *
+   * This passed only what the caller handed it — images, and nothing else — so
+   * `ctx.cwd` was always undefined and every corp run landed in a throwaway
+   * directory under the OS temp dir. The whole point of a persistent team is that
+   * it belongs to a project and is still there next week; a team keyed to a
+   * folder that never existed before cannot be.
+   *
+   * Found by driving the real app instead of the harness: the e2e driver builds
+   * the mesh directly and never touches this path, so it looked healthy while the
+   * product was writing everything to /var/folders.
+   */
+  const activePath = useProjectStore.getState().activePath;
+  const withCwd: TaskContext | undefined =
+    activePath !== null && activePath !== ''
+      ? { ...(ctx ?? {}), cwd: activePath }
+      : ctx;
   const { taskId } = await window.piDesktop.invoke('corp:start', {
     prompt,
-    ...(ctx ? { ctx } : {}),
+    ...(withCwd ? { ctx: withCwd } : {}),
     effort,
   });
   const inbox = inboxFor(taskId);

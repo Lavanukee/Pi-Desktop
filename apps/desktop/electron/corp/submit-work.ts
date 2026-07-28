@@ -311,8 +311,18 @@ export function proofIsEphemeral(command: string): boolean {
    * `./check`, `node run.js`, `dotnet test` — all fine, none of them named here.
    */
   if (/<<-?\s*['"]?\w+/.test(command)) return true; // heredoc
-  if (/(^|\s)-(c|e)(\s|$)/.test(command)) return true; // inline code: -c / -e
-  if (/(^|\s)--(eval|command|execute)(\s|=)/.test(command)) return true;
+  /*
+   * `-c` and `-e` mean "here is the code" for a handful of interpreters and
+   * something else entirely for everything else. A bare test on the flag rejected
+   * `gcc -c`, `tar -c`, `grep -e`, `sort -c` and `docker run -e` — all of them
+   * ordinary, all of them already PASSED. So the interpreter has to be named
+   * right before it, which is a small, honest list of "programs whose -c argument
+   * is a program", not a list of what testing looks like.
+   */
+  if (/\b(python[0-9.]*|node|deno|bun|ruby|perl|php|sh|bash|zsh|osascript)\s+-\w*[ce]\b/.test(command)) {
+    return true;
+  }
+  if (/(^|\s)--(eval|command)(\s|=)/.test(command)) return true;
   return false;
 }
 

@@ -456,9 +456,19 @@ export function bashWriteGate(
     typeof (input as { command?: unknown }).command === 'string'
       ? (input as { command: string }).command
       : '';
-  const outside = shellWrites(command).filter(
-    (w) => !w.path.startsWith(`${SCRATCH_DIR}/`) && w.path !== SCRATCH_DIR,
-  );
+  /*
+   * The path may arrive in any of the shapes an agent naturally writes, and every
+   * one of them means the same directory: `.scratch/x`, `./.scratch/x`, or the
+   * absolute path — which is the one the workspace note hands out, so it is the
+   * one it will use. Matching only the bare prefix refused the manager access to
+   * the corner it had just been told was its own.
+   */
+  const inScratch = (p: string): boolean => {
+    const norm = p.replace(/^\.\//, '');
+    if (norm === SCRATCH_DIR || norm.startsWith(`${SCRATCH_DIR}/`)) return true;
+    return norm.includes(`/${SCRATCH_DIR}/`) || norm.endsWith(`/${SCRATCH_DIR}`);
+  };
+  const outside = shellWrites(command).filter((w) => !inScratch(w.path));
   if (outside.length === 0) return undefined;
   const names = outside.map((w) => w.path).join(', ');
   return {

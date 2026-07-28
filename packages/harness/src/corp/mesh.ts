@@ -101,7 +101,23 @@ export function refusalNote(kind: TalkRefusal, to: string): string {
     case 'not-a-peer':
       return `(you are not set up to talk to "${to}".)`;
     case 'busy':
-      return `(${to} is busy right now and can't respond — carry on and check back later.)`;
+      /*
+       * "Check back later" is advice that can never succeed, and it was the only
+       * thing the one upward edge in this system ever returned. `deliver` marks
+       * the recipient active BEFORE awaiting the turn, so whoever called you is on
+       * the stack for as long as you are running: an engineer messaging its
+       * manager is refused 100% of the time. Measured — across fourteen live runs
+       * engineers tried exactly twice, and were refused twice.
+       *
+       * The synchronous shape is not itself wrong: your reply IS the message back
+       * to whoever called you. So say that, instead of sending a small model round
+       * a loop that has no exit.
+       */
+      return (
+        `(${to} is mid-turn — it is the one waiting on YOU, so it cannot answer a ` +
+        `message right now. If you need something from ${to}, stop here and put it ` +
+        `in your reply: your reply goes straight back to them.)`
+      );
     case 'too-deep':
       return '(this conversation has nested too many times — wrap up and report back.)';
     case 'out-of-turns':

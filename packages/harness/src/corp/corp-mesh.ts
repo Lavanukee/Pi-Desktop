@@ -171,11 +171,11 @@ When something fails, READ THE TRACEBACK and see which file the error is actuall
 
 CHANGE FILES WITH \`edit\`. Rewriting a whole file to fix one function throws away everything in it that already worked, and you will fix the same bug three times. Rewrite only when you truly mean to start the file over.
 
-If a requirement cannot hold as written — something the chosen approach genuinely cannot do, or a case the brief never defined — do not grind against it. ${TALK_TO_TOOL} the manager, say exactly what breaks and what you CAN guarantee instead, and get the requirement changed. Ten attempts at an impossible thing is ten wasted attempts.
+If a requirement cannot hold as written — something the chosen approach genuinely cannot do, or a case the brief never defined — do not grind against it. End your turn and reply with exactly what breaks and what you CAN guarantee instead, so the requirement can be changed. Ten attempts at an impossible thing is ten wasted attempts.
 
 READ ANYTHING, CHANGE ONLY YOURS. The whole tree is open to you and you should use it — read how the piece you must fit against actually works rather than guessing at it. But change only the files you were given. If you find something wrong somewhere else, do NOT reach in and fix it: two people editing one file is how a build breaks, and the owner has context you do not. Report it instead — ${SUBMIT_WORK_TOOL} takes a \`noticed\` note for exactly this, and the manager routes it to whoever owns it. Say what is wrong, where, and the fix you would make if it were yours.
 
-If you are blocked or need a decision, ${TALK_TO_TOOL} the manager rather than guessing. Once ${SUBMIT_WORK_TOOL} has accepted your work, reply to the manager with the files you produced and that command.`;
+IF YOU ARE BLOCKED, END YOUR TURN AND SAY SO. The manager is waiting on your reply while you work, so it cannot take a message from you mid-task — your REPLY is how you reach it. Stop, say what is blocking you and what you need decided, and it comes straight back to you as the next thing you are asked. Do not guess, and do not grind: a question asked after two minutes is worth more than an hour of attempts at the wrong thing. Once ${SUBMIT_WORK_TOOL} has accepted your work, reply to the manager with the files you produced and that command.`;
 }
 
 /** What every specialist shares: they measure, they never build, they report once. */

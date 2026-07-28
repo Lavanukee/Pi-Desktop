@@ -45,9 +45,7 @@ import {
   capabilityBriefing,
   probeCapabilities,
 } from './capabilities';
-import { runProductGate } from './product-gate';
 import type { CorpModelHandle } from './role-agent';
-import { CHECK_PRODUCT_TOOL, createCheckProductTool } from './check-product';
 import {
   createSubmitWorkTool,
   SUBMIT_WORK_TOOL,
@@ -132,51 +130,24 @@ function communicationTools(agent: MeshAgent, talk: TalkFn): ToolDefinition[] {
   return tools as unknown as ToolDefinition[];
 }
 
-/** How much of the failing output to staple to a manager's message. Enough to
- * name the failing test and its error; not enough to bury the message itself. */
-const STATUS_OUTPUT_CHARS = 700;
-
 /**
- * The product's CURRENT state, as a short block appended to what the manager is
- * told. Measured at delivery time, so it can never be the stale memory that cost
- * run 10 its second half. Never throws — a broken probe must not stop a message.
+ * THE ASK, RESTATED, on every message the manager receives.
+ *
+ * Run 10's manager measured the product once and then sent the same engineer the
+ * same diagnosis four times, long after the file had been repaired — reasoning
+ * from memory about a mutable world. Run 17 shipped a library with no entry point
+ * at all, a requirement stated in a sentence of its own, twenty exchanges after it
+ * had last seen that sentence.
+ *
+ * This used to carry an automated check's verdict too. It does not any more: an
+ * automated result is only meaningful for the kind of project somebody
+ * anticipated, and this has to work for a film as readily as a compiler. The
+ * manager finds out how the product is doing by USING it, and by sending in an
+ * auditor. What the harness can honestly supply is what was asked for, unchanged.
  */
-export async function productStatusNote(cwd: string, task?: string): Promise<string> {
-  // THE ASK, KEPT NEXT TO THE STATE. Run 17 shipped a library and a test file and
-  // no command-line entry point at all — which the task names in a sentence of its
-  // own — while the manager watched the tests fail for forty minutes. It had the
-  // product's state in front of it on every message and the REQUIREMENT nowhere,
-  // twenty exchanges after it last saw the brief. Same fix as the state itself:
-  // stop asking it to remember, and put the sentence back.
-  const ask =
-    task !== undefined && task.trim() !== ''
-      ? `--- WHAT WAS ASKED FOR (unchanged, re-read it) ---\n${task.trim()}\n\n`
-      : '';
-  try {
-    const gate = await runProductGate(cwd, { timeoutMs: 120_000 });
-    if (!gate.ran) {
-      return ask + [
-        `--- PRODUCT CHECK (measured just now) ---`,
-        `NOTHING RUNNABLE YET: ${gate.output.split('\n')[0] ?? ''}`,
-        `Until something in the workspace can be run, nothing here counts as delivered.`,
-      ].join('\n');
-    }
-    if (gate.ok) {
-      return ask + [
-        `--- PRODUCT CHECK (measured just now) ---`,
-        `PASSES: \`${gate.command}\` exits 0. This is the check that decides the run.`,
-      ].join('\n');
-    }
-    return ask + [
-      `--- PRODUCT CHECK (measured just now) ---`,
-      `FAILS: \`${gate.command}\``,
-      gate.output.slice(-STATUS_OUTPUT_CHARS),
-      `This is the product as it stands RIGHT NOW — not what anyone told you earlier.`,
-      `Send this error to whoever owns the file it names.`,
-    ].join('\n');
-  } catch {
-    return '';
-  }
+export function taskNote(task?: string): string {
+  if (task === undefined || task.trim() === '') return '';
+  return `--- WHAT WAS ASKED FOR (unchanged — re-read it before you judge anything) ---\n${task.trim()}`;
 }
 
 /** Map a mesh role to a corp turn purpose (for sampling + telemetry). */
@@ -212,7 +183,6 @@ export const PASSTHROUGH_KEYS = [
   'maxStepsPerMessage',
   'onActivity',
   'onSubmitted',
-  'onChecked',
   'onRepaired',
 ] as const;
 
@@ -261,9 +231,6 @@ export interface MeshAgentHostConfig {
   readonly onSessionFile?: (agentId: string, file: string) => void;
   /** An engineer submitted work and its proof command was run. */
   readonly onSubmitted?: (agentId: string, work: SubmittedWork) => void;
-  /** Observe every `check_product` — the team running the real acceptance check on
-   * itself. In the transcript this is what convergence looks like. */
-  readonly onChecked?: (agentId: string, ok: boolean, command: string) => void;
   /** Observe files rescued out of a mangled nested path (see workspace-paths). */
   readonly onRepaired?: (agentId: string, count: number) => void;
 }
@@ -370,7 +337,7 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
     // check that does not get run, so put the answer in front of it instead.
     const incoming =
       agent.role === 'manager'
-        ? `Message from ${from}:\n${message}\n\n${await productStatusNote(config.cwd, config.task)}`
+        ? `Message from ${from}:\n${message}\n\n${taskNote(config.task)}`
         : `Message from ${from}:\n${message}`;
     let reply = '';
     try {
@@ -384,10 +351,6 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
             ...agent.tools,
             TALK_TO_TOOL,
             COMMISSION_SPECIALIST_TOOL,
-            // NOT the CEO. It called check_product five times in run 12 and then
-            // went looking for a way to read Python files — a role handed an
-            // instrument it has no use for will use it anyway.
-            ...(agent.role === 'ceo' ? [] : [CHECK_PRODUCT_TOOL]),
             ...(agent.role === 'engineer' ? [SUBMIT_WORK_TOOL] : []),
           ],
           /*
@@ -400,22 +363,11 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
           enableToolSearch: agent.role !== 'ceo',
           customTools: [
             ...communicationTools(agent, talkThrough(agentId)),
-            // EVERYONE gets the acceptance check. It used to fire once, at the
-            // end, where the team could not reach it — so they built toward a
-            // guess of what "working" meant. Run 7 failed on a test helper
-            // defined in the wrong class, which the first whole-file run would
-            // have caught; the only thing that ran the file whole was the gate.
-            ...(agent.role === 'ceo' ? [] : [createCheckProductTool({
-              cwd: config.cwd,
-              ...(config.onChecked !== undefined
-                ? { onChecked: (r) => config.onChecked?.(agentId, r.ok, r.command) }
-                : {}),
-            }) as unknown as ToolDefinition]),
-            // ENGINEERS ONLY. Finishing is not something they can assert: the
-            // command they submit as proof is RUN, and the submission is refused
-            // with the real output if it fails. Four runs in a row produced
-            // working code that was verified BY HAND and then reported done,
-            // leaving nothing runnable behind — this makes "done" an exit code.
+            // ENGINEERS ONLY. This is how a piece comes back: what was built, how
+            // they checked it, and — when a command makes sense for this kind of
+            // work — the output of the harness running it, so the manager reads
+            // what really happened rather than an account of it. Four runs in a
+            // row produced working code that was verified BY HAND and reported done,
             ...(agent.role === 'engineer'
               ? [
                   createSubmitWorkTool({
@@ -535,9 +487,6 @@ export async function runCorpMeshTask(opts: {
    * a run had ever produced — left no trace in the transcript, and the run read as
    * though the tool had never fired. */
   readonly onSubmitted?: (agentId: string, work: SubmittedWork) => void;
-  /** Observe every `check_product` — the team running the real acceptance check on
-   * itself. In the transcript this is what convergence looks like. */
-  readonly onChecked?: (agentId: string, ok: boolean, command: string) => void;
   /** Observe files rescued out of a mangled nested path (see workspace-paths). */
   readonly onRepaired?: (agentId: string, count: number) => void;
   /** How many WORK tool calls one message may spend before the role is pushed to

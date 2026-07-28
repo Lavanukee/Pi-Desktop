@@ -1,3 +1,25 @@
+  /*
+   * THE VERDICT IS THE CEO'S. Nothing here decides whether the work is good.
+   *
+   * This used to run a discovered check and print DELIVERED / INCOMPLETE from its
+   * exit code, plus a held-out acceptance script. That is a coding-shaped
+   * assumption, and the harness has to run a project that is a film or a document
+   * just as well — where there is nothing to execute and an automated verdict is
+   * either meaningless or wrong. The chain that judges is the hierarchy: the
+   * manager uses the product and hunts for what is broken, an auditor traces it,
+   * the CEO checks it against what the user actually asked for.
+   *
+   * What a run reports, then, is what happened: what the CEO concluded, what the
+   * team produced, and how the work moved. An artifact list is not a verdict — it
+   * is there so a human can go and look, which is the only real check there is.
+   */
+  console.log(`\n${'─'.repeat(60)}`);
+  console.log('THE CEO SAYS:\n');
+  console.log(result.reply.trim() || '(no reply)');
+  console.log(`${'─'.repeat(60)}`);
+  console.log(`\nGo and look for yourself:  ${WORKSPACE}`);
+  console.log(`Artifacts + transcript:    ${RUN_DIR}`);
+
 /**
  * THE CORP MESH RUN — the real thing, end to end, against a real model.
  *
@@ -23,7 +45,8 @@
  *
  * Kills the server on every exit path — no orphan.
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   appendFileSync,
   existsSync,
@@ -121,6 +144,16 @@ const TRANSCRIPT = path.join(RUN_DIR, 'transcript.jsonl');
 // /var/folders/4h/nq1c73q107v594j4g0lq6bw00000gn/T — an opaque 50-character path,
 // which is most of the problem again. /tmp resolves to /private/tmp.
 const WORKSPACE = process.env.WORKSPACE ?? path.join('/tmp', `cw-${path.basename(RUN_DIR)}`);
+/*
+ * The team lives OUTSIDE the workspace and survives the run, exactly as it does
+ * in the app: point two runs at the same WORKSPACE and the second one talks to
+ * the people who did the first. Keyed to the workspace path so different
+ * projects get different teams.
+ */
+const TEAM_DIR =
+  process.env.TEAM_DIR ??
+  path.join('/tmp', `corp-team-${createHash('sha256').update(WORKSPACE).digest('hex').slice(0, 12)}`);
+mkdirSync(TEAM_DIR, { recursive: true });
 mkdirSync(WORKSPACE, { recursive: true });
 
 const t0 = Date.now();
@@ -258,6 +291,7 @@ async function main() {
   startServer();
   await waitForHealth();
   log('server healthy · task:', TASK_NAME, '· workspace:', WORKSPACE);
+  log('team (persists across runs):', TEAM_DIR);
 
   const roleMod = await import(pathToFileURL(ROLE_AGENT_TS).href);
   const meshMod = await import(pathToFileURL(MESH_HOST_TS).href);
@@ -289,9 +323,13 @@ async function main() {
       cwd: WORKSPACE,
       engineerCount: ENGINEERS,
       signal: controller.signal,
-      onSubmitted: (agentId, command, accepted) => {
-        log(`  ${agentId} SUBMIT ${accepted ? 'ACCEPTED' : 'REJECTED'}: ${command.slice(0, 90)}`);
-        record({ kind: 'submit', agentId, command, accepted });
+      teamDir: TEAM_DIR,
+      onSubmitted: (agentId, work) => {
+        // What the engineer handed over, and — when it offered a command — what
+        // that command really printed. Nothing here judges it; the manager does.
+        const ran = work.command !== undefined ? ` [${work.ok ? 'ran ok' : 'ran, non-zero'}]` : '';
+        log(`  ${agentId} SUBMITTED: ${work.summary.slice(0, 80)}${ran}`);
+        record({ kind: 'submit', agentId, ...work });
       },
       onRepaired: (agentId, count) => {
         // Files rescued out of a re-stated workspace path. Loud on purpose: this
@@ -299,26 +337,6 @@ async function main() {
         // constantly is a run to go and look at.
         log(`  ${agentId} REPAIRED ${count} file(s) written to a nested workspace path`);
         record({ kind: 'repair', agentId, count });
-      },
-      onChecked: (agentId, ok, command) => {
-        // The team running the REAL acceptance check on itself. Watching this
-        // number climb while `ok` flips to true is what convergence looks like;
-        // a run with zero of these is a team working blind.
-        log(`  ${agentId} CHECK ${ok ? 'PASS' : 'fail'}${command ? ` [${command}]` : ''}`);
-        record({ kind: 'check', agentId, ok, command });
-      },
-      onGate: (g, round) => {
-        const verdict = g.ok ? 'PASS' : g.ran ? `FAIL (exit ${g.exitCode})` : 'UNVERIFIABLE';
-        log(`GATE round ${round}: ${verdict} — ${g.how}${g.command ? ` [${g.command}]` : ''}`);
-        record({
-          kind: 'gate',
-          round,
-          ok: g.ok,
-          ran: g.ran,
-          how: g.how,
-          command: g.command,
-          output: g.output,
-        });
       },
       onActivity: (agentId, r) => {
         const a = seen(agentId);
@@ -393,43 +411,33 @@ async function main() {
   console.log(`CEO said: ${result.reply.slice(0, 600)}`);
 
   /*
-   * THE GATE. Deliberately about the ARTIFACT, never the conversation: a run that
-   * talks beautifully and writes nothing has failed, and that is the exact failure
-   * mode this whole rebuild exists to catch.
+   * NO VERDICT IS PRINTED HERE, and that is the point.
+   *
+   * This used to run a discovered check and declare DELIVERED or INCOMPLETE from
+   * its exit code, plus a held-out script for the benchmark tasks. Both are
+   * coding-shaped: they assume a product you can execute and grade, and the
+   * harness has to run a project that is a film, a document or a dataset just as
+   * well. An automated verdict there is either meaningless or wrong, and a wrong
+   * one holds up work that is fine with nobody to appeal to.
+   *
+   * The chain that judges is the hierarchy — the manager uses the thing and hunts
+   * for what is broken, an auditor traces it, the CEO checks it against what the
+   * user actually asked for. So what a run reports is what happened, and where to
+   * go and look.
    */
   const nonTrivial = files.filter((f) => f.bytes > 64);
+  console.log(`\n${'─'.repeat(64)}`);
+  console.log('THE CEO SAYS:\n');
+  console.log((result.reply ?? '').trim() || '(no reply)');
+  console.log('─'.repeat(64));
+  console.log(`\nGo and look:  ${WORKSPACE}`);
+  console.log(`Transcript:   ${RUN_DIR}`);
+  console.log(`Team (kept):  ${TEAM_DIR}`);
 
-  /*
-   * THE HELD-OUT CHECK. The product gate runs the TEAM'S tests, so it can only ask
-   * "is this self-consistent?" — and run 14 went green while failing YAML->CSV,
-   * because the suite tested the limitation the team had built rather than the
-   * requirement it was given. For the named benchmark targets the harness keeps
-   * its own acceptance check, never shown to the team, run on inputs the product
-   * has never seen. DELIVERED means both agree.
-   */
-  const acceptanceScript = path.join(appRoot, 'tests/e2e/acceptance', `${TASK_NAME}-acceptance.py`);
-  let accepted;
-  if (existsSync(acceptanceScript)) {
-    const res = spawnSync('python3', [acceptanceScript, WORKSPACE], {
-      encoding: 'utf8',
-      timeout: 300_000,
-    });
-    const out = `${res.stdout ?? ''}${res.stderr ?? ''}`.trim();
-    accepted = res.status === 0;
-    console.log(`\nHELD-OUT CHECK  ${accepted ? 'PASS' : 'FAIL'}`);
-    if (out !== '') console.log(out.split('\n').map((l) => `                ${l}`).join('\n'));
-    record({ kind: 'acceptance', ok: accepted, output: out.slice(0, 4000) });
-  }
-
-  const delivered = nonTrivial.length > 0 && g.ok && accepted !== false;
-  const verdict = delivered
-    ? 'DELIVERED — the product exists, passes its own check, and passes the held-out check'
-    : nonTrivial.length > 0
-      ? `INCOMPLETE — built a product but ${!g.ok ? 'its own check fails' : 'it fails the held-out check'}`
-      : 'NO PRODUCT — talked, built nothing';
-  console.log(`\nVERDICT: ${verdict}`);
   killServer();
-  process.exit(delivered ? 0 : 1);
+  // Zero means the run COMPLETED, not that the product is good — that is the
+  // CEO's reply above, and ultimately a human's judgement of the artifacts.
+  process.exit(nonTrivial.length > 0 ? 0 : 1);
 }
 
 main().catch((e) => {

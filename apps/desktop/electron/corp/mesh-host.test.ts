@@ -16,7 +16,7 @@ import {
   DEFAULT_STEPS_PER_MESSAGE,
   hostPassthrough,
   PASSTHROUGH_KEYS,
-  productStatusNote,
+  taskNote,
 } from './mesh-host';
 
 describe('what a run hands through to its host', () => {
@@ -60,10 +60,6 @@ describe('what a run hands through to its host', () => {
     expect(hostPassthrough({})).toEqual({});
   });
 
-  it('carries the acceptance-check observer too', () => {
-    const onChecked = (): void => {};
-    expect(hostPassthrough({ onChecked })).toEqual({ onChecked });
-  });
 
   it('lists the keys once, where they can be read', () => {
     expect([...PASSTHROUGH_KEYS]).toEqual([
@@ -72,66 +68,33 @@ describe('what a run hands through to its host', () => {
       'maxStepsPerMessage',
       'onActivity',
       'onSubmitted',
-      'onChecked',
       'onRepaired',
     ]);
   });
 });
 
-describe('what the manager is told about the product, every time', () => {
-  // Run 10's manager measured once at 920s and then sent the same engineer the
-  // same diagnosis four times — "cli.py is truncated at line 101" — long after
-  // the file had been repaired. It was reasoning from memory about a mutable
-  // world, so the current verdict is stapled to every message it receives.
-  let dir: string;
-  beforeEach(() => {
-    dir = mkdtempSync(path.join(os.tmpdir(), 'pd-status-'));
-  });
-  afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-
-  it('says PASSES when the product passes', async () => {
-    writeFileSync(path.join(dir, 'check'), 'echo "all cases passed"\nexit 0\n');
-    const note = await productStatusNote(dir);
-    expect(note).toContain('measured just now');
-    expect(note).toContain('PASSES');
-  });
-
-  it('carries the real failing output, so the manager forwards evidence not opinion', async () => {
-    writeFileSync(
-      path.join(dir, 'check'),
-      'echo "cli line 101: unexpected end of input" >&2\nexit 1\n',
-    );
-    const note = await productStatusNote(dir);
-    expect(note).toContain('FAILS');
-    expect(note).toContain('unexpected end of input');
-    expect(note).toContain('RIGHT NOW');
-  });
-
-  it('says so plainly when there is nothing to run yet', async () => {
-    const note = await productStatusNote(dir);
-    expect(note).toContain('NOTHING RUNNABLE YET');
-  });
-
-  it('restates the task, so a requirement cannot fall out of the conversation', async () => {
-    // Run 17 shipped a library with no command-line entry point — a sentence of
-    // its own in the brief — while the manager watched the tests fail for forty
-    // minutes, twenty exchanges after it last saw that sentence.
-    writeFileSync(path.join(dir, 'check'), 'exit 0\n');
-    const note = await productStatusNote(dir, 'Provide a command-line entry point.');
+describe('what the manager is told, every time', () => {
+  // Run 10's manager measured once and then repeated a stale diagnosis four
+  // times; run 17 dropped a requirement stated in a sentence of its own. It is
+  // handed the ask, unchanged, on every message — and no automated verdict,
+  // because an automated verdict only means anything for a project somebody
+  // anticipated, and this has to work for a film too.
+  it('restates the task verbatim', () => {
+    const note = taskNote('Build a thing that does the following.');
     expect(note).toContain('WHAT WAS ASKED FOR');
-    expect(note).toContain('Provide a command-line entry point.');
+    expect(note).toContain('Build a thing that does the following.');
   });
 
-  it('says nothing extra when there is no task to restate', async () => {
-    writeFileSync(path.join(dir, 'check'), 'exit 0\n');
-    const note = await productStatusNote(dir);
-    expect(note).not.toContain('WHAT WAS ASKED FOR');
+  it('says nothing at all when there is no task to restate', () => {
+    expect(taskNote()).toBe('');
+    expect(taskNote('   ')).toBe('');
   });
 
-  it('never throws — a broken probe must not stop a message', async () => {
-    await expect(productStatusNote('/definitely/not/a/directory')).resolves.toBeTypeOf('string');
+  it('carries no automated verdict — the manager judges by using the product', () => {
+    const note = taskNote('anything');
+    expect(note).not.toContain('PRODUCT CHECK');
+    expect(note).not.toContain('PASSES');
+    expect(note).not.toContain('FAILS');
   });
 });
 

@@ -14,6 +14,7 @@
  * model — only main frames of app-created windows may reach it).
  */
 
+import { openHierarchy } from './hierarchy-store';
 import fs from 'node:fs';
 import path from 'node:path';
 import { BrowserAgentClient, registerBrowserUseTools } from '@pi-desktop/browser-use';
@@ -211,8 +212,33 @@ async function handleStart(
   let abortMesh: (() => void) | undefined;
   if (resolved.ok && corpParamsForEffort(req.effort).promotionAllowed) {
     const meshTaskId = `corp-mesh-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-    const cwd = createNodeWorkspaceFactory(corpWorkspaceRoot())(meshTaskId).workspace;
+    /*
+     * THE TEAM BELONGS TO THE PROJECT, AND OUTLIVES THE RUN.
+     *
+     * This used to be a fresh randomly-named directory under the OS temp dir, so
+     * the roster and every agent's conversation were written somewhere that had
+     * never existed before and would be swept away — a brand-new team hired and
+     * destroyed on every single run, with all the remembering machinery pointed
+     * at nothing. The whole design rests on the opposite: come back to a project
+     * next week and the person who wrote that code is still the one who fixes it.
+     *
+     * So the work happens in the CHAT'S OWN directory, and the team is stored in
+     * the app, keyed to that directory's absolute path. Any chat opened on the
+     * same project reaches the same hierarchy and therefore the same people, and
+     * the user's folder stays free of machine transcripts they did not ask for.
+     */
+    const projectPath =
+      typeof req.ctx?.cwd === 'string' && req.ctx.cwd.trim() !== ''
+        ? req.ctx.cwd
+        : path.join(corpWorkspaceRoot(), meshTaskId);
+    const hierarchy = openHierarchy(app.getPath('userData'), projectPath);
+    const cwd = projectPath;
     fs.mkdirSync(cwd, { recursive: true });
+    log.info('corp MESH hierarchy', {
+      project: hierarchy.projectPath,
+      team: hierarchy.dir,
+      returning: hierarchy.existed,
+    });
     const modelHandle = await createCorpModelProvider({
       baseUrl: resolved.baseUrl,
       model: resolved.model,
@@ -222,6 +248,7 @@ async function handleStart(
       task: req.prompt,
       taskId: meshTaskId,
       cwd,
+      teamDir: hierarchy.dir,
     });
     handle = meshHandle;
     abortMesh = meshHandle.abort;

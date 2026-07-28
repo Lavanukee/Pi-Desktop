@@ -168,6 +168,10 @@ export function startMeshTask(opts: {
   readonly task: string;
   readonly taskId: string;
   readonly cwd: string;
+  /** Where this project's team lives between runs — the hierarchy directory. When
+   * absent the team is written beside the work, which is only right for a
+   * throwaway run. */
+  readonly teamDir?: string;
   readonly maxTokens?: number;
 }): TaskHandle & { readonly abort: () => void } {
   const stream = new MeshEventStream();
@@ -207,6 +211,7 @@ export function startMeshTask(opts: {
     cwd: opts.cwd,
     signal: controller.signal,
     ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+    ...(opts.teamDir !== undefined ? { teamDir: opts.teamDir } : {}),
     onActivity: (agentId, record) => {
       if (record.kind === 'turn-start') {
         states.set(agentId, 'working');

@@ -232,6 +232,14 @@ describe('the CEO’s brief matches the tools it actually has', () => {
   it('names the judgement in both directions, with the small case first', () => {
     expect(p()).toContain('single file');
     expect(p()).toContain('one HTML file');
-    expect(p()).toContain('BRING IN THE MANAGER WHEN THE JOB IS BIGGER');
+    expect(p()).toContain('BRING IN THE MANAGER FOR A PROJECT');
+  });
+
+  it('says outright that a team is never an obligation', () => {
+    // jedd: "we wouldn't want the CEO to call the talk_to tool on a 'hi how are
+    // you today' — ensure your system prompt is framing it as a task for huge
+    // problems and projects, not forced."
+    expect(p()).toContain('NOTHING OBLIGES YOU TO USE THEM');
+    expect(p()).toContain('A greeting');
   });
 });

@@ -438,7 +438,24 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
            * product itself is never the right move for it. It stays gated.
            */
           mayWriteFiles: agent.role === 'engineer' || agent.role === 'ceo',
-          ...(config.additionalExtensionPaths !== undefined
+          /*
+           * EVERY ROLE BUT THE MANAGER GETS THE APP'S TOOL SURFACE.
+           *
+           * The point of loading these is that a subagent should be a chat like
+           * any other — the lead and the engineers and the specialists all build,
+           * measure or research, and a thin hand-picked toolset is what made
+           * `mcp_call` resolve to nothing for a specialist.
+           *
+           * The MANAGER is the one role whose job is explicitly not to work, and
+           * handing it a builder's toolkit stopped it working as a manager.
+           * MEASURED, either side of the change: before, the manager called
+           * `talk_to` four times and the run created engineer-1..4 and a
+           * specialist session. After, across six consecutive runs, it called
+           * `talk_to` ZERO times — it ran bash and ls and did the job itself, and
+           * no engineer session was ever created. `talk_to` was still offered and
+           * still described in its prompt. Capability decided, as it always does.
+           */
+          ...(config.additionalExtensionPaths !== undefined && agent.role !== 'manager'
             ? { additionalExtensionPaths: config.additionalExtensionPaths }
             : {}),
           ...(config.extensionFactories !== undefined

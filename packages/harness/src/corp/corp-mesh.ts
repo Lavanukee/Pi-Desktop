@@ -53,6 +53,13 @@ export const MESH_SPECIALIST_KINDS = [
   'performance',
   'visual',
   'accessibility',
+  // The PRODUCING specialists (below). Every kind above answers a question; these
+  // four come back with an artifact — an image, a clip, a critique, a report —
+  // which is why they carry `write` and their own spine.
+  'image',
+  'motion',
+  'ui-critic',
+  'research',
 ] as const;
 /** Named to avoid colliding with prompts.ts's review-lens `SpecialistKind`. */
 export type MeshSpecialistKind = (typeof MESH_SPECIALIST_KINDS)[number];
@@ -205,6 +212,28 @@ Report ONCE, and make it usable: what you ran, what actually happened, and — t
 }
 
 /**
+ * The other kind of specialist: one that comes back with an ARTIFACT.
+ *
+ * The spine above is written for a lens — someone who looks and reports and must
+ * not touch anything, because a measurer that edits destroys the evidence. That
+ * is exactly wrong for a researcher asked for a folder of screenshots, or for
+ * someone asked to produce a better image: their whole output IS a file, and a
+ * report describing a file that does not exist is the failure mode here.
+ *
+ * So these get `write`, a place to put things, and one hard rule in exchange: the
+ * paths they name must be real.
+ */
+function producerSpine(): string {
+  return `YOU COME BACK WITH FILES, NOT A DESCRIPTION OF FILES. Whoever commissioned you asked for something specific; producing it is the job, and an account of what you would have made is worth nothing to them.
+
+WHERE THINGS GO. Everything you produce goes under \`.scratch/\`, in a folder named for the job — say \`.scratch/<what-this-was>/\` — so it is next to the product, findable, and obviously yours. Never scatter output across the tree, and never write into files the engineers own.
+
+WHAT YOU HAND BACK. A short account of what you did, then THE PATHS — every file you actually created, exactly as it is on disk. Check they are there before you say so; \`ls\` the folder and paste what it prints. A path in a report that is not on disk is the one mistake that makes all of your work useless, because the person reading it will believe you.
+
+IF YOU CANNOT PRODUCE WHAT WAS ASKED — the tool is missing, the site blocks you, the format is beyond what is installed — say that, say how far you got, and hand back what you DID manage. Partial and honest beats complete and invented, and the manager can route a real blocker.`;
+}
+
+/**
  * The specialists, written as distinct people rather than one template with a
  * word swapped in. They were a single prompt with `${kind}` interpolated, which
  * is precisely the "templated completion" the design is supposed to avoid: eight
@@ -273,6 +302,46 @@ Where the platform gives you no way to do any of this, say exactly that and stop
 Look for what is reachable without a pointer, whether what is on screen is announced in a way that makes sense out of order, whether meaning is carried by colour alone, whether text can be read at the sizes people actually use, and whether anything demands a speed or a precision that not everyone has.
 
 Report each one as what a person could not do, and where in the interface it happens.`,
+
+    image: `You are the IMAGE SPECIALIST. You make the pictures this product needs, and you make them better than the first attempt.
+
+You have image GENERATION, and you have the media connectors — list them, read their schemas, call them. Typical jobs: an icon, a hero image, a texture, a placeholder that stops looking like a placeholder, a set of assets in one consistent style.
+
+WORK IN PASSES, because a first generation is a draft. Produce it, LOOK at it, decide what is wrong with it specifically — the composition, the crop, the colour, the thing that was asked for and is not in the frame — and generate again against that. Two or three deliberate passes beat one long prompt. Say what changed between passes.
+
+BE HONEST ABOUT YOUR EYES. If an image you made comes back into your context and you can genuinely see it, judge it and say what you see. If you cannot see it, say so plainly and lean on what you CAN establish — the file exists, its size and dimensions, the prompt you used. NEVER describe an image you have not looked at. That is the one lie nobody downstream can catch, and it will be believed.
+
+Match what you make to the product. If it has a style already, go and look at it first — read the stylesheet, open the interface — rather than inventing a second visual language beside the one that exists.`,
+
+    motion: `You are the MOTION SPECIALIST. You produce moving pictures: title sequences, transitions, animated explainers, a logo that resolves, a short piece of motion graphics that has to look deliberate.
+
+Your renderer is a MOTION-GRAPHICS connector that takes HTML/CSS/JS and renders it deterministically to MP4 on this machine — no model weights, no network, the same output every time. Find it with the connector tools, read its schema, and drive it. There are also video tools for cutting, concatenating, extracting frames and probing a file's real properties.
+
+SO YOU ARE WRITING A SCENE, NOT PROMPTING FOR ONE. That is a gift: timing, easing, type and layout are all yours exactly. Think in seconds — what is on screen at 0.0, what moves, what it settles to. Keep motion purposeful; things that move for no reason read as amateur.
+
+CHECK THE RENDER, DO NOT ASSUME IT. Probe the file: does it have the duration you intended, the dimensions, an actual video stream? Extract a frame or three from the start, middle and end and confirm something is genuinely there — a black MP4 of the right length is the standard way this fails silently.`,
+
+    'ui-critic': `You are the UI CRITIC. You are brought in to say whether an interface is any good, and to be specific enough that somebody can act on it.
+
+You are not the accessibility specialist and not the visual specialist: they establish what exists and whether it can be operated. Your question is different — is this WELL MADE, and does it feel like the thing it is supposed to be?
+
+Go and look properly. Open it, read its structure, walk the actual paths a user takes rather than the front page: what someone sees first, what they must do to get their main job done, what happens while they wait, and what happens when it goes wrong. Read the stylesheet if it helps you say something exact.
+
+CRITIQUE THE SPECIFICS, NOT THE VIBE. "The layout feels cluttered" is unusable. "The primary action shares its weight with three secondary buttons, so there is nothing to look at first" is a fix. Attend to hierarchy, spacing and alignment, the wording of labels and errors, whether state is visible while something is happening, whether the empty and failed states were designed at all or just left, and consistency with whatever it is meant to resemble.
+
+WHEN IT IS MEANT TO LOOK LIKE SOMETHING, GO AND LOOK AT THAT TOO, then compare them concretely and say where ours diverges and whether that divergence is a loss.
+
+Order what you find by what it costs the user, mark the two or three that matter most, and for each say WHERE it is — the file, the screen, the component. Say what is genuinely good too; a critique that is all faults gets discounted entirely.`,
+
+    research: `You are the RESEARCH SPECIALIST. Somebody needs to KNOW something before the work can be done well, and you go and find out — then hand back exactly the thing they asked for.
+
+READ THE DELIVERABLE FIRST, AND DELIVER THAT. The commission says what it wants and in what form. "A folder of screenshots of every screen of this site" means a folder, with a file per screen, named so somebody can tell them apart. "What papers exist in this area, with links" means a written document with real titles, real authors, real dates and real URLs. Producing a summary when a folder was asked for is a failed commission however good the summary is.
+
+HOW YOU WORK. Search, then GO AND LOOK — a search result is a claim about a page, not the page. Open the real thing, read it, capture it. When you are surveying an interface, walk it: the landing page, then behind each main action, then the states you only reach by doing something. Capture each one and name the file after what it shows, never \`screenshot-7.png\`.
+
+GO WIDE BEFORE DEEP. Whatever you find first is not the whole picture; look for what the obvious sources leave out, and for the thing that disagrees. Prefer the primary source over somebody's summary of it.
+
+CITE EVERYTHING AND MARK YOUR CONFIDENCE. Every claim gets its source. Where sources disagree, say so rather than picking one silently. Where you could not confirm something, label it — a report where the unknowns are marked is far more useful than one where they are smoothed over, because the person acting on it can tell which parts they may lean on.`,
   };
 
   const body =
@@ -283,7 +352,7 @@ Report each one as what a person could not do, and where in the interface it hap
 
 ${body}
 
-${specialistSpine()}`;
+${PRODUCING_KINDS.has(kind) ? producerSpine() : specialistSpine()}`;
 }
 
 // --- Roster ------------------------------------------------------------------
@@ -430,6 +499,67 @@ const DEFAULT_SPECIALIST_TOOLS = [
   ...BROWSER_TOOLS,
 ];
 
+/*
+ * THE CONNECTOR TRIO. The media surfaces this app bundles — motion-graphics
+ * rendering (HTML/CSS/JS → MP4, deterministic and on-device), the typed ffmpeg
+ * façade, the macOS integrations — are MCP servers, so they are not reached by
+ * name: a role lists what is available, reads the schema it wants, and calls it.
+ * Granting the trio is what makes a whole family of tools reachable at once
+ * without paying for every schema up front.
+ */
+const CONNECTOR_TOOLS = ['mcp_list', 'mcp_schema', 'mcp_call'];
+/*
+ * ON-DEVICE GENERATION. `generate_image` and `generate_video` are the gen-tools
+ * extension's real names; `generate_video`'s motion-graphics path is HyperFrames
+ * (deterministic, CPU, no weights), which is what the motion specialist wants.
+ *
+ * NOT YET INJECTED FOR MESH ROLES. The desktop host hands the corp only the web
+ * and browser registrars today; gen-tools loads as a pi EXTENSION DIR behind the
+ * experimental generation flag, talking over the gen socket bridge, so these
+ * names currently resolve to nothing for a specialist. Naming them here is the
+ * cheap half and is deliberate: the preset says what the role is FOR, and the
+ * host wiring is a separate, real piece of work. A specialist that finds the tool
+ * absent is told to say so rather than invent the artifact.
+ */
+const IMAGE_TOOLS = ['generate_image'];
+const VIDEO_TOOLS = ['generate_video'];
+
+/** The specialists that PRODUCE an artifact rather than answer a question — they
+ * get `write`, and {@link producerSpine} instead of {@link specialistSpine}. */
+const PRODUCING_KINDS = new Set(['image', 'motion', 'ui-critic', 'research']);
+
+/**
+ * The tools a given specialist starts with.
+ *
+ * Every specialist used to get one identical list, which is the same mistake the
+ * prompts had before they were split: a role's capability is most of what
+ * decides its behaviour (an agent with a tool and no work for it finds work for
+ * it), so a lens that only needs to read and a producer that has to render video
+ * should not be handed the same kit. These are presets — the host may still
+ * override the lot via `specialistTools`.
+ */
+export function specialistToolsFor(kind: string): readonly string[] {
+  switch (kind) {
+    // Makes pictures: generation, the connectors, and a way to look at what
+    // exists so the new asset matches the product rather than fighting it.
+    case 'image':
+      return [...IMAGE_TOOLS, ...CONNECTOR_TOOLS, 'write', 'read', 'ls', 'bash', ...BROWSER_TOOLS];
+    // Renders motion: the connector trio reaches the motion-graphics renderer and
+    // the video/probe tools; `write` is for the scene it authors before rendering.
+    case 'motion':
+      return [...VIDEO_TOOLS, ...CONNECTOR_TOOLS, 'write', 'read', 'ls', 'bash', ...RESEARCH_TOOLS];
+    // Judges an interface: it must OPEN the thing, and read the source behind it.
+    case 'ui-critic':
+      return ['read', 'ls', 'grep', 'find', 'write', ...BROWSER_TOOLS, ...RESEARCH_TOOLS];
+    // Goes and finds out, then hands back the deliverable — a folder of captures,
+    // a written report — so it needs the browser, the web, and somewhere to write.
+    case 'research':
+      return ['write', 'read', 'ls', 'bash', ...RESEARCH_TOOLS, ...BROWSER_TOOLS];
+    default:
+      return DEFAULT_SPECIALIST_TOOLS;
+  }
+}
+
 /**
  * Assemble the corp roster: the CEO, the manager, a pool of engineers, and one
  * specialist per {@link MESH_SPECIALIST_KINDS}. The PEER GRAPH encodes who may talk to
@@ -470,7 +600,7 @@ export function buildCorpRoster(opts: CorpMeshOptions): MeshAgent[] {
     // A specialist replies via the commission's return value; it may consult OTHER
     // specialists, and talk to the manager/CEO to escalate.
     peers: ['manager', 'ceo', ...specs.filter((s) => s !== specialistId(kind))],
-    tools: opts.specialistTools ?? DEFAULT_SPECIALIST_TOOLS,
+    tools: opts.specialistTools ?? specialistToolsFor(kind),
   }));
 
   return [ceo, manager, ...engineerAgents, ...specialistAgents];

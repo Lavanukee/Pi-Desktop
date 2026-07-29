@@ -6,6 +6,8 @@ import {
   MESH_SPECIALIST_KINDS,
   runCorpMesh,
   specialistId,
+  specialistMeshPrompt,
+  specialistToolsFor,
   TALK_TO_TOOL,
 } from './corp-mesh.js';
 import type { AgentTurnRequest, RunAgentTurn } from './mesh.js';
@@ -118,5 +120,72 @@ describe('corp-mesh tool names', () => {
   it('exposes the two universal communication primitives', () => {
     expect(TALK_TO_TOOL).toBe('talk_to');
     expect(COMMISSION_SPECIALIST_TOOL).toBe('commission_specialist');
+  });
+});
+
+describe('the producing specialists (jedd’s presets)', () => {
+  // Four specialists whose output is an ARTIFACT rather than an answer: an
+  // improved image, a rendered clip, a critique, a research deliverable. They
+  // needed their own spine — the measuring spine forbids the very thing they are
+  // for ("you have no editor") — and their own tools.
+  const prompt = (k: string) => specialistMeshPrompt(k);
+
+  it('are in the roster, so anyone can commission them', () => {
+    for (const kind of ['image', 'motion', 'ui-critic', 'research']) {
+      expect(MESH_SPECIALIST_KINDS).toContain(kind);
+      const agent = buildCorpRoster({ task: 't' }).find((a) => a.id === specialistId(kind));
+      expect(agent).toBeDefined();
+      expect(agent?.role).toBe('specialist');
+    }
+  });
+
+  it('can WRITE, unlike every lens — their deliverable is a file', () => {
+    for (const kind of ['image', 'motion', 'ui-critic', 'research']) {
+      expect(specialistToolsFor(kind)).toContain('write');
+    }
+    // The measuring lenses still cannot: a measurer that edits destroys the evidence.
+    for (const kind of ['auditor', 'correctness', 'security', 'tester']) {
+      expect(specialistToolsFor(kind)).not.toContain('write');
+    }
+  });
+
+  it('carry the producer spine, not the "you do not build" one', () => {
+    for (const kind of ['image', 'motion', 'ui-critic', 'research']) {
+      expect(prompt(kind)).toContain('COME BACK WITH FILES');
+      expect(prompt(kind)).not.toContain('You MEASURE. You do not build');
+    }
+    expect(prompt('auditor')).toContain('You MEASURE. You do not build');
+  });
+
+  it('each gets the kit its job actually needs, not one shared list', () => {
+    // Capability decides behaviour, so the kits differ on purpose.
+    expect(specialistToolsFor('image')).toContain('generate_image');
+    expect(specialistToolsFor('motion')).toContain('generate_video'); // HyperFrames path
+    expect(specialistToolsFor('motion')).toContain('mcp_call'); // + the ffmpeg façade
+    expect(specialistToolsFor('ui-critic')).toContain('browser_navigate');
+    expect(specialistToolsFor('research')).toContain('browser_screenshot');
+    // A critic has no shell — it judges an interface, it does not run builds.
+    expect(specialistToolsFor('ui-critic')).not.toContain('bash');
+    // An unknown kind still gets a workable default rather than nothing.
+    expect(specialistToolsFor('whatever')).toContain('read');
+  });
+
+  it('tell the truth about what they can SEE', () => {
+    // The one lie the system cannot catch. The image specialist is held to the
+    // same rule as the visual one.
+    expect(prompt('image')).toContain('NEVER describe an image you have not looked at');
+    expect(prompt('visual')).toContain('NEVER describe what something looks like');
+  });
+
+  it('the researcher delivers the FORM that was asked for', () => {
+    const p = prompt('research');
+    expect(p).toContain('READ THE DELIVERABLE FIRST');
+    expect(p).toContain('folder');
+    expect(p).toContain('CITE EVERYTHING');
+  });
+
+  it('the motion specialist checks its own render instead of trusting it', () => {
+    // A black MP4 of the right length is how this fails silently.
+    expect(prompt('motion')).toContain('CHECK THE RENDER');
   });
 });

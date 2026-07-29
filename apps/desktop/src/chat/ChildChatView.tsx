@@ -7,48 +7,15 @@
  * Selected from the nested sidebar dropdown (childAgentStore.viewedChildId); a
  * back affordance returns to the main chat.
  */
-import type { AssistantMsg, ChatMsg, ToolResultMsg } from '@pi-desktop/engine';
 import { IconChevronDown, Spinner } from '@pi-desktop/ui';
 import type { ReactNode } from 'react';
 import { useChildAgentStore } from '../state/child-agent-store';
-import { AssistantGroup } from './AssistantGroup';
-
-type Item =
-  | { kind: 'user'; message: Extract<ChatMsg, { kind: 'user' }> }
-  | { kind: 'group'; group: AssistantMsg[] };
-
-/** Group consecutive assistant messages (no user turn between) into one group —
- * the same coalescing rule the main thread uses. */
-function toItems(messages: ChatMsg[]): Item[] {
-  const items: Item[] = [];
-  let group: AssistantMsg[] = [];
-  const flush = (): void => {
-    if (group.length > 0) items.push({ kind: 'group', group });
-    group = [];
-  };
-  for (const m of messages) {
-    if (m.kind === 'assistant') {
-      group.push(m);
-    } else if (m.kind === 'user') {
-      flush();
-      items.push({ kind: 'user', message: m });
-    }
-    // toolResult rows are consumed via resultByCallId, not rendered standalone.
-  }
-  flush();
-  return items;
-}
+import { AgentTranscript } from './AgentTranscript';
 
 export function ChildChatView({ childId }: { childId: string }): ReactNode {
   const entry = useChildAgentStore((s) => s.children[childId]);
   const setViewedChild = useChildAgentStore((s) => s.setViewedChild);
   if (entry === undefined) return null;
-
-  const resultByCallId = new Map<string, ToolResultMsg>();
-  for (const m of entry.messages) {
-    if (m.kind === 'toolResult') resultByCallId.set(m.toolCallId, m);
-  }
-  const items = toItems(entry.messages);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="child-chat-view">
@@ -68,34 +35,18 @@ export function ChildChatView({ childId }: { childId: string }): ReactNode {
         {entry.running ? <Spinner size={13} /> : null}
       </div>
 
-      {/* The transcript, rendered through the same components as the main chat. */}
+      {/* The transcript, through the ONE agent renderer the whole app uses —
+          so a fix to how a tool row or a thought looks lands here too. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
-          {items.map((item, i) =>
-            item.kind === 'user' ? (
-              <div
-                // biome-ignore lint/suspicious/noArrayIndexKey: read-only static list
-                key={`u${i}`}
-                className="self-end rounded-2xl bg-bg-elevated px-4 py-2 text-body text-text-primary"
-              >
-                {item.message.text}
+          <AgentTranscript
+            messages={entry.messages}
+            empty={
+              <div className="py-8 text-center text-body text-text-muted">
+                {entry.running ? 'Starting…' : 'No activity yet.'}
               </div>
-            ) : (
-              <AssistantGroup
-                // biome-ignore lint/suspicious/noArrayIndexKey: read-only static list
-                key={`g${i}`}
-                group={item.group}
-                resultByCallId={resultByCallId}
-                runningToolCalls={[]}
-                tps={undefined}
-              />
-            ),
-          )}
-          {items.length === 0 ? (
-            <div className="py-8 text-center text-body text-text-muted">
-              {entry.running ? 'Starting…' : 'No activity yet.'}
-            </div>
-          ) : null}
+            }
+          />
         </div>
       </div>
     </div>

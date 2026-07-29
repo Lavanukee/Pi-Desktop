@@ -30,7 +30,7 @@ import { ContextGauge, MessageRow, ShimmerText, Spinner, Thread } from '@pi-desk
 import { useEffect, useRef, useState } from 'react';
 import { fetchWorkerTranscript } from '../../state/corp-connect';
 import { useCorpStore } from '../../state/corp-store';
-import { AssistantGroup } from '../AssistantGroup';
+import { AgentTranscript } from '../AgentTranscript';
 import { transcriptToAssistantView } from './corp-blocks';
 
 /** Live-transcript poll cadence: fast while text is streaming in, calm otherwise.
@@ -128,16 +128,15 @@ export function CorpWorkerFeed({
         <TaskBriefingBubble briefing={transcript.briefing} collapsible />
       ) : null}
       {view !== null ? (
-        <MessageRow kind="assistant">
-          <AssistantGroup
-            group={view.group}
-            resultByCallId={view.resultByCallId}
-            runningToolCalls={[]}
-            tps={undefined}
-            suppressInlineArtifacts
-            {...(onOpenFile !== undefined ? { onOpenFile } : {})}
-          />
-        </MessageRow>
+        /* THE SAME RENDERER THE CHAT AND THE CHILD CHATS USE. This was a second
+           copy of the grouping + AssistantGroup wiring, which is how the corp
+           came to show tool rows with no output while the chat showed them in
+           full. One component now, so a fix lands on every agent's view. */
+        <AgentTranscript
+          messages={[...view.group, ...view.resultByCallId.values()]}
+          suppressInlineArtifacts
+          {...(onOpenFile !== undefined ? { onOpenFile } : {})}
+        />
       ) : null}
       {/* J1: the user-facing "Processing…" indicator — the model is active but no
           token has streamed for a beat (a prefill / slow-tool gap). Sits directly

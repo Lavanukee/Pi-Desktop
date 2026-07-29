@@ -249,6 +249,20 @@ try {
     writeFileSync(path.join(OUT, 'last-state.json'), JSON.stringify(state, null, 2));
   }
 
+  /*
+   * A SUBAGENT'S OWN CHAT. The point of the display unification is that opening a
+   * subagent gives you a chat like any other, so the run has to be observed that
+   * way and not only as a room full of rows.
+   */
+  await page.evaluate(() => {
+    const corp = window.__corpStore;
+    const nodes = corp?.getState().situation?.chart.nodes ?? [];
+    const worker = nodes.find((n) => n.parentId !== undefined);
+    if (worker !== undefined) corp.getState().selectNode(worker);
+  }).catch(() => {});
+  await page.waitForTimeout(2000);
+  await page.screenshot({ path: path.join(OUT, 'subagent-chat.png') });
+
   await page.screenshot({ path: path.join(OUT, 'final.png') });
   log('done watching · screenshots:', OUT);
   console.log(`\nProject (go and look): ${PROJECT}`);

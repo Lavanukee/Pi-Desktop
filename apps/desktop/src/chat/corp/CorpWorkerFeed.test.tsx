@@ -311,3 +311,72 @@ describe('CorpWorkerFeed — A5: no lead briefing card, real subagent briefing k
     await unmount();
   });
 });
+
+describe('a subagent’s tool shows its RESULT, exactly as the chat does', () => {
+  /*
+   * jedd: "the web search opens duckduckgo and shows no results when the
+   * subagents do it but regularly it shows actual results."
+   *
+   * Two causes. The browser hijack was one. This is the other, and the deeper
+   * one: the corp store had every tool's output all along, but the transcript
+   * line dropped it, so the feed could only synthesise EMPTY results — and the
+   * shared chain builds a row's body from the result text. Every subagent tool
+   * row was therefore a header with nothing under it.
+   */
+  it('renders a search as the results CARD, not a bare row', async () => {
+    const { container, unmount } = await render(
+      feed([
+        {
+          at: 0,
+          kind: 'tool-call',
+          text: 'web_search',
+          label: 'Searched the web',
+          detail: 'local model benchmarks',
+          output: [
+            '2 result(s) via duckduckgo',
+            '',
+            '[1] Example Domain',
+            '    https://example.com/',
+            '    An illustrative example.',
+            '',
+            '[2] Wikipedia',
+            '    https://en.wikipedia.org/wiki/Main_Page',
+            '    The free encyclopedia.',
+          ].join('\n'),
+        },
+      ]),
+    );
+    const rows = container.querySelectorAll('.pd-websearch-row');
+    expect(rows.length).toBe(2);
+    expect(container.textContent).toContain('Example Domain');
+    expect(container.textContent).toContain('en.wikipedia.org');
+    await unmount();
+  });
+
+  it('renders a command with the output it actually printed', async () => {
+    const { container, unmount } = await render(
+      feed([
+        {
+          at: 0,
+          kind: 'tool-call',
+          text: 'bash',
+          label: 'Ran',
+          detail: 'pytest -q',
+          output: '2 passed in 0.10s',
+        },
+      ]),
+    );
+    expect(container.textContent).toContain('pytest -q');
+    expect(container.textContent).toContain('2 passed in 0.10s');
+    await unmount();
+  });
+
+  it('a tool that returned nothing yet is still just a row (nothing invented)', async () => {
+    const { container, unmount } = await render(
+      feed([{ at: 0, kind: 'tool-call', text: 'bash', label: 'Ran', detail: 'npm run build' }]),
+    );
+    expect(container.textContent).toContain('npm run build');
+    expect(container.querySelectorAll('.pd-websearch-row').length).toBe(0);
+    await unmount();
+  });
+});

@@ -449,6 +449,18 @@ export interface WorkerTranscriptLine {
   readonly addedLines?: number;
   /** Lines this file step removed, when known — the live `−N` readout. */
   readonly removedLines?: number;
+  /**
+   * What the tool RETURNED — a command's output, a search's result list, a
+   * connector's reply. The pane turns this into a real tool result so the shared
+   * renderer shows it exactly as the ordinary chat does: a terminal block for a
+   * command, a results card for a search.
+   *
+   * Without it, a subagent's tool row was a header with nothing under it while
+   * the identical call in the chat rendered its full output — the discrepancy
+   * jedd hit on web_search ("shows no results when the subagents do it but
+   * regularly it shows actual results").
+   */
+  readonly output?: string;
 }
 
 /**

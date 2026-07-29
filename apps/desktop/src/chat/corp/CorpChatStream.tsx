@@ -115,6 +115,10 @@ function blockToLine(block: CorpBlock, working: boolean): WorkerTranscriptLine {
         ...(block.label !== undefined ? { label: block.label } : {}),
         ...(block.detail !== undefined ? { detail: block.detail } : {}),
         ...(block.path !== undefined ? { path: block.path } : {}),
+        // The RESULT. This was dropped here, which is why a subagent's tool row
+        // was a header with nothing under it — no command output, and no search
+        // results card — while the same call in the chat rendered in full.
+        ...(block.output !== undefined ? { output: block.output } : {}),
       };
     case 'file':
       return {

@@ -508,26 +508,50 @@ export function transcriptToAssistantView(
     { kind: 'assistant', id: CORP_MSG_ID, blocks, isStreaming: working, timestamp: 0 },
   ];
 
-  // Only the LAST tool call may run (it is the current action / in the live run);
-  // give every earlier tool call a settled result so it never shimmers. When the
-  // node isn't working nothing runs at all, so no synthesis is needed.
+  /*
+   * THE REAL RESULTS, WHERE THERE ARE ANY.
+   *
+   * This used to synthesise EMPTY results — just enough to stop settled rows
+   * shimmering — and that is why a subagent's tool row was a header with nothing
+   * under it: no command output, and no search-results card, while the identical
+   * call in the ordinary chat rendered in full. The chain builds its body from
+   * the result text, so an empty result is an empty row by construction.
+   *
+   * The output was in the store the whole time; it simply never reached here.
+   * Now every tool line that has one gets a real result carrying it, and the
+   * SHARED renderer does the rest — a terminal block for a command, a results
+   * card for a search, exactly as the chat draws them.
+   *
+   * The empty synthesis stays for the rest: while the node is working, every
+   * tool call except the last is settled, whether or not it returned anything.
+   */
   const resultByCallId = new Map<string, ToolResultMsg>();
+  const toolCalls = blocks.filter((b): b is ToolCallBlock => b.type === 'toolCall');
+  const settle = (id: string, text: string, toolName: string): void => {
+    resultByCallId.set(id, {
+      kind: 'toolResult',
+      id: `corp-res-${id}`,
+      toolCallId: id,
+      toolName,
+      text,
+      isError: false,
+      timestamp: 0,
+    });
+  };
+  // Matched by the id `lineToBlocks` derives from the line's INDEX, not by
+  // position among the tool calls: a file write and a consult each emit a tool
+  // call too, so counting them would pair outputs with the wrong rows.
+  transcript.lines.forEach((line, i) => {
+    if (line.kind !== 'tool-call' || line.output === undefined || line.output === '') return;
+    const id = `${CORP_MSG_ID}-${i}-tool`;
+    const call = toolCalls.find((c) => c.id === id);
+    if (call !== undefined) settle(call.id, line.output, call.name);
+  });
   if (working) {
-    const toolIds = blocks
-      .filter((b): b is ToolCallBlock => b.type === 'toolCall')
-      .map((b) => b.id);
-    for (let i = 0; i < toolIds.length - 1; i++) {
-      const id = toolIds[i];
-      if (id === undefined) continue;
-      resultByCallId.set(id, {
-        kind: 'toolResult',
-        id: `corp-res-${id}`,
-        toolCallId: id,
-        toolName: '',
-        text: '',
-        isError: false,
-        timestamp: 0,
-      });
+    for (let i = 0; i < toolCalls.length - 1; i++) {
+      const call = toolCalls[i];
+      if (call === undefined || resultByCallId.has(call.id)) continue;
+      settle(call.id, '', '');
     }
   }
   return { group, resultByCallId };

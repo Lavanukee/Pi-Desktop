@@ -23,12 +23,11 @@ import {
   type SubagentItem,
   useCanvasTabs,
 } from '@pi-desktop/canvas';
-import type { ArtifactRef, OrgNodeView, ProductPeek } from '@pi-desktop/coordination';
+import type { OrgNodeView, ProductPeek } from '@pi-desktop/coordination';
 import { IconButton, IconClose } from '@pi-desktop/ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useCanvasStore } from '../../state/canvas-store';
 import { useChildAgentStore } from '../../state/child-agent-store';
-import { peekCorpTask } from '../../state/corp-connect';
 import { useCorpStore } from '../../state/corp-store';
 import { usePiStore } from '../../state/pi-slice';
 import { artifactToPayload } from './artifacts';
@@ -395,30 +394,6 @@ export function CanvasTabsPanel() {
     if (tab !== undefined) controller.updateTab(tab.id, { situationNodeTiming: corpNodeTiming });
   }, [controller, corpTaskId, corpNodeTiming]);
 
-  // "Peek at the build" (spec §11 safety valve): fetch the REAL in-progress product
-  // tree for the live task and open it in its own tab. DTO-only — the renderer never
-  // touches the engine; it reads the neutral ProductPeek over `corp:peek`.
-  const onSituationPeek = useCallback(
-    (_tabId: string, artifact: ArtifactRef) => {
-      setCanvasOpen(true);
-      const taskId = useCorpStore.getState().taskId;
-      const tabKey = `situation-peek:${taskId ?? artifact.id}`;
-      void (async () => {
-        const peek = taskId ? await peekCorpTask(taskId) : null;
-        controller.upsertTab(tabKey, {
-          kind: 'html',
-          title: 'Build snapshot',
-          artifact: {
-            id: `peek-${artifact.id}`,
-            title: artifact.title,
-            content: { kind: 'html', text: renderPeekHtml(artifact.title, peek) },
-          },
-        });
-      })();
-    },
-    [controller, setCanvasOpen],
-  );
-
   // Render nothing only once the closed rail has finished sliding out AND has no
   // tabs to preserve (`exiting` holds it through the exit transition above).
   // When the user opens it with no tabs (top-right toggle), the rail shows
@@ -443,7 +418,7 @@ export function CanvasTabsPanel() {
   // surface with copyable content (round-5 #20/#21).
   const surface = (
     <CanvasTabs
-      handlers={{ ...surfaceHandlers, onSubagentSelect, onSituationNodeSelect, onSituationPeek }}
+      handlers={{ ...surfaceHandlers, onSubagentSelect, onSituationNodeSelect }}
       onNewTab={onNewTab}
       onMenuOpenChange={setOverlayOpen}
       onPopout={popOut}

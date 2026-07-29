@@ -31,15 +31,7 @@ import type {
   ExerciseSessionView,
   OrgNodeView,
 } from '@pi-desktop/coordination';
-import {
-  ActivityRow,
-  Button,
-  IconCheck,
-  IconChevronDown,
-  IconEye,
-  ShimmerText,
-  Spinner,
-} from '@pi-desktop/ui';
+import { ActivityRow, IconCheck, IconChevronDown, ShimmerText, Spinner } from '@pi-desktop/ui';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { ExercisePanel } from './exercise-panel.tsx';
 import { PlanPanel } from './plan-panel.tsx';
@@ -60,8 +52,6 @@ export type SituationUserMode = 'user' | 'power';
 
 export interface SituationRoomSurfaceProps {
   state: SituationState;
-  /** Open the current best artifact ("peek at what we have so far"). */
-  onPeek?: (artifact: ArtifactRef) => void;
   /** Accepted for API stability; the simplified room has no raw-path detail to gate. */
   userMode?: SituationUserMode;
   /** Clicking a worker routes its live stream to the app (left chat area). */
@@ -159,7 +149,6 @@ function useNow(active: boolean): number {
 
 export function SituationRoomSurface({
   state,
-  onPeek,
   onSelectNode,
   selectedNodeId,
   nodeTiming,
@@ -540,7 +529,6 @@ export interface SituationRoomHostProps {
    */
   events?: AsyncIterable<CoordinationEvent>;
   taskId?: string;
-  onPeek?: (artifact: ArtifactRef) => void;
   userMode?: SituationUserMode;
   onSelectNode?: (node: OrgNodeView) => void;
   selectedNodeId?: string;
@@ -555,7 +543,6 @@ export interface SituationRoomHostProps {
 export function SituationRoomHost({
   events,
   taskId,
-  onPeek,
   userMode,
   onSelectNode,
   selectedNodeId,
@@ -600,7 +587,6 @@ export function SituationRoomHost({
   return (
     <SituationRoomSurface
       state={state}
-      onPeek={onPeek}
       userMode={userMode}
       onSelectNode={onSelectNode}
       selectedNodeId={selectedNodeId}

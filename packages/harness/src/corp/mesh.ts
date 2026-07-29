@@ -256,7 +256,12 @@ export class AgentMesh {
       const talk: TalkFn = (f, t, m) => this.deliver(f, t, m, depth + 1);
       // Anything that arrived while this agent was busy goes in front of the new
       // message, so it is read before being asked to do the next thing.
-      const out = await this.runTurn({ agentId: to, from, message: `${this.queued(to)}${message}`, talk });
+      const out = await this.runTurn({
+        agentId: to,
+        from,
+        message: `${this.queued(to)}${message}`,
+        talk,
+      });
       reply = out.reply;
     } catch (err) {
       // A seam that throws is the agent's failure to report, not a mesh crash.

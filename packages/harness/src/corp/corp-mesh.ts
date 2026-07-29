@@ -42,7 +42,6 @@ export const COMMISSION_SPECIALIST_TOOL = 'commission_specialist';
  * builds the concrete tool all agree. */
 export const SUBMIT_WORK_TOOL = 'submit_work';
 
-
 /** The specialties any agent may commission — aligned with the review lenses. Each is
  * a persistent `specialist:<kind>` agent in the roster. */
 export const MESH_SPECIALIST_KINDS = [
@@ -276,7 +275,9 @@ Look for what is reachable without a pointer, whether what is on screen is annou
 Report each one as what a person could not do, and where in the interface it happens.`,
   };
 
-  const body = bodies[kind] ?? `You are the ${kind.toUpperCase()} SPECIALIST. Somebody commissioned you to look at this product through that lens specifically. Work out what that means here, look, and report what you find.`;
+  const body =
+    bodies[kind] ??
+    `You are the ${kind.toUpperCase()} SPECIALIST. Somebody commissioned you to look at this product through that lens specifically. Work out what that means here, look, and report what you find.`;
 
   return `${meshPreamble()}
 

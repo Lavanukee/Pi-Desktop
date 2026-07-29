@@ -1,4 +1,4 @@
-import type { ArtifactRef, OrgNodeView } from '@pi-desktop/coordination';
+import type { OrgNodeView } from '@pi-desktop/coordination';
 import {
   IconButton,
   IconCheck,
@@ -155,8 +155,6 @@ export interface CanvasTabsHandlers {
   onMediaRefresh?: (tabId: string) => void;
   onMediaExpand?: (tabId: string) => void;
   onSubagentSelect?: (tabId: string, subagentId: string) => void;
-  /** Situation room — "peek at what we have so far" (open the artifact). */
-  onSituationPeek?: (tabId: string, artifact: ArtifactRef) => void;
   /** Situation room — a worker node was clicked (route its live stream into
    * the chat area, with the stylized task-briefing bubble leading it). */
   onSituationNodeSelect?: (tabId: string, node: OrgNodeView) => void;
@@ -675,7 +673,6 @@ function DefaultSurface({
           userMode={tab.situationUserMode}
           selectedNodeId={tab.situationSelectedNodeId}
           nodeTiming={tab.situationNodeTiming}
-          onPeek={(artifact) => handlers?.onSituationPeek?.(id, artifact)}
           onSelectNode={
             handlers?.onSituationNodeSelect
               ? (node) => handlers.onSituationNodeSelect?.(id, node)

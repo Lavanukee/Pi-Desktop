@@ -126,7 +126,7 @@ export function SituationDemoView() {
   // "Peek at what we have so far": open the current best artifact in its own
   // canvas tab. The target is stubbed (the real engine hands back a build);
   // the affordance and routing are the real thing.
-  const onSituationPeek = (_tabId: string, artifact: ArtifactRef) => {
+  const openPeekTab = (artifact: ArtifactRef) => {
     controller.upsertTab(`situation-peek:${MOCK_TASK_ID}`, {
       kind: 'html',
       title: 'Build snapshot',
@@ -151,7 +151,7 @@ export function SituationDemoView() {
 
   const peekTarget = latestArtifact(sitState);
   const onInlinePeek = () => {
-    if (peekTarget !== undefined) onSituationPeek('inline', peekTarget);
+    if (peekTarget !== undefined) openPeekTab(peekTarget);
   };
 
   return (
@@ -191,7 +191,7 @@ export function SituationDemoView() {
       {/* The canvas sidebar (right): the situation room lives here. */}
       <div className="w-[52%] min-w-[560px] max-w-[900px] flex-none p-2">
         <CanvasProvider controller={controller}>
-          <CanvasTabs handlers={{ onSituationPeek, onSituationNodeSelect }} />
+          <CanvasTabs handlers={{ onSituationNodeSelect }} />
         </CanvasProvider>
       </div>
     </div>

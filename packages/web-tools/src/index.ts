@@ -182,22 +182,33 @@ export function registerWebTools(pi: ExtensionAPI, options: WebToolsOptions = {}
     }),
     async execute(_id, params, signal): Promise<AgentToolResult<WebSearchDetails>> {
       const count = boundCount(params.count);
-      // PREFER the browser-backed search when wired: it opens the canvas browser
-      // to a DuckDuckGo results page (visible + not bot-blocked) and scrapes it.
-      // Fall back to the server-side scrape backends only if it errors/empties.
-      let outcome: Awaited<ReturnType<typeof runWebSearch>> | undefined;
-      if (options.browserSearch !== undefined) {
+      /*
+       * THE ORDINARY SEARCH FIRST; THE BROWSER ONLY IF IT COMES BACK EMPTY.
+       *
+       * This used to prefer the browser-backed path whenever one was wired,
+       * which is how a subagent's search came to look nothing like the same
+       * search in the chat: the canvas browser was driven to a DuckDuckGo page
+       * the user then sat watching, and when that page was a bot-challenge (as
+       * it now usually is) they watched an empty one. jedd: "have web search
+       * populate the card in the tools area but not open duckduckgo or the
+       * browser. use the regular chat thing, not the subagents thing, as the
+       * good starting point ... duckduckgo in browser as fallback I suppose."
+       *
+       * So the configured backends run first — the identical call the chat
+       * makes, rendering the identical results card — and the browser is what
+       * happens only when they find nothing, where taking over the screen buys
+       * something instead of merely being seen to.
+       */
+      let outcome = await runWebSearch(backends, params.query, { count, signal });
+      if (outcome.results.length === 0 && options.browserSearch !== undefined) {
         try {
           const results = await options.browserSearch(params.query, count);
           if (results.length > 0) {
             outcome = { backend: 'browser · duckduckgo', results, note: undefined };
           }
         } catch {
-          // fall through to the scrape backends
+          // Keep the original empty outcome — its note explains what went wrong.
         }
-      }
-      if (outcome === undefined) {
-        outcome = await runWebSearch(backends, params.query, { count, signal });
       }
       const lines = outcome.results.map(
         (r, i) => `[${i + 1}] ${r.title}\n    ${r.url}\n    ${r.snippet}`,

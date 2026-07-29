@@ -35,6 +35,7 @@ import {
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
 import { type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
 import type { AppEventMap } from '../ipc-contract';
+import { siteFavicon } from './favicons';
 import { isTrustedIpcEvent } from '../trusted-senders';
 import { browserManager } from './browser-manager';
 import {
@@ -449,6 +450,15 @@ export function registerBrowserAgentIpc(getWindow: () => WebContents | null): vo
     guard(event, 'canvas:report-state');
     cachedCanvasState = req.state ?? null;
     return { ok: true };
+  });
+
+  // A search result's own site icon, fetched here so the renderer's CSP can go on
+  // refusing remote images (see ./favicons). Never rejects — a site with no icon
+  // is a null, and the card draws its letter chip.
+  ipcMain.handle('canvas:site-icon', async (event, req: { site: string }) => {
+    guard(event, 'canvas:site-icon');
+    const dataUri = await siteFavicon(typeof req?.site === 'string' ? req.site : '');
+    return { dataUri };
   });
 }
 

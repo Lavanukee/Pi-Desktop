@@ -107,6 +107,14 @@ export interface CanvasTab {
   id: string;
   kind: CanvasTabKind;
   title: string;
+  /**
+   * A quieter second line under the title, for a tab whose NAME must stay put
+   * while its CONTENTS change — the corp run's "Agent activity" tab, which is
+   * the same tab all run long and shows whatever the followed agent is touching.
+   * Renaming it per file made the tab bar shuffle under the cursor; this says
+   * what is inside without moving anything.
+   */
+  subtitle?: string;
   /** Stable identity for `upsertTab(key, …)` — open-or-focus by this key. */
   key?: string;
   /** Override the kind's default type icon in the tab bar. */

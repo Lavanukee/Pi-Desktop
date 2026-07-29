@@ -259,6 +259,12 @@ export type {
   WebSearchResultItemProps,
   WebSearchResultsProps,
 } from './components/web-search.tsx';
-export { WebSearchResultItem, WebSearchResults } from './components/web-search.tsx';
+export {
+  OpenUrlProvider,
+  SiteIconProvider,
+  type UseSiteIcon,
+  WebSearchResultItem,
+  WebSearchResults,
+} from './components/web-search.tsx';
 export type { VariantProps, VariantSelection, VariantsConfig } from './define-variants.ts';
 export { defineVariants } from './define-variants.ts';

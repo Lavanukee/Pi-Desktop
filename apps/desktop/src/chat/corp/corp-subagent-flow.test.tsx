@@ -223,13 +223,13 @@ describe('corp/subagent-run UX flow', () => {
     await unmount();
   });
 
-  it('(4) selecting node A pins it and scopes the canvas to its live surface', async () => {
+  it('(4) selecting node A pins it and LEAVES the situation room in front', async () => {
     const controller = createCanvasController();
     const situationId = controller.upsertTab('situation:t1', {
       kind: 'situation',
       title: 'Situation room',
     });
-    // A has written a file — its most-recent live surface (a corpfile tab).
+    // A has written a file — the activity tab is showing its work.
     useCorpStore.getState().foldWorkerActivity({
       type: 'worker-activity',
       nodeId: 'a',
@@ -237,20 +237,23 @@ describe('corp/subagent-run UX flow', () => {
       path: 'src/a.ts',
       addedLines: 3,
     });
-    const fileId = controller.upsertTab('corpfile:src/a.ts', {
+    const activityId = controller.upsertTab('corp:activity', {
       kind: 'file',
-      key: 'corpfile:src/a.ts',
-      title: 'a.ts',
+      key: 'corp:activity',
+      title: 'Agent activity',
     });
-    // Move focus to the situation tab (off the file tab), then click A's row.
+    // Move focus to the situation tab (off the activity tab), then click A's row.
     controller.focusTab(situationId);
     expect(controller.getState().activeTabId).toBe(situationId);
 
     selectCorpNodeAndFocus(controller, 't1', A_WORKING);
     // Pinned in the store (the chat pane drills into it) …
     expect(useCorpStore.getState().pinnedNode?.id).toBe('a');
-    // … and the canvas scoped to A's file tab.
-    expect(controller.getState().activeTabId).toBe(fileId);
+    // … and you are STILL IN THE ROOM. Clicking a subagent changes what the
+    // surfaces show, never which surface you are looking at — otherwise every
+    // click costs a hunt back through the tab bar (jedd).
+    expect(controller.getState().activeTabId).toBe(situationId);
+    expect(controller.getState().activeTabId).not.toBe(activityId);
   });
 
   it('(5) a not-started node B reads "Not yet queued" with its contract still shown', async () => {

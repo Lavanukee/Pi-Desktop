@@ -64,14 +64,23 @@ export class CanvasController {
     for (const listener of this.#listeners) listener();
   }
 
-  /** Append a tab, focus it, and un-collapse the canvas. Returns the new id. */
-  openTab(spec: CanvasTabSpec): string {
+  /**
+   * Append a tab, focus it, and un-collapse the canvas. Returns the new id.
+   *
+   * `focus: false` opens it in the BACKGROUND — the tab appears in the bar, the
+   * canvas opens if closed, and whatever the user was reading stays in front.
+   * That is what a surface which updates on its own (an agent's live work) needs:
+   * without it, every write and every command yanks the user off the page they
+   * were on, which is precisely what makes a live run impossible to follow.
+   */
+  openTab(spec: CanvasTabSpec, opts: { focus?: boolean } = {}): string {
     const id = spec.id ?? this.#idFactory();
     const tab: CanvasTab = { ...spec, id };
+    const focus = opts.focus !== false;
     this.#commit({
       ...this.#state,
       tabs: [...this.#state.tabs, tab],
-      activeTabId: id,
+      activeTabId: focus ? id : (this.#state.activeTabId ?? id),
       collapsed: false,
     });
     return id;
@@ -81,15 +90,18 @@ export class CanvasController {
    * Open-or-focus by stable key. If a tab already carries `key`, its spec is
    * merged in and it is focused (its id is preserved so native views survive);
    * otherwise a fresh tab is opened with that key. Returns the tab id either way.
+   *
+   * `focus: false` merges/opens WITHOUT taking focus — see {@link openTab}.
    */
-  upsertTab(key: string, spec: CanvasTabSpec): string {
+  upsertTab(key: string, spec: CanvasTabSpec, opts: { focus?: boolean } = {}): string {
     const existing = this.#state.tabs.find((tab) => tab.key === key);
-    if (!existing) return this.openTab({ ...spec, key });
+    const focus = opts.focus !== false;
+    if (!existing) return this.openTab({ ...spec, key }, opts);
     const merged: CanvasTab = { ...existing, ...spec, id: existing.id, key };
     this.#commit({
       ...this.#state,
       tabs: this.#state.tabs.map((tab) => (tab.id === existing.id ? merged : tab)),
-      activeTabId: existing.id,
+      activeTabId: focus ? existing.id : this.#state.activeTabId,
       collapsed: false,
     });
     return existing.id;

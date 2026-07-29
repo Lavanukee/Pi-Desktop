@@ -35,7 +35,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { corpChatView } from '../corp/corp-thread-view';
 import { useCorpStore } from '../../state/corp-store';
-import { selectCorpNodeAndFocus, useCorpCanvasRouting } from './corp-canvas-routing';
+import {
+  AGENT_ACTIVITY_TAB_KEY,
+  AGENT_ACTIVITY_TITLE,
+  selectCorpNodeAndFocus,
+  useCorpCanvasRouting,
+} from './corp-canvas-routing';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 // SituationRoomSurface measures its width via ResizeObserver — stub it for jsdom.
@@ -182,7 +187,7 @@ describe('the way back to the CEO', () => {
 });
 
 describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', () => {
-  it('follows ONLY the shown node; one file tab (reused), one terminal (appended)', async () => {
+  it('follows ONLY the shown node, into ONE tab that morphs and never takes focus', async () => {
     const controller = createCanvasController();
     useCorpStore.getState().setTask('t1');
 
@@ -192,9 +197,13 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
       </CanvasProvider>,
     );
 
-    // A team forms: ceo + two builders. The user PINS eng-1 (the node they are
-    // viewing in the chat) — only the PINNED node's work reaches the canvas (C5);
-    // live-follow no longer auto-drives it (it flipped between engineers).
+    // Something the user is already reading, so a focus steal would be visible.
+    const homeId = await act(async () =>
+      controller.openTab({ kind: 'situation', title: 'Situation room', key: 'situation:t1' }),
+    );
+
+    // A team forms: ceo + two builders. The user PINS eng-1 — only the PINNED
+    // node's work reaches the canvas.
     await feedChart(['ceo', 'eng-1', 'eng-2']);
     const eng1 = chartOf(['ceo', 'eng-1', 'eng-2']).nodes.find((n) => n.id === 'eng-1');
     await act(async () => {
@@ -202,63 +211,59 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
     });
     expect(useCorpStore.getState().pinnedNode?.id).toBe('eng-1');
 
-    // (C5) A NON-shown node (eng-2) writes a file → NO tab opens for it.
+    // A NON-shown node writes a file → nothing appears for it.
     await push(
       wa({ nodeId: 'eng-2', kind: 'file', path: 'other/z.ts', content: 'zzz', addedLines: 9 }),
     );
     await flush();
-    expect(controller.getState().tabs.find((t) => t.key === 'corpfile:other/z.ts')).toBeUndefined();
+    expect(controller.getState().tabs).toHaveLength(1);
 
-    // (C1/C2) The SHOWN node writes a file, its captured body carried end-to-end →
-    // a live file tab renders the ACTUAL content, +N from the file block (not a
-    // content-derived count), streaming settled (a structured write lands complete).
+    // The SHOWN node writes → the ONE activity tab appears, carrying the real
+    // captured body and the file block's +N — and the user is NOT moved to it.
     await push(
       wa({ kind: 'file', path: 'src/x.ts', label: 'Writing', content: 'a\nb\nc', addedLines: 3 }),
     );
-    const fileX = controller.getState().tabs.find((t) => t.key === 'corpfile:src/x.ts');
-    expect(fileX).toBeDefined();
-    expect(fileX?.kind).toBe('file');
-    expect(fileX?.artifact?.content.text).toBe('a\nb\nc');
-    expect(fileX?.addedLines).toBe(3);
-    expect(fileX?.streaming).toBe(false);
-    // The new file tab focused (auto-swap to the execution).
-    expect(controller.getState().activeTabId).toBe(fileX?.id);
+    const first = controller.getState().tabs.find((t) => t.key === AGENT_ACTIVITY_TAB_KEY);
+    expect(first).toBeDefined();
+    expect(first?.kind).toBe('file');
+    expect(first?.title).toBe(AGENT_ACTIVITY_TITLE);
+    expect(first?.subtitle).toBe('x.ts');
+    expect(first?.artifact?.content.text).toBe('a\nb\nc');
+    expect(first?.addedLines).toBe(3);
+    expect(controller.getState().activeTabId).toBe(homeId); // stayed put
 
-    // (C4) A NEW file for the same node REPLACES the tab — the prior corpfile is
-    // CLOSED, not stacked. Exactly one corp file tab remains.
-    await push(wa({ kind: 'file', path: 'src/y.ts', content: 'y1\ny2\ny3\ny4', addedLines: 4 }));
-    expect(controller.getState().tabs.find((t) => t.key === 'corpfile:src/x.ts')).toBeUndefined();
-    const fileY = controller.getState().tabs.find((t) => t.key === 'corpfile:src/y.ts');
-    expect(fileY?.artifact?.content.text).toBe('y1\ny2\ny3\ny4');
-    expect(fileY?.addedLines).toBe(4);
-    expect(controller.getState().tabs.filter((t) => t.key?.startsWith('corpfile:'))).toHaveLength(
-      1,
-    );
+    // A NEW file is the SAME tab, re-pointed — never a second one.
+    await push(wa({ kind: 'file', path: 'src/y.ts', content: 'y1\ny2', addedLines: 2 }));
+    const second = controller.getState().tabs.find((t) => t.key === AGENT_ACTIVITY_TAB_KEY);
+    expect(second?.id).toBe(first?.id);
+    expect(second?.subtitle).toBe('y.ts');
+    expect(second?.artifact?.content.text).toBe('y1\ny2');
+    expect(controller.getState().tabs).toHaveLength(2); // home + activity, still
 
-    // (C6) Two shell commands for the shown node → ONE terminal tab (keyed by node),
-    // both commands appended into the same mirror — never a tab per command.
+    // Then it runs commands: the SAME tab BECOMES a terminal carrying every
+    // command in one mirror — the shell you would see sitting next to it.
     await push(
       wa({ kind: 'tool', toolName: 'bash', detail: 'npm run build' }),
       wa({ kind: 'tool', toolName: 'bash', detail: 'npm run build', output: 'Build OK' }),
       wa({ kind: 'tool', toolName: 'bash', detail: 'npm test' }),
       wa({ kind: 'tool', toolName: 'bash', detail: 'npm test', output: 'Tests pass' }),
     );
-    const terms = controller.getState().tabs.filter((t) => t.key?.startsWith('corpterm:'));
-    expect(terms).toHaveLength(1);
-    expect(terms[0]?.key).toBe('corpterm:eng-1');
-    const mirror = terms[0]?.data?.mirrorText as string | undefined;
+    const asTerm = controller.getState().tabs.find((t) => t.key === AGENT_ACTIVITY_TAB_KEY);
+    expect(asTerm?.id).toBe(first?.id); // morphed in place
+    expect(asTerm?.kind).toBe('terminal');
+    expect(asTerm?.subtitle).toBe('npm test');
+    const mirror = asTerm?.data?.mirrorText as string | undefined;
     expect(mirror).toContain('npm run build');
     expect(mirror).toContain('Build OK');
     expect(mirror).toContain('npm test');
     expect(mirror).toContain('Tests pass');
-
-    // (C5, again) eng-2 never got a surface — only the followed node's work showed.
-    expect(controller.getState().tabs.find((t) => t.key === 'corpterm:eng-2')).toBeUndefined();
+    expect(controller.getState().tabs).toHaveLength(2);
+    expect(controller.getState().activeTabId).toBe(homeId); // still never moved
 
     await unmount();
   });
 
-  it('types a file in live from the streamed write body + opens a live HTML preview (code focused)', async () => {
+  it('types a live write into the activity tab, and shows an html page as the PAGE', async () => {
     const controller = createCanvasController();
     useCorpStore.getState().setTask('t1');
 
@@ -268,7 +273,6 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
       </CanvasProvider>,
     );
 
-    // Make eng-1 the followed node (PINNED) so its work reaches the canvas (C5).
     await feedChart(['ceo', 'eng-1']);
     const eng1a = chartOf(['ceo', 'eng-1']).nodes.find((n) => n.id === 'eng-1');
     await act(async () => {
@@ -276,8 +280,8 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
     });
 
     // The model streams a TEXT-FORM `<function=write>` whose content GROWS across
-    // deltas (the qwen grammar-failure shape) — the corp canvas must render THIS
-    // live body, not the (empty mid-run) product peek.
+    // deltas (the qwen grammar-failure shape) — the canvas must render THIS live
+    // body, not the (empty mid-run) product peek.
     await push(wa({ kind: 'text', phase: 'start' }));
     await push(
       wa({
@@ -288,25 +292,18 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
       }),
     );
 
-    // (1) The file CODE tab renders the ACTUAL streaming write body, streaming, and
-    // is FOCUSED (the code tab, not the preview).
-    const code1 = controller.getState().tabs.find((t) => t.key === 'corpfile:index.html');
-    expect(code1).toBeDefined();
-    expect(code1?.kind).toBe('file');
-    expect(code1?.streaming).toBe(true);
-    expect(code1?.artifact?.content.text).toBe('<!DOCTYPE html>\n<html><body><h1>Hi');
-    expect(controller.getState().activeTabId).toBe(code1?.id);
+    // An html file the agent is building shows as the PAGE — watching a site
+    // appear is the point — in the one activity tab, streaming.
+    const page1 = controller.getState().tabs.find((t) => t.key === AGENT_ACTIVITY_TAB_KEY);
+    expect(page1).toBeDefined();
+    expect(page1?.kind).toBe('html');
+    expect(page1?.subtitle).toBe('index.html');
+    expect(page1?.streaming).toBe(true);
+    expect(page1?.artifact?.content.text).toContain('<h1>Hi');
+    expect(controller.getState().tabs).toHaveLength(1); // no separate preview tab
 
-    // (2) A live HTML PREVIEW opened alongside it (secondary — NOT focused).
-    const preview1 = controller.getState().tabs.find((t) => t.key === 'corphtml:index.html');
-    expect(preview1).toBeDefined();
-    expect(preview1?.kind).toBe('html');
-    expect(preview1?.artifact?.content.kind).toBe('html');
-    expect(preview1?.artifact?.content.text).toContain('<h1>Hi');
-    expect(controller.getState().activeTabId).not.toBe(preview1?.id);
-
-    // (3) More content streams in — the SAME tabs GROW in place, then settle when
-    // the write closes (streaming:false), never a new tab, never a focus steal.
+    // More content streams in — the SAME tab GROWS, then settles when the write
+    // closes. Never a new tab.
     await push(
       wa({
         kind: 'text',
@@ -316,22 +313,16 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
       wa({ kind: 'text', phase: 'end' }),
     );
 
-    const code2 = controller.getState().tabs.find((t) => t.key === 'corpfile:index.html');
-    expect(code2?.id).toBe(code1?.id); // grew in place
-    expect(code2?.artifact?.content.text).toContain('Hi there');
-    expect(code2?.artifact?.content.text.length ?? 0).toBeGreaterThan(
-      code1?.artifact?.content.text.length ?? 0,
-    );
-    expect(code2?.streaming).toBe(false); // the write closed → settled
-
-    const preview2 = controller.getState().tabs.find((t) => t.key === 'corphtml:index.html');
-    expect(preview2?.id).toBe(preview1?.id);
-    expect(preview2?.artifact?.content.text).toContain('Hi there');
+    const page2 = controller.getState().tabs.find((t) => t.key === AGENT_ACTIVITY_TAB_KEY);
+    expect(page2?.id).toBe(page1?.id);
+    expect(page2?.artifact?.content.text).toContain('Hi there');
+    expect(page2?.streaming).toBe(false);
+    expect(controller.getState().tabs).toHaveLength(1);
 
     await unmount();
   });
 
-  it('delegation focuses the situation room; a subagent click scopes to its latest surface', async () => {
+  it('delegation shows the room, and clicking a subagent LEAVES YOU THERE', async () => {
     const controller = createCanvasController();
     useCorpStore.getState().setTask('t1');
 
@@ -352,37 +343,33 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
     const situationId = controller.getState().tabs.find((t) => t.key === 'situation:t1')?.id;
     expect(situationId).toBeDefined();
 
-    // A delegation (a NEW org-chart node) focuses the situation room.
+    // A delegation (a NEW org-chart node) brings the room forward.
     await feedChart(['ceo', 'eng-1']);
     expect(controller.getState().activeTabId).toBe(situationId);
 
-    // A subagent-row click PINS eng-1 (the node the user chooses to watch) — only
-    // the pinned node's work reaches the canvas (C5, pinned-only). Focus the room
-    // first so the scope is observable.
-    await act(async () => {
-      if (situationId) controller.focusTab(situationId);
-    });
     const { container: room, unmount: unmountRoom } = await render(
       <SituationRoomSurface
         state={situationState(['ceo', 'eng-1'])}
         onSelectNode={(node) => selectCorpNodeAndFocus(controller, 't1', node)}
       />,
     );
-    // By node id, not by position: the root is listed first now (it is the way
-    // back to the CEO), so the first row is not a subagent.
     const row = room.querySelector('[data-testid="subagent-row"][data-node-id="eng-1"]');
-    expect(row).not.toBeNull();
     await act(async () => {
       (row as HTMLElement).click();
     });
     expect(useCorpStore.getState().pinnedNode?.id).toBe('eng-1');
+    // THE POINT: the click changed WHAT the surfaces show, not WHICH one you are
+    // looking at. jedd: "keep that tab open instead of moving to the subagent's
+    // tab immediately ... we need to be able to quickly swap and monitor."
+    expect(controller.getState().activeTabId).toBe(situationId);
 
-    // Now the PINNED node runs a shell command → its ONE terminal opens + focuses.
+    // The pinned node then runs a command — the activity tab fills BEHIND the
+    // room, ready when the user wants it, and still does not grab focus.
     await push(wa({ kind: 'tool', toolName: 'bash', detail: 'python -m http.server' }));
-    const term = controller.getState().tabs.find((t) => t.key === 'corpterm:eng-1');
-    expect(term).toBeDefined();
-    expect(term?.data?.mirrorText as string | undefined).toContain('python -m http.server');
-    expect(controller.getState().activeTabId).toBe(term?.id);
+    const activity = controller.getState().tabs.find((t) => t.key === AGENT_ACTIVITY_TAB_KEY);
+    expect(activity?.kind).toBe('terminal');
+    expect(activity?.data?.mirrorText as string | undefined).toContain('python -m http.server');
+    expect(controller.getState().activeTabId).toBe(situationId);
 
     await unmountRoom();
     await unmount();

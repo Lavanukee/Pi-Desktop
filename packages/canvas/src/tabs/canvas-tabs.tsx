@@ -401,6 +401,12 @@ export function CanvasTabs({
                       >
                         <span className="pd-canvas-tab-icon">{tab.icon ?? <Icon size={14} />}</span>
                         <span className="pd-canvas-tab-label">{tab.title || meta.label}</span>
+                        {/* A tab whose name must stay put while its contents change
+                            says what is inside here, quietly, instead of renaming
+                            itself and shuffling the bar under the cursor. */}
+                        {tab.subtitle !== undefined && tab.subtitle !== '' ? (
+                          <span className="pd-canvas-tab-subtitle">{tab.subtitle}</span>
+                        ) : null}
                       </button>
                       <button
                         type="button"

@@ -15,6 +15,9 @@ import type { ChatMsg, ContentBlock } from '@pi-desktop/engine';
 import { useEffect, useRef } from 'react';
 import { usePiStore } from '../../state/pi-slice';
 import { toolStepKind } from '../activity-mapping';
+import { isInteractiveCommand, mirrorCommandText, shortCommandTitle } from './agent-surfaces';
+
+export { isInteractiveCommand };
 
 type ToolCallBlock = Extract<ContentBlock, { type: 'toolCall' }>;
 
@@ -24,34 +27,6 @@ export interface BashTerminalEvent {
   command: string;
   output: string;
   running: boolean;
-}
-
-/**
- * Patterns that mark a command as interactive or long-running enough to warrant
- * a live terminal. Deliberately narrow so a routine `ls`/`git status` never
- * pops a terminal — only clearly persistent/interactive processes do.
- */
-const INTERACTIVE_PATTERNS: RegExp[] = [
-  /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|watch|serve|preview)\b/,
-  /\bvite\b/,
-  /\bnodemon\b/,
-  /\bwebpack(?:-dev-server)?\b/,
-  /\bnext\s+(?:dev|start)\b/,
-  /\b(?:tail|watch|top|htop|less|vim|nano|ssh|irb|psql)\b/,
-  /\btail\s+-f\b/,
-  /--watch\b/,
-  /\bpython3?\s+-m\s+http\.server\b/,
-  /\bhttp-server\b/,
-  /\bjest\s+--watch\b/,
-  /\bdocker\s+(?:run|compose\s+up)\b/,
-  /&\s*$/,
-];
-
-/** True when a bash command is interactive / long-running (→ live terminal). */
-export function isInteractiveCommand(command: string): boolean {
-  const c = command.trim();
-  if (c === '') return false;
-  return INTERACTIVE_PATTERNS.some((re) => re.test(c));
 }
 
 function str(value: unknown): string | undefined {
@@ -92,13 +67,7 @@ const terminalTabKey = (callId: string): string => `term:${callId}`;
 
 /** The xterm text for a mirror terminal: the command prompt + its output. */
 function mirrorText(ev: BashTerminalEvent): string {
-  const body = ev.output.length > 0 ? ev.output : ev.running ? '(running…)' : '(no output)';
-  return `$ ${ev.command}\n\n${body}\n`;
-}
-
-function shortTitle(command: string): string {
-  const first = command.trim().split(/\s+/).slice(0, 3).join(' ');
-  return first.length > 28 ? `${first.slice(0, 27)}…` : first;
+  return mirrorCommandText(ev.command, ev.output, ev.running);
 }
 
 /**
@@ -122,7 +91,7 @@ export function useBashTerminalCanvasRouting(): void {
         controller.upsertTab(key, {
           kind: 'terminal',
           key,
-          title: shortTitle(ev.command),
+          title: shortCommandTitle(ev.command),
           data,
         });
       } else if ((existing.data?.mirrorText as string | undefined) !== data.mirrorText) {

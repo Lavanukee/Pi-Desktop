@@ -459,6 +459,12 @@ export type CanvasInvokeMap = {
    * hook (browser url/title re-enriched from the live view). Debounced by the
    * renderer; pushed on surface / active-tab changes. */
   'canvas:report-state': { request: { state: CanvasState }; response: { ok: boolean } };
+  /** A site's own icon as a `data:` URI, for the web-search results card. Fetched
+   * in MAIN (first-party only, cached by host) so the renderer's CSP keeps
+   * forbidding remote images and no aggregator learns what was searched.
+   * `dataUri` is null when the site has none we can use — the card then draws
+   * the letter chip it already falls back to. */
+  'canvas:site-icon': { request: { site: string }; response: { dataUri: string | null } };
 };
 
 export const CANVAS_INVOKE_CHANNELS = [
@@ -469,6 +475,7 @@ export const CANVAS_INVOKE_CHANNELS = [
   'canvas:open-with',
   'canvas:reveal',
   'canvas:report-state',
+  'canvas:site-icon',
 ] as const satisfies readonly (keyof CanvasInvokeMap)[];
 
 // ---------------------------------------------------------------------------

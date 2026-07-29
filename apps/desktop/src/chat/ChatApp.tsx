@@ -16,8 +16,16 @@ import {
   replayableEvents,
 } from '@pi-desktop/canvas';
 import type { Model } from '@pi-desktop/engine';
-import { IconButton, IconClose, IconGears, MainSurface, TopBar } from '@pi-desktop/ui';
-import { useEffect, useRef, useState } from 'react';
+import {
+  IconButton,
+  IconClose,
+  IconGears,
+  MainSurface,
+  OpenUrlProvider,
+  SiteIconProvider,
+  TopBar,
+} from '@pi-desktop/ui';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SettingsSection } from '../settings/SettingsView';
 import { registerCanvasController, useCanvasStore } from '../state/canvas-store';
 import { useChildAgentStore } from '../state/child-agent-store';
@@ -34,6 +42,7 @@ import { ChatComposer } from './ChatComposer';
 import { ChatThread } from './ChatThread';
 import { ChatTitle } from './ChatTitle';
 import { ChildChatView } from './ChildChatView';
+import { useSiteIcon } from './site-icons';
 import { CanvasTabsPanel } from './canvas/CanvasTabsPanel';
 import { CorpDebugHud } from './corp/CorpDebugHud';
 import { PROMOTE_STATUS_KEY, parsePromoteSignal } from './harness-status';
@@ -338,12 +347,33 @@ export function ChatApp({
     />
   );
 
+  /*
+   * Open a search result in the app's OWN browser, in the canvas beside the
+   * conversation it came from — jedd: "clicking them to show their links in the
+   * browser". ONE tab, reused: a results list is something you go through, and a
+   * tab per link buries the chat under a browser session in four clicks.
+   */
+  const openResultUrl = useCallback((url: string) => {
+    const controller = canvasController.current;
+    if (controller === null) return;
+    controller.upsertTab('websearch:result', {
+      kind: 'browser',
+      title: 'Browser',
+      url,
+    });
+    useCanvasStore.getState().setCanvasOpen(true);
+  }, []);
+
   return (
     <CanvasProvider controller={canvasController.current}>
       {/* Dev-only live activity HUD — explicit opt-in via ?corphud
           (PI_DESKTOP_CORP_HUD=1), NOT the corp feature flag, so a normal corp run
           shows no debug overlay. Still exposes __corpStore under ?piE2E for probes. */}
       <CorpDebugHud />
+      {/* Search-result rows resolve their site's icon through main (the CSP
+          forbids remote images) and open in the canvas browser when clicked. */}
+      <SiteIconProvider value={useSiteIcon}>
+        <OpenUrlProvider value={openResultUrl}>
       <div className="flex h-full">
         {/* The sidebar stays mounted; when collapsed the slot narrows to a
             ~64px ICON RAIL (round-8 #1) rather than hiding — global.css owns the
@@ -438,6 +468,8 @@ export function ChatApp({
         <ToastHost />
         <WindowDropOverlay />
       </div>
+        </OpenUrlProvider>
+      </SiteIconProvider>
     </CanvasProvider>
   );
 }

@@ -240,6 +240,21 @@
   white-space: nowrap;
 }
 
+/* The quiet "what is in it right now" line on a stable-titled tab. Clipped hard
+   so a long filename or command can never widen the tab and push the others. */
+.pd-canvas-tab-subtitle {
+  overflow: hidden;
+  max-width: 11ch;
+  color: var(--pd-text-muted);
+  font-size: 0.85em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-canvas-tab[data-active] .pd-canvas-tab-subtitle {
+  color: var(--pd-text-secondary);
+}
+
 .pd-canvas-tab-close {
   display: inline-flex;
   align-items: center;

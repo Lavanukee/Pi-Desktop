@@ -933,6 +933,18 @@ export interface RoleAgentConfig {
    */
   readonly extensionFactories?: ExtensionFactory[];
   /**
+   * Extension PACKAGES to load into this role's session — the same dirs the chat's
+   * pi child loads via `-e`, so a subagent's tool surface is the chat's tool
+   * surface rather than a hand-picked subset.
+   *
+   * jedd: "why don't we treat each subagent as a new individual chat exactly the
+   * same, allowing the same tools". Before this, the corp seam injected two
+   * registrars (web + browser) and everything else a role's allowlist named —
+   * `mcp_call`, the connectors, generation — resolved to nothing. Two tool
+   * surfaces meant every parity bug had to be found and fixed twice.
+   */
+  readonly additionalExtensionPaths?: readonly string[];
+  /**
    * LIVE ACTIVITY sink (spec §11). When set, `corpExt` forwards this run's pi
    * lifecycle events as neutral {@link RoleAgentActivity} records the MOMENT they
    * happen: `turn-start`/`turn-end` (the per-turn node pulse) and, on each finished
@@ -1335,6 +1347,12 @@ export async function openRoleSession(
     // factories the seam supplies (e.g. web-tools for the CEO vision turn). Extra
     // tools still only fire when their name is in `config.tools` (the allowlist).
     extensionFactories: [corpExt, ...(config.extensionFactories ?? [])],
+    // The chat's own tool extensions, loaded into this role's session (see
+    // `additionalExtensionPaths`). Nothing here activates a tool by itself — the
+    // role's allowlist still decides what it may use.
+    ...(config.additionalExtensionPaths !== undefined && config.additionalExtensionPaths.length > 0
+      ? { additionalExtensionPaths: [...config.additionalExtensionPaths] }
+      : {}),
   });
   await loader.reload();
 

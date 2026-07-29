@@ -174,6 +174,8 @@ export function startMeshTask(opts: {
   readonly teamDir?: string;
   /** Tool registrars (web, browser) for every role's session. */
   readonly extensionFactories?: unknown[];
+  /** Extension packages every role's session loads — the chat's own tool dirs. */
+  readonly additionalExtensionPaths?: readonly string[];
   readonly maxTokens?: number;
 }): TaskHandle & { readonly abort: () => void } {
   const stream = new MeshEventStream();
@@ -214,6 +216,9 @@ export function startMeshTask(opts: {
     signal: controller.signal,
     ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
     ...(opts.teamDir !== undefined ? { teamDir: opts.teamDir } : {}),
+    ...(opts.additionalExtensionPaths !== undefined
+      ? { additionalExtensionPaths: opts.additionalExtensionPaths }
+      : {}),
     ...(opts.extensionFactories !== undefined
       ? { extensionFactories: opts.extensionFactories as never }
       : {}),

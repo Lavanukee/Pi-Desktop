@@ -147,19 +147,42 @@ try {
    * flailing in a directory that did not exist, with `Effort · Low` sitting in the
    * corner of the screenshot. Set it through the real IPC, then READ IT BACK.
    */
+  /*
+   * THROUGH THE RENDERER'S STORE, AND CONFIRMED ON SCREEN.
+   *
+   * The previous version called the `settings:set` IPC and believed the value
+   * main handed back. Main is not who decides: the RENDERER stamps `effort` on
+   * the corp request, and `settings:set` does not push into its store. So the
+   * probe reported "effort: max", the request went out at whatever the renderer
+   * still held, and two runs I told jedd were the corporation were a single solo
+   * agent — with `Effort · Low` sitting in the corner of the screenshot the whole
+   * time. This is the SAME mistake the project chip had, in the same file, fixed
+   * the same way: drive the store a user drives, then read the screen.
+   */
   const effortNow = await page.evaluate(async (level) => {
-    const s = await window.piDesktop.invoke('settings:set', {
-      patch: { effort: level, effortMode: 'level' },
-    });
-    return s?.effort ?? null;
+    const store = window.__settings_store?.();
+    if (store === undefined) return 'no-store';
+    await store.getState().update({ effort: level, effortMode: 'level' });
+    return store.getState().settings.effort;
   }, EFFORT);
-  if (effortNow !== EFFORT) {
-    console.error(`corp-headed-run: effort is "${effortNow}", wanted "${EFFORT}" — refusing to`);
-    console.error('start, because below the top levels there is no corporation to observe.');
+  await page.waitForTimeout(1500);
+  const effortChip = (await page.textContent('[data-testid="composer-effort"]').catch(() => null))
+    ?? (await page.evaluate(() => {
+      const el = [...document.querySelectorAll('button, span')].find((n) =>
+        /Effort\s*·/.test(n.textContent ?? ''),
+      );
+      return el?.textContent ?? '';
+    }));
+  const wantLabel = { low: 'Low', medium: 'Balanced', high: 'High', max: 'Max' }[EFFORT] ?? EFFORT;
+  if (effortNow !== EFFORT || !new RegExp(wantLabel, 'i').test(effortChip ?? '')) {
+    console.error(`corp-headed-run: effort is "${effortNow}" and the chip reads`);
+    console.error(`"${(effortChip ?? '').trim()}" — wanted "${EFFORT}" / "${wantLabel}".`);
+    console.error('Refusing to start: below the top levels there is no corporation to observe,');
+    console.error('and a run reported as the corp that was a solo agent is worse than no run.');
     await app.close().catch(() => {});
     process.exit(3);
   }
-  log('effort:', effortNow);
+  log('effort:', effortNow, '· chip:', (effortChip ?? '').trim());
 
   /*
    * THE PROJECT — set it, then CONFIRM IT ON SCREEN.

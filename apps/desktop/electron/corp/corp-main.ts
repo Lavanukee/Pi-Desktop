@@ -15,6 +15,7 @@
  */
 
 import { openHierarchy } from './hierarchy-store';
+import { piToolExtensionPaths } from '../pi/pi-main';
 import fs from 'node:fs';
 import path from 'node:path';
 import { BrowserAgentClient, registerBrowserUseTools } from '@pi-desktop/browser-use';
@@ -256,6 +257,15 @@ async function handleStart(
        * open the product had names that resolved to nothing. These are the same
        * registrars the solo path uses, driving the same visible browser.
        */
+      /*
+       * THE SAME TOOLS THE CHAT HAS. Every role's session loads the app's own tool
+       * extension packages — the harness, the MCP surface, the connectors,
+       * generation when enabled — so a subagent is not a lesser kind of chat.
+       * The web/browser registrars stay as FACTORIES because they carry live
+       * in-process handles (the canvas browser bridge, the browser-backed search
+       * fallback) that a package load cannot be given.
+       */
+      additionalExtensionPaths: piToolExtensionPaths(),
       extensionFactories: [
         (pi: never) => registerWebTools(pi, browserSearch !== undefined ? { browserSearch } : {}),
         (pi: never) => registerBrowserUseTools(pi, { bridge: browserBridge }),

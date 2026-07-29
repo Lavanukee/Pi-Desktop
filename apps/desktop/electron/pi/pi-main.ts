@@ -23,7 +23,7 @@ import { advancedSamplingFilePath, generationExperimentEnabled } from '../settin
 import { isTrustedIpcEvent } from '../trusted-senders';
 import { type ChildAgents, createChildAgents } from './child-agents';
 import type { PiInvokeMap } from './contract';
-import { extensionPackageDirs } from './extension-dirs';
+import { extensionPackageDirs, toolExtensionPackageDirs } from './extension-dirs';
 import { createPiSessions, type PiSessionHandlers } from './pi-sessions';
 import { registerPrefillIpc } from './prefill-main';
 import { installPiQuitHold } from './quit-hold';
@@ -66,6 +66,27 @@ function resolveExtensionPaths(): string[] {
 }
 
 const EXTENSION_PATHS: string[] = resolveExtensionPaths();
+
+/**
+ * The TOOL extension paths (no providers) — the same surface the chat loads,
+ * exported so a corp role's session can load exactly it.
+ *
+ * Resolved lazily and cached: this module's top-level resolve already ran for the
+ * child's `-e` flags, and repeating the file reads per role would be waste.
+ */
+let toolExtensionPaths: string[] | undefined;
+export function piToolExtensionPaths(): string[] {
+  if (toolExtensionPaths !== undefined) return toolExtensionPaths;
+  const wanted = new Set(
+    toolExtensionPackageDirs(generationExperimentEnabled()).map((d) =>
+      resolveBundledPackageAsset(d, 'src/index.ts'),
+    ),
+  );
+  // Reuse the already-verified list, so a placeholder extension stays excluded.
+  toolExtensionPaths = EXTENSION_PATHS.filter((p) => wanted.has(p));
+  log.info('corp role tool extensions', { count: toolExtensionPaths.length });
+  return toolExtensionPaths;
+}
 
 /** SIGTERM → SIGKILL grace for every bridge; the quit hold caps at this plus
  * a margin, so the two must not drift apart. */

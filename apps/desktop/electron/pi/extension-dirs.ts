@@ -35,3 +35,30 @@ export const BASE_EXTENSION_PACKAGE_DIRS = [
 export function extensionPackageDirs(genEnabled: boolean): readonly string[] {
   return genEnabled ? [...BASE_EXTENSION_PACKAGE_DIRS, 'gen-tools'] : BASE_EXTENSION_PACKAGE_DIRS;
 }
+
+/**
+ * The provider extensions — they wire a MODEL, not tools.
+ *
+ * A pi child needs them because it resolves its own model. A corp role does not:
+ * it is handed an already-resolved model by the role pool, so loading a provider
+ * into its session buys nothing and risks a second registration of the same
+ * provider inside one process.
+ */
+const PROVIDER_PACKAGE_DIRS = ['provider-llamacpp', 'provider-afm', 'provider-mlx'];
+
+/**
+ * The TOOL extensions — everything a chat can reach that is not a provider:
+ * the harness, web tools, the browser, the macOS connectors, computer-use, the
+ * MCP surface, and (when enabled) generation.
+ *
+ * This exists so a SUBAGENT gets the same tools as the chat. jedd: "the original
+ * model ... has the ability for its instance to have all the tools and wires, why
+ * don't we treat each subagent as a new individual chat exactly the same". They
+ * were two tool surfaces — the chat loaded these dirs, while a corp role got a
+ * hand-picked pair of registrars injected by the corp seam — which is why a
+ * specialist's `mcp_call` resolved to nothing and every parity bug had to be
+ * fixed twice. One list now feeds both.
+ */
+export function toolExtensionPackageDirs(genEnabled: boolean): readonly string[] {
+  return extensionPackageDirs(genEnabled).filter((d) => !PROVIDER_PACKAGE_DIRS.includes(d));
+}

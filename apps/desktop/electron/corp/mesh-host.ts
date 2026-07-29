@@ -213,6 +213,9 @@ export interface MeshAgentHostConfig {
    * allowlist (web_search, browser_*) resolve to nothing, which is what the mesh
    * path did: it declared them and wired neither. */
   readonly extensionFactories?: ExtensionFactory[];
+  /** Extension PACKAGES every role's session loads — the chat's own tool dirs, so
+   * a subagent has the chat's tools rather than a hand-picked subset. */
+  readonly additionalExtensionPaths?: readonly string[];
   /** The roster (to look up each agent's system prompt / peers / built-in tools). */
   readonly roster: readonly MeshAgent[];
   /** Per-turn generation cap (default the model's own). */
@@ -401,6 +404,9 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
           // need one to write `gui_app.py`, which is what it did the moment it had
           // one. Engineers keep the ability to write; nobody else has it.
           mayWriteFiles: agent.role === 'engineer',
+          ...(config.additionalExtensionPaths !== undefined
+            ? { additionalExtensionPaths: config.additionalExtensionPaths }
+            : {}),
           ...(config.extensionFactories !== undefined
             ? { extensionFactories: config.extensionFactories }
             : {}),
@@ -490,6 +496,8 @@ export async function runCorpMeshTask(opts: {
   readonly teamDir?: string | null;
   /** Tool registrars for every role — see MeshAgentHostConfig.extensionFactories. */
   readonly extensionFactories?: ExtensionFactory[];
+  /** Extension packages every role loads — see MeshAgentHostConfig. */
+  readonly additionalExtensionPaths?: readonly string[];
   readonly maxLiveAgents?: number;
   /** How many times a failing product check is handed back to the team before the
   /** Observe every `submit_work`, accepted or refused. This was declared on the
@@ -535,6 +543,9 @@ export async function runCorpMeshTask(opts: {
     cwd: opts.cwd,
     roster,
     task: opts.task,
+    ...(opts.additionalExtensionPaths !== undefined
+      ? { additionalExtensionPaths: opts.additionalExtensionPaths }
+      : {}),
     ...(opts.extensionFactories !== undefined
       ? { extensionFactories: opts.extensionFactories }
       : {}),

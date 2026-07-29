@@ -238,7 +238,13 @@ export async function restartPi(
       ...(opts ?? {}),
     });
   } finally {
-    usePiStore.setState({ intentionalRestart: false });
+    // NOT synchronously. The bridge-exit event is delivered over IPC and can land
+    // a tick or two AFTER `pi:restart` resolves — clearing the flag here raced it,
+    // and the deliberate restart then surfaced as a crash notice. Hold the flag
+    // briefly so the paired exit can consume it; the timer is the backstop for the
+    // already-dead-bridge case (recovery after a real crash), where no fresh exit
+    // event ever arrives to consume it.
+    setTimeout(() => usePiStore.setState({ intentionalRestart: false }), 3000);
   }
 }
 

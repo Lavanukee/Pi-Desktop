@@ -662,12 +662,29 @@ export function createPiSink(
       }),
 
     bridgeExit: (info) =>
-      set((s) =>
-        s.intentionalRestart
-          ? // Deliberate dispose (restart): consume the flag and drop the crash
-            // toast, but still clear transient run state as a real exit would.
-            { intentionalRestart: false, runningToolCalls: [], uiRequests: [] }
-          : { bridgeExited: info, runningToolCalls: [], uiRequests: [] },
-      ),
+      set((s) => {
+        const cleared: Partial<PiSliceState> = { runningToolCalls: [], uiRequests: [] };
+        // Deliberate dispose (restart): consume the flag and drop the notice, but
+        // still clear transient run state as a real exit would.
+        if (s.intentionalRestart) return { intentionalRestart: false, ...cleared };
+        /*
+         * AN EXIT NOBODY WAS WAITING ON IS NOT NEWS.
+         *
+         * jedd, on the "The assistant restarted" toast: "it just shouldn't show up
+         * as a notification at all... it's just always happening a single time on
+         * app startup." He is right about what he saw. A dispose at startup — a
+         * model select, a respawn that re-reads models.json, a restart whose exit
+         * event lands after the IPC resolved and so misses the intentional flag —
+         * costs the user nothing: pi comes back before anything is asked of it,
+         * and the toast sits there forever (duration: Infinity) reporting a
+         * problem that has already fixed itself.
+         *
+         * What DOES cost something is an exit mid-turn: the reply in flight is
+         * gone and will not come back on its own. That is the only case worth
+         * interrupting anybody for, so it is the only case that raises the notice.
+         */
+        const interrupted = s.agent.isStreaming || s.promptInFlight;
+        return interrupted ? { bridgeExited: info, ...cleared } : cleared;
+      }),
   };
 }

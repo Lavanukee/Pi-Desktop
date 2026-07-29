@@ -69,12 +69,12 @@ describe('SituationRoomSurface', () => {
     // Header: real contract progress + a RANGE, not a countdown.
     expect(container.textContent).toContain('of 48 tasks');
     expect(container.textContent).toMatch(/~\d+–\d+ min left/);
-    // The subagent navigator lists the corporation (manager + areas + builders),
-    // active rows first, and NEVER the root "you" node.
+    // The navigator lists the WHOLE hierarchy — the root first, because it is the
+    // top of it and the one you get back to, then everyone else active-first.
     const rows = [...container.querySelectorAll('[data-testid="subagent-row"]')];
-    expect(rows.length).toBeGreaterThanOrEqual(8);
-    expect(rows.some((r) => r.getAttribute('data-node-id') === 'root')).toBe(false);
-    expect(rows[0]?.getAttribute('data-state')).toBe('working');
+    expect(rows.length).toBeGreaterThanOrEqual(9);
+    expect(rows[0]?.getAttribute('data-node-id')).toBe('root');
+    expect(rows[1]?.getAttribute('data-state')).toBe('working');
     // A working builder's row carries its LIVE current action.
     expect(rows.some((r) => r.textContent?.includes('Writing '))).toBe(true);
     expect(container.textContent).toContain('Core Engine');
@@ -100,11 +100,11 @@ describe('SituationRoomSurface', () => {
       <SituationRoomSurface state={state} onSelectNode={onSelectNode} />,
     );
     const rows = [...container.querySelectorAll('[data-testid="subagent-row"]')];
-    // The root lead ("Pi") is the node the user is already talking to — no row.
-    expect(rows.length).toBe(5);
-    expect(rows.some((r) => r.getAttribute('data-node-id') === 'ceo')).toBe(false);
-    // Active first (working → queued → done), chart order within a rank.
+    // The root lead is the one the user is already talking to — and it is LISTED,
+    // first, so there is a way back to it. Everyone below is active-first.
+    expect(rows.length).toBe(6);
     expect(rows.map((r) => r.getAttribute('data-node-id'))).toEqual([
+      'ceo',
       'mgr',
       'eng-1',
       'eng-3',
@@ -112,20 +112,20 @@ describe('SituationRoomSurface', () => {
       'eng-2',
     ]);
     // A working LEAD reads as coordination, not an echoed action.
-    expect(rows[0]?.textContent).toContain('Build plan');
-    expect(rows[0]?.textContent).toContain('waiting for other subagents to finish');
+    expect(rows[1]?.textContent).toContain('Build plan');
+    expect(rows[1]?.textContent).toContain('waiting for other subagents to finish');
     // A working builder shows its bold name + LIVE current action, with the
     // chat activity row's spinner in the icon slot.
-    expect(rows[1]?.querySelector('strong')?.textContent).toBe('Frontend builder 1');
-    expect(rows[1]?.textContent).toContain('Writing src/ui/emitter.ts');
-    expect(rows[1]?.querySelector('.pd-activity-row-icon .pd-loader')).not.toBeNull();
+    expect(rows[2]?.querySelector('strong')?.textContent).toBe('Frontend builder 1');
+    expect(rows[2]?.textContent).toContain('Writing src/ui/emitter.ts');
+    expect(rows[2]?.querySelector('.pd-activity-row-icon .pd-loader')).not.toBeNull();
     // The raw "thinking" action reads as a live "thinking…".
-    expect(rows[2]?.textContent).toContain('thinking…');
+    expect(rows[3]?.textContent).toContain('thinking…');
     // Queued and done rows keep honest muted words.
-    expect(rows[3]?.textContent).toContain('queued');
-    expect(rows[4]?.textContent).toContain('done');
+    expect(rows[4]?.textContent).toContain('queued');
+    expect(rows[5]?.textContent).toContain('done');
     // The WHOLE row is the button: clicking routes the worker's stream.
-    (rows[1] as HTMLButtonElement).click();
+    (rows[2] as HTMLButtonElement).click();
     expect(onSelectNode).toHaveBeenCalledTimes(1);
     expect(onSelectNode.mock.calls[0]?.[0]?.id).toBe('eng-1');
     await unmount();
@@ -176,8 +176,9 @@ describe('SituationRoomHost', () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(container.textContent).toContain('Forming a plan');
     const rows = [...container.querySelectorAll('[data-testid="subagent-row"]')];
-    expect(rows.length).toBe(1);
-    expect(rows[0]?.textContent).toContain('Build plan');
+    expect(rows.length).toBe(2); // the root, then the manager under it
+    expect(rows[0]?.textContent).toContain('Pi');
+    expect(rows[1]?.textContent).toContain('Build plan');
     await unmount();
   });
 

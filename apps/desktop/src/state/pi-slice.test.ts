@@ -394,7 +394,8 @@ describe('pi-slice — intentional restart suppresses the crash toast', () => {
     expect(s.intentionalRestart).toBe(false);
   });
 
-  it('still shows the crash toast for an unexpected exit (no restart in flight)', () => {
+  it('still shows the crash toast when an unexpected exit INTERRUPTS a turn', () => {
+    usePiStore.setState({ promptInFlight: true });
     route([{ type: '_bridge_exit', code: 1, signal: null } as PiBridgeEvent]);
 
     const s = usePiStore.getState();
@@ -402,6 +403,16 @@ describe('pi-slice — intentional restart suppresses the crash toast', () => {
     expect(
       s.notifications.some((n) => n.level === 'error' && n.message.startsWith('pi exited (')),
     ).toBe(true);
+  });
+
+  it('says NOTHING when pi exits with nobody waiting on it', () => {
+    // jedd: "assistant restarted just shouldn't show up as a notification at all
+    // ... it's just always happening a single time on app startup." An idle exit
+    // costs nothing — pi is back before anything is asked of it — so the
+    // permanent toast was reporting a problem that had already fixed itself.
+    usePiStore.setState({ promptInFlight: false });
+    route([{ type: '_bridge_exit', code: 1, signal: null } as PiBridgeEvent]);
+    expect(usePiStore.getState().bridgeExited).toBeNull();
   });
 });
 
@@ -438,6 +449,7 @@ describe('pi-slice — dialog lifecycle (pi auto-resolves expired dialogs silent
     expect(usePiStore.getState().uiRequests).toHaveLength(0);
 
     router.handleEvent(dialog('ui-2'));
+    usePiStore.setState({ promptInFlight: true }); // a turn was in flight: this one is news
     router.handleEvent({ type: '_bridge_exit', code: 1, signal: null } as PiBridgeEvent);
     expect(usePiStore.getState().uiRequests).toHaveLength(0);
     expect(usePiStore.getState().bridgeExited).toEqual({ code: 1, signal: null });

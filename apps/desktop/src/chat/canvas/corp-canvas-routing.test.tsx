@@ -33,6 +33,7 @@ import type { ReactNode } from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { corpChatView } from '../corp/corp-thread-view';
 import { useCorpStore } from '../../state/corp-store';
 import { selectCorpNodeAndFocus, useCorpCanvasRouting } from './corp-canvas-routing';
 
@@ -140,6 +141,45 @@ function situationState(ids: string[]): SituationState {
   s = reduceSituation(s, { type: 'org-chart', chart: chartOf(ids) });
   return s;
 }
+
+describe('the way back to the CEO', () => {
+  /*
+   * jedd: "the CEO == the original model right? there's no way back to the CEO,
+   * the top of the situation room shows the manager."
+   *
+   * It listed every node EXCEPT the root, on the reasoning that the root is the
+   * conversation you are already in. True — and it meant the hierarchy appeared to
+   * start at the manager, and the one agent you might most want to return to was
+   * the only one you could not click.
+   */
+  it('lists the root FIRST, and clicking it pins the CEO back into the chat', async () => {
+    const controller = createCanvasController();
+    useCorpStore.getState().setTask('t1');
+    const { container, unmount } = await render(
+      <SituationRoomSurface
+        state={situationState(['ceo', 'mgr', 'eng-1'])}
+        onSelectNode={(node) => selectCorpNodeAndFocus(controller, 't1', node)}
+      />,
+    );
+    const rows = [...container.querySelectorAll('[data-testid="subagent-row"]')];
+    expect(rows[0]?.getAttribute('data-node-id')).toBe('ceo');
+    await act(async () => {
+      (rows[0] as HTMLElement).click();
+    });
+    // Pinned → corpChatView renders the CEO's own stream in the chat pane, which
+    // is the original model's conversation.
+    expect(useCorpStore.getState().pinnedNode?.id).toBe('ceo');
+    expect(
+      corpChatView({
+        taskId: 't1',
+        situation: situationState(['ceo', 'mgr', 'eng-1']),
+        liveNode: null,
+        pinnedNode: useCorpStore.getState().pinnedNode,
+      }),
+    ).toMatchObject({ kind: 'stream', node: { id: 'ceo' } });
+    await unmount();
+  });
+});
 
 describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', () => {
   it('follows ONLY the shown node; one file tab (reused), one terminal (appended)', async () => {
@@ -328,7 +368,9 @@ describe('useCorpCanvasRouting — a corp run drives the canvas like a chat', ()
         onSelectNode={(node) => selectCorpNodeAndFocus(controller, 't1', node)}
       />,
     );
-    const row = room.querySelector('[data-testid="subagent-row"]');
+    // By node id, not by position: the root is listed first now (it is the way
+    // back to the CEO), so the first row is not a subagent.
+    const row = room.querySelector('[data-testid="subagent-row"][data-node-id="eng-1"]');
     expect(row).not.toBeNull();
     await act(async () => {
       (row as HTMLElement).click();

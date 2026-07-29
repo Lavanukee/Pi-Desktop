@@ -116,15 +116,29 @@ const STACK_WIDTH = 640;
 const TIGHT_WIDTH = 460;
 
 /**
- * The subagents the navigator lists: every chart node EXCEPT the single root
- * (CEO / solo) — the root is the "you" node, the agent the user is already
- * talking to in the chat pane, not one of its own subagents. Managers,
- * specialists, work areas and builders all list.
+ * The team the navigator lists, ROOT FIRST.
+ *
+ * The root used to be filtered out on the reasoning that it is the "you" node —
+ * the agent already answering in the chat pane, not one of its own subagents.
+ * True, and it made the list start at the manager, so the hierarchy read as
+ * though the manager were the top of it and there was no way back to the one you
+ * were actually talking to. jedd: "there's no way back to the CEO, the top of
+ * the situation room shows the manager."
+ *
+ * So the root is listed, first, where it belongs — and selecting it routes back
+ * to its stream, which is the chat. Everyone below it follows in order.
+ *
+ * The FIRST-ness is enforced in {@link orderSubagents}, not here: this list is
+ * re-sorted by state on the way to the rows, so a root put first here would sink
+ * the moment it stopped working.
  */
-function subagentNodes(nodes: readonly OrgNodeView[]): readonly OrgNodeView[] {
-  return nodes.filter(
-    (n) => !(n.parentId === undefined && (n.role === 'ceo' || n.role === 'solo')),
-  );
+function teamNodes(nodes: readonly OrgNodeView[]): readonly OrgNodeView[] {
+  return nodes;
+}
+
+/** The root of the hierarchy: the agent answering in the chat pane. */
+function isRootNode(n: OrgNodeView): boolean {
+  return n.parentId === undefined && (n.role === 'ceo' || n.role === 'solo');
 }
 
 /**
@@ -185,7 +199,9 @@ export function SituationRoomSurface({
   };
 
   // Honest live summaries for collapsed (and quiet) section headers.
-  const subagents = subagentNodes(state.chart.nodes);
+  const team = teamNodes(state.chart.nodes);
+  // The root answers in the chat, so it is listed but never COUNTED as a subagent.
+  const subagents = team.filter((n) => !isRootNode(n));
   const busy = subagents.filter((n) => n.state === 'working').length;
   // A shared 1s clock drives every row's live timer. It ticks for the WHOLE time
   // the run is live (`live`) — not merely when THIS snapshot happens to show a
@@ -302,14 +318,14 @@ export function SituationRoomSurface({
         <div className="pd-sitroom-main pd-scroll">
           <RoomSection
             id="agents"
-            title="Subagents"
+            title="The team"
             summary={agentsSummary}
             live={busy > 0}
             open={secOpen('agents')}
             onToggle={toggleSec}
           >
             <SubagentList
-              nodes={subagents}
+              nodes={team}
               onSelectNode={onSelectNode}
               selectedNodeId={selectedNodeId}
               nodeTiming={nodeTiming}
@@ -423,11 +439,19 @@ const STATE_RANK: Record<OrgNodeView['state'], number> = {
   retired: 4,
 };
 
-/** Stable ordering: rank by state, keep the chart's order within a rank. */
+/** Stable ordering: the root always first, then rank by state, keeping the
+ * chart's order within a rank.
+ *
+ * The root is pinned rather than ranked because it is not one of the workers
+ * competing for attention — it is the top of the hierarchy and the way back to
+ * the conversation the user is actually in, so it has to sit in the same place
+ * whatever it happens to be doing. Sorted by state it sinks under the builders
+ * the moment it hands off, which is exactly when somebody wants it. */
 function orderSubagents(nodes: readonly OrgNodeView[]): readonly OrgNodeView[] {
+  const rank = (n: OrgNodeView): number => (isRootNode(n) ? -1 : STATE_RANK[n.state]);
   return nodes
     .map((node, index) => ({ node, index }))
-    .sort((a, b) => STATE_RANK[a.node.state] - STATE_RANK[b.node.state] || a.index - b.index)
+    .sort((a, b) => rank(a.node) - rank(b.node) || a.index - b.index)
     .map((entry) => entry.node);
 }
 

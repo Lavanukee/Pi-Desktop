@@ -47,7 +47,7 @@
   animation: pd-effort-name-up var(--pd-duration-base) var(--pd-easing-standard);
 }
 
-.pd-effort-name[data-dir='down'] {
+.pd-effort-name[data-dir="down"] {
   animation-name: pd-effort-name-down;
 }
 

@@ -435,36 +435,61 @@ const FILE_TOOLS = ['read', 'write', 'edit', 'ls', 'grep', 'find'];
  *                    it must not quietly become a second engineer.
  */
 /*
- * The CEO gets RESEARCH ONLY — no file tools at all.
- *
- * Taking away its shell (L7) stopped it building the product itself, but it did
- * not make it delegate: run 5's CEO spent 17 turns saying "Let me create the
- * project structure" and then `ls`ing an empty directory and reading a file that
- * did not exist, over and over. Its plan was "build it"; with no way to build it,
- * it retried rather than reconsidered.
- *
- * A small model works with what is in front of it. Leave it file tools and an
- * empty tree and it will poke at the empty tree. Leave it only research and a way
- * to TALK, and talking becomes the obvious move. It learns what the product does
- * by commissioning the tester, which is the honest way to know anyway.
+ * THE CONNECTOR TRIO. The media surfaces this app bundles — motion-graphics
+ * rendering (HTML/CSS/JS → MP4, deterministic and on-device), the typed ffmpeg
+ * façade, the macOS integrations — are MCP servers, so they are not reached by
+ * name: a role lists what is available, reads the schema it wants, and calls it.
+ * Granting the trio is what makes a whole family of tools reachable at once
+ * without paying for every schema up front.
  */
+const CONNECTOR_TOOLS = ['mcp_list', 'mcp_schema', 'mcp_call'];
 /*
- * THE CEO GETS NO WORK TOOLS. MEASURED, run 12:
+ * ON-DEVICE GENERATION. `generate_image` and `generate_video` are the gen-tools
+ * extension's real names; `generate_video`'s motion-graphics path is HyperFrames
+ * (deterministic, CPU, no weights), which is what the motion specialist wants.
  *
- *   ceo   31 turns   tool_search × 23,  check_product × 5,  talk_to × 2
- *
- * Thirty-one turns to send two messages. On one model slot a turn is the scarce
- * resource, and the CEO spent a third of the run searching for tools to use on a
- * job that was never its job — while the engineer that was one missing `import
- * yaml` from a green gate ran out of time.
- *
- * This is L7/L11 for the third time: a role with a capability and no work for it
- * will find work for it. The CEO's entire job is to turn the user's request into
- * a brief, hand it to the manager, and answer questions afterwards. `talk_to` and
- * `commission_specialist` are added by the host; nothing else belongs here — not
- * research, not the product check, not tool_search.
+ * NOT YET INJECTED FOR MESH ROLES. The desktop host hands the corp only the web
+ * and browser registrars today; gen-tools loads as a pi EXTENSION DIR behind the
+ * experimental generation flag, talking over the gen socket bridge, so these
+ * names currently resolve to nothing for a specialist. Naming them here is the
+ * cheap half and is deliberate: the preset says what the role is FOR, and the
+ * host wiring is a separate, real piece of work. A specialist that finds the tool
+ * absent is told to say so rather than invent the artifact.
  */
-const DEFAULT_CEO_TOOLS: readonly string[] = [];
+const IMAGE_TOOLS = ['generate_image'];
+const VIDEO_TOOLS = ['generate_video'];
+
+/*
+ * THE CEO IS THE CHAT YOU WERE ALREADY TALKING TO. It keeps its tools.
+ *
+ * This was `[]` — no tools at all — and the reasoning behind that was real and
+ * measured. Run 5's CEO, given file tools and an empty tree, spent 17 turns
+ * saying "let me create the project structure" and `ls`ing nothing. Run 12's,
+ * given tool_search, spent 31 turns and 23 searches to send two messages. A role
+ * with a capability and no work for it will find work for it, so the capability
+ * was removed.
+ *
+ * That fixed the symptom by breaking the thing underneath. jedd: "the original
+ * model, initial one (which IS the CEO, it just turns into what we're calling
+ * the CEO as soon as it calls the talk_to tool) — it has the ability for its
+ * instance to have all the tools and wires." There is no separate CEO. There is
+ * the chat, and at high effort it also has a way to delegate. Stripping its tools
+ * the moment it delegates means answering "hi" and answering "hi, and also build
+ * me this" put you in front of two different assistants — and the first one loses
+ * the ability to search the web because the second one once over-searched.
+ *
+ * So the CEO carries the ordinary surface. The over-searching is a PROMPT problem
+ * — its brief says plainly that the building is not its job and that talking is
+ * the move — and a prompt is the right place to fix a behaviour, rather than
+ * amputating a capability the same agent had a moment earlier.
+ */
+const DEFAULT_CEO_TOOLS: readonly string[] = [
+  ...FILE_TOOLS,
+  'bash',
+  ...RESEARCH_TOOLS,
+  ...BROWSER_TOOLS,
+  ...CONNECTOR_TOOLS,
+];
 /*
  * THE MANAGER GETS A SHELL — to RUN, never to write. MEASURED, run 15: with no
  * way to execute one command it used an engineer as a remote terminal, nine times:
@@ -498,31 +523,6 @@ const DEFAULT_SPECIALIST_TOOLS = [
   ...RESEARCH_TOOLS,
   ...BROWSER_TOOLS,
 ];
-
-/*
- * THE CONNECTOR TRIO. The media surfaces this app bundles — motion-graphics
- * rendering (HTML/CSS/JS → MP4, deterministic and on-device), the typed ffmpeg
- * façade, the macOS integrations — are MCP servers, so they are not reached by
- * name: a role lists what is available, reads the schema it wants, and calls it.
- * Granting the trio is what makes a whole family of tools reachable at once
- * without paying for every schema up front.
- */
-const CONNECTOR_TOOLS = ['mcp_list', 'mcp_schema', 'mcp_call'];
-/*
- * ON-DEVICE GENERATION. `generate_image` and `generate_video` are the gen-tools
- * extension's real names; `generate_video`'s motion-graphics path is HyperFrames
- * (deterministic, CPU, no weights), which is what the motion specialist wants.
- *
- * NOT YET INJECTED FOR MESH ROLES. The desktop host hands the corp only the web
- * and browser registrars today; gen-tools loads as a pi EXTENSION DIR behind the
- * experimental generation flag, talking over the gen socket bridge, so these
- * names currently resolve to nothing for a specialist. Naming them here is the
- * cheap half and is deliberate: the preset says what the role is FOR, and the
- * host wiring is a separate, real piece of work. A specialist that finds the tool
- * absent is told to say so rather than invent the artifact.
- */
-const IMAGE_TOOLS = ['generate_image'];
-const VIDEO_TOOLS = ['generate_video'];
 
 /** The specialists that PRODUCE an artifact rather than answer a question — they
  * get `write`, and {@link producerSpine} instead of {@link specialistSpine}. */

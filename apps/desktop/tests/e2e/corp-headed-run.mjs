@@ -115,10 +115,18 @@ const app = await electron.launch({
     ...process.env,
     PI_E2E: '1',
     PI_DESKTOP_CORP: '1',
-    // The corp is now something the MODEL asks for, so a probe that wants to
-    // exercise one cannot wait and hope. FORCE is testing-only and never set in a
-    // normal launch. Unset it to watch whether the model promotes on its own.
-    ...(process.env.NO_FORCE === '1' ? {} : { PI_DESKTOP_CORP_FORCE: '1' }),
+    /*
+     * FORCE IS OPT-IN NOW. It used to default ON, and the app this probe leaves
+     * open is one jedd then types into — so every message he sent, "hi" included,
+     * was forced into a corporation and answered with "Reading the request and
+     * deciding how to approach it." He reported it as a product bug. It was this
+     * flag: a testing-only switch that made the app I handed him behave unlike
+     * the app he ships.
+     *
+     * Set FORCE=1 when a probe genuinely needs a corp on the first message.
+     * Otherwise the model decides, exactly as it does for a real user.
+     */
+    ...(process.env.FORCE === '1' ? { PI_DESKTOP_CORP_FORCE: '1' } : {}),
   },
 });
 

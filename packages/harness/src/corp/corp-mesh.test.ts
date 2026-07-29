@@ -189,3 +189,22 @@ describe('the producing specialists (jedd’s presets)', () => {
     expect(prompt('motion')).toContain('CHECK THE RENDER');
   });
 });
+
+describe('the CEO is the chat you were already talking to', () => {
+  // jedd: the initial model IS the CEO — it just becomes one the moment it calls
+  // talk_to. Stripping its tools at that moment means "hi" and "hi, and build me
+  // this" put you in front of two different assistants.
+  const ceo = () => buildCorpRoster({ task: 't' }).find((a) => a.id === 'ceo');
+
+  it('keeps the ordinary tool surface — it does not lose the web when it delegates', () => {
+    const tools = ceo()?.tools ?? [];
+    for (const t of ['read', 'write', 'edit', 'ls', 'bash', 'web_search', 'browser_navigate']) {
+      expect(tools).toContain(t);
+    }
+  });
+
+  it('still has the manager and the specialists as peers', () => {
+    expect(ceo()?.peers).toContain('manager');
+    expect(ceo()?.peers).toContain(specialistId('auditor'));
+  });
+});

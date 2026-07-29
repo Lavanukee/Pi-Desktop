@@ -47,9 +47,36 @@ const arg = (name, fallback) => {
 const TASK = process.env.TASK ?? arg('task', '');
 /** Words that say nothing about what is being built. */
 const STOPWORDS = new Set([
-  'build', 'make', 'create', 'write', 'real', 'the', 'and', 'for', 'with', 'that', 'this',
-  'into', 'from', 'like', 'any', 'all', 'can', 'has', 'have', 'them', 'they', 'you', 'your',
-  'able', 'must', 'need', 'want', 'please', 'app', 'application',
+  'build',
+  'make',
+  'create',
+  'write',
+  'real',
+  'the',
+  'and',
+  'for',
+  'with',
+  'that',
+  'this',
+  'into',
+  'from',
+  'like',
+  'any',
+  'all',
+  'can',
+  'has',
+  'have',
+  'them',
+  'they',
+  'you',
+  'your',
+  'able',
+  'must',
+  'need',
+  'want',
+  'please',
+  'app',
+  'application',
 ]);
 const EFFORT = process.env.EFFORT ?? arg('effort', 'max');
 const MINUTES = Number(process.env.MINUTES ?? arg('minutes', '45'));
@@ -166,8 +193,9 @@ try {
     return store.getState().settings.effort;
   }, EFFORT);
   await page.waitForTimeout(1500);
-  const effortChip = (await page.textContent('[data-testid="composer-effort"]').catch(() => null))
-    ?? (await page.evaluate(() => {
+  const effortChip =
+    (await page.textContent('[data-testid="composer-effort"]').catch(() => null)) ??
+    (await page.evaluate(() => {
       const el = [...document.querySelectorAll('button, span')].find((n) =>
         /Effort\s*·/.test(n.textContent ?? ''),
       );
@@ -245,7 +273,9 @@ try {
             : (last?.text ?? '').slice(-160),
       };
     });
-    log(`t+${n} · ${state.messages} msgs · ${state.streaming ? 'working' : 'idle'} · ${state.tail}`);
+    log(
+      `t+${n} · ${state.messages} msgs · ${state.streaming ? 'working' : 'idle'} · ${state.tail}`,
+    );
     writeFileSync(path.join(OUT, 'last-state.json'), JSON.stringify(state, null, 2));
   }
 
@@ -254,14 +284,30 @@ try {
    * subagent gives you a chat like any other, so the run has to be observed that
    * way and not only as a room full of rows.
    */
-  await page.evaluate(() => {
-    const corp = window.__corpStore;
-    const nodes = corp?.getState().situation?.chart.nodes ?? [];
-    const worker = nodes.find((n) => n.parentId !== undefined);
-    if (worker !== undefined) corp.getState().selectNode(worker);
-  }).catch(() => {});
+  await page
+    .evaluate(() => {
+      const corp = window.__corpStore;
+      const nodes = corp?.getState().situation?.chart.nodes ?? [];
+      const worker = nodes.find((n) => n.parentId !== undefined);
+      if (worker !== undefined) corp.getState().selectNode(worker);
+    })
+    .catch(() => {});
   await page.waitForTimeout(2000);
   await page.screenshot({ path: path.join(OUT, 'subagent-chat.png') });
+
+  /* The PLAN, read straight from the store — so "the panel is empty" can be told
+     apart from "nothing was handed out", which are very different bugs. */
+  const plan = await page
+    .evaluate(() => {
+      const st = window.__corpStore?.getState?.().situation;
+      return {
+        rows: (st?.checklist ?? []).map((c) => `${c.state} · ${c.group ?? ''} · ${c.label}`),
+        nodes: st?.chart.nodes.length ?? 0,
+      };
+    })
+    .catch(() => ({ rows: [], nodes: 0 }));
+  log(`plan rows: ${plan.rows.length} of ${plan.nodes} nodes`);
+  for (const r of plan.rows) log('  ·', r);
 
   await page.screenshot({ path: path.join(OUT, 'final.png') });
   log('done watching · screenshots:', OUT);

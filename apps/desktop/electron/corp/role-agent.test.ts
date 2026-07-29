@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BASH_OUTPUT_CAP,
-  SAMPLING_MODES,
-  SAVE_GRACE,
-  TOOL_SEARCH_NAME,
   applySamplingMode,
+  BASH_OUTPUT_CAP,
   bashDenylistGate,
+  bashWriteGate,
   checkInReason,
   collectFilesWritten,
   countAssistantTurns,
@@ -13,14 +11,17 @@ import {
   deriveTerminatedReason,
   fileWriteActivity,
   maxTurnOutputTokens,
+  type RoleAgentToolCall,
   roleActiveTools,
+  SAMPLING_MODES,
+  SAVE_GRACE,
+  type SamplingMode,
+  type StripMessage,
   settleActivitiesOnEnd,
   stepCapReason,
   stripPriorThinking,
+  TOOL_SEARCH_NAME,
   toolResultText,
-  type RoleAgentToolCall,
-  type SamplingMode,
-  type StripMessage,
 } from './role-agent';
 
 describe('roleActiveTools — full-harness parity starting active set', () => {
@@ -577,5 +578,45 @@ describe('turn / token roll-ups', () => {
 
   it('is 0 with no assistant usage', () => {
     expect(maxTurnOutputTokens([{ role: 'user' }, { role: 'assistant' }])).toBe(0);
+  });
+});
+
+describe('role separation is enforced by CAPABILITY, not by the prompt', () => {
+  /*
+   * MEASURED, and the reason this exists: after every role was given the app's
+   * whole tool surface, a run had the lead call `talk_to` once and then `write`
+   * twice — building the product itself — while the manager spent its turn in
+   * `tool_search` and handed out nothing. Four engineers were never messaged;
+   * their session directories were never created. The lead's brief told it in
+   * capitals not to do this. Capability beat the prompt.
+   */
+  it('blocks a non-builder writing into the product with the file tools', () => {
+    for (const tool of ['write', 'edit']) {
+      const block = bashWriteGate(tool, { path: 'src/engine.py' }, false);
+      expect(block?.block).toBe(true);
+      expect(block?.reason).toContain('the product');
+      expect(block?.reason).toContain('engineer');
+    }
+  });
+
+  it('still lets it write freely in its own corner', () => {
+    for (const p of ['.scratch/in.txt', './.scratch/in.txt', '/Users/x/proj/.scratch/in.txt']) {
+      expect(bashWriteGate('write', { path: p }, false)).toBeUndefined();
+    }
+  });
+
+  it('never blocks a role that IS a builder', () => {
+    expect(bashWriteGate('write', { path: 'src/engine.py' }, true)).toBeUndefined();
+  });
+
+  it('leaves reading alone — the tools are for verifying what came back', () => {
+    for (const tool of ['read', 'ls', 'grep', 'find']) {
+      expect(bashWriteGate(tool, { path: 'src/engine.py' }, false)).toBeUndefined();
+    }
+  });
+
+  it('still catches the shell route it always caught', () => {
+    const block = bashWriteGate('bash', { command: 'cat > src/x.py << EOF\nx\nEOF' }, false);
+    expect(block?.block).toBe(true);
   });
 });

@@ -370,7 +370,23 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
            * needs exactly two verbs — brief the manager, answer questions — and a
            * search tool is only an invitation to find a third.
            */
-          enableToolSearch: agent.role !== 'ceo',
+          /*
+           * TOOL SEARCH IS FOR ROLES THAT DO WORK — and neither lead does.
+           *
+           * This excluded only the CEO, on run 12's measurement: 31 turns, 23 of
+           * them `tool_search`, to send two messages. The manager has the same
+           * two-verb job one level down — split the work, check what comes back —
+           * and once every role gained the app's whole tool surface there was far
+           * more corpus to trawl. Measured immediately after: a manager spent 13
+           * turns in `tool_search`, tried twice to write the product itself, and
+           * never messaged a single engineer. Its session was the only one that
+           * existed besides the lead's.
+           *
+           * An agent with a capability and no work for it will find work for it.
+           * The people who need to reach for an unfamiliar tool are the ones
+           * actually building and measuring; they keep it.
+           */
+          enableToolSearch: agent.role !== 'ceo' && agent.role !== 'manager',
           customTools: [
             ...communicationTools(agent, talkThrough(agentId)),
             // ENGINEERS ONLY. This is how a piece comes back: what was built, how
@@ -405,7 +421,23 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
           // manager needs a shell to see a failure with its own eyes; it does not
           // need one to write `gui_app.py`, which is what it did the moment it had
           // one. Engineers keep the ability to write; nobody else has it.
-          mayWriteFiles: agent.role === 'engineer',
+          /*
+           * THE LEAD CAN BUILD. It is the chat the user was already talking to,
+           * and jedd is explicit: "the CEO should have all the tools ... it
+           * should be able to write and work and do small things itself as well
+           * as drive and test anything or make small changes."
+           *
+           * I had gated it, after a run where it wrote the product instead of
+           * delegating. That fixed the wrong thing: a lead that CANNOT write is a
+           * lead that has to convene a corporation to change one line, which is
+           * absurd for the single-html-file case. The judgement of when a job
+           * warrants a team belongs to the lead, and lives in its brief.
+           *
+           * The MANAGER is a different animal — it exists only inside a
+           * corporation and its entire job is to hand work out, so writing the
+           * product itself is never the right move for it. It stays gated.
+           */
+          mayWriteFiles: agent.role === 'engineer' || agent.role === 'ceo',
           ...(config.additionalExtensionPaths !== undefined
             ? { additionalExtensionPaths: config.additionalExtensionPaths }
             : {}),

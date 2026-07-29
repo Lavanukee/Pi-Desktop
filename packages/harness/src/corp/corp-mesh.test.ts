@@ -212,31 +212,26 @@ describe('the CEO is the chat you were already talking to', () => {
 });
 
 describe('the CEO’s brief matches the tools it actually has', () => {
-  // Giving the CEO the chat's tool surface (jedd) without fixing its brief made
-  // the brief LIE — it still said "you have no editor, no shell and no file
-  // tools". A model told it cannot build, that finds it can, builds. Measured:
-  // the run after that change had the lead write five files itself and hand out
-  // nothing, so the plan was empty because there was no plan.
+  // The lead IS the chat the user was already talking to. jedd: "the CEO should
+  // have all the tools ... it should be able to write and work and do small
+  // things itself ... it needs to call the manager of its own volition and make
+  // it do the task when it's a project that needs it, not a single html file."
+  const p = (): string => ceoMeshPrompt('build a thing');
+
   it('never claims to be toolless', () => {
-    const p = ceoMeshPrompt('build a thing');
-    expect(p).not.toContain('you have no editor');
-    expect(p).not.toContain('no file tools');
+    expect(p()).not.toContain('you have no editor');
+    expect(p()).not.toContain('no file tools');
+    expect(p()).not.toContain('You cannot run anything yourself');
   });
 
-  it('says plainly that having the tools is not permission to use them to build', () => {
-    const p = ceoMeshPrompt('build a thing');
-    expect(p).toContain('YOU HAVE THE TOOLS TO BUILD THIS YOURSELF. DO NOT.');
-    expect(p).toContain('verify');
+  it('does not MANDATE delegating — it is a judgement call', () => {
+    expect(p()).not.toContain('YOUR FIRST ACTION IS TO');
+    expect(p()).toContain('YOU DECIDE WHETHER THIS NEEDS A TEAM');
   });
-});
 
-describe('a contract is delivered, not filed', () => {
-  it('tells the manager the contract IS the message', () => {
-    // Measured: a manager wrote four .txt contracts into the project, announced
-    // it had assigned them, and then built everything itself while four idle
-    // engineers waited to be asked. Nothing was ever handed out.
-    const p = managerMeshPrompt();
-    expect(p).toContain('A CONTRACT IS A MESSAGE YOU SEND, NEVER A FILE YOU WRITE');
-    expect(p).toContain(TALK_TO_TOOL);
+  it('names the judgement in both directions, with the small case first', () => {
+    expect(p()).toContain('single file');
+    expect(p()).toContain('one HTML file');
+    expect(p()).toContain('BRING IN THE MANAGER WHEN THE JOB IS BIGGER');
   });
 });

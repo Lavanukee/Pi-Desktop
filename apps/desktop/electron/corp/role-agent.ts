@@ -30,7 +30,6 @@
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { shellWrites } from './shell-writes';
 // TYPE-ONLY import of the pi SDK — erased at build, so it emits NO runtime code.
 // `AuthStorage`/`ModelRegistry` double as VALUE constructors; they are pulled from
 // the dynamic loader below at runtime, and named here only for the type positions
@@ -69,6 +68,7 @@ import { checkScaryBash } from '@pi-desktop/harness/permissions';
 // of the harness/pi barrel. A role starts with its curated tools ACTIVE, then can
 // search the full registered corpus and activate what it needs mid-run.
 import { registerToolSearch } from '@pi-desktop/harness/tool-search';
+import { shellWrites } from './shell-writes';
 
 // ---------------------------------------------------------------------------
 // LAZY pi-SDK loader — the boot-crash fix.
@@ -300,11 +300,7 @@ export function checkInReason(spent: string, exempt: readonly string[], saveLeft
   );
 }
 
-export function stepCapReason(
-  maxSteps: number,
-  exempt: readonly string[],
-  saveLeft = 0,
-): string {
+export function stepCapReason(maxSteps: number, exempt: readonly string[], saveLeft = 0): string {
   const base = `step budget (${maxSteps} tool calls) reached — this call did not run`;
   const canSave =
     saveLeft > 0
@@ -444,12 +440,53 @@ export function bashDenylistGate(toolName: string, input: unknown): StepCapBlock
  * product tree stays the engineers'. */
 export const SCRATCH_DIR = '.scratch';
 
+/**
+ * The role's own corner: `.scratch/`, in any of the shapes an agent naturally
+ * writes it — `.scratch/x`, `./.scratch/x`, or the absolute path, which is what
+ * the workspace note hands out and therefore the one it will use.
+ */
+function inScratchPath(p: string): boolean {
+  const norm = p.replace(/^\.\//, '');
+  if (norm === SCRATCH_DIR || norm.startsWith(`${SCRATCH_DIR}/`)) return true;
+  return norm.includes(`/${SCRATCH_DIR}/`) || norm.endsWith(`/${SCRATCH_DIR}`);
+}
+
 export function bashWriteGate(
   toolName: string,
   input: unknown,
   mayWrite: boolean,
 ): StepCapBlock | undefined {
-  if (mayWrite || toolName !== 'bash') return undefined;
+  if (mayWrite) return undefined;
+  /*
+   * THE FILE TOOLS COUNT TOO. This only ever inspected `bash`, which was enough
+   * while the non-building roles had no file tools at all. They do now — every
+   * role loads the app's whole tool surface, and `tool_search` can activate
+   * anything in it — so the gate has to cover the direct route as well.
+   *
+   * MEASURED, the run that found this: the lead called `talk_to` once, then
+   * `write` twice, and built the product itself; the manager spent its turn in
+   * `tool_search` and never handed anything out. Four engineers sat unmessaged —
+   * their session directories were never even created. The prompt told the lead
+   * in capitals not to do this. Capability beat the prompt, which is the lesson
+   * this codebase has now learned three times: role separation has to be enforced
+   * by what a role CAN do, never by what it is told.
+   */
+  if (toolName === 'write' || toolName === 'edit') {
+    const target = toolCallPath(input as RoleAgentToolCall['arguments']);
+    if (target === undefined || inScratchPath(target)) return undefined;
+    return {
+      block: true,
+      reason:
+        `you tried to ${toolName} ${target}, which is the product — it did not run. ` +
+        `Building it yourself is the one thing that wastes the team: you are one agent ` +
+        `with one context, and while you edit, the people who could have built this in ` +
+        `parallel are idle waiting to be asked. Send the work to an engineer instead — ` +
+        `say what to build, which files they own, and what it must do. Your own file ` +
+        `tools are for READING what comes back, and \`${SCRATCH_DIR}/\` is yours to ` +
+        `write in freely.`,
+    };
+  }
+  if (toolName !== 'bash') return undefined;
   const command =
     input !== null &&
     typeof input === 'object' &&
@@ -463,12 +500,7 @@ export function bashWriteGate(
    * one it will use. Matching only the bare prefix refused the manager access to
    * the corner it had just been told was its own.
    */
-  const inScratch = (p: string): boolean => {
-    const norm = p.replace(/^\.\//, '');
-    if (norm === SCRATCH_DIR || norm.startsWith(`${SCRATCH_DIR}/`)) return true;
-    return norm.includes(`/${SCRATCH_DIR}/`) || norm.endsWith(`/${SCRATCH_DIR}`);
-  };
-  const outside = shellWrites(command).filter((w) => !inScratch(w.path));
+  const outside = shellWrites(command).filter((w) => !inScratchPath(w.path));
   if (outside.length === 0) return undefined;
   const names = outside.map((w) => w.path).join(', ');
   return {

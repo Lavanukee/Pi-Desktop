@@ -418,17 +418,32 @@ export class NativeSurfaces {
     });
   }
 
-  /** Render a mirror terminal's current text into its xterm (reset + rewrite,
-   * CRLF-normalised). No-ops when the tab isn't a mirror or the text is
-   * unchanged (so a controller tick doesn't flicker the buffer). */
+  /**
+   * Render a mirror terminal's current text into its xterm, CRLF-normalised.
+   *
+   * APPENDS when the new text merely GREW, which is the normal case: output
+   * arriving, another command running. It used to `reset()` and rewrite the
+   * whole buffer every time, and that is what made the live terminal feel like a
+   * bad imitation of one — the screen rebuilt itself on every tick, scrollback
+   * was thrown away, and anything the user had scrolled back to snapped away
+   * under them. Writing only the new characters is what a terminal actually
+   * does, so it reads as typing and the scroll position survives.
+   *
+   * A full reset is kept for the case that is genuinely not an append — the
+   * mirror being repointed at a different agent, or text rewritten rather than
+   * extended — where the old buffer is not a prefix of the new one.
+   */
   #writeMirror(tabId: string, force = false): void {
     const entry = this.#terminals.get(tabId);
     if (entry === undefined || !entry.mirror) return;
     const text = (this.#tab(tabId)?.data?.mirrorText as string | undefined) ?? '';
     if (!force && text === entry.lastMirrorText) return;
+    const previous = entry.lastMirrorText ?? '';
+    const grew = !force && previous !== '' && text.startsWith(previous);
     entry.lastMirrorText = text;
-    entry.term.reset();
-    entry.term.write(text.replace(/\r?\n/g, '\r\n'));
+    const chunk = grew ? text.slice(previous.length) : text;
+    if (!grew) entry.term.reset();
+    if (chunk !== '') entry.term.write(chunk.replace(/\r?\n/g, '\r\n'));
   }
 
   /** Push new mirror text into any mounted mirror terminals (called on each

@@ -46,14 +46,20 @@ export function isInteractiveCommand(command: string): boolean {
  * The xterm text for one command in a mirror terminal: the prompt line, then its
  * output, exactly as it looked in the shell.
  *
- * A command with no output yet reads "(running…)" — it is genuinely still going.
- * A FINISHED command that printed nothing reads "(no output)", which is a
- * different fact and used to be reported as the first one by the corp's copy of
- * this function: every quiet `mkdir` sat there claiming to be running forever.
+ * A RUNNING command is its prompt line and nothing else — which is what a real
+ * terminal shows while a command is working, and, more usefully, means the text
+ * only ever GROWS as output arrives. That is what lets the mirror append rather
+ * than reset and rewrite itself (see native-surfaces' `#writeMirror`), so it
+ * reads as typing instead of a screen rebuilding on every tick.
+ *
+ * A FINISHED command that printed nothing says so — a different fact from "still
+ * going", and one the corp's own copy of this function used to get wrong: every
+ * quiet `mkdir` sat there claiming to be running forever.
  */
 export function mirrorCommandText(command: string, output: string, running: boolean): string {
-  const body = output.length > 0 ? output : running ? '(running…)' : '(no output)';
-  return `$ ${command}\n\n${body}\n`;
+  const head = `$ ${command}\n\n`;
+  if (output.length > 0) return `${head}${output}\n`;
+  return running ? head : `${head}(no output)\n`;
 }
 
 /** First few words of a command, clipped — a terminal tab's short title. */

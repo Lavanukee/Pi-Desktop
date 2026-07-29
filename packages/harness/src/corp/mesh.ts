@@ -165,14 +165,28 @@ export class AgentMesh {
   private readonly runTurn: RunAgentTurn;
   private readonly budget: MeshBudget;
 
+  /** Called as each hop is recorded, so a host can show work being handed out
+   * WHILE it happens. `hops` is only readable once the whole run resolves, which
+   * is far too late for anything watching a live run. */
+  private readonly onHop: ((hop: MeshHop) => void) | undefined;
+
   constructor(
     runTurn: RunAgentTurn,
     agents: readonly MeshAgent[],
     budget: MeshBudget = DEFAULT_MESH_BUDGET,
+    onHop?: (hop: MeshHop) => void,
   ) {
     this.runTurn = runTurn;
     this.budget = budget;
+    this.onHop = onHop;
     for (const a of agents) this.agents.set(a.id, a);
+  }
+
+  /** Record a hop and tell anyone watching. Every `hops.push` goes through here
+   * so a new hop kind cannot silently skip the notification. */
+  private record(hop: MeshHop): void {
+    this.hops.push(hop);
+    this.onHop?.(hop);
   }
 
   /** True once no more turns may run (the total-turn budget is spent). */
@@ -236,7 +250,7 @@ export class AgentMesh {
       const waiting = this.pending.get(to) ?? [];
       waiting.push(`[message from ${from}, sent while you were working]\n${message}`);
       this.pending.set(to, waiting);
-      this.hops.push({ from, to, message, reply: '(queued)', depth, queued: true });
+      this.record({ from, to, message, reply: '(queued)', depth, queued: true });
       return (
         `(Delivered. ${to} is mid-task, so it will read this the moment it next picks ` +
         `up work — you do not need to wait or resend.)`
@@ -245,7 +259,7 @@ export class AgentMesh {
     const refusal = this.refuse(from, to, depth);
     if (refusal !== undefined) {
       const reply = refusalNote(refusal, to);
-      this.hops.push({ from, to, message, reply, depth, refused: refusal });
+      this.record({ from, to, message, reply, depth, refused: refusal });
       return reply;
     }
 
@@ -269,7 +283,7 @@ export class AgentMesh {
     } finally {
       this.active.delete(to);
     }
-    this.hops.push({ from, to, message, reply, depth });
+    this.record({ from, to, message, reply, depth });
     return reply;
   }
 

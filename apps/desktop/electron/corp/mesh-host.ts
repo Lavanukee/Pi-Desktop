@@ -24,6 +24,8 @@
  * is verified end-to-end only on a LIVE run — no unit test exercises a real model.
  */
 
+import { mkdirSync } from 'node:fs';
+import nodePath from 'node:path';
 import type { ExtensionFactory, ToolDefinition } from '@mariozechner/pi-coding-agent';
 import {
   AgentMesh,
@@ -54,8 +56,6 @@ import {
 } from './submit-work';
 import { TeamBook } from './team-record';
 import { repairNote, repairShadowTree } from './workspace-paths';
-import { mkdirSync } from 'node:fs';
-import nodePath from 'node:path';
 
 /** A pi tool result carrying a single text block (the reply the calling agent reads). */
 function textResult(text: string): {
@@ -239,6 +239,8 @@ export interface MeshAgentHostConfig {
   readonly onSessionFile?: (agentId: string, file: string) => void;
   /** An engineer submitted work and its proof command was run. */
   readonly onSubmitted?: (agentId: string, work: SubmittedWork) => void;
+  /** Each hop as it happens — the host derives the live plan from these. */
+  readonly onHop?: (hop: MeshHop) => void;
   /** Observe files rescued out of a mangled nested path (see workspace-paths). */
   readonly onRepaired?: (agentId: string, count: number) => void;
 }
@@ -488,6 +490,8 @@ export async function runCorpMeshTask(opts: {
   readonly engineerCount?: number;
   readonly maxTokens?: number;
   readonly onActivity?: (agentId: string, record: RoleAgentActivity) => void;
+  /** Each hop as it happens — lets the caller show work being handed out live. */
+  readonly onHop?: (hop: MeshHop) => void;
   /** Cooperative stop: fires the mesh's abort so no new agent turns start. */
   readonly signal?: AbortSignal;
   /** Where the TEAM is kept — `.pi/corp/` under this directory. Defaults to the
@@ -554,7 +558,7 @@ export async function runCorpMeshTask(opts: {
     sessionFileFor: (id) => team.sessionFileFor(id),
     onSessionFile: (id, file) => team.remember(id, roleOf.get(id) ?? 'engineer', file),
   });
-  const mesh = new AgentMesh(host, roster);
+  const mesh = new AgentMesh(host, roster, undefined, opts.onHop);
   // A stop must reach BOTH layers: the mesh refuses new talks, and the host cuts
   // whatever is already running. Only one of those existed before, so a spent
   // budget left the in-flight agent churning.

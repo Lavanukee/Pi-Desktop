@@ -1762,6 +1762,14 @@ body {
 
 /* ── Chat rows: hover 3-dot menu + inline rename + project groups (B1/B2) ────── */
 .pd-chatrow {
+  /* The outer block: the chat row PLUS its nested agent rows. Deliberately NOT
+     the positioning context for the hover actions — see .pd-chatrow-main. */
+  position: relative;
+}
+
+/* The chat row itself. The hover actions are positioned against THIS, so they
+   cannot stretch over the nested agent rows below and swallow their clicks. */
+.pd-chatrow-main {
   position: relative;
 }
 /* The 3-dot menu is a SIBLING overlay of the row button (valid HTML), revealed on
@@ -1777,13 +1785,13 @@ body {
   pointer-events: none;
   transition: opacity 0.12s var(--pd-easing-standard);
 }
-.pd-chatrow:hover .pd-chatrow-actions,
-.pd-chatrow:focus-within .pd-chatrow-actions {
+.pd-chatrow-main:hover .pd-chatrow-actions,
+.pd-chatrow-main:focus-within .pd-chatrow-actions {
   opacity: 1;
   pointer-events: auto;
 }
-.pd-chatrow:hover .pd-sidebar-row-meta,
-.pd-chatrow:focus-within .pd-sidebar-row-meta {
+.pd-chatrow-main:hover .pd-sidebar-row-meta,
+.pd-chatrow-main:focus-within .pd-sidebar-row-meta {
   opacity: 0;
 }
 .pd-chatrow-dots,

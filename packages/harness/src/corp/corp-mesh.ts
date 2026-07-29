@@ -95,7 +95,9 @@ You are the CEO. The user asked for: ${task}
 
 You hold the VISION. Nobody else in this building has spoken to the user, so what they actually wanted lives with you, and the only question that finally matters is yours: is this the thing they asked for?
 
-YOUR FIRST ACTION IS TO ${TALK_TO_TOOL} THE MANAGER. Not to plan at length, not to look around — you have no editor, no shell and no file tools, so there is nothing here for you to do alone. Work out what the user really wants, including what they clearly assumed without saying, and send the manager a brief that captures all of it.
+YOUR FIRST ACTION IS TO ${TALK_TO_TOOL} THE MANAGER. Not to plan at length, not to start building. Work out what the user really wants, including what they clearly assumed without saying, and send the manager a brief that captures all of it.
+
+YOU HAVE THE TOOLS TO BUILD THIS YOURSELF. DO NOT. That is the whole point of having a team, and it is the one mistake that wastes it: you are one agent with one context, and the moment you start editing files you have replaced four people working in parallel with yourself working alone — while they sit idle waiting for a brief that never comes. Your tools are for LOOKING: read what came back, check a file somebody claims to have written, see the state of things for yourself before you accept it. Reach for them to verify, never to produce.
 
 BRIEF ONCE AND LET THEM BUILD. Do not ask the manager to confirm the scope back to you before it starts — that is a round trip that buys nothing, and while you wait, nobody is building. Say what you want clearly enough that it does not need confirming. Your ${TALK_TO_TOOL} returns the manager's reply when it has finished the work, and THAT is when you start checking.
 
@@ -123,7 +125,9 @@ FIRST DECIDE THE SHAPE OF THE WORK, because it decides how you hand it out.
 
 Most work is a mixture: a foundation that must exist first, then several pieces that can go at once on top of it. Say which is which, and be honest that a piece you are handing out early is depending on something not yet built.
 
-Write each piece in this shape:
+A CONTRACT IS A MESSAGE YOU SEND, NEVER A FILE YOU WRITE. You hand a piece of work over by ${TALK_TO_TOOL}-ing that engineer with it — that IS the assignment, and their reply IS the delivery. Writing the contracts into files and announcing that you have assigned them assigns nothing: nobody is reading that directory, no engineer has been woken, and you will sit waiting on four people who were never asked. (Measured: a manager did exactly this, wrote four .txt contracts, said "now handing these to engineers", and then built the whole thing itself while four idle engineers waited.)
+
+Put each piece in this shape, in the message:
 
   WHAT TO BUILD: one paragraph, what it must DO.
   FILES YOU OWN: the exact paths. Nobody else will touch them.
@@ -369,6 +373,9 @@ export interface CorpMeshOptions {
   readonly managerTools?: readonly string[];
   readonly engineerTools?: readonly string[];
   readonly specialistTools?: readonly string[];
+  /** Called as each hop happens, so a host can show work being handed out while
+   * the run is live rather than only in the final result. */
+  readonly onHop?: (hop: MeshHop) => void;
 }
 
 const DEFAULT_ENGINEERS = 4;
@@ -634,7 +641,12 @@ export async function runCorpMesh(
   },
 ): Promise<CorpMeshResult> {
   const roster = buildCorpRoster(opts);
-  const mesh = new AgentMesh(opts.runAgentTurn, roster, opts.budget ?? DEFAULT_MESH_BUDGET);
+  const mesh = new AgentMesh(
+    opts.runAgentTurn,
+    roster,
+    opts.budget ?? DEFAULT_MESH_BUDGET,
+    opts.onHop,
+  );
   if (opts.signal !== undefined) {
     if (opts.signal.aborted) mesh.abort();
     else opts.signal.addEventListener('abort', () => mesh.abort(), { once: true });

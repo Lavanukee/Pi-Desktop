@@ -21,6 +21,7 @@ import type {
 } from '@pi-desktop/coordination';
 import { buildCorpRoster, type MeshAgent, type RoleAgentActivity } from '@pi-desktop/harness/corp';
 import { runCorpMeshTask } from './mesh-host';
+import { type PlanHop, planFromHops } from './mesh-plan';
 import type { CorpModelHandle } from './role-agent';
 
 /** A minimal single-producer/single-consumer async queue — the same shape as the
@@ -185,6 +186,20 @@ export function startMeshTask(opts: {
     stream.push({ type: 'org-chart', chart: buildMeshChart(opts.taskId, roster, states) });
   };
 
+  /*
+   * THE LIVE PLAN. The room's plan panel and its progress rail read the
+   * `checklist` event, which the mesh never emitted — so every run showed a full
+   * team and 0/0 tasks. The rows are derived from the work actually handed out
+   * (see ./mesh-plan); this keeps the hops so far and re-publishes on each one.
+   */
+  const hops: PlanHop[] = [];
+  const emitPlan = (): void => {
+    const working = new Set(
+      [...states.entries()].filter(([, st]) => st === 'working').map(([id]) => id),
+    );
+    stream.push({ type: 'checklist', items: planFromHops(hops, working) });
+  };
+
   stream.push({ type: 'status', status: 'working' });
   emitChart();
 
@@ -222,16 +237,22 @@ export function startMeshTask(opts: {
     ...(opts.extensionFactories !== undefined
       ? { extensionFactories: opts.extensionFactories as never }
       : {}),
+    onHop: (hop) => {
+      hops.push(hop);
+      emitPlan();
+    },
     onActivity: (agentId, record) => {
       if (record.kind === 'turn-start') {
         states.set(agentId, 'working');
         emitChart();
+        emitPlan();
         return;
       }
       if (record.kind === 'turn-end') {
         // Not "done" — a persistent agent may be talked to again; idle between turns.
         states.set(agentId, 'idle');
         emitChart();
+        emitPlan();
         return;
       }
       const event = activityToEvent(agentId, record);

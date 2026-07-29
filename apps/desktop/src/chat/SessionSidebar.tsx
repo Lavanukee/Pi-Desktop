@@ -83,8 +83,8 @@ import { useChildAgentStore, useChildrenByParent } from '../state/child-agent-st
 import { useCorpStore } from '../state/corp-store';
 import { useModalityStore } from '../state/modality-store';
 import { listSessions, newSession, restartPi, switchSession } from '../state/pi-connect';
-import { useProjectStore } from '../state/project-store';
 import { usePiStore } from '../state/pi-slice';
+import { useProjectStore } from '../state/project-store';
 import { setUserMode, useSettingsStore, useUserMode } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
 import { PROFILE_MENU_ACTIONS, USER_MODE_OPTIONS, userModeBlurb } from './profile-menu';
@@ -610,7 +610,15 @@ export function SessionSidebar({
       (bgRun?.streaming === true && bgRun.sessionFile === s.file);
     const unreadKind = unread[s.file];
     const kids = childrenByParent.get(s.file) ?? [];
-    const corpKids = corpRunning && effectiveCurrentFile === s.file ? corpNodes : [];
+    /*
+     * A TEAM YOU CAN GO BACK TO. This was gated on `corpRunning`, so the moment a
+     * run finished every role vanished from the sidebar and there was no way to
+     * re-open what any of them had done — the opposite of the whole point, which
+     * is that these are chats. A child agent's rows survive its run; so do these.
+     * Still scoped to the chat that hosts the run: another conversation's team is
+     * not this conversation's business.
+     */
+    const corpKids = effectiveCurrentFile === s.file ? corpNodes : [];
     const hasKids = kids.length > 0 || corpKids.length > 0;
     const expanded = hasKids && !collapsedParents.has(s.file);
     const isFocused = effectiveCurrentFile === s.file && viewedChildId === null;
@@ -640,114 +648,133 @@ export function SessionSidebar({
 
     return (
       <div key={s.file} className="pd-chatrow">
-        <SidebarRow
-          // No caret by default; a chat with agents swaps its bubble for a fold
-          // caret ON HOVER (CSS) so nothing shifts (jedd A4).
-          icon={
-            hasKids ? (
-              <span className="pd-chat-icon-swap">
-                <IconChat size={16} className="pd-chat-icon-bubble" />
-                <IconChevronDown
-                  size={14}
-                  className={`pd-chat-icon-caret ${expanded ? '' : '-rotate-90'}`}
-                />
-              </span>
-            ) : (
-              <IconChat size={16} />
-            )
-          }
-          label={title}
-          // Priority: needs-input dot > running spinner > finished dot > pin glyph > time.
-          meta={
-            unreadKind === 'needs-input' ? (
-              <span className="pd-chat-dot pd-chat-dot--needs-input" />
-            ) : running ? (
-              <Spinner size={14} />
-            ) : unreadKind === 'finished' ? (
-              <span className="pd-chat-dot pd-chat-dot--finished" />
-            ) : pinned ? (
-              <IconPin size={13} className="text-text-muted" />
-            ) : (
-              relativeTime(s.modifiedAt)
-            )
-          }
-          selected={isFocused}
-          data-testid={`chat-row-${title}`}
-          onClick={() => {
-            if (isFocused && hasKids) {
-              toggleParent(s.file);
-              return;
+        {/* The row and its hover actions share a positioning context of their OWN.
+            They used to sit directly in `.pd-chatrow`, which also holds the nested
+            agent rows — so the absolutely-positioned actions overlay (top:0;
+            bottom:0) stretched over the children too. Two symptoms, one cause: the
+            3 dots centred themselves over the whole block and drifted down beside
+            a child row, and on hover their `pointer-events:auto` layer covered the
+            child rows, so a subagent could not be clicked (jedd: "the 'Pi' subchat
+            which itself is not clickable to show"). Bounding them to the row fixes
+            both. */}
+        <div className="pd-chatrow-main">
+          <SidebarRow
+            // No caret by default; a chat with agents swaps its bubble for a fold
+            // caret ON HOVER (CSS) so nothing shifts (jedd A4).
+            icon={
+              hasKids ? (
+                <span className="pd-chat-icon-swap">
+                  <IconChat size={16} className="pd-chat-icon-bubble" />
+                  <IconChevronDown
+                    size={14}
+                    className={`pd-chat-icon-caret ${expanded ? '' : '-rotate-90'}`}
+                  />
+                </span>
+              ) : (
+                <IconChat size={16} />
+              )
             }
-            setViewedChild(null);
-            void onOpen(s.file);
-          }}
-        />
-        {/* Hover-revealed 3-dot menu. A SIBLING of the row button (not nested) so
+            label={title}
+            // Priority: needs-input dot > running spinner > finished dot > pin glyph > time.
+            meta={
+              unreadKind === 'needs-input' ? (
+                <span className="pd-chat-dot pd-chat-dot--needs-input" />
+              ) : running ? (
+                <Spinner size={14} />
+              ) : unreadKind === 'finished' ? (
+                <span className="pd-chat-dot pd-chat-dot--finished" />
+              ) : pinned ? (
+                <IconPin size={13} className="text-text-muted" />
+              ) : (
+                relativeTime(s.modifiedAt)
+              )
+            }
+            selected={isFocused}
+            data-testid={`chat-row-${title}`}
+            onClick={() => {
+              if (isFocused && hasKids) {
+                toggleParent(s.file);
+                return;
+              }
+              setViewedChild(null);
+              void onOpen(s.file);
+            }}
+          />
+          {/* Hover-revealed 3-dot menu. A SIBLING of the row button (not nested) so
             it's valid HTML; :focus-within keeps it up while the menu is open. */}
-        <div className="pd-chatrow-actions">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className="pd-chatrow-dots pd-focusable"
-                aria-label="Chat actions"
-                data-testid={`chat-menu-${title}`}
+          <div className="pd-chatrow-actions">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="pd-chatrow-dots pd-focusable"
+                  aria-label="Chat actions"
+                  data-testid={`chat-menu-${title}`}
+                >
+                  <IconMore size={16} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                side="bottom"
+                sideOffset={4}
+                className="min-w-[190px]"
               >
-                <IconMore size={16} />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="bottom" sideOffset={4} className="min-w-[190px]">
-              <DropdownMenuItem icon={<IconPencil size={16} />} onSelect={() => beginRenameChat(s)}>
-                Rename
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                icon={<IconPin size={16} />}
-                onSelect={() => void togglePin(s.file)}
-              >
-                {pinned ? 'Unpin' : 'Pin'}
-              </DropdownMenuItem>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger icon={<IconFolderPlus size={16} />}>
-                  Add to project
-                </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="min-w-[180px]">
-                  {org.projects.length === 0 ? (
-                    <DropdownMenuItem disabled>No projects yet</DropdownMenuItem>
-                  ) : (
-                    org.projects.map((p) => (
-                      <DropdownMenuItem
-                        key={p.id}
-                        hint={assignedTo === p.id ? '✓' : undefined}
-                        onSelect={() => void assignChat(s.file, p.id)}
-                      >
-                        {p.name}
+                <DropdownMenuItem
+                  icon={<IconPencil size={16} />}
+                  onSelect={() => beginRenameChat(s)}
+                >
+                  Rename
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  icon={<IconPin size={16} />}
+                  onSelect={() => void togglePin(s.file)}
+                >
+                  {pinned ? 'Unpin' : 'Pin'}
+                </DropdownMenuItem>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger icon={<IconFolderPlus size={16} />}>
+                    Add to project
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="min-w-[180px]">
+                    {org.projects.length === 0 ? (
+                      <DropdownMenuItem disabled>No projects yet</DropdownMenuItem>
+                    ) : (
+                      org.projects.map((p) => (
+                        <DropdownMenuItem
+                          key={p.id}
+                          hint={assignedTo === p.id ? '✓' : undefined}
+                          onSelect={() => void assignChat(s.file, p.id)}
+                        >
+                          {p.name}
+                        </DropdownMenuItem>
+                      ))
+                    )}
+                    {assignedTo !== undefined ? (
+                      <DropdownMenuItem onSelect={() => void assignChat(s.file, null)}>
+                        Remove from project
                       </DropdownMenuItem>
-                    ))
-                  )}
-                  {assignedTo !== undefined ? (
-                    <DropdownMenuItem onSelect={() => void assignChat(s.file, null)}>
-                      Remove from project
+                    ) : null}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      icon={<IconPlus size={16} />}
+                      onSelect={() => void createProjectAndAssign(s.file)}
+                    >
+                      New project…
                     </DropdownMenuItem>
-                  ) : null}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    icon={<IconPlus size={16} />}
-                    onSelect={() => void createProjectAndAssign(s.file)}
-                  >
-                    New project…
-                  </DropdownMenuItem>
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                danger
-                icon={<IconTrash size={16} />}
-                onSelect={() => requestDeleteChat(s)}
-              >
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  danger
+                  icon={<IconTrash size={16} />}
+                  onSelect={() => requestDeleteChat(s)}
+                >
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
         {expanded ? (
           <div className="pd-child-rows" data-testid="child-rows">

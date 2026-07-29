@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCorpRoster,
   COMMISSION_SPECIALIST_TOOL,
+  ceoMeshPrompt,
   engineerId,
   MESH_SPECIALIST_KINDS,
+  managerMeshPrompt,
   runCorpMesh,
   specialistId,
   specialistMeshPrompt,
@@ -206,5 +208,35 @@ describe('the CEO is the chat you were already talking to', () => {
   it('still has the manager and the specialists as peers', () => {
     expect(ceo()?.peers).toContain('manager');
     expect(ceo()?.peers).toContain(specialistId('auditor'));
+  });
+});
+
+describe('the CEO’s brief matches the tools it actually has', () => {
+  // Giving the CEO the chat's tool surface (jedd) without fixing its brief made
+  // the brief LIE — it still said "you have no editor, no shell and no file
+  // tools". A model told it cannot build, that finds it can, builds. Measured:
+  // the run after that change had the lead write five files itself and hand out
+  // nothing, so the plan was empty because there was no plan.
+  it('never claims to be toolless', () => {
+    const p = ceoMeshPrompt('build a thing');
+    expect(p).not.toContain('you have no editor');
+    expect(p).not.toContain('no file tools');
+  });
+
+  it('says plainly that having the tools is not permission to use them to build', () => {
+    const p = ceoMeshPrompt('build a thing');
+    expect(p).toContain('YOU HAVE THE TOOLS TO BUILD THIS YOURSELF. DO NOT.');
+    expect(p).toContain('verify');
+  });
+});
+
+describe('a contract is delivered, not filed', () => {
+  it('tells the manager the contract IS the message', () => {
+    // Measured: a manager wrote four .txt contracts into the project, announced
+    // it had assigned them, and then built everything itself while four idle
+    // engineers waited to be asked. Nothing was ever handed out.
+    const p = managerMeshPrompt();
+    expect(p).toContain('A CONTRACT IS A MESSAGE YOU SEND, NEVER A FILE YOU WRITE');
+    expect(p).toContain(TALK_TO_TOOL);
   });
 });

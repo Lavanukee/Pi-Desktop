@@ -14,7 +14,7 @@
  * untrusted web content.
  */
 import { describe, expect, it } from 'vitest';
-import { popupAllowed } from './browser-manager';
+import { popupAllowed, stripEmbedderTokens } from './browser-manager';
 
 describe('which popups may open', () => {
   it('allows a real web page — this is the sign-in case', () => {
@@ -39,5 +39,33 @@ describe('which popups may open', () => {
     for (const url of ['', '   ', 'not a url', 'about:blank?']) {
       expect(popupAllowed(url)).toBe(false);
     }
+  });
+});
+
+describe('what the browser calls itself', () => {
+  /*
+   * Google's sign-in refuses embedded user agents by policy, and Electron's
+   * default advertises both the app and the framework. jedd's Google sign-in
+   * white-screens on accounts.google.com/gsi/* while the same flow completes in
+   * Safari and Chrome — that string is why.
+   */
+  it('strips the app and framework tokens, keeping the real Chromium', () => {
+    const raw =
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) ' +
+      'Bobble/0.1.0 Chrome/140.0.0.0 Electron/43.1.0 Safari/537.36';
+    const cleaned = stripEmbedderTokens(raw);
+    expect(cleaned).not.toContain('Electron/');
+    expect(cleaned).not.toContain('Bobble/');
+    // What remains is a truthful description of the engine actually rendering.
+    expect(cleaned).toContain('Chrome/140.0.0.0');
+    expect(cleaned).toContain('AppleWebKit/537.36');
+    expect(cleaned).toContain('Safari/537.36');
+  });
+
+  it('leaves an already-clean agent alone', () => {
+    const clean =
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) ' +
+      'Chrome/140.0.0.0 Safari/537.36';
+    expect(stripEmbedderTokens(clean)).toBe(clean);
   });
 });

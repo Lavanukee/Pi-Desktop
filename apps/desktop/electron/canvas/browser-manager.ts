@@ -20,9 +20,11 @@
  */
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
 import {
+  app,
   BrowserWindow,
   type IpcMainInvokeEvent,
   ipcMain,
+  session,
   type WebContents,
   WebContentsView,
 } from 'electron';
@@ -35,6 +37,47 @@ const events = createIpcEventSender<AppEventMap>();
 
 /** Dedicated session so browser-tab cookies/storage stay off the app origin. */
 const BROWSER_PARTITION = 'persist:pi-browser';
+
+/**
+ * WHAT THIS BROWSER CALLS ITSELF.
+ *
+ * Electron's default user agent advertises the app and the framework —
+ * "… Chrome/140.0.0.0 Bobble/0.1.0 Electron/43.1.0 Safari/537.36". Google's
+ * sign-in refuses embedded user agents by policy and looks for exactly those
+ * markers, which is why jedd's Google sign-in white-screens on
+ * `accounts.google.com/gsi/*` while the identical flow completes in Safari and
+ * Chrome. He found a suggestion to blocklist that URL; that only makes the
+ * script fail early so the page falls back, and it would rot the moment Google
+ * changed a path.
+ *
+ * So the browser tab presents the Chromium it actually is, with the app and
+ * framework tokens removed. This is not a disguise: the engine, the version and
+ * the rendering behaviour are exactly what the string now claims. It applies ONLY
+ * to the canvas browser's own partition — the app's own windows are untouched.
+ */
+export function stripEmbedderTokens(userAgent: string): string {
+  return userAgent
+    .split(' ')
+    .filter((token) => !/^(Electron|Bobble|pi-desktop)\//i.test(token))
+    .join(' ');
+}
+
+function webUserAgent(): string {
+  return stripEmbedderTokens(app.userAgentFallback);
+}
+
+/** Applied once, the first time a browser view is created. */
+let userAgentApplied = false;
+function ensureWebUserAgent(): void {
+  if (userAgentApplied) return;
+  userAgentApplied = true;
+  try {
+    session.fromPartition(BROWSER_PARTITION).setUserAgent(webUserAgent());
+    log.info('browser user agent set', { userAgent: webUserAgent() });
+  } catch (err) {
+    log.warn('could not set the browser user agent', { err: String(err) });
+  }
+}
 
 interface Entry {
   view: WebContentsView;
@@ -239,6 +282,9 @@ function wireOwner(owner: WebContents, win: BrowserWindow): void {
 function ensureView(tabId: string, owner: WebContents): Entry | undefined {
   const existing = entries.get(tabId);
   if (existing) return existing;
+  // Before the first page loads — the partition's UA must be right from the very
+  // first request, or a sign-in that sniffs it on load has already decided.
+  ensureWebUserAgent();
   const win = BrowserWindow.fromWebContents(owner);
   if (win === null) {
     log.warn('browser:create with no owning window', { tabId });

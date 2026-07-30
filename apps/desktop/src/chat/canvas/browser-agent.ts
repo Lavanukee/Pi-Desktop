@@ -22,6 +22,36 @@ const AGENT_TAB_KEY = 'pi:agent-browser';
 /** Fixed id of the main-owned headless agent view (must match the main bridge). */
 const HEADLESS_AGENT_TAB_ID = 'pi:agent-headless';
 
+/**
+ * The browser tab the agent should drive: the one the user is looking at if it is
+ * a browser, else the newest browser tab, else none (open our own).
+ *
+ * Exported for the test — the preference order is the whole behaviour.
+ */
+export function pickAgentBrowserTab(
+  tabs: readonly { id: string; kind: string }[],
+  activeTabId: string | null,
+): string | undefined {
+  const active = tabs.find((t) => t.id === activeTabId);
+  if (active?.kind === 'browser') return active.id;
+  const browsers = tabs.filter((t) => t.kind === 'browser');
+  return browsers[browsers.length - 1]?.id;
+}
+
+function adoptOrOpenBrowserTab(controller: CanvasController): string {
+  const state = controller.getState();
+  const existing = pickAgentBrowserTab(state.tabs, state.activeTabId);
+  if (existing !== undefined) {
+    controller.updateTab(existing, { driving: true });
+    return existing;
+  }
+  return controller.upsertTab(AGENT_TAB_KEY, {
+    kind: 'browser',
+    title: 'Pi Browser',
+    driving: true,
+  });
+}
+
 export function useBrowserAgent(controller: CanvasController): void {
   const agentTabId = useRef<string | null>(null);
 
@@ -47,11 +77,21 @@ export function useBrowserAgent(controller: CanvasController): void {
         void window.piDesktop.invoke('browser:agent-headless', {});
         return;
       }
-      const id = controller.upsertTab(AGENT_TAB_KEY, {
-        kind: 'browser',
-        title: 'Pi Browser',
-        driving: true,
-      });
+      /*
+       * DRIVE THE TAB THE USER IS ALREADY LOOKING AT.
+       *
+       * This always created its own "Pi Browser" tab, keyed AGENT_TAB_KEY. With a
+       * page already open in the canvas browser that meant a SECOND, blank tab —
+       * and the agent registered against that one, so `browser_snapshot` read
+       * about:blank and reported no interactive elements. jedd: "it knows what tab
+       * I have open but the read call is reading the about blank???" It did know;
+       * it was reading somewhere else.
+       *
+       * So: adopt the browser tab in front of the user — the active one if it is a
+       * browser, else the most recently opened browser tab — and only open a tab
+       * of our own when there is no browser open at all.
+       */
+      const id = adoptOrOpenBrowserTab(controller);
       agentTabId.current = id;
       // Ensure the rail is visible so the WebContentsView actually mounts.
       useCanvasStore.getState().setCanvasOpen(true);

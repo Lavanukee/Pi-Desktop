@@ -33,9 +33,10 @@ export function registerUseTool(pi: ExtensionAPI, opts: UseToolOptions): void {
     name: USE_TOOL_NAME,
     label: 'Use',
     description:
-      'Call a tool that a capability told you about but which is not in your tool list. Pass ' +
-      'the tool name and its arguments. Tools already IN your list should be called directly ' +
-      'rather than through this.',
+      'Fallback: call a tool by name when it is not in your tool list. Prefer calling a tool ' +
+      'directly when you can see it — after `capability` turns a group on, those tools appear ' +
+      'in your list and should be called normally. Use this only if one you were told about ' +
+      'is still not callable.',
     promptSnippet: 'Call a tool a capability made available',
     parameters: Type.Object({
       tool: Type.String({ description: 'The tool name, exactly as the capability named it.' }),

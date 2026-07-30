@@ -351,3 +351,24 @@ describe('resolvePresetTools — graceful degradation (v0.1 tool set)', () => {
     expect(tools).toEqual(['read', 'bash']);
   });
 });
+
+describe('capability and use travel together', () => {
+  /*
+   * MEASURED, from a shipped build: `capability` was advertised and `use` was
+   * not, so the model was told it could reach mac_snapshot and then had no way
+   * to call it. It typed `mac_snapshot` at the SHELL, which aborted. Naming a
+   * tool the model cannot call is worse than not naming it.
+   */
+  it('advertises BOTH, in every preset that gets discovery', () => {
+    const universe = ['read', 'write', 'edit', 'bash', 'capability', 'use'];
+    const resolved = resolvePresetTools('coding', universe);
+    expect(resolved).toContain('capability');
+    expect(resolved).toContain('use');
+  });
+
+  it('adds neither when neither is registered', () => {
+    const resolved = resolvePresetTools('coding', ['read', 'bash']);
+    expect(resolved).not.toContain('capability');
+    expect(resolved).not.toContain('use');
+  });
+});

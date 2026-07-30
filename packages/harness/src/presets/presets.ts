@@ -25,6 +25,17 @@ import { SPAWN_SUBAGENT_TOOL_NAME } from '../subagent/types.js';
 export const TOOL_SEARCH_TOOL_NAME = 'capability';
 
 /**
+ * The dispatcher that CALLS what a capability named. It travels with
+ * {@link TOOL_SEARCH_TOOL_NAME} and must never be advertised without it.
+ *
+ * MEASURED, and the reason this constant exists: `capability` was advertised and
+ * `use` was not, so the model was told it could reach `mac_snapshot` and then had
+ * no way to. It did the only thing left and typed `mac_snapshot` at the SHELL,
+ * which aborted. Naming a tool the model cannot call is worse than not naming it.
+ */
+export const USE_TOOL_NAME = 'use';
+
+/**
  * Harness tools kept active in EVERY preset (when registered), independent of
  * the task class — the model must always be able to publish a plan and ask the
  * user a question. `tool_search` is handled separately (it is gated by
@@ -179,13 +190,15 @@ export function resolvePresetTools(
       seen.add(name);
     }
   }
-  if (
-    includeToolSearch &&
-    available.has(TOOL_SEARCH_TOOL_NAME) &&
-    !seen.has(TOOL_SEARCH_TOOL_NAME)
-  ) {
-    out.push(TOOL_SEARCH_TOOL_NAME);
-    seen.add(TOOL_SEARCH_TOOL_NAME);
+  // `capability` and `use` are a PAIR — one names tools, the other calls them.
+  // Either alone is broken, so they are added together or not at all.
+  if (includeToolSearch) {
+    for (const name of [TOOL_SEARCH_TOOL_NAME, USE_TOOL_NAME]) {
+      if (available.has(name) && !seen.has(name)) {
+        out.push(name);
+        seen.add(name);
+      }
+    }
   }
   // Front-load the subagent tool ONLY for genuinely-agentic classes (blind-test
   // item 6). Trivial doc/file/answer tasks omit it here and reach it via the

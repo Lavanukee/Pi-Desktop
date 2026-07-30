@@ -840,17 +840,32 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
    * activated a tool at a time and scored differently depending on wording.
    */
   registerCapabilityTool(pi, {
-    available: () => toolRegistry.names(),
     /*
-     * NOTHING IS ACTIVATED. Turning a capability on used to call setActiveTools,
-     * which rewrites the advertised tool block at the START of the prompt and
-     * therefore re-prefills the whole conversation. It no longer has to: the
-     * capability's result NAMES the tools, and `use` can call any of them. The
-     * advertised set is untouched, so the KV prefix survives — jedd: "there's no
-     * way we *need* to pay a prefill of whole context when a new capability is
-     * activated." Quite right.
+     * WHAT EXISTS, from pi — not from our own capture.
+     *
+     * MEASURED the hard way: with `available` reading the capture, asking for the
+     * browser capability answered "not available in this build" even though the
+     * browser tools were plainly loaded. That is the proof that each extension
+     * gets its OWN api object, so wrapping ours only ever saw ours. Anything
+     * that reports on what EXISTS must ask pi, which sees all of them.
      */
-    onActivate: () => {},
+    available: () => pi.getAllTools().map((t) => t.name),
+    /*
+     * AND THE TOOLS ARE GENUINELY TURNED ON. Same finding, same consequence:
+     * `use` can only dispatch what our capture holds, which is our own tools, so
+     * it cannot reach browser_snapshot or mac_snapshot. Until the capture spans
+     * extensions, activation has to be real — otherwise the model is told it has
+     * a tool and then cannot call it, which is exactly how it ended up typing
+     * `mac_snapshot` at the shell.
+     *
+     * Costs one re-prefill per activation. Bounded and rare; not free, and not
+     * where this ends.
+     */
+    onActivate: (added) => {
+      const next = Array.from(new Set([...runtime.activeTools, ...added]));
+      runtime.activeTools = next;
+      pi.setActiveTools(next);
+    },
   });
   registerUseTool(pi, {
     registry: toolRegistry,

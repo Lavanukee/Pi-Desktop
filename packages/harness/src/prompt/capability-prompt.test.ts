@@ -129,8 +129,21 @@ describe('each capability carries its own guidance (jedd)', () => {
   // browser, utilize mac computer use if it is requested you do something in the
   // user's other browsers on their system ... bundle the calendar, email and
   // reminders stuff also."
-  it('names the built-in browser as the PRIMARY web control', () => {
-    expect(CAPABILITY_PROMPT).toContain('These are your PRIMARY browser controls');
+  it('makes browser_navigate the DEFAULT way to visit a page', () => {
+    // jedd: "load browser navigate by default … bias it to use the built in
+    // browser instead of bash to open safari when no specific is requested."
+    expect(CAPABILITY_PROMPT).toContain('the DEFAULT way to visit any web');
+    expect(CAPABILITY_PROMPT).toContain('never `open -a Safari`');
+  });
+
+  it('forbids re-navigating to a page it is already on', () => {
+    // The loop jedd hit: "constantly reopen the same link over and over".
+    expect(CAPABILITY_PROMPT).toContain('NAVIGATING RETURNS THE PAGE');
+    expect(CAPABILITY_PROMPT).toContain('Re-opening a link you are already on');
+  });
+
+  it('says the rest of the browser suite is one capability call away', () => {
+    expect(CAPABILITY_PROMPT).toContain('the whole suite arrives in your list');
   });
 
   it('sends computer use at the user’s OWN browsers, and only those', () => {
@@ -140,8 +153,7 @@ describe('each capability carries its own guidance (jedd)', () => {
 
   it('tells it to act on an already-open tab rather than opening another', () => {
     // The bug jedd hit: a blank second tab, snapshotted instead of his page.
-    expect(CAPABILITY_PROMPT).toContain('act on');
-    expect(CAPABILITY_PROMPT).toContain('rather than opening a new one');
+    expect(CAPABILITY_PROMPT).toContain('act on THAT tab');
   });
 
   it('bundles calendar, mail, reminders, contacts and messages as ONE capability', () => {
@@ -158,8 +170,8 @@ describe('each capability carries its own guidance (jedd)', () => {
 
   it('warns that opening from the shell lands in a real Mac app', () => {
     // The common case jedd flagged: `open -a Safari` is computer-use territory.
-    expect(CAPABILITY_PROMPT).toContain('hands it to a');
-    expect(CAPABILITY_PROMPT).toContain('not the built-in browser');
+    expect(CAPABILITY_PROMPT).toContain('hand the page to');
+    expect(CAPABILITY_PROMPT).toContain('control it with computer use');
   });
 
   it('still says an AX-opaque app gives a screenshot to act on by coordinates', () => {

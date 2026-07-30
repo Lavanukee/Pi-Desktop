@@ -36,6 +36,19 @@ export const TOOL_SEARCH_TOOL_NAME = 'capability';
 export const USE_TOOL_NAME = 'use';
 
 /**
+ * The one browser tool that is ALWAYS advertised.
+ *
+ * jedd: "load browser navigate by default … bias it to use the built in browser
+ * instead of bash to open safari when no specific is requested." Without a
+ * browser tool in hand, "open example.com" leaves the model one option — the
+ * shell — and `open -a Safari` hands the page to a browser it cannot then drive.
+ * Navigating is the entry point to the web, so it is always there; it returns the
+ * loaded page WITH its indexed elements, and the rest of the suite arrives with
+ * the `browser` capability.
+ */
+export const BROWSER_NAVIGATE_ALWAYS = 'browser_navigate';
+
+/**
  * Harness tools kept active in EVERY preset (when registered), independent of
  * the task class — the model must always be able to publish a plan and ask the
  * user a question. `tool_search` is handled separately (it is gated by
@@ -193,7 +206,7 @@ export function resolvePresetTools(
   // `capability` and `use` are a PAIR — one names tools, the other calls them.
   // Either alone is broken, so they are added together or not at all.
   if (includeToolSearch) {
-    for (const name of [TOOL_SEARCH_TOOL_NAME, USE_TOOL_NAME]) {
+    for (const name of [TOOL_SEARCH_TOOL_NAME, USE_TOOL_NAME, BROWSER_NAVIGATE_ALWAYS]) {
       if (available.has(name) && !seen.has(name)) {
         out.push(name);
         seen.add(name);

@@ -27,6 +27,9 @@ export interface OpenedTarget {
   readonly chrome: boolean;
   /** The URL or file it was pointed at, when the command named one. */
   readonly target?: string;
+  /** A web page opened via the shell with no browser named — it should have gone
+   * to the built-in browser, which the model can actually drive. */
+  readonly strayWebPage?: boolean;
 }
 
 const CHROME_NAMES = /^(google\s+chrome|chrome|google chrome canary)$/i;
@@ -78,6 +81,8 @@ export function detectOpenedApp(command: string): OpenedTarget | undefined {
   return {
     app: isUrl ? 'your default browser' : 'the app that owns that file',
     chrome: false,
+    // A bare URL is the case that should NOT have gone to the shell at all.
+    ...(isUrl ? { strayWebPage: true } : {}),
     target,
   };
 }
@@ -106,6 +111,17 @@ export function openedAppNote(opened: OpenedTarget): string {
       `${head} Read it through its DOM: call use with tool="chrome_snapshot", then act with ` +
       'chrome_click / chrome_type the same way. Do NOT use the built-in browser tools for it — ' +
       'that is a different browser, with different logins and a different page.]'
+    );
+  }
+  if (opened.strayWebPage === true) {
+    // jedd: "bias it to use the built in browser instead of bash to open safari
+    // when no specific is requested." The page is now in a browser this app
+    // cannot drive; say so, and point at the tool that would have worked.
+    return (
+      `${head} A web page opened from the shell lands in a browser you cannot drive. ` +
+      `Use browser_navigate("${opened.target ?? ''}") instead — it opens the page in this ` +
+      "app's own browser and hands you back the page itself, ready to act on. Do that now " +
+      'rather than trying to control what just opened.]'
     );
   }
   return (

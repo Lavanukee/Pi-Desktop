@@ -73,3 +73,29 @@ describe('what the model is told afterwards', () => {
     expect(openedAppNote({ app: 'Safari', chrome: false })).toContain('Safari');
   });
 });
+
+describe('a web page opened from the shell with no browser named', () => {
+  // jedd: "bias it to use the built in browser instead of bash to open safari
+  // when no specific is requested."
+  it('is redirected to browser_navigate, which it can actually drive', () => {
+    const opened = detectOpenedApp('open https://example.com');
+    if (opened === undefined) throw new Error('not detected');
+    expect(opened.strayWebPage).toBe(true);
+    const note = openedAppNote(opened);
+    expect(note).toContain('browser_navigate("https://example.com")');
+    expect(note).toContain('cannot drive');
+  });
+
+  it('does NOT redirect when the user named a browser — that was deliberate', () => {
+    const opened = detectOpenedApp('open -a Safari https://example.com');
+    if (opened === undefined) throw new Error('not detected');
+    expect(opened.strayWebPage).toBeUndefined();
+    expect(openedAppNote(opened)).toContain('mac_snapshot');
+  });
+
+  it('leaves a FILE open alone — that is not a web page', () => {
+    const opened = detectOpenedApp('open ~/report.pdf');
+    if (opened === undefined) throw new Error('not detected');
+    expect(opened.strayWebPage).toBeUndefined();
+  });
+});

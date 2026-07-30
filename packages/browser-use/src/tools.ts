@@ -103,10 +103,11 @@ export function registerBrowserUseTools(pi: ExtensionAPI, options: BrowserUseOpt
     name: BROWSER_NAVIGATE_TOOL,
     label: 'Browse: Navigate',
     description:
-      'Drive a live Chrome browser for reliable, real-time access to any website. Open a URL in ' +
-      'the canvas browser (opening/focusing the browser tab if needed) and wait for it to load. ' +
-      'Follow with browser_snapshot or browser_read to see the page. The user watches a live ' +
-      'cursor as you browse.',
+      'Open a URL in the app’s OWN browser — the one the user is watching — and get the loaded ' +
+      'page back with it: the title, the final URL, and an indexed list of what is on it. This ' +
+      'is the DEFAULT way to visit any web page; do not shell out to `open` or drive Safari ' +
+      'unless the user named a specific browser. If a page is already open, you are already ' +
+      'there: act on it rather than navigating to it again.',
     promptSnippet: 'Navigate the canvas browser to a URL',
     parameters: Type.Object({
       url: Type.String({ description: 'URL to open (a bare host gets https://).' }),
@@ -115,9 +116,27 @@ export function registerBrowserUseTools(pi: ExtensionAPI, options: BrowserUseOpt
       if (bridge === null) return unavailable('browser_navigate');
       try {
         const state = await bridge.request<TabState>('navigate', { url: params.url });
+        /*
+         * NAVIGATE HANDS BACK THE PAGE, not a receipt for it.
+         *
+         * It used to say "Navigated to X — call browser_snapshot to see it",
+         * which is only useful if you HAVE browser_snapshot. Without it the model
+         * had exactly one browser tool and no way to see anything, so it did the
+         * only thing available and navigated again. jedd: "constantly reopen the
+         * same link over and over".
+         *
+         * Landing on a page and being shown it is one action, not two, so the
+         * snapshot rides along. Best-effort: if it fails, the navigation still
+         * succeeded and saying so is better than failing the whole call.
+         */
+        let page = '';
+        try {
+          page = `\n\n${formatSnapshot(await snapshot())}`;
+        } catch {
+          page = '\n\n(Could not read the page yet — call browser_snapshot in a moment.)';
+        }
         return textResult(
-          `Navigated to ${state.url}\nTitle: ${state.title || '(untitled)'}\n` +
-            'Call browser_snapshot to see interactive elements.',
+          `Navigated to ${state.url}\nTitle: ${state.title || '(untitled)'}${page}`,
           { action: 'navigate', ok: true, url: state.url, title: state.title },
         );
       } catch (err) {

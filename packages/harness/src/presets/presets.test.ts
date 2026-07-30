@@ -82,6 +82,7 @@ describe('resolvePresetTools — full tool universe', () => {
       'bash',
       'python_run',
       'capability',
+      'browser_navigate',
     ]);
   });
 
@@ -93,6 +94,7 @@ describe('resolvePresetTools — full tool universe', () => {
       'web_search',
       'web_fetch',
       'capability',
+      'browser_navigate',
       'read',
       'write',
       'edit',
@@ -114,6 +116,8 @@ describe('resolvePresetTools — full tool universe', () => {
       'browser_key',
       'web_fetch',
       'capability',
+      // browser_navigate is always appended, but this preset already leads with
+      // it — the dedupe keeps the first position rather than adding a second.
       // Globally-active file tools, appended LAST so the browser tools still lead.
       'read',
       'write',
@@ -152,6 +156,7 @@ describe('resolvePresetTools — full tool universe', () => {
       'grep',
       'video_locate',
       'capability',
+      'browser_navigate',
       'bash',
     ]);
   });
@@ -164,6 +169,7 @@ describe('resolvePresetTools — full tool universe', () => {
       'image_ocr',
       'video_edit',
       'capability',
+      'browser_navigate',
       'read',
       'write',
       'edit',
@@ -180,6 +186,7 @@ describe('resolvePresetTools — full tool universe', () => {
       'image_generate',
       'image_edit',
       'capability',
+      'browser_navigate',
       'read',
       'write',
       'edit',
@@ -205,7 +212,7 @@ describe('resolvePresetTools — full tool universe', () => {
     // Was tool-search-only; jedd made read/write/edit/bash globally active so a
     // simple-QA turn that suddenly needs a file can act instead of disclaiming.
     const tools = resolvePresetTools('simple-QA', ALL_TOOLS);
-    expect(tools).toEqual(['capability', 'read', 'write', 'edit', 'bash']);
+    expect(tools).toEqual(['capability', 'browser_navigate', 'read', 'write', 'edit', 'bash']);
     expect(isToolSearchOnly(tools)).toBe(false);
   });
 
@@ -232,7 +239,7 @@ describe('resolvePresetTools — full tool universe', () => {
     expect(tools).not.toContain('calendar_list_events');
     expect(tools).not.toContain('mail_recent');
     expect(tools).not.toContain('messages_send');
-    expect(tools).toEqual(['capability', 'read', 'write', 'edit', 'bash']);
+    expect(tools).toEqual(['capability', 'browser_navigate', 'read', 'write', 'edit', 'bash']);
   });
 
   it("'other' with no connectors falls back to the global file tools + capability", () => {

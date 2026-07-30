@@ -36,17 +36,26 @@ export const TOOL_SEARCH_TOOL_NAME = 'capability';
 export const USE_TOOL_NAME = 'use';
 
 /**
- * The one browser tool that is ALWAYS advertised.
+ * The browser tools that are ALWAYS advertised — navigate AND snapshot.
  *
- * jedd: "load browser navigate by default … bias it to use the built in browser
- * instead of bash to open safari when no specific is requested." Without a
- * browser tool in hand, "open example.com" leaves the model one option — the
- * shell — and `open -a Safari` hands the page to a browser it cannot then drive.
- * Navigating is the entry point to the web, so it is always there; it returns the
- * loaded page WITH its indexed elements, and the rest of the suite arrives with
- * the `browser` capability.
+ * jedd asked for navigate by default so "open example.com" never falls to the
+ * shell. Shipping navigate ALONE caused the loop he then hit: "it's constantly in
+ * a loop of calling browser navigate … it really seems like the models are trying
+ * to call browser snapshot or something and then they're getting forced to call
+ * browser navigate."
+ *
+ * That is exactly right, and it is the coercion measured earlier on this server:
+ * llama-server's tool-call grammar pins the function name to the ADVERTISED list,
+ * so a bid for `browser_snapshot` cannot be emitted — it collapses onto the only
+ * browser name available, `browser_navigate`. The model navigates, is shown the
+ * page, wants to look again, is forced to navigate again. Forever.
+ *
+ * A tool that takes you somewhere and no tool that lets you look is not half a
+ * browser, it is a trap. They ship together.
  */
 export const BROWSER_NAVIGATE_ALWAYS = 'browser_navigate';
+export const BROWSER_SNAPSHOT_ALWAYS = 'browser_snapshot';
+export const ALWAYS_BROWSER_TOOLS = [BROWSER_NAVIGATE_ALWAYS, BROWSER_SNAPSHOT_ALWAYS] as const;
 
 /**
  * Harness tools kept active in EVERY preset (when registered), independent of
@@ -206,7 +215,7 @@ export function resolvePresetTools(
   // `capability` and `use` are a PAIR — one names tools, the other calls them.
   // Either alone is broken, so they are added together or not at all.
   if (includeToolSearch) {
-    for (const name of [TOOL_SEARCH_TOOL_NAME, USE_TOOL_NAME, BROWSER_NAVIGATE_ALWAYS]) {
+    for (const name of [TOOL_SEARCH_TOOL_NAME, USE_TOOL_NAME, ...ALWAYS_BROWSER_TOOLS]) {
       if (available.has(name) && !seen.has(name)) {
         out.push(name);
         seen.add(name);

@@ -65,9 +65,10 @@ export const CAPABILITIES: readonly Capability[] = [
     name: 'browser',
     summary: "Drive the app's own built-in browser: navigate, click, type, read a page.",
     guidance:
-      'Your PRIMARY web control. Use it for anything on the web — searching, reading a site, ' +
-      'filling a form, using a web app. If a tab is already open, snapshot THAT tab rather ' +
-      'than opening another.',
+      'Your PRIMARY web control. browser_navigate and browser_snapshot are always in your ' +
+      'list; this adds the rest — click, type, scroll, read, wait, back, forward, key. Never ' +
+      're-navigate to a page you are already on just to look at it: snapshot it. If a tab is ' +
+      'already open, act on THAT tab rather than opening another.',
     tools: [...BROWSER_TOOL_NAMES],
   },
   {

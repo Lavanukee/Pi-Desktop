@@ -139,7 +139,10 @@ describe('each capability carries its own guidance (jedd)', () => {
   it('forbids re-navigating to a page it is already on', () => {
     // The loop jedd hit: "constantly reopen the same link over and over".
     expect(CAPABILITY_PROMPT).toContain('NAVIGATING RETURNS THE PAGE');
-    expect(CAPABILITY_PROMPT).toContain('Re-opening a link you are already on');
+    expect(CAPABILITY_PROMPT).toContain('NEVER navigate to a URL you are already on');
+    // And it must name the tool that lets it look WITHOUT navigating — a browser
+    // with no way to look is what forced the loop in the first place.
+    expect(CAPABILITY_PROMPT).toContain('`browser_snapshot` is also always available');
   });
 
   it('says the rest of the browser suite is one capability call away', () => {

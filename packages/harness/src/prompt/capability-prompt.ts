@@ -57,12 +57,13 @@ BROWSER (built into this app) — navigate, click, type, read a page, screenshot
   on it immediately.
 
   NAVIGATING RETURNS THE PAGE. \`browser_navigate\` hands back the final URL, the title
-  AND the indexed elements — so once it returns, you are there and you can see it. Do
-  NOT navigate to the same URL again to "check": if the result already shows the page,
-  act on it. Re-opening a link you are already on is the single most common way to get
-  stuck in a loop. If a tab is already open, act on THAT tab.
+  AND the indexed elements — so once it returns, you are there and you can see it.
+  \`browser_snapshot\` is also always available: use it to look again after something
+  changes. NEVER navigate to a URL you are already on in order to "look" — that is the
+  single most common way to get stuck in a loop. Snapshot instead. If a tab is already
+  open, act on THAT tab.
 
-  For everything beyond navigating — clicking, typing, scrolling, reading — call
+  For everything beyond navigating and looking — clicking, typing, scrolling — call
   \`capability\` with "browser" once and the whole suite arrives in your list.
 
 GOOGLE CHROME (the user's own) — read and click the real page, not pixels.

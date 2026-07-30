@@ -135,7 +135,22 @@ mkdirSync(userDataDir, { recursive: true });
 
 const app = await electron.launch({
   executablePath: electronBinary,
-  args: [appRoot, `--user-data-dir=${userDataDir}`],
+  /*
+   * THE REAL PROFILE, by default.
+   *
+   * This used to always launch with its own `--user-data-dir`, which sounds tidy
+   * and is why every headed run I did answered "fetch failed": a fresh profile
+   * has no model selected, so the app never starts a llama-server. jedd, seeing
+   * it: "on your test build you're getting fetch failed … this never happens on
+   * the real app seemingly, make sure this doesn't happen for you."
+   *
+   * A test that cannot reproduce the user's setup is not a test of the product.
+   * So the default is now the SAME profile the installed app uses — same model,
+   * same server, same everything. ISOLATED_PROFILE=1 restores the sandbox for a
+   * probe that genuinely must not touch real state.
+   */
+  args:
+    process.env.ISOLATED_PROFILE === '1' ? [appRoot, `--user-data-dir=${userDataDir}`] : [appRoot],
   // PI_E2E exposes the store for observation. There is no mock here: this is the
   // real local model, because a corp run against a fixture proves nothing.
   env: {
@@ -231,7 +246,9 @@ try {
   await page.waitForTimeout(2500);
   const chip = (await page.textContent('.pd-project-chip').catch(() => null)) ?? '';
   const want = path.basename(PROJECT);
-  if (!chip.includes(want)) {
+  if (process.env.NO_PROJECT === '1') {
+    log('project check skipped (NO_PROJECT=1)');
+  } else if (!chip.includes(want)) {
     console.error(`corp-headed-run: the folder chip reads "${chip.trim()}", not "${want}".`);
     console.error('Refusing to start — the run would go somewhere other than the project you');
     console.error('asked for, and the team is keyed to that path.');
@@ -239,6 +256,31 @@ try {
     process.exit(4);
   }
   log('project confirmed on screen:', chip.trim());
+
+  /*
+   * WAIT FOR THE MODEL. Every headed run I did answered "fetch failed", and the
+   * reason was mine: the probe typed the moment the window appeared, while a 4B
+   * Q8 model was still loading. jedd: "this never happens on the real app
+   * seemingly" — because a human waits for it. A test that races the model is
+   * testing the race.
+   */
+  const modelReady = await page
+    .waitForFunction(
+      () => {
+        const st = window.__llm_store?.().getState?.().status;
+        return st?.phase === 'ready';
+      },
+      { timeout: 180_000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  if (!modelReady) {
+    console.error('corp-headed-run: the model never reached "ready" — refusing to send, because');
+    console.error('a prompt into a loading model just yields "fetch failed" and proves nothing.');
+    await app.close().catch(() => {});
+    process.exit(5);
+  }
+  log('model ready');
 
   await page.click('[data-testid="composer-input"]');
   await page.keyboard.insertText(TASK);
@@ -309,7 +351,7 @@ try {
   log(`plan rows: ${plan.rows.length} of ${plan.nodes} nodes`);
   for (const r of plan.rows) log('  ·', r);
 
-  await page.screenshot({ path: path.join(OUT, 'final.png') });
+  await page.screenshot({ path: path.join(OUT, 'final.png') }).catch(() => {});
   log('done watching · screenshots:', OUT);
   console.log(`\nProject (go and look): ${PROJECT}`);
   console.log(`Screenshots:           ${OUT}`);

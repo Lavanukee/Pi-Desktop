@@ -83,6 +83,7 @@ describe('resolvePresetTools — full tool universe', () => {
       'python_run',
       'capability',
       'browser_navigate',
+      'browser_snapshot',
     ]);
   });
 
@@ -95,6 +96,7 @@ describe('resolvePresetTools — full tool universe', () => {
       'web_fetch',
       'capability',
       'browser_navigate',
+      'browser_snapshot',
       'read',
       'write',
       'edit',
@@ -157,6 +159,7 @@ describe('resolvePresetTools — full tool universe', () => {
       'video_locate',
       'capability',
       'browser_navigate',
+      'browser_snapshot',
       'bash',
     ]);
   });
@@ -170,6 +173,7 @@ describe('resolvePresetTools — full tool universe', () => {
       'video_edit',
       'capability',
       'browser_navigate',
+      'browser_snapshot',
       'read',
       'write',
       'edit',
@@ -187,6 +191,7 @@ describe('resolvePresetTools — full tool universe', () => {
       'image_edit',
       'capability',
       'browser_navigate',
+      'browser_snapshot',
       'read',
       'write',
       'edit',
@@ -212,7 +217,15 @@ describe('resolvePresetTools — full tool universe', () => {
     // Was tool-search-only; jedd made read/write/edit/bash globally active so a
     // simple-QA turn that suddenly needs a file can act instead of disclaiming.
     const tools = resolvePresetTools('simple-QA', ALL_TOOLS);
-    expect(tools).toEqual(['capability', 'browser_navigate', 'read', 'write', 'edit', 'bash']);
+    expect(tools).toEqual([
+      'capability',
+      'browser_navigate',
+      'browser_snapshot',
+      'read',
+      'write',
+      'edit',
+      'bash',
+    ]);
     expect(isToolSearchOnly(tools)).toBe(false);
   });
 
@@ -239,7 +252,15 @@ describe('resolvePresetTools — full tool universe', () => {
     expect(tools).not.toContain('calendar_list_events');
     expect(tools).not.toContain('mail_recent');
     expect(tools).not.toContain('messages_send');
-    expect(tools).toEqual(['capability', 'browser_navigate', 'read', 'write', 'edit', 'bash']);
+    expect(tools).toEqual([
+      'capability',
+      'browser_navigate',
+      'browser_snapshot',
+      'read',
+      'write',
+      'edit',
+      'bash',
+    ]);
   });
 
   it("'other' with no connectors falls back to the global file tools + capability", () => {

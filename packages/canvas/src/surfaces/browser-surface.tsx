@@ -4,7 +4,8 @@ import { type ContentSlotOptions, useContentSlot } from './content-slot.ts';
 export interface BrowserSurfaceProps extends ContentSlotOptions {
   /** Current URL; empty/undefined shows the "start browsing" empty state. */
   url?: string;
-  /** Show the "model is driving" indicator (browser-use is live). */
+  /** True while browser-use is driving this view. Accepted (callers still pass
+   * it, and the state is real) but no longer DRAWN — see the note in the body. */
   driving?: boolean;
   className?: string;
 }
@@ -12,7 +13,7 @@ export interface BrowserSurfaceProps extends ContentSlotOptions {
 /**
  * BrowserSurface — the CONTENT for a live web tab. The URL bar + nav chrome now
  * live in the per-tab {@link CanvasOperationBar}; this surface renders only the
- * native content slot, the "Pi is browsing" driving indicator, and the empty
+ * native content slot and the empty
  * state. The page is a native WebContentsView the APP mounts and positions over
  * the slot: `onMount(el)` hands the app the slot element, and `onRectChange(rect)`
  * streams its viewport rect (both null on unmount → the app hides that view). The
@@ -32,12 +33,11 @@ export function BrowserSurface({
     <div className={rootClass}>
       <div className="pd-browser-content">
         <div ref={slotRef} className="pd-browser-slot" data-native-slot="browser" />
-        {driving ? (
-          <span className="pd-browser-driving" title="The model is driving this browser">
-            <span className="pd-browser-driving-dot" />
-            Pi is browsing
-          </span>
-        ) : null}
+        {/* NO "Pi is browsing" chip. jedd: "I'd like that 'Pi is browsing' and
+            blue dot stuff to be gone." It floated over the page's own top-right
+            corner — exactly where a site puts its account menu and its sign-in
+            controls — to narrate something the user can already see happening.
+            `driving` is still tracked; it simply draws nothing. */}
         {url ? null : (
           <div className="pd-browser-empty" aria-hidden="true">
             <IconGlobe size={48} />

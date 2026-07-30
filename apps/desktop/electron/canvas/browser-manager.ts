@@ -51,6 +51,23 @@ const entries = new Map<string, Entry>();
  * (avoid double-binding). */
 const wiredOwners = new Set<number>();
 
+/**
+ * Whether a `window.open` may become a real popup window.
+ *
+ * Only http(s). A `mailto:`, `tel:`, `itms-apps:` or custom-scheme open is a
+ * request to hand the URL to ANOTHER application, not to show a page — honouring
+ * it as a popup would launch something outside the app from untrusted web
+ * content, so it is refused. Junk that does not parse is refused too.
+ */
+export function popupAllowed(url: string): boolean {
+  try {
+    const scheme = new URL(url).protocol;
+    return scheme === 'https:' || scheme === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 function emitState(owner: WebContents, patch: BrowserStateEvent): void {
   if (!owner.isDestroyed()) events.send(owner, 'browser:state', patch);
 }
@@ -82,10 +99,47 @@ function attachListeners(tabId: string, view: WebContentsView, owner: WebContent
   wc.on('page-favicon-updated', (_e, favicons) => {
     if (favicons[0]) emitState(owner, { tabId, faviconUrl: favicons[0] });
   });
-  // Keep target=_blank / window.open in the same view — one tab, one view.
-  wc.setWindowOpenHandler(({ url }) => {
-    void wc.loadURL(url);
-    return { action: 'deny' };
+  /*
+   * A POPUP IS A REAL WINDOW. This used to deny every `window.open` and navigate
+   * the SAME view to the popup's URL instead — "one tab, one view", which is tidy
+   * and breaks every sign-in flow on the web.
+   *
+   * MEASURED, from jedd signing into a site with Google: the consent screen is a
+   * popup. Flattened into the opener's own view it has no `window.opener`, so
+   * after "Allow" it posts its result to nothing and calls `window.close()` on a
+   * window that is not a popup — and the page goes blank. He tried the identical
+   * flow in Safari and Chrome, where it completes, because they open the real
+   * popup. It also explains why the agent's cursor could not be seen clicking
+   * those buttons: there was no separate window for it to appear over.
+   *
+   * So a popup opens as a genuine child window, with the opener relationship
+   * intact. `outlivesOpener: false` ties it to the tab that opened it, so closing
+   * the tab cannot leave an orphan sign-in window behind. A NON-http scheme is
+   * still denied — that is a request to hand the URL to another application, not
+   * to show a page.
+   */
+  wc.setWindowOpenHandler(({ url, frameName }) => {
+    if (!popupAllowed(url)) return { action: 'deny' };
+    return {
+      action: 'allow',
+      outlivesOpener: false,
+      overrideBrowserWindowOptions: {
+        // Sized like a real auth popup, and it must not be a child of the canvas
+        // layout — it is its own window, as it is in every other browser.
+        width: 520,
+        height: 640,
+        title: frameName.length > 0 ? frameName : 'Sign in',
+        autoHideMenuBar: true,
+        webPreferences: {
+          // The SAME partition as the tab that opened it, or the session it
+          // establishes is invisible to the page that asked for it.
+          partition: BROWSER_PARTITION,
+          contextIsolation: true,
+          sandbox: true,
+          nodeIntegration: false,
+        },
+      },
+    };
   });
   // ── Blank-pane recovery (root cause: dead renderer) ───────────────────────
   // These views host arbitrary, untrusted web content, so their renderer/GPU
@@ -119,12 +173,34 @@ function attachListeners(tabId: string, view: WebContentsView, owner: WebContent
   });
 }
 
+/**
+ * A view's webContents, but only when it is genuinely usable.
+ *
+ * A destroyed WebContentsView can leave `view.webContents` UNDEFINED, not merely
+ * destroyed — and every call site here assumed the property was always an object.
+ * MEASURED, from jedd's crash dialog: "Cannot read properties of undefined
+ * (reading 'isDestroyed')", thrown out of a BrowserWindow event listener, i.e.
+ * the focus/show repaint below walking an entry whose view had already gone. That
+ * is an uncaught exception in the MAIN process, so it is a modal error dialog in
+ * the user's face rather than a bad frame.
+ *
+ * A dead entry is also pruned on the way past: it can never come back, and
+ * leaving it in the map means every future window event trips over it again.
+ */
+function liveContents(tabId: string, entry: Entry): WebContents | undefined {
+  const wc = entry.view.webContents as WebContents | undefined;
+  if (wc === undefined || wc.isDestroyed()) {
+    entries.delete(tabId);
+    return undefined;
+  }
+  return wc;
+}
+
 /** Force a repaint of every VISIBLE view owned by `owner`. */
 function invalidateOwned(owner: WebContents): void {
-  for (const entry of entries.values()) {
-    if (entry.owner === owner && entry.visible && !entry.view.webContents.isDestroyed()) {
-      entry.view.webContents.invalidate();
-    }
+  for (const [tabId, entry] of [...entries]) {
+    if (entry.owner !== owner || !entry.visible) continue;
+    liveContents(tabId, entry)?.invalidate();
   }
 }
 
@@ -223,7 +299,8 @@ function destroyView(tabId: string): void {
   } catch {
     // Owner window already gone — nothing to detach from.
   }
-  if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close();
+  const wc = entry.view.webContents as WebContents | undefined;
+  if (wc !== undefined && !wc.isDestroyed()) wc.close();
   log.info('browser view destroyed', { tabId });
 }
 
@@ -297,7 +374,9 @@ const KEY_MAP: Record<string, string> = {
 
 function has(tabId: string): boolean {
   const entry = entries.get(tabId);
-  return entry !== undefined && !entry.view.webContents.isDestroyed();
+  if (entry === undefined) return false;
+  const wc = entry.view.webContents as WebContents | undefined;
+  return wc !== undefined && !wc.isDestroyed();
 }
 
 function stateOf(tabId: string): AgentTabState | null {

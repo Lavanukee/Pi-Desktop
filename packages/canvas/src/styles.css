@@ -920,31 +920,6 @@
   animation: pd-browser-pulse 1.4s ease-in-out infinite;
 }
 
-/* The "Pi is browsing" chip floats over the page content (top-right). */
-.pd-browser-driving {
-  position: absolute;
-  top: var(--pd-space-sm);
-  right: var(--pd-space-sm);
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border-radius: var(--pd-radius-full);
-  background: var(--pd-accent-subtle);
-  color: var(--pd-accent-primary);
-  font-size: var(--pd-font-size-footnote);
-  box-shadow: var(--pd-shadow-popover);
-}
-
-.pd-browser-driving-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--pd-radius-full);
-  background: currentColor;
-  animation: pd-browser-pulse 1.4s ease-in-out infinite;
-}
-
 @keyframes pd-browser-pulse {
   0%,
   100% {
@@ -956,7 +931,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pd-browser-driving-dot,
   .pd-browser-loading {
     animation: none;
   }

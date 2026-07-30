@@ -36,8 +36,12 @@ describe('BrowserSurface', () => {
     expect(onMount).toHaveBeenLastCalledWith(null);
   });
 
-  it('shows the "model is driving" indicator when driving', async () => {
-    const { container } = await render(<BrowserSurface url="https://x.dev" driving />);
-    expect(container.querySelector('.pd-browser-driving')).toBeTruthy();
+  it('draws NO "Pi is browsing" chip, even while driving', () => {
+    // jedd: "I'd like that 'Pi is browsing' and blue dot stuff to be gone." It sat
+    // over the page's own top-right corner — where sites put their account menu
+    // and sign-in controls — narrating something already visible.
+    const html = render(<BrowserSurface url="https://x.test" driving />);
+    expect(html).not.toContain('pd-browser-driving');
+    expect(html).not.toContain('Pi is browsing');
   });
 });

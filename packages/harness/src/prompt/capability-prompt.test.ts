@@ -122,3 +122,41 @@ describe('augmentSystemPrompt', () => {
     expect(p).toMatch(/don't spawn a subagent or open the browser for a simple/);
   });
 });
+
+describe('each capability carries its own guidance (jedd)', () => {
+  // "add tidbits to each capability in the system prompt, eg. utilize these tools
+  // as the primary browser controls whenever you do something requiring a web
+  // browser, utilize mac computer use if it is requested you do something in the
+  // user's other browsers on their system ... bundle the calendar, email and
+  // reminders stuff also."
+  it('names the built-in browser as the PRIMARY web control', () => {
+    expect(CAPABILITY_PROMPT).toContain('These are your PRIMARY browser controls');
+  });
+
+  it('sends computer use at the user’s OWN browsers, and only those', () => {
+    expect(CAPABILITY_PROMPT).toContain('THEIR OWN browsers');
+    expect(CAPABILITY_PROMPT).toContain('Safari, Chrome, Arc');
+  });
+
+  it('tells it to act on an already-open tab rather than opening another', () => {
+    // The bug jedd hit: a blank second tab, snapshotted instead of his page.
+    expect(CAPABILITY_PROMPT).toContain('act on');
+    expect(CAPABILITY_PROMPT).toContain('rather than opening a new one');
+  });
+
+  it('bundles calendar, mail, reminders, contacts and messages as ONE capability', () => {
+    expect(CAPABILITY_PROMPT).toContain('CALENDAR, MAIL, REMINDERS, CONTACTS & MESSAGES');
+    // …with the rule that matters: read/write via the connector, not the UI.
+    expect(CAPABILITY_PROMPT).toContain('never drive the Calendar or Mail UI with computer use');
+  });
+
+  it('warns that opening from the shell lands in a real Mac app', () => {
+    // The common case jedd flagged: `open -a Safari` is computer-use territory.
+    expect(CAPABILITY_PROMPT).toContain('hands it to a');
+    expect(CAPABILITY_PROMPT).toContain('not the built-in browser');
+  });
+
+  it('still says an AX-opaque app gives a screenshot to act on by coordinates', () => {
+    expect(CAPABILITY_PROMPT).toContain('act by x,y coordinates');
+  });
+});

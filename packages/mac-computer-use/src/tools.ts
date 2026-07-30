@@ -20,7 +20,7 @@ import type {
 } from '@mariozechner/pi-coding-agent';
 import { Type } from '@sinclair/typebox';
 import type { MacBridge } from './bridge-client.js';
-import { formatMacSnapshot } from './format.js';
+import { formatMacSnapshot, isAxOpaque } from './format.js';
 import type { MacConsentGate } from './permissions.js';
 import { createMacConsentGate } from './permissions.js';
 import type { MacActAck, MacLaunchAck, MacSnapshot, MacTccStatus } from './protocol.js';
@@ -172,9 +172,10 @@ export function registerMacComputerUseTools(
       '(buttons, fields, menus, …) plus a short summary. This is your view of the app — act on ' +
       'elements by their [index]. Defaults to the app you are CONTROLLING (the one you launched ' +
       'or last snapshotted); pass an app name to switch control to another running app. Before ' +
-      'any app is controlled it reads the frontmost app. Optionally attach a screenshot (needed ' +
-      'for AX-opaque apps). Prefer this over guessing coordinates. The first call asks the user ' +
-      'to allow Mac control.',
+      'any app is controlled it reads the frontmost app. If the app exposes nothing to ' +
+      'Accessibility you get a SCREENSHOT of its window automatically, with its bounds — act by ' +
+      'x,y coordinates in that case; you never need to ask for the image. Prefer acting by ' +
+      'index when indexes exist. The first call asks the user to allow Mac control.',
     promptSnippet: 'See a Mac app as an indexed Accessibility element list',
     parameters: Type.Object({
       app: Type.Optional(
@@ -183,7 +184,11 @@ export function registerMacComputerUseTools(
         }),
       ),
       screenshot: Type.Optional(
-        Type.Boolean({ description: 'Also attach a screenshot image (heavier). Default false.' }),
+        Type.Boolean({
+          description:
+            'Force a screenshot even when Accessibility answers (heavier). Default false — an ' +
+            'app with no AX elements attaches one on its own.',
+        }),
       ),
     }),
     async execute(_id, params, _signal, _upd, ctx): Promise<AgentToolResult<MacDetails>> {
@@ -191,12 +196,30 @@ export function registerMacComputerUseTools(
       const blocked = await gate('mac_snapshot', ctx, params.app);
       if (blocked !== null) return blocked;
       try {
-        const snap = await snapshot(params.app, params.screenshot === true);
+        /*
+         * AN EMPTY AX TREE MUST STILL COME BACK WITH SOMETHING TO ACT ON.
+         *
+         * Screenshots were opt-in, so an app that exposes nothing to Accessibility
+         * answered with a sentence saying so and an instruction to call this same
+         * tool again with a flag — jedd: it "returns something that just isn't able
+         * to do anything ... some useless information about it being AX opaque".
+         * A whole turn spent learning the tool could not help.
+         *
+         * So the first attempt is cheap (no capture), and if AX yields nothing we
+         * immediately re-take it WITH the image and hand that back. The floor jedd
+         * asked for: whatever else fails, a snapshot returns a picture of the
+         * window and tells the model to work in coordinates.
+         */
+        let snap = await snapshot(params.app, params.screenshot === true);
+        if (params.screenshot !== true && isAxOpaque(snap)) {
+          snap = await snapshot(params.app, true);
+        }
         const content: AgentToolResult<MacDetails>['content'] = [
           { type: 'text', text: formatMacSnapshot(snap) },
         ];
         const shot = snap.screenshot;
-        if (params.screenshot === true && shot?.base64 !== undefined && shot.base64 !== '') {
+        const wantImage = params.screenshot === true || isAxOpaque(snap);
+        if (wantImage && shot?.base64 !== undefined && shot.base64 !== '') {
           content.push({
             type: 'image',
             data: shot.base64,

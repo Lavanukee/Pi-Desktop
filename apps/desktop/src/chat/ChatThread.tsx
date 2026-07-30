@@ -86,6 +86,28 @@ function toRenderItems(messages: ChatMsg[], claimed: Set<string>): RenderItem[] 
   return items;
 }
 
+/**
+ * A generation rate we are willing to print.
+ *
+ * jedd, on a footer reading "~13888 tok/s": "suspiciously incorrect". It is — no
+ * local model decodes at five figures. That number is a PROMPT-processing rate,
+ * which llama.cpp reports in the same timing block and in the same units, so a
+ * stray parse or a prefill-only request surfaces it as though it were throughput.
+ *
+ * Rather than print a figure that is certainly wrong, print nothing. The reading
+ * is a nicety; a wrong one actively misleads, and it is exactly the kind of number
+ * a person would go on to make a decision with. The ceiling is deliberately loose
+ * — far above any real local decode rate on this hardware, so a genuinely fast
+ * model is never censored.
+ */
+const MAX_PLAUSIBLE_TPS = 1000;
+
+function plausibleTps(tps: number | undefined): number | undefined {
+  if (tps === undefined || !Number.isFinite(tps)) return undefined;
+  if (tps <= 0 || tps > MAX_PLAUSIBLE_TPS) return undefined;
+  return tps;
+}
+
 export function ChatThread() {
   const messages = usePiStore((s) => s.messages);
   const queuedSends = usePiStore((s) => s.queuedSends);
@@ -351,8 +373,11 @@ export function ChatThread() {
                     <MessageActions
                       onCopy={() => copyText(groupPlainText(group))}
                       onRetry={() => retryFrom(first.id)}
-                      tokenCount={totalTokens}
-                      tokensPerSecond={streaming ? undefined : tps}
+                      /* No context chip. jedd: "remove the context used one, just
+                         keep the copy reload and toks/s". It was also the least
+                         trustworthy number on the row — a whole-conversation
+                         total rendered under every individual message. */
+                      tokensPerSecond={streaming ? undefined : plausibleTps(tps)}
                     />
                   }
                 >

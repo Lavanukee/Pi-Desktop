@@ -45,7 +45,6 @@ import {
   type PermissionController,
   registerPermissions,
 } from './permissions/modes.js';
-import { preloadToolNames } from './presets/preload.js';
 import { resolvePresetTools } from './presets/presets.js';
 import { augmentSystemPrompt } from './prompt/capability-prompt.js';
 import { connectRepairBridge, type LiveRepairDeps } from './repair/bridge.js';
@@ -272,7 +271,7 @@ function buildConversationPrefix(
  * \`name\`:\n```\n…`, the shape the composer's buildAgentMessage produces for a
  * pasted block or dropped text file).
  *
- * Such a turn SKIPS message-scored tool preload and uses the DETERMINISTIC base
+ * Such a turn uses the DETERMINISTIC base
  * preset. Two reasons: (1) scoring a document's prose — or even a short "summarize
  * this" request — pulls in false-positive tools (a doc about arctic terns loaded
  * `web_search`; "summarize the key themes" loaded the whole browser pipeline via
@@ -956,9 +955,8 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     extraTools: readonly string[] = [],
   ): void {
     const available = pi.getAllTools().map((t) => t.name);
-    // The class preset PLUS any semantically-preloaded tools for this message
-    // (top matches + their peer pipelines — preloadToolNames already filtered to
-    // registered/not-active). Unioned append-only below so the KV prefix holds.
+    // The class preset PLUS any extra tools the caller named. Unioned
+    // append-only below so the KV prefix holds.
     const preset = [...resolvePresetTools(cls, available), ...extraTools];
     // The active tool list is rendered at the START of the prompt (chat templates
     // emit tools before the messages), so it is part of the KV-cached prefix. If
@@ -1109,24 +1107,29 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     // let's just completely remove"). The turn-1 {title,class} piggyback cost
     // ~2.5s of TTFT — an awaited utility call before the model could even start.
     // Instead use a fixed default preset: deterministic, and it matches the
-    // model-load warm-up ('coding') so the KV prefix is reused; semantic preload
-    // still adds message-relevant tools append-only. Conversation naming is now a
+    // model-load warm-up ('coding') so the KV prefix is reused. Conversation naming is now a
     // post-turn background pass (agent_end) that never blocks the reply. Re-add
     // per-task classify later if the routing proves worth the latency.
     const cls: TaskClass = runtime.config.preset === 'auto' ? 'coding' : runtime.config.preset;
-    // Preemptively pull in the tools this message semantically needs (jedd): the
-    // top ~2 high-confidence matches + their peer pipelines (mac snapshot ⇒ the
-    // whole mac computer-use set), so the model doesn't have to spend a tool_search
-    // round-trip before acting. Append-only ⇒ the KV-cached prefix is preserved.
-    // A turn carrying a pasted/attached block uses the deterministic base preset
-    // (no message-scored preload) so its tool prefix matches ATTACHMENT PREFILL's
-    // and the primed KV is reused — see hasAttachedFileBlock.
-    const preloaded = hasAttachedFileBlock(event.prompt ?? '')
-      ? []
-      : preloadToolNames(event.prompt ?? '', pi.getAllTools(), {
-          activeToolNames: runtime.activeTools,
-        });
-    applyPreset(cls, ctx, preloaded);
+    /*
+     * SEMANTIC TOOL PRELOAD IS GONE. jedd: "ensure that semantic tool preload is
+     * not happening per turn or at all."
+     *
+     * It scored each message and appended the tools it looked like it needed, to
+     * save a `tool_search` round-trip. "Append-only, so the KV prefix survives"
+     * was the justification and it was wrong in the way that matters: the tool
+     * SCHEMAS sit in the prompt prefix, so appending a tool changes the prefix,
+     * and a prefix that changes with the wording of every message is a prefix
+     * that is never reused. On one model slot that is the whole cost of a turn.
+     *
+     * It also made the tool set unpredictable — the same question could arrive
+     * with a different set of verbs depending on how it was phrased, which is a
+     * plausible contributor to the looping jedd has been seeing.
+     *
+     * The preset alone is deterministic, matches the model-load warm-up prefix,
+     * and a role that needs something else can still reach for `tool_search`.
+     */
+    applyPreset(cls, ctx);
     pi.appendEntry(HARNESS_CLASSIFY_ENTRY, { class: cls, turnIndex: runtime.turnIndex });
     // Replace the turn's system prompt with the capability-affirming version.
     return { systemPrompt: augmentedSystemPrompt };

@@ -5,7 +5,7 @@ import { MessageActions } from './message-actions.tsx';
 import { TooltipProvider } from './tooltip.tsx';
 
 /**
- * Under-message action bar — jedd Wave B. The bar is scaled ~1.5× (bigger touch
+ * Under-message action bar — jedd Wave B, since shrunk 20% to 1.2× (bigger touch
  * targets + glyphs, #1) and the response speed moved OFF the pinned footnote and
  * INTO the bar as its own item (#2). Asserted through the repo's jsdom-free
  * static-markup convention; the bar's Tooltips need a TooltipProvider ancestor.
@@ -17,13 +17,16 @@ function render(ui: ReactElement): string {
 }
 
 describe('MessageActions bar (Wave B)', () => {
-  it('scales the action glyphs 1.5× — 14 → 21px, none left at the old size', () => {
+  it('scales the action glyphs 1.2× — 14 → 17px, none left at an older size', () => {
+    // Wave B scaled the bar 1.5× (21px). jedd has since asked for it 20% smaller:
+    // "shrink this whole bottom thing by 20%". The glyph literal has to move with
+    // the CSS scale or the icons stop fitting their targets.
     const html = render(<MessageActions onCopy={noop} onRetry={noop} onShare={noop} />);
     expect(html).toContain('pd-msg-action-bar');
-    expect(html).toContain('width="21"');
-    expect(html).toContain('height="21"');
-    // No glyph is left at the pre-scale 14px size.
+    expect(html).toContain('width="17"');
+    expect(html).toContain('height="17"');
     expect(html).not.toContain('width="14"');
+    expect(html).not.toContain('width="21"');
   });
 
   it('renders the response speed AS a bar item (default "~" prefix, rounded)', () => {

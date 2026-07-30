@@ -55,12 +55,12 @@ export interface MessageActionsProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 /**
- * The under-message action bar is scaled up ~1.5× (jedd Wave B #1: bigger touch
- * targets + glyphs). The button/chip geometry rides message-actions.css; icons
- * carry the matching 1.5× pixel size (14 → 21) so the SVG attrs stay in step
- * with the enlarged controls even before CSS loads.
+ * The bar's glyph size, kept in step with the CSS scale (--pd-msg-bar-scale).
+ * Wave B #1 scaled it 1.5× (14 → 21); jedd has since asked for 20% less, so it
+ * is 1.2× (14 → 17). Carried here as a literal so the SVG attrs are right even
+ * before the stylesheet loads.
  */
-const BAR_ICON = 21;
+const BAR_ICON = 17;
 
 export const MessageActions = forwardRef<HTMLDivElement, MessageActionsProps>(
   function MessageActions(

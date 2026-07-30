@@ -17,20 +17,23 @@
 }
 
 /*
- * Wave B #1: scale the whole bar ~1.5× — larger touch targets + glyphs. The
- * icon buttons and the token/speed chips ride --pd-control-sm; bump both to 1.5×
- * so the row reads at a comfortable size (icons carry the matching pixel size
- * from the component, BAR_ICON = 21). These bar-scoped rules sort AFTER the base
- * .pd-msg-context above so specificity climbs in source order.
+ * Wave B #1 scaled the bar 1.5×; jedd has since asked for it 20% smaller ("shrink
+ * this whole bottom thing by 20%"), so the factor is 1.2 — one variable, because
+ * the buttons, the chips and the icon pixel size all have to move together or the
+ * glyphs stop fitting their targets.
  */
+.pd-msg-action-bar {
+  --pd-msg-bar-scale: 1.2;
+}
+
 .pd-msg-action-bar .pd-icon-btn.pd-btn--sm {
-  width: calc(var(--pd-control-sm) * 1.5);
-  height: calc(var(--pd-control-sm) * 1.5);
+  width: calc(var(--pd-control-sm) * var(--pd-msg-bar-scale));
+  height: calc(var(--pd-control-sm) * var(--pd-msg-bar-scale));
 }
 
 .pd-msg-action-bar .pd-msg-context {
-  height: calc(var(--pd-control-sm) * 1.5);
-  padding: 0 10px;
+  height: calc(var(--pd-control-sm) * var(--pd-msg-bar-scale));
+  padding: 0 8px;
   font-size: var(--pd-font-size-body);
   line-height: var(--pd-leading-body);
 }
@@ -44,8 +47,8 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: calc(var(--pd-control-sm) * 1.5);
-  padding: 0 8px;
+  height: calc(var(--pd-control-sm) * var(--pd-msg-bar-scale));
+  padding: 0 6px;
   color: var(--pd-text-muted);
   font-family: var(--pd-font-sans);
   font-size: var(--pd-font-size-body);

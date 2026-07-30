@@ -19,6 +19,12 @@ export const MAC_TYPE_TOOL = 'mac_type';
 export const MAC_KEY_TOOL = 'mac_key';
 export const MAC_SCROLL_TOOL = 'mac_scroll';
 export const MAC_LAUNCH_TOOL = 'mac_launch';
+/* Chrome, driven through its DOM rather than its pixels — the user's OWN Chrome,
+ * with their sessions. See ./chrome.ts for why this beats sighted clicking. */
+export const CHROME_SNAPSHOT_TOOL = 'chrome_snapshot';
+export const CHROME_CLICK_TOOL = 'chrome_click';
+export const CHROME_TYPE_TOOL = 'chrome_type';
+export const CHROME_GO_TOOL = 'chrome_go';
 
 /** Every `mac_*` computer-use tool name — the full background-control pipeline. */
 export const MAC_COMPUTER_USE_TOOL_NAMES = [
@@ -28,4 +34,8 @@ export const MAC_COMPUTER_USE_TOOL_NAMES = [
   MAC_TYPE_TOOL,
   MAC_KEY_TOOL,
   MAC_SCROLL_TOOL,
+  CHROME_SNAPSHOT_TOOL,
+  CHROME_CLICK_TOOL,
+  CHROME_TYPE_TOOL,
+  CHROME_GO_TOOL,
 ] as const;

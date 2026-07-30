@@ -56,6 +56,13 @@ BROWSER (built into this app) — navigate, click, type, read a page, screenshot
   is far more reliable than looking at pixels. If a browser tab is already open, act on
   THAT tab; snapshot it first to see what is on it rather than opening a new one.
 
+GOOGLE CHROME (the user's own) — read and click the real page, not pixels.
+  When the work is in THEIR Chrome, use chrome_snapshot / chrome_click / chrome_type:
+  it reads the actual DOM, so it is as precise as the built-in browser and it has their
+  logins and sessions. Always prefer it over computer use for Chrome. It needs one
+  Chrome setting the user is asked to approve the first time; if that is declined or
+  Chrome has not been restarted, fall back to computer use.
+
 MAC COMPUTER USE — see and control any app on the user's Mac.
   Reach for this when the work is in one of THEIR applications rather than on the web:
   Notes, Mail, Finder, Photoshop, a game, a preferences pane. Also use it when the user

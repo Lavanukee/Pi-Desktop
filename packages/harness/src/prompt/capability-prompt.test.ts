@@ -150,6 +150,12 @@ describe('each capability carries its own guidance (jedd)', () => {
     expect(CAPABILITY_PROMPT).toContain('never drive the Calendar or Mail UI with computer use');
   });
 
+  it('routes the user’s own Chrome through its DOM, not through pixels', () => {
+    expect(CAPABILITY_PROMPT).toContain('GOOGLE CHROME');
+    expect(CAPABILITY_PROMPT).toContain('chrome_snapshot');
+    expect(CAPABILITY_PROMPT).toContain('Always prefer it over computer use for Chrome');
+  });
+
   it('warns that opening from the shell lands in a real Mac app', () => {
     // The common case jedd flagged: `open -a Safari` is computer-use territory.
     expect(CAPABILITY_PROMPT).toContain('hands it to a');

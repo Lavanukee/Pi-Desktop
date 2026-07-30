@@ -86,6 +86,7 @@ import {
 } from './subagent/types.js';
 import { registerAskUser } from './tools/ask-user.js';
 import { registerImageTools } from './tools/image-tools.js';
+import { detectOpenedApp, openedAppNote } from './tools/opened-app.js';
 import { registerPlanTool } from './tools/plan-tool.js';
 import { registerSandboxFileTools } from './tools/sandbox-fs.js';
 import { truncateToolOutput } from './tools/tool-output-truncate.js';
@@ -1259,6 +1260,15 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
         runtime.touchedFiles.push(path);
       }
     }
+    /*
+     * A command that OPENS something hands the work to a real Mac app, and the
+     * model gets back an empty stdout and exit 0 — no way to tell a window now
+     * exists. Remember what was opened so the result can say which tool sees it.
+     */
+    if (event.toolName === 'bash') {
+      const command = (event.input as { command?: unknown }).command;
+      lastOpened = typeof command === 'string' ? detectOpenedApp(command) : undefined;
+    }
     const detector = runtime.loopDetector;
     if (detector === null) return;
     const signal = detector.onToolCall(event.toolName, event.input);
@@ -1285,7 +1295,22 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
   // disposable; `read` is left alone (its content is the point, and pi already
   // bounds it). Only the text parts are capped — image parts pass through.
   const TRUNCATE_TOOLS = new Set(['bash', 'grep', 'find', 'ls']);
+  /** What the last bash command opened, if anything — consumed by its result. */
+  let lastOpened: ReturnType<typeof detectOpenedApp>;
   pi.on('tool_result', (event) => {
+    // The open-an-app note rides on the bash result that caused it (jedd: give it
+    // the tools and the snapshot immediately, rather than leaving it to guess).
+    if (event.toolName === 'bash' && lastOpened !== undefined) {
+      const opened = lastOpened;
+      lastOpened = undefined;
+      const note = openedAppNote(opened);
+      const withNote = event.content.map((part, i) =>
+        i === 0 && part.type === 'text' ? { ...part, text: `${part.text}${note}` } : part,
+      );
+      const content =
+        withNote.length > 0 ? withNote : [{ type: 'text' as const, text: note.trimStart() }];
+      return { content };
+    }
     if (!TRUNCATE_TOOLS.has(event.toolName)) return;
     let changed = false;
     const content = event.content.map((part) => {

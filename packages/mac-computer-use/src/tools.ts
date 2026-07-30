@@ -20,6 +20,13 @@ import type {
 } from '@mariozechner/pi-coding-agent';
 import { Type } from '@sinclair/typebox';
 import type { MacBridge } from './bridge-client.js';
+import {
+  CHROME_SNAPSHOT_JS,
+  chromeActionJs,
+  chromeEval,
+  chromeJsAllowed,
+  enableChromeJs,
+} from './chrome.js';
 import { formatMacSnapshot, isAxOpaque } from './format.js';
 import type { MacConsentGate } from './permissions.js';
 import { createMacConsentGate } from './permissions.js';
@@ -31,6 +38,10 @@ import { createMacSessionState, type MacSessionState } from './session-state.js'
 // of truth, cheaply importable by the harness); re-exported here for existing
 // call sites.
 export {
+  CHROME_CLICK_TOOL,
+  CHROME_GO_TOOL,
+  CHROME_SNAPSHOT_TOOL,
+  CHROME_TYPE_TOOL,
   MAC_CLICK_TOOL,
   MAC_COMPUTER_USE_TOOL_NAMES,
   MAC_KEY_TOOL,
@@ -41,6 +52,10 @@ export {
 } from './tool-names.js';
 
 import {
+  CHROME_CLICK_TOOL,
+  CHROME_GO_TOOL,
+  CHROME_SNAPSHOT_TOOL,
+  CHROME_TYPE_TOOL,
   MAC_CLICK_TOOL,
   MAC_KEY_TOOL,
   MAC_LAUNCH_TOOL,
@@ -598,4 +613,129 @@ export function registerMacComputerUseTools(
 /** Probe the TCC grant status through the bridge (drives the capabilities UI). */
 export async function checkMacTcc(bridge: MacBridge): Promise<MacTccStatus> {
   return bridge.request<MacTccStatus>('check');
+}
+
+/**
+ * Register the Chrome DOM tools.
+ *
+ * Separate from the mac_* registration because they are a different KIND of
+ * control: real elements instead of coordinates, in the user's own Chrome with
+ * their sessions and logins. Computer use sees Chrome as one opaque rectangle;
+ * this sees the page.
+ *
+ * The `defaults write` that unlocks it is a change to ANOTHER app's preferences,
+ * so it is never made silently — the same confirm the Mac-control gate uses asks
+ * first, and a refusal is reported honestly rather than retried.
+ */
+export function registerChromeTools(pi: ExtensionAPI): void {
+  let askedThisSession = false;
+
+  /** Make sure Chrome will run our JavaScript, asking the user once if not. */
+  async function ensureChromeJs(ctx: ExtensionContext): Promise<string | null> {
+    if (await chromeJsAllowed()) return null;
+    if (ctx.hasUI !== true) {
+      return (
+        'Chrome will not run JavaScript from Apple Events yet, and there is no UI here to ' +
+        'ask for permission to enable it.'
+      );
+    }
+    if (askedThisSession) {
+      return 'Chrome scripting was not enabled — the user declined earlier this session.';
+    }
+    askedThisSession = true;
+    const ok = await ctx.ui.confirm(
+      'Let Pi control Google Chrome?',
+      'To read and click pages in YOUR Chrome (with your logins), Chrome has to allow ' +
+        'JavaScript from Apple Events. This changes one Chrome setting — the same one under ' +
+        'View → Developer → Allow JavaScript from Apple Events — and Chrome must be restarted ' +
+        'for it to take effect. Nothing else about Chrome is changed.',
+    );
+    if (!ok) return 'The user declined to enable Chrome scripting.';
+    const res = await enableChromeJs();
+    if (!res.ok) return `Could not change the Chrome setting: ${res.stderr}`;
+    return (
+      'ENABLED — but Chrome must be RESTARTED before it takes effect. Tell the user to quit ' +
+      'and reopen Chrome, then try again.'
+    );
+  }
+
+  /** Shared: gate, evaluate, and turn a failure into something actionable. */
+  async function evalInChrome(
+    ctx: ExtensionContext,
+    js: string,
+  ): Promise<{ text: string; ok: boolean }> {
+    const blocked = await ensureChromeJs(ctx);
+    if (blocked !== null) return { text: blocked, ok: false };
+    const res = await chromeEval(js);
+    if (!res.ok) return { text: res.error ?? 'Chrome did not respond.', ok: false };
+    return { text: res.value, ok: true };
+  }
+
+  pi.registerTool({
+    name: CHROME_SNAPSHOT_TOOL,
+    label: 'Chrome: Snapshot',
+    description:
+      "Read the page in the user's own Google Chrome — its URL, title, and an INDEXED list of " +
+      'the interactive elements actually visible on it. This reads the real DOM, so prefer it ' +
+      'over computer-use screenshots whenever the work is in Chrome. Act on what it lists with ' +
+      'chrome_click / chrome_type by [index].',
+    promptSnippet: "See the page in the user's Chrome as an indexed element list",
+    parameters: Type.Object({}),
+    async execute(_id, _params, _signal, _upd, ctx) {
+      const out = await evalInChrome(ctx, CHROME_SNAPSHOT_JS);
+      return { content: [{ type: 'text', text: out.text }], details: undefined };
+    },
+  });
+
+  pi.registerTool({
+    name: CHROME_CLICK_TOOL,
+    label: 'Chrome: Click',
+    description:
+      'Click an element in the user’s Chrome by its [index] from the latest chrome_snapshot. ' +
+      'Indexes come from the same visible-element ordering, so they always agree.',
+    promptSnippet: 'Click an element in the user’s Chrome by index',
+    parameters: Type.Object({
+      index: Type.Number({ description: 'The [index] from chrome_snapshot.' }),
+    }),
+    async execute(_id, params, _signal, _upd, ctx) {
+      const out = await evalInChrome(ctx, chromeActionJs(params.index, 'click'));
+      return { content: [{ type: 'text', text: out.text }], details: undefined };
+    },
+  });
+
+  pi.registerTool({
+    name: CHROME_TYPE_TOOL,
+    label: 'Chrome: Type',
+    description:
+      'Type text into an editable element in the user’s Chrome, by its [index] from the latest ' +
+      'chrome_snapshot. Sets the value and fires the input/change events a page listens for.',
+    promptSnippet: 'Type into a field in the user’s Chrome',
+    parameters: Type.Object({
+      index: Type.Number({ description: 'The [index] from chrome_snapshot.' }),
+      text: Type.String({ description: 'The text to enter.' }),
+    }),
+    async execute(_id, params, _signal, _upd, ctx) {
+      const out = await evalInChrome(ctx, chromeActionJs(params.index, 'focus', params.text));
+      return { content: [{ type: 'text', text: out.text }], details: undefined };
+    },
+  });
+
+  pi.registerTool({
+    name: CHROME_GO_TOOL,
+    label: 'Chrome: Navigate',
+    description: "Navigate the active tab of the user's Chrome to a URL.",
+    promptSnippet: 'Send the user’s Chrome to a URL',
+    parameters: Type.Object({ url: Type.String({ description: 'The URL to open.' }) }),
+    async execute(_id, params, _signal, _upd, ctx) {
+      const url = params.url.trim();
+      if (!/^https?:\/\//i.test(url)) {
+        return {
+          content: [{ type: 'text', text: 'Only http(s) URLs can be opened this way.' }],
+          details: undefined,
+        };
+      }
+      const out = await evalInChrome(ctx, `location.href = ${JSON.stringify(url)}; location.href`);
+      return { content: [{ type: 'text', text: out.text }], details: undefined };
+    },
+  });
 }

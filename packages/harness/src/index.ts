@@ -78,6 +78,7 @@ import {
 import { subagentBridgeRunChildFromEnv } from './subagent/bridge-client.js';
 import { detectBudget } from './subagent/budget.js';
 import { type SchedulerSnapshot, SubagentScheduler } from './subagent/scheduler.js';
+import { specialistFromEnv, specialistToolset } from './subagent/specialist-env.js';
 import { registerSubagentTool } from './subagent/subagent-tool.js';
 import {
   HARNESS_SUBAGENTS_STATUS_KEY,
@@ -1069,6 +1070,32 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     extraTools: readonly string[] = [],
   ): void {
     const available = pi.getAllTools().map((t) => t.name);
+    /*
+     * A SPECIALIST CHILD IS PINNED, not preset. jedd: "with just these tools
+     * loaded, those subagents are only for that purpose". So its set REPLACES
+     * the preset instead of unioning onto it — an image specialist holding the
+     * coding preset is an agent that will go and read source instead of making
+     * the picture it was commissioned for.
+     *
+     * Empty means this build registered none of them; leaving the preset alone
+     * is the right fallback, because an agent pinned to zero tools can do
+     * nothing whatsoever.
+     */
+    const specialist = specialistFromEnv();
+    if (specialist !== undefined) {
+      const pinned = specialistToolset(specialist, available);
+      if (pinned.length > 0) {
+        runtime.activeClass = cls;
+        if (
+          pinned.length !== runtime.activeTools.length ||
+          pinned.some((t, i) => runtime.activeTools[i] !== t)
+        ) {
+          runtime.activeTools = pinned;
+          pi.setActiveTools(pinned);
+        }
+        return;
+      }
+    }
     // The class preset PLUS any extra tools the caller named. Unioned
     // append-only below so the KV prefix holds.
     const preset = [...resolvePresetTools(cls, available), ...extraTools];

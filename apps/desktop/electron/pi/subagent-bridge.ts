@@ -41,7 +41,13 @@ interface SpawnRequest {
   id: number;
   token: string;
   method: string;
-  params?: { goal?: string; name?: string; childId?: string; timeoutMs?: number };
+  params?: {
+    goal?: string;
+    name?: string;
+    childId?: string;
+    timeoutMs?: number;
+    specialist?: string;
+  };
 }
 
 async function handleSpawn(
@@ -69,7 +75,15 @@ async function handleSpawn(
       : `sub-${randomBytes(5).toString('hex')}`;
   const res = await childAgents.spawnAndWait(
     wc,
-    { childId, parentId: activeSession, title: name, goal },
+    {
+      childId,
+      parentId: activeSession,
+      title: name,
+      goal,
+      ...(typeof params?.specialist === 'string' && params.specialist.trim().length > 0
+        ? { specialist: params.specialist.trim() }
+        : {}),
+    },
     timeoutMs,
   );
   return { ok: res.ok, summary: res.summary, error: res.error };

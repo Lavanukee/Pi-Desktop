@@ -31,7 +31,7 @@
  */
 
 import path from 'node:path';
-import type { GenEvent, GenOutput } from '@pi-desktop/gen-service';
+import type { GenOutput } from '@pi-desktop/gen-service';
 import type { HyperFramesRender } from './video-dispatch.js';
 
 /** A scene the renderer can drive, and the window it draws into. */
@@ -190,7 +190,24 @@ export function createStillRenderer(deps: StillRendererDeps): HyperFramesRender 
           height,
           ...(seed !== undefined ? { seed } : {}),
         });
-        onEvent(progress(spec.modelId, (i + 1) / times.length, `frame ${i + 1}/${times.length}`));
+        /*
+         * SHOW THE FRAME AS IT LANDS. jedd: "ensure we can see hyperframes stuff
+         * being generated and iterating in the canvas."
+         *
+         * The canvas renders `previewPath` off a progress event (see
+         * ./gen-manager.ts `onEvent`), so pointing it at the frame just written
+         * makes the render visibly build up rather than sitting on a spinner and
+         * arriving all at once. `step`/`total` drive the same progress readout
+         * every other backend uses.
+         */
+        onEvent({
+          event: 'progress',
+          jobId: spec.modelId,
+          candidate: 0,
+          step: i + 1,
+          total: times.length,
+          previewPath: file,
+        });
       }
     } finally {
       // A leaked offscreen window keeps a renderer process alive for the life of
@@ -202,9 +219,4 @@ export function createStillRenderer(deps: StillRendererDeps): HyperFramesRender 
     }
     return outputs;
   };
-}
-
-/** A `progress` GenEvent, shaped loosely so this file need not import the union. */
-function progress(jobId: string, fraction: number, message: string): GenEvent {
-  return { event: 'progress', jobId, progress: fraction, message } as unknown as GenEvent;
 }

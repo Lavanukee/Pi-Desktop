@@ -18,20 +18,15 @@
  * text, same effect on behaviour, no host protocol change; if the bridge ever
  * grows a systemPrompt field this composes into it unchanged.
  *
- * AND THE TOOLS IT NEEDS. `specialistToolsFor` names them, but a child cannot be
- * handed an arbitrary active set over that same bridge — so instead the charter
- * closes by naming the CAPABILITY to switch on, which the child can do for itself
- * in one call. That path is real: capability activation genuinely turns tools on
- * (see ../tools/capability-tool.ts), and the intent hook switches the right group
- * on by itself the moment the child says what it means to do.
+ * AND THE TOOLS IT NEEDS ARE ALREADY LOADED. jedd: "with just these tools
+ * loaded, those subagents are only for that purpose, we aren't putting any of
+ * this as 'capability suites'." The kind rides an env var to the child, whose
+ * harness pins the active set to exactly `specialistToolsFor(kind)` — see
+ * ./specialist-env.ts. So the charter never mentions activating anything: by the
+ * time the child reads it, it is holding precisely its own kit and nothing else.
  */
 
-import {
-  MESH_SPECIALIST_KINDS,
-  specialistMeshPrompt,
-  specialistToolsFor,
-} from '../corp/corp-mesh.js';
-import { CAPABILITIES } from '../presets/capabilities.js';
+import { MESH_SPECIALIST_KINDS, specialistMeshPrompt } from '../corp/corp-mesh.js';
 
 export { MESH_SPECIALIST_KINDS };
 
@@ -46,19 +41,6 @@ export function normalizeSpecialist(kind: string): string | undefined {
     .toLowerCase()
     .replace(/[\s_]+/g, '-');
   return (MESH_SPECIALIST_KINDS as readonly string[]).find((k) => k === key);
-}
-
-/**
- * The capabilities a specialist's tool list falls inside, so the charter can tell
- * the child exactly what to switch on rather than leaving it to guess.
- */
-export function capabilitiesForSpecialist(kind: string): string[] {
-  const wanted = new Set(specialistToolsFor(kind));
-  const out: string[] = [];
-  for (const cap of CAPABILITIES) {
-    if (cap.tools.some((t) => wanted.has(t))) out.push(cap.name);
-  }
-  return out;
 }
 
 /**
@@ -136,14 +118,14 @@ export function composeCommission(opts: CommissionOptions): string {
   }
   const parts = [specialistMeshPrompt(kind)];
 
-  const caps = capabilitiesForSpecialist(kind);
-  if (caps.length > 0) {
-    parts.push(
-      `TOOLS. Turn on what you need with the \`capability\` tool before you start: ` +
-        `${caps.join(', ')}. If a tool you were promised is missing, say so plainly ` +
-        `and do not invent the artifact it would have produced.`,
-    );
-  }
+  /* No activation step: the child was launched holding exactly this role's tools
+   * (../subagent/specialist-env.ts). What it must NOT do is invent an artifact
+   * when one of them turns out to be missing. */
+  parts.push(
+    'TOOLS. Everything you need is already in your tool list — there is nothing to ' +
+      'turn on, and nothing else is available to you. If a tool you were promised is ' +
+      'missing, say so plainly and do not invent the artifact it would have produced.',
+  );
 
   if (kind === 'image') {
     parts.push(imageLoopProtocol(opts.iterations ?? DEFAULT_IMAGE_ITERATIONS));

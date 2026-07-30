@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  capabilitiesForSpecialist,
   composeCommission,
   DEFAULT_IMAGE_ITERATIONS,
   imageLoopProtocol,
@@ -24,14 +23,16 @@ describe('normalizeSpecialist', () => {
   });
 });
 
-describe('capabilitiesForSpecialist', () => {
-  it('names the browser for the specialists that must open something', () => {
-    expect(capabilitiesForSpecialist('ui-critic')).toContain('browser');
-    expect(capabilitiesForSpecialist('research')).toContain('browser');
-  });
-
-  it('names generation for the image specialist', () => {
-    expect(capabilitiesForSpecialist('image')).toContain('generation');
+/* Specialists no longer route through capabilities at all — jedd: "we aren't
+ * putting any of this as 'capability suites'". The child is launched already
+ * holding its kit, so the charter must not send it looking for a switch. */
+describe('no capability round-trip', () => {
+  it('never tells a specialist to turn something on', () => {
+    for (const k of MESH_SPECIALIST_KINDS) {
+      const out = composeCommission({ kind: k, goal: 'do the thing' });
+      expect(out).not.toMatch(/Turn on what you need/);
+      expect(out).toContain('already in your tool list');
+    }
   });
 });
 
@@ -88,10 +89,10 @@ describe('composeCommission', () => {
     expect(out.trimEnd().endsWith('Judge the settings panel.')).toBe(true);
   });
 
-  it('tells the child which capability to switch on', () => {
+  it('tells the child its kit is already loaded and closed', () => {
     const out = composeCommission({ kind: 'research', goal: 'Survey the docs.' });
-    expect(out).toContain('capability');
-    expect(out).toContain('browser');
+    expect(out).toContain('already in your tool list');
+    expect(out).toContain('nothing else is available to you');
   });
 
   it('adds the pass loop for the image specialist only', () => {

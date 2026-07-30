@@ -126,6 +126,9 @@ export interface RunChildAgentOptions {
   readonly signal?: AbortSignal;
   /** Grace between SIGTERM and SIGKILL. Default 1500ms. */
   readonly killGraceMs?: number;
+  /** Run the child as this specialist — its harness loads exactly that role's
+   * tools and nothing else (see ./specialist-env.ts). */
+  readonly specialist?: string;
 }
 
 export interface ChildAgentResult {

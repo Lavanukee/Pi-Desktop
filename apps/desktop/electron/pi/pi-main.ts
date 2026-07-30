@@ -188,7 +188,7 @@ const sessions = createPiSessions<WebContents>({
  * recursion of children spawning children.
  */
 function createChildBridge(
-  opts: { cwd?: string },
+  opts: { cwd?: string; specialist?: string },
   onEvent: (event: PiBridgeEvent) => void,
 ): PiBridge {
   const cwd = resolveSessionCwd({ cwd: opts.cwd ?? activeProjectPath() ?? undefined });
@@ -200,6 +200,15 @@ function createChildBridge(
         // Matches SUBAGENT_DEPTH_ENV (packages/harness subagent/types.ts): a child
         // at depth >= 1 does NOT register the spawn tool.
         PI_DESKTOP_SUBAGENT_DEPTH: '1',
+        /*
+         * A SPECIALIST CHILD IS PINNED TO ITS OWN TOOLS. jedd: "with just these
+         * tools loaded, those subagents are only for that purpose, we aren't
+         * putting any of this as 'capability suites'." The child's harness reads
+         * this and REPLACES its preset with exactly that role's kit — no
+         * activation step, nothing else reachable. Keyed to SPECIALIST_ENV in
+         * packages/harness subagent/specialist-env.ts.
+         */
+        ...(opts.specialist !== undefined ? { PI_DESKTOP_SPECIALIST: opts.specialist } : {}),
       },
       noSession: true,
       extensionPaths: EXTENSION_PATHS,

@@ -67,6 +67,8 @@ function runViaBridge(
             name: opts.name,
             childId: opts.id,
             timeoutMs: opts.timeoutMs,
+            // The role the child runs as; its harness pins the tool set from this.
+            specialist: opts.specialist,
           },
         })}\n`,
       );

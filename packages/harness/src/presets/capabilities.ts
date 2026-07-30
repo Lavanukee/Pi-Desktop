@@ -101,18 +101,20 @@ export const CAPABILITIES: readonly Capability[] = [
   {
     name: 'generation',
     summary: 'Create and edit images, video, motion graphics and 3D models, on-device.',
-    guidance: 'Use when the deliverable IS the media, rather than a description of it.',
-    tools: [
-      'generate_image',
-      'edit_image',
-      'image_generate',
-      'image_edit',
-      'video_generate',
-      'video_edit',
-      'extract_frames',
-      'probe',
-      'motion_graphics_render',
-    ],
+    guidance:
+      'Use when the deliverable IS the media, rather than a description of it. For a picture ' +
+      'that has to be GOOD rather than merely produced, commission the image specialist with ' +
+      'spawn_subagent instead — it works in passes and keeps the best one.',
+    /*
+     * ONLY WHAT IS REGISTERED. This listed nine names; four existed. `image_generate`,
+     * `image_edit`, `video_generate`, `video_edit`, `extract_frames`, `probe` and
+     * `motion_graphics_render` were aspirational — activating this capability handed
+     * the model seven tools it could not call, and (per the coercion this codebase has
+     * measured twice) a bid for one of them lands on whichever advertised name is
+     * nearest. jedd: "you can remove things from being explicitly in the ui gallery
+     * card." So: the four that a real extension registers, and nothing else.
+     */
+    tools: ['generate_image', 'edit_image', 'generate_video'],
   },
   {
     name: 'connectors',

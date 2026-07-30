@@ -159,16 +159,34 @@ describe('createStillRenderer', () => {
   });
 
   it('reports progress per frame', async () => {
-    const events: number[] = [];
+    const steps: Array<[number, number]> = [];
     const render = createStillRenderer({
       openWindow: async () => makeWin(),
       writeFile: async () => {},
     });
     await render(spec, '/out', (e) => {
-      const p = (e as unknown as { progress?: number }).progress;
-      if (typeof p === 'number') events.push(p);
+      if (e.event === 'progress') steps.push([e.step, e.total]);
     });
-    expect(events).toEqual([1 / 3, 2 / 3, 1]);
+    expect(steps).toEqual([
+      [1, 3],
+      [2, 3],
+      [3, 3],
+    ]);
+  });
+
+  /* jedd: "ensure we can see hyperframes stuff being generated and iterating in
+   * the canvas." The canvas renders `previewPath` off a progress event, so
+   * without it a render is a spinner that resolves all at once at the end. */
+  it('previews each frame as it lands, so the canvas fills in live', async () => {
+    const previews: string[] = [];
+    const render = createStillRenderer({
+      openWindow: async () => makeWin(),
+      writeFile: async () => {},
+    });
+    await render(spec, '/out', (e) => {
+      if (e.event === 'progress' && e.previewPath !== undefined) previews.push(e.previewPath);
+    });
+    expect(previews).toEqual(['/out/frame_000.png', '/out/frame_001.png', '/out/frame_002.png']);
   });
 
   /* An offscreen window that outlives the job keeps a renderer process alive for

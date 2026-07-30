@@ -187,6 +187,7 @@ export function registerSubagentTool(pi: ExtensionAPI, deps: SubagentToolDeps): 
           id,
           name,
           timeoutMs,
+          ...(kind !== undefined ? { specialist: kind } : {}),
           ...(params.model !== undefined ? { model: params.model } : {}),
           ...(params.provider !== undefined ? { provider: params.provider } : {}),
           onStep: (step) => setStep(`Running ${step}`),

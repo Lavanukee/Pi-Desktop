@@ -37,6 +37,8 @@ export interface ChildSpawnRequest {
   parentId: string;
   title: string;
   goal: string;
+  /** Run this child as a named specialist — its harness pins the tool set. */
+  specialist?: string;
   cwd?: string;
 }
 
@@ -45,7 +47,7 @@ export interface ChildAgentsDeps<S extends SessionSender> {
    * the same base config as the main chat + `--no-session` + a bumped subagent
    * depth so a child can't recursively spawn its own children). */
   createChildBridge: (
-    opts: { cwd?: string },
+    opts: { cwd?: string; specialist?: string },
     onEvent: (event: PiBridgeEvent) => void,
   ) => ChildBridge;
   /** Fan one tagged child event out to the renderer (the 'pi:child-event' wire). */
@@ -100,17 +102,23 @@ export function createChildAgents<S extends SessionSender>(
     // A re-spawn with the same id replaces the old instance.
     children.get(req.childId)?.bridge.dispose();
 
-    const bridge = deps.createChildBridge({ cwd: req.cwd }, (event) => {
-      if (!sender.isDestroyed()) {
-        deps.sendChildEvent(sender, {
-          childId: req.childId,
-          parentId: req.parentId,
-          title: req.title,
-          goal: req.goal,
-          event,
-        });
-      }
-    });
+    const bridge = deps.createChildBridge(
+      {
+        cwd: req.cwd,
+        ...(req.specialist !== undefined ? { specialist: req.specialist } : {}),
+      },
+      (event) => {
+        if (!sender.isDestroyed()) {
+          deps.sendChildEvent(sender, {
+            childId: req.childId,
+            parentId: req.parentId,
+            title: req.title,
+            goal: req.goal,
+            event,
+          });
+        }
+      },
+    );
     const record: ChildRecord = {
       childId: req.childId,
       parentId: req.parentId,
@@ -165,34 +173,40 @@ export function createChildAgents<S extends SessionSender>(
     // the summary is the LAST message's text (the final answer, after any tools).
     let summary = '';
 
-    const bridge = deps.createChildBridge({ cwd: req.cwd }, (event) => {
-      if (!sender.isDestroyed()) {
-        deps.sendChildEvent(sender, {
-          childId: req.childId,
-          parentId: req.parentId,
-          title: req.title,
-          goal: req.goal,
-          event,
-        });
-      }
-      const e = event as {
-        type?: string;
-        assistantMessageEvent?: { type?: string; delta?: string };
-      };
-      if (e.type === 'message_start') summary = '';
-      else if (
-        e.type === 'message_update' &&
-        e.assistantMessageEvent?.type === 'text_delta' &&
-        typeof e.assistantMessageEvent.delta === 'string'
-      ) {
-        summary += e.assistantMessageEvent.delta;
-      }
-      // The child's top-level turn ended (or it crashed) → its final answer is ready.
-      if (!ended && (event.type === 'agent_end' || event.type === '_bridge_exit')) {
-        ended = true;
-        settle({ ok: true, summary });
-      }
-    });
+    const bridge = deps.createChildBridge(
+      {
+        cwd: req.cwd,
+        ...(req.specialist !== undefined ? { specialist: req.specialist } : {}),
+      },
+      (event) => {
+        if (!sender.isDestroyed()) {
+          deps.sendChildEvent(sender, {
+            childId: req.childId,
+            parentId: req.parentId,
+            title: req.title,
+            goal: req.goal,
+            event,
+          });
+        }
+        const e = event as {
+          type?: string;
+          assistantMessageEvent?: { type?: string; delta?: string };
+        };
+        if (e.type === 'message_start') summary = '';
+        else if (
+          e.type === 'message_update' &&
+          e.assistantMessageEvent?.type === 'text_delta' &&
+          typeof e.assistantMessageEvent.delta === 'string'
+        ) {
+          summary += e.assistantMessageEvent.delta;
+        }
+        // The child's top-level turn ended (or it crashed) → its final answer is ready.
+        if (!ended && (event.type === 'agent_end' || event.type === '_bridge_exit')) {
+          ended = true;
+          settle({ ok: true, summary });
+        }
+      },
+    );
     children.set(req.childId, {
       childId: req.childId,
       parentId: req.parentId,

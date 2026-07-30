@@ -120,3 +120,68 @@ describe('createChildAgents', () => {
     expect(agents.list(2).map((c) => c.childId)).toEqual(['b']);
   });
 });
+
+/*
+ * THE SPECIALIST HOP. jedd: "the model should be able to spawn a subagent that
+ * can do any of these as specialist workflows, with just these tools loaded".
+ *
+ * The kind has to survive all the way to createChildBridge, because that is
+ * where it becomes PI_DESKTOP_SPECIALIST on the child's env and the child's
+ * harness pins its tool set from it. Both spawn paths are covered: the bridge
+ * uses spawnAndWait, the renderer uses spawn, and it would be easy to wire one
+ * and not the other — so this asserts both.
+ */
+describe('specialist children', () => {
+  const capture = () => {
+    const seen: Array<{ cwd?: string; specialist?: string }> = [];
+    const agents = createChildAgents({
+      createChildBridge: (opts, _onEvent) => {
+        seen.push(opts);
+        return fakeBridge(() => {});
+      },
+      sendChildEvent: () => {},
+      log,
+    });
+    return { agents, seen };
+  };
+
+  it('carries the kind through spawn()', async () => {
+    const { agents, seen } = capture();
+    await agents.spawn(sender, {
+      childId: 'c1',
+      parentId: 'p1',
+      title: 'Image',
+      goal: 'make a hero image',
+      specialist: 'image',
+    });
+    expect(seen[0]?.specialist).toBe('image');
+  });
+
+  it('carries the kind through spawnAndWait() — the path the subagent tool uses', async () => {
+    const { agents, seen } = capture();
+    void agents.spawnAndWait(
+      sender,
+      {
+        childId: 'c2',
+        parentId: 'p1',
+        title: 'Critic',
+        goal: 'judge the panel',
+        specialist: 'ui-critic',
+      },
+      50,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    expect(seen[0]?.specialist).toBe('ui-critic');
+  });
+
+  it('leaves it unset for an ordinary subagent', async () => {
+    const { agents, seen } = capture();
+    await agents.spawn(sender, {
+      childId: 'c3',
+      parentId: 'p1',
+      title: 'Plain',
+      goal: 'do a thing',
+    });
+    expect(seen[0]?.specialist).toBeUndefined();
+  });
+});

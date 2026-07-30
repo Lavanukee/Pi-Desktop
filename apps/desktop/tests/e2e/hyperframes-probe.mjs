@@ -33,6 +33,7 @@ const SCENE = `
 
 async function main() {
   await app.whenReady();
+  const previews = [];
   const dir = mkdtempSync(path.join(tmpdir(), 'hf-probe-'));
   const render = createStillRenderer({
     openWindow: openStillWindow,
@@ -54,7 +55,13 @@ async function main() {
     },
     dir,
     (e) => {
-      if (e.event === 'progress') process.stdout.write(`  ${e.message}\n`);
+      // What the canvas actually consumes: step/total for the readout and
+      // previewPath for the live thumbnail. If previewPath is ever absent the
+      // render becomes a spinner that resolves all at once — jedd's ask.
+      if (e.event === 'progress') {
+        previews.push(e.previewPath);
+        process.stdout.write(`  frame ${e.step}/${e.total} → ${e.previewPath ?? 'NO PREVIEW'}\n`);
+      }
     },
   );
 
@@ -85,7 +92,10 @@ async function main() {
   console.log(`first differs from last: ${moved ? 'yes' : 'NO'}`);
   console.log(`seek produced motion   : ${distinct > 1 ? 'yes' : 'NO'}`);
 
-  const ok = nonEmpty && moved && distinct > 1;
+  const livePreviews = previews.filter((p) => typeof p === 'string').length;
+  console.log(`live canvas previews  : ${livePreviews} of ${files.length}`);
+
+  const ok = nonEmpty && moved && distinct > 1 && livePreviews === files.length;
   console.log(ok ? '\nPASS — the renderer renders and the seek works.' : '\nFAIL');
   app.exit(ok ? 0 : 1);
 }

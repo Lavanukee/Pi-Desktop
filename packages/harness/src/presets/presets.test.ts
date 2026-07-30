@@ -70,7 +70,7 @@ describe('PRESET_TOOLS', () => {
 });
 
 describe('resolvePresetTools — full tool universe', () => {
-  it('coding → filesystem + bash + python + tool_search', () => {
+  it('coding → filesystem + bash + python + capability', () => {
     const tools = resolvePresetTools('coding', ALL_TOOLS);
     expect(tools).toEqual([
       'read',
@@ -81,18 +81,18 @@ describe('resolvePresetTools — full tool universe', () => {
       'grep',
       'bash',
       'python_run',
-      'tool_search',
+      'capability',
     ]);
   });
 
-  it('basic-tools → python + web + tool_search + the always-active file tools', () => {
+  it('basic-tools → python + web + capability + the always-active file tools', () => {
     // read/write/edit/bash are appended to EVERY class now (jedd: never refuse a
-    // file op), after the class preset + tool_search.
+    // file op), after the class preset + capability.
     expect(resolvePresetTools('basic-tools', ALL_TOOLS)).toEqual([
       'python_run',
       'web_search',
       'web_fetch',
-      'tool_search',
+      'capability',
       'read',
       'write',
       'edit',
@@ -100,7 +100,7 @@ describe('resolvePresetTools — full tool universe', () => {
     ]);
   });
 
-  it('browser-use → the REAL browser tools (snapshot present + early) + web_fetch + tool_search + file tools', () => {
+  it('browser-use → the REAL browser tools (snapshot present + early) + web_fetch + capability + file tools', () => {
     expect(resolvePresetTools('browser-use', ALL_TOOLS)).toEqual([
       'browser_navigate',
       'browser_snapshot',
@@ -113,7 +113,7 @@ describe('resolvePresetTools — full tool universe', () => {
       'browser_forward',
       'browser_key',
       'web_fetch',
-      'tool_search',
+      'capability',
       // Globally-active file tools, appended LAST so the browser tools still lead.
       'read',
       'write',
@@ -137,7 +137,7 @@ describe('resolvePresetTools — full tool universe', () => {
     expect(tools.indexOf('browser_read')).toBeLessThan(tools.indexOf('read'));
   });
 
-  it('video-edit → ffmpeg façade + fs + video_locate + tool_search (generation stays in advanced-video)', () => {
+  it('video-edit → ffmpeg façade + fs + video_locate + capability (generation stays in advanced-video)', () => {
     // read/write/edit are already in the preset's CORE_FS; only `bash` is added
     // by the always-active set (appended at the very end).
     expect(resolvePresetTools('video-edit', ALL_TOOLS)).toEqual([
@@ -151,19 +151,19 @@ describe('resolvePresetTools — full tool universe', () => {
       'find',
       'grep',
       'video_locate',
-      'tool_search',
+      'capability',
       'bash',
     ]);
   });
 
-  it('perception → segment/detect/locate/ocr + video_edit + tool_search + file tools', () => {
+  it('perception → segment/detect/locate/ocr + video_edit + capability + file tools', () => {
     expect(resolvePresetTools('perception', ALL_TOOLS)).toEqual([
       'image_segment',
       'image_detect',
       'video_locate',
       'image_ocr',
       'video_edit',
-      'tool_search',
+      'capability',
       'read',
       'write',
       'edit',
@@ -179,7 +179,7 @@ describe('resolvePresetTools — full tool universe', () => {
       'edit_image',
       'image_generate',
       'image_edit',
-      'tool_search',
+      'capability',
       'read',
       'write',
       'edit',
@@ -201,25 +201,25 @@ describe('resolvePresetTools — full tool universe', () => {
     }
   });
 
-  it('simple-QA → tool_search + the always-active file tools (never a bare refusal)', () => {
+  it('simple-QA → capability + the always-active file tools (never a bare refusal)', () => {
     // Was tool-search-only; jedd made read/write/edit/bash globally active so a
     // simple-QA turn that suddenly needs a file can act instead of disclaiming.
     const tools = resolvePresetTools('simple-QA', ALL_TOOLS);
-    expect(tools).toEqual(['tool_search', 'read', 'write', 'edit', 'bash']);
+    expect(tools).toEqual(['capability', 'read', 'write', 'edit', 'bash']);
     expect(isToolSearchOnly(tools)).toBe(false);
   });
 
-  it("'connectors' surfaces the macOS connectors + tool_search when registered", () => {
+  it("'connectors' surfaces the macOS connectors + capability when registered", () => {
     const tools = resolvePresetTools('connectors', ALL_TOOLS);
     // A GENUINE calendar/mail/messages request (the `connectors` class) must hand
-    // the model the connector tools directly, not force a tool_search hop — the
+    // the model the connector tools directly, not force a capability hop — the
     // fix for "I can't access your calendar" refusals.
     expect(tools).toContain('calendar_list_events');
     expect(tools).toContain('mail_recent');
     expect(tools).toContain('messages_send');
     expect(tools).toContain('reminders_list');
     expect(tools).toContain('contacts_search');
-    expect(tools).toContain('tool_search');
+    expect(tools).toContain('capability');
     expect(isToolSearchOnly(tools)).toBe(false);
   });
 
@@ -227,17 +227,17 @@ describe('resolvePresetTools — full tool universe', () => {
     // The bloat fix (jedd): a no-signal query used to route to 'other' and pick
     // up all 10 personal-info connectors. 'other' is now tool-search-only, so
     // even with EVERY tool registered it hands back only the always-active file
-    // tools + tool_search — the connectors stay out unless actually asked for.
+    // tools + capability — the connectors stay out unless actually asked for.
     const tools = resolvePresetTools('other', ALL_TOOLS);
     expect(tools).not.toContain('calendar_list_events');
     expect(tools).not.toContain('mail_recent');
     expect(tools).not.toContain('messages_send');
-    expect(tools).toEqual(['tool_search', 'read', 'write', 'edit', 'bash']);
+    expect(tools).toEqual(['capability', 'read', 'write', 'edit', 'bash']);
   });
 
-  it("'other' with no connectors falls back to the global file tools + tool_search", () => {
+  it("'other' with no connectors falls back to the global file tools + capability", () => {
     // With no connector tools registered, 'other' keeps only the always-active
-    // file tools + tool_search — no longer a bare tool-search-only refusal (jedd).
+    // file tools + capability — no longer a bare tool-search-only refusal (jedd).
     const tools = resolvePresetTools('other', [
       'read',
       'write',
@@ -245,13 +245,13 @@ describe('resolvePresetTools — full tool universe', () => {
       'bash',
       TOOL_SEARCH_TOOL_NAME,
     ]);
-    expect(tools).toEqual(['tool_search', 'read', 'write', 'edit', 'bash']);
+    expect(tools).toEqual(['capability', 'read', 'write', 'edit', 'bash']);
     expect(isToolSearchOnly(tools)).toBe(false);
   });
 
-  it('always keeps tool_search available across every class', () => {
+  it('always keeps capability available across every class', () => {
     for (const cls of TASK_CLASSES) {
-      expect(resolvePresetTools(cls, ALL_TOOLS)).toContain('tool_search');
+      expect(resolvePresetTools(cls, ALL_TOOLS)).toContain('capability');
     }
   });
 });
@@ -285,10 +285,10 @@ describe('spawn_subagent is front-loaded only for agentic classes (blind-test it
     }
   });
 
-  it("'other' (the generic fallback) gets tool_search + file tools, no connectors, no subagent", () => {
+  it("'other' (the generic fallback) gets capability + file tools, no connectors, no subagent", () => {
     const tools = resolvePresetTools('other', WITH_HARNESS_TOOLS);
     expect(tools).not.toContain('calendar_list_events');
-    expect(tools).toContain('tool_search');
+    expect(tools).toContain('capability');
     expect(tools).not.toContain(SPAWN_SUBAGENT_TOOL_NAME);
   });
 
@@ -324,7 +324,7 @@ describe('resolvePresetTools — graceful degradation (v0.1 tool set)', () => {
     TOOL_SEARCH_TOOL_NAME,
   ];
 
-  it('a category whose domain tools are absent falls back to file tools + tool_search', () => {
+  it('a category whose domain tools are absent falls back to file tools + capability', () => {
     for (const cls of [
       'motion-graphics',
       'advanced-video',
@@ -333,10 +333,10 @@ describe('resolvePresetTools — graceful degradation (v0.1 tool set)', () => {
       'browser-use',
     ] as const) {
       // No domain tools registered → the class keeps only the always-active file
-      // tools + tool_search. It is NO LONGER bare tool-search-only: jedd made
+      // tools + capability. It is NO LONGER bare tool-search-only: jedd made
       // read/write/edit/bash globally available so even a stripped class can act.
       const tools = resolvePresetTools(cls, V01_TOOLS);
-      expect(tools).toEqual(['tool_search', 'read', 'write', 'edit', 'bash']);
+      expect(tools).toEqual(['capability', 'read', 'write', 'edit', 'bash']);
       expect(isToolSearchOnly(tools)).toBe(false);
     }
   });
@@ -346,7 +346,7 @@ describe('resolvePresetTools — graceful degradation (v0.1 tool set)', () => {
     for (const t of tools) expect(V01_TOOLS).toContain(t);
   });
 
-  it('omits tool_search when it is not registered', () => {
+  it('omits capability when it is not registered', () => {
     const tools = resolvePresetTools('coding', ['read', 'bash']);
     expect(tools).toEqual(['read', 'bash']);
   });

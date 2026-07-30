@@ -51,7 +51,7 @@ function makeFakePi(toolNames: string[]) {
       handlers.set(event, list);
     },
     registerTool: (def: ToolDefinition) => {
-      if (def.name === 'tool_search') toolSearch = def;
+      if (def.name === 'capability') toolSearch = def;
       if (def.name === 'update_plan') planTool = def;
     },
     registerCommand: (
@@ -61,7 +61,7 @@ function makeFakePi(toolNames: string[]) {
       command = opts;
     },
     getAllTools: (): ToolInfo[] =>
-      [...toolNames, 'tool_search'].map((name) => ({
+      [...toolNames, 'capability'].map((name) => ({
         name,
         description: `${name} tool`,
         // biome-ignore lint/suspicious/noExplicitAny: stub schema.
@@ -111,10 +111,12 @@ describe('wireHarness', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it('registers tool_search and the /harness command', () => {
+  it('registers the capability tool and the /harness command', () => {
+    // tool_search is gone (jedd: "remove tool search entirely … a source of much
+    // looping"); a named capability group replaces it.
     const f = makeFakePi(['read', 'bash']);
     wireHarness(f.pi);
-    expect(f.getToolSearch()?.name).toBe('tool_search');
+    expect(f.getToolSearch()?.name).toBe('capability');
     expect(f.getCommand()).toBeDefined();
   });
 
@@ -135,10 +137,10 @@ describe('wireHarness', () => {
     );
     expect(f.setActiveTools).toHaveBeenCalled();
     const lastCall = f.setActiveTools.mock.calls.at(-1)?.[0] as string[];
-    // coding preset → filesystem + bash + python + tool_search.
+    // coding preset → filesystem + bash + python + the capability tool.
     expect(lastCall).toContain('bash');
     expect(lastCall).toContain('python_run');
-    expect(lastCall).toContain('tool_search');
+    expect(lastCall).toContain('capability');
   });
 
   it('returns a capability-affirming system prompt from before_agent_start (appended to the base)', async () => {

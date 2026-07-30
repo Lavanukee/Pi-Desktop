@@ -85,12 +85,12 @@ import {
   readSubagentDepth,
 } from './subagent/types.js';
 import { registerAskUser } from './tools/ask-user.js';
+import { registerCapabilityTool } from './tools/capability-tool.js';
 import { registerImageTools } from './tools/image-tools.js';
 import { detectOpenedApp, openedAppNote } from './tools/opened-app.js';
 import { registerPlanTool } from './tools/plan-tool.js';
 import { registerSandboxFileTools } from './tools/sandbox-fs.js';
 import { truncateToolOutput } from './tools/tool-output-truncate.js';
-import { registerToolSearch } from './tools/tool-search.js';
 import {
   detectProjectCheck,
   makeExecBashRunner,
@@ -820,10 +820,21 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
   // so a plain CLI `pi` user keeps the unfenced built-ins. See tools/sandbox-fs.ts.
   registerSandboxFileTools(pi);
 
-  // Tool search — always available so the model can pull in missing tools.
-  registerToolSearch(pi, {
+  /*
+   * CAPABILITIES, not search. jedd: "remove tool search entirely, and instead
+   * replace with a 'capability' tool … the tools can be computer use, mail,
+   * calendar, browser etc.", and "the tool search isn't great and is a source of
+   * much looping right now."
+   *
+   * A named group turned on in one call, instead of a free-text query that
+   * activated a tool at a time and scored differently depending on wording.
+   */
+  registerCapabilityTool(pi, {
+    available: () => pi.getAllTools().map((t) => t.name),
     onActivate: (added) => {
-      runtime.activeTools = Array.from(new Set([...runtime.activeTools, ...added]));
+      const next = Array.from(new Set([...runtime.activeTools, ...added]));
+      runtime.activeTools = next;
+      pi.setActiveTools(next);
     },
   });
 

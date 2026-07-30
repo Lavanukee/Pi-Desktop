@@ -17,7 +17,12 @@ import type { TaskClass } from '../classify/classify.js';
 import { SPAWN_SUBAGENT_TOOL_NAME } from '../subagent/types.js';
 
 /** The always-available tool-search tool name. */
-export const TOOL_SEARCH_TOOL_NAME = 'tool_search';
+/**
+ * The always-present discovery tool. It WAS `tool_search`; jedd had it removed
+ * ("a source of much looping") in favour of a named capability group, which is a
+ * fixed set turned on in one call rather than a scored free-text query.
+ */
+export const TOOL_SEARCH_TOOL_NAME = 'capability';
 
 /**
  * Harness tools kept active in EVERY preset (when registered), independent of
@@ -183,8 +188,8 @@ export function resolvePresetTools(
     seen.add(TOOL_SEARCH_TOOL_NAME);
   }
   // Front-load the subagent tool ONLY for genuinely-agentic classes (blind-test
-  // item 6). Trivial doc/file/answer tasks omit it here and reach it via
-  // tool_search instead, so the model stops spawning a child for simple work.
+  // item 6). Trivial doc/file/answer tasks omit it here and reach it via the
+  // capability tool instead, so the model stops spawning a child for simple work.
   if (
     SUBAGENT_PRESET_CLASSES.has(cls) &&
     available.has(SPAWN_SUBAGENT_TOOL_NAME) &&

@@ -90,18 +90,28 @@ export function detectOpenedApp(command: string): OpenedTarget | undefined {
  */
 export function openedAppNote(opened: OpenedTarget): string {
   const what = opened.target !== undefined ? ` (${opened.target})` : '';
+  const head = `\n\n[This opened ${opened.app}${what} — a real Mac app, NOT the built-in browser.`;
+  /*
+   * THE TOOLS ARE ALREADY YOURS. jedd: "currently i'm seeing it open safari and
+   * chrome, and then just not be able to control the things it opened with bash
+   * like that, it needs to be able to control it."
+   *
+   * Telling it to call `mac_snapshot` was useless while that tool was not in its
+   * list — it was being sent after something it could not reach. Naming `use`
+   * here closes that: `use` IS advertised, always, so the very next action can
+   * drive the window that just opened without a capability round-trip first.
+   */
   if (opened.chrome) {
     return (
-      `\n\n[This opened ${opened.app}${what} — a real Mac app, NOT the built-in browser. ` +
-      'Call chrome_snapshot now to read that page through its DOM, then act with ' +
-      'chrome_click / chrome_type by index. Do not use the built-in browser tools for it: ' +
+      `${head} Read it through its DOM: call use with tool="chrome_snapshot", then act with ` +
+      'chrome_click / chrome_type the same way. Do NOT use the built-in browser tools for it — ' +
       'that is a different browser, with different logins and a different page.]'
     );
   }
   return (
-    `\n\n[This opened ${opened.app}${what} — a real Mac app, NOT the built-in browser. ` +
-    'Call mac_snapshot now to see it, then act on what it lists. If the app exposes nothing ' +
-    'to Accessibility you will get a screenshot of its window automatically; read that and ' +
+    `${head} Call use with tool="mac_snapshot" and args={"app":"${opened.app}"} now to see it, ` +
+    'then act on what it lists (use with tool="mac_click", and so on). If the app exposes ' +
+    'nothing to Accessibility you get a screenshot of its window automatically; read that and ' +
     'act by x,y coordinates.]'
   );
 }

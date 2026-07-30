@@ -91,6 +91,8 @@ import { detectOpenedApp, openedAppNote } from './tools/opened-app.js';
 import { registerPlanTool } from './tools/plan-tool.js';
 import { registerSandboxFileTools } from './tools/sandbox-fs.js';
 import { truncateToolOutput } from './tools/tool-output-truncate.js';
+import { captureRegisteredTools } from './tools/tool-registry.js';
+import { registerUseTool } from './tools/use-tool.js';
 import {
   detectProjectCheck,
   makeExecBashRunner,
@@ -348,6 +350,14 @@ const HELP = [
  * (in the app) by the code that also needs the permission controller.
  */
 export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}): HarnessHandle {
+  /*
+   * FIRST, before anything registers: wrap `pi.registerTool` so every tool that
+   * follows — this harness's own, and web-tools / browser-use / the mac
+   * extensions, which all load after us — is captured WITH its `execute`. That
+   * registry is what `use` dispatches through, which is what lets a capability
+   * be pure text and cost no re-prefill. See tools/tool-registry.ts.
+   */
+  const toolRegistry = captureRegisteredTools(pi);
   const runtime: HarnessRuntime = {
     config: DEFAULT_CONFIG,
     activeClass: null,
@@ -830,12 +840,21 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
    * activated a tool at a time and scored differently depending on wording.
    */
   registerCapabilityTool(pi, {
-    available: () => pi.getAllTools().map((t) => t.name),
-    onActivate: (added) => {
-      const next = Array.from(new Set([...runtime.activeTools, ...added]));
-      runtime.activeTools = next;
-      pi.setActiveTools(next);
-    },
+    available: () => toolRegistry.names(),
+    /*
+     * NOTHING IS ACTIVATED. Turning a capability on used to call setActiveTools,
+     * which rewrites the advertised tool block at the START of the prompt and
+     * therefore re-prefills the whole conversation. It no longer has to: the
+     * capability's result NAMES the tools, and `use` can call any of them. The
+     * advertised set is untouched, so the KV prefix survives — jedd: "there's no
+     * way we *need* to pay a prefill of whole context when a new capability is
+     * activated." Quite right.
+     */
+    onActivate: () => {},
+  });
+  registerUseTool(pi, {
+    registry: toolRegistry,
+    active: () => runtime.activeTools,
   });
 
   // Task-list / checklist tool: the model publishes a plan the app renders live.

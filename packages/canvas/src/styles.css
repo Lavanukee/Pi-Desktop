@@ -808,6 +808,26 @@
   font-size: var(--pd-font-size-caption);
 }
 
+/* The inline "name your project" field — the New project row, in place. Matches
+   the search input above it so the menu keeps one visual language. */
+.pd-project-new {
+  cursor: default;
+}
+
+.pd-project-new-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--pd-text-primary);
+  font: inherit;
+  outline: none;
+}
+
+.pd-project-new-input::placeholder {
+  color: var(--pd-text-muted);
+}
+
 .pd-project-search-input:focus {
   outline: none;
 }

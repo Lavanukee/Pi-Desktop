@@ -74,7 +74,9 @@ export interface ProjectPickerProps {
   /** A project row was chosen. */
   onSelect: (id: string) => void;
   /** "New project" chosen — the app creates + activates it. */
-  onNew: () => void;
+  /** Create a project. Called with the NAME the user typed when the picker asks
+   * for one (the default), or with nothing if the host wants its own flow. */
+  onNew: (name?: string) => void;
   /** "Don't work in a project" chosen — the app clears the working folder. */
   onClear: () => void;
   /** Optional live search hook (fires on every keystroke; local filter still runs). */
@@ -103,6 +105,12 @@ export function ProjectPicker({
 }: ProjectPickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  /* "New project" used to fire immediately — in the app that opened a folder
+     picker, which registered a working directory the sidebar never showed. jedd
+     wants a project you NAME, that appears in both places. So the row becomes an
+     input in place; nothing is created until it is given a name. */
+  const [naming, setNaming] = useState(false);
+  const [draft, setDraft] = useState('');
   const [pos, setPos] = useState<MenuPos | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
@@ -115,6 +123,8 @@ export function ProjectPicker({
   const toggle = (): void => {
     if (open) {
       setOpen(false);
+      setNaming(false);
+      setDraft('');
       return;
     }
     setPos(placeProjectMenu(chipRef.current));
@@ -170,85 +180,120 @@ export function ProjectPicker({
               style={pos ? menuStyle(pos) : undefined}
             >
               <div className="pd-project-search">
-            <IconSearch size={14} />
-            <input
-              className="pd-project-search-input"
-              type="text"
-              placeholder="Search projects"
-              aria-label="Search projects"
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                onSearch?.(event.target.value);
-              }}
-            />
-          </div>
-          {filtered.length > 0 ? (
-            filtered.map((project) => (
+                <IconSearch size={14} />
+                <input
+                  className="pd-project-search-input"
+                  type="text"
+                  placeholder="Search projects"
+                  aria-label="Search projects"
+                  value={query}
+                  onChange={(event) => {
+                    setQuery(event.target.value);
+                    onSearch?.(event.target.value);
+                  }}
+                />
+              </div>
+              {filtered.length > 0 ? (
+                filtered.map((project) => (
+                  <button
+                    key={project.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={project.id === active}
+                    className={`pd-menu-item${project.id === active ? ' pd-menu-item--current' : ''}`}
+                    onClick={() => pick(() => onSelect(project.id))}
+                  >
+                    <span className="pd-menu-icon" aria-hidden="true">
+                      <IconFolder size={16} />
+                    </span>
+                    <span className="pd-project-name">{project.name}</span>
+                    {project.id === active ? (
+                      <span className="pd-menu-check" aria-hidden="true">
+                        <IconCheck size={14} />
+                      </span>
+                    ) : null}
+                  </button>
+                ))
+              ) : (
+                <p className="pd-project-empty">No matching projects</p>
+              )}
+              <div className="pd-menu-separator" aria-hidden="true" />
+              {naming ? (
+                <div className="pd-menu-item pd-project-new">
+                  <span className="pd-menu-icon" aria-hidden="true">
+                    <IconFolderPlus size={16} />
+                  </span>
+                  <input
+                    className="pd-project-new-input"
+                    type="text"
+                    placeholder="Project name"
+                    aria-label="New project name"
+                    data-testid="project-new-input"
+                    // biome-ignore lint/a11y/noAutofocus: the row was just replaced by this input
+                    autoFocus
+                    value={draft}
+                    onChange={(event) => setDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        const name = draft.trim();
+                        if (name.length === 0) return;
+                        setNaming(false);
+                        setDraft('');
+                        pick(() => onNew(name));
+                      } else if (event.key === 'Escape') {
+                        setNaming(false);
+                        setDraft('');
+                      }
+                    }}
+                  />
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="pd-menu-item"
+                  data-testid="project-new"
+                  onClick={() => {
+                    setDraft(query.trim());
+                    setNaming(true);
+                  }}
+                >
+                  <span className="pd-menu-icon" aria-hidden="true">
+                    <IconFolderPlus size={16} />
+                  </span>
+                  New project
+                </button>
+              )}
               <button
-                key={project.id}
                 type="button"
                 role="menuitemradio"
-                aria-checked={project.id === active}
-                className={`pd-menu-item${project.id === active ? ' pd-menu-item--current' : ''}`}
-                onClick={() => pick(() => onSelect(project.id))}
+                aria-checked={active == null}
+                className={`pd-menu-item${active == null ? ' pd-menu-item--current' : ''}`}
+                onClick={() => pick(onClear)}
               >
                 <span className="pd-menu-icon" aria-hidden="true">
-                  <IconFolder size={16} />
+                  {/* Folder with a slash — "no working folder". */}
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                    <line x1="3.5" y1="3.5" x2="20.5" y2="20.5" />
+                  </svg>
                 </span>
-                <span className="pd-project-name">{project.name}</span>
-                {project.id === active ? (
+                <span className="pd-project-name">Don't work in a project</span>
+                {active == null ? (
                   <span className="pd-menu-check" aria-hidden="true">
                     <IconCheck size={14} />
                   </span>
                 ) : null}
               </button>
-            ))
-          ) : (
-            <p className="pd-project-empty">No matching projects</p>
-          )}
-          <div className="pd-menu-separator" aria-hidden="true" />
-          <button
-            type="button"
-            role="menuitem"
-            className="pd-menu-item"
-            onClick={() => pick(onNew)}
-          >
-            <span className="pd-menu-icon" aria-hidden="true">
-              <IconFolderPlus size={16} />
-            </span>
-            New project
-          </button>
-          <button
-            type="button"
-            role="menuitemradio"
-            aria-checked={active == null}
-            className={`pd-menu-item${active == null ? ' pd-menu-item--current' : ''}`}
-            onClick={() => pick(onClear)}
-          >
-            <span className="pd-menu-icon" aria-hidden="true">
-              {/* Folder with a slash — "no working folder". */}
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                <line x1="3.5" y1="3.5" x2="20.5" y2="20.5" />
-              </svg>
-            </span>
-            <span className="pd-project-name">Don't work in a project</span>
-            {active == null ? (
-              <span className="pd-menu-check" aria-hidden="true">
-                <IconCheck size={14} />
-              </span>
-            ) : null}
-          </button>
             </div>,
             document.body,
           )

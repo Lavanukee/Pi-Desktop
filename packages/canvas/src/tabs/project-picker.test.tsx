@@ -105,12 +105,34 @@ describe('ProjectPicker', () => {
     await click(container.querySelector('.pd-project-chip'));
     const items = [...document.querySelectorAll('.pd-menu-item')].map((n) => n.textContent);
     expect(items).toContain('New project');
+    // "New project" no longer fires immediately — it asks for a NAME first, in
+    // place. Nothing is created until one is given (jedd: a "create project?"
+    // popup that puts the project in the sidebar AND here).
     await click(
       [...document.querySelectorAll('.pd-menu-item')].find(
         (n) => n.textContent === 'New project',
       ) ?? null,
     );
+    expect(onNew).toHaveBeenCalledTimes(0);
+    const input = document.querySelector<HTMLInputElement>('[data-testid="project-new-input"]');
+    expect(input).not.toBeNull();
+    await act(async () => {
+      if (input !== null) {
+        // Through the NATIVE setter: React's value tracker ignores a plain
+        // assignment, so onChange never fires and the draft stays empty.
+        const setter = Object.getOwnPropertyDescriptor(
+          window.HTMLInputElement.prototype,
+          'value',
+        )?.set;
+        setter?.call(input, 'Movie');
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    });
+    await act(async () => {
+      input?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
     expect(onNew).toHaveBeenCalledTimes(1);
+    expect(onNew).toHaveBeenCalledWith('Movie');
 
     await click(container.querySelector('.pd-project-chip'));
     await click(

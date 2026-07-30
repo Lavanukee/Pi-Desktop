@@ -86,6 +86,7 @@ import { listSessions, newSession, restartPi, switchSession } from '../state/pi-
 import { usePiStore } from '../state/pi-slice';
 import { useProjectStore } from '../state/project-store';
 import { setUserMode, useSettingsStore, useUserMode } from '../state/settings-store';
+import { publishSessionList } from '../state/visible-projects';
 import { useThemeStore } from '../store/theme';
 import { PROFILE_MENU_ACTIONS, USER_MODE_OPTIONS, userModeBlurb } from './profile-menu';
 
@@ -381,7 +382,13 @@ export function SessionSidebar({
   const [dontAskDelete, setDontAskDelete] = useState(false);
 
   const refresh = useCallback(() => {
-    void listSessions().then(setSessions);
+    void listSessions().then((list) => {
+      setSessions(list);
+      // Share it: the composer's project picker derives its list from the SAME
+      // sessions, so both surfaces agree on what a project is (jedd: nothing in
+      // the dropdown that isn't in the sidebar).
+      publishSessionList(list);
+    });
   }, []);
 
   // Refresh on mount and whenever pi reports a session change (new turn/switch).

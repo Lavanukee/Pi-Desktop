@@ -30,7 +30,7 @@ import {
   PopoverTrigger,
 } from '@pi-desktop/ui';
 import { useMemo, useRef } from 'react';
-import { assignChat, useChatOrg } from '../state/chat-org';
+import { AUTO_PROJECT_PREFIX, assignChat, createProject, useChatOrg } from '../state/chat-org';
 import { useCorpStore } from '../state/corp-store';
 import { useLlmStore } from '../state/llm-store';
 import { autoEffortForTier } from '../state/model-selection';
@@ -38,6 +38,7 @@ import { restartPi } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { useProjectStore } from '../state/project-store';
 import { useEffortMode, useSettingsStore } from '../state/settings-store';
+import { useVisibleProjects } from '../state/visible-projects';
 import {
   type ContextGaugeView,
   EFFORT_STEP_COUNT,
@@ -69,6 +70,7 @@ function ProjectRegion() {
   const sessionCwd = usePiStore((s) => s.session?.cwd);
   const sessionFile = usePiStore((s) => s.session?.sessionFile);
   const selectProject = useProjectStore((s) => s.selectProject);
+  const selectProjectPath = useProjectStore((s) => s.selectPath);
   const newProject = useProjectStore((s) => s.newProject);
   const clearProject = useProjectStore((s) => s.clearProject);
 
@@ -90,17 +92,35 @@ function ProjectRegion() {
       ? null
       : (chatOrg.projects.find((p) => p.id === orgProjectId)?.name ?? null);
 
-  // Combined list: electron working folders + the sidebar's manual projects,
-  // deduped by name (auto cwd-folders aren't in chatOrg.projects, so no dupes).
-  const items = useMemo(() => {
-    const storeNames = new Set(projects.map((p) => p.name));
-    const storeItems = projects.map((p) => ({ id: p.id, name: p.name }));
-    const orgItems = chatOrg.projects
-      .filter((p) => !storeNames.has(p.name))
-      .map((p) => ({ id: p.id, name: p.name }));
-    return [...storeItems, ...orgItems];
-  }, [projects, chatOrg.projects]);
+  /*
+   * EXACTLY WHAT THE SIDEBAR LISTS. This used to be the electron project store —
+   * every working folder the app had ever been pointed at — unioned with the
+   * sidebar's manual projects. After a day of probe runs that meant eight
+   * throwaway `unify-*` directories in the dropdown, none of them in the sidebar.
+   * jedd: "nothing should be in this dropdown if it isn't in the left sidebar."
+   * One derivation now, shared, so the two cannot drift apart again.
+   */
+  const visible = useVisibleProjects();
+  const items = useMemo(() => visible.map((p) => ({ id: p.id, name: p.name })), [visible]);
+  /** An auto folder is selected by its PATH; a real project by its id. */
+  const autoPathById = useMemo(() => {
+    const out = new Map<string, string>();
+    for (const p of visible) {
+      if (p.auto && p.id.startsWith(AUTO_PROJECT_PREFIX)) {
+        out.set(p.id, p.id.slice(AUTO_PROJECT_PREFIX.length));
+      }
+    }
+    return out;
+  }, [visible]);
   const orgIds = useMemo(() => new Set(chatOrg.projects.map((p) => p.id)), [chatOrg.projects]);
+
+  /** Create a sidebar project by name and put this chat in it. */
+  const createNamedProject = async (name: string) => {
+    const id = await createProject(name);
+    if (sessionFile !== undefined && sessionFile.length > 0) {
+      await assignChat(sessionFile, id);
+    }
+  };
 
   // Selecting a sidebar project = put THIS chat in it (assign + root at its
   // folder / shared sandbox) — the same "this chat's project" meaning the chip
@@ -150,10 +170,20 @@ function ProjectRegion() {
       // selected working folder (unless pi fell back to the sandbox).
       active={orgProjectId ?? (sandbox ? null : activeId)}
       onSelect={(id) => {
-        if (orgIds.has(id)) void selectOrgProject(id);
+        const autoPath = autoPathById.get(id);
+        if (autoPath !== undefined) void selectProjectPath(autoPath);
+        else if (orgIds.has(id)) void selectOrgProject(id);
         else void selectProject(id);
       }}
-      onNew={() => void newProject()}
+      /* A NAMED project, in both places at once. This used to call the electron
+         `project:new` folder picker, which registered a working directory that the
+         sidebar never listed — the source of the clutter jedd found. Creating a
+         real chat-org project puts it in `org.projects`, which IS the sidebar's
+         list and now the picker's, and assigns this chat to it. */
+      onNew={(name) => {
+        if (name === undefined || name.trim().length === 0) return;
+        void createNamedProject(name.trim());
+      }}
       onClear={() => void clearProject()}
       /* "Sandbox" and "No project" were two labels for one state — a chat with
          no working folder, whose files go to its own private folder. jedd: call

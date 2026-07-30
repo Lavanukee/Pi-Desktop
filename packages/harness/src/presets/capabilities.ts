@@ -138,6 +138,19 @@ export function findCapability(name: string): Capability | undefined {
   );
 }
 
+/**
+ * The capability that contains a given tool.
+ *
+ * Used when the model's stated intent names a tool it has not been given: it
+ * wants to click, so it is browsing, so it is about to want type and scroll too.
+ * Turning on the whole group costs the SAME single re-prefill as smuggling in the
+ * one tool, and saves the next two. jedd: "load the capability suite of browser
+ * tools when it's called immediately."
+ */
+export function capabilityForTool(tool: string): Capability | undefined {
+  return CAPABILITIES.find((c) => c.tools.includes(tool));
+}
+
 /** The menu, for a bare `capability()` call. */
 export function capabilityMenu(): string {
   const lines = CAPABILITIES.map((c) => `- ${c.name} — ${c.summary}`);

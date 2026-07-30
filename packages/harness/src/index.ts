@@ -45,7 +45,8 @@ import {
   type PermissionController,
   registerPermissions,
 } from './permissions/modes.js';
-import { resolvePresetTools } from './presets/presets.js';
+import { capabilityForTool } from './presets/capabilities.js';
+import { BROWSER_NAVIGATE_ALWAYS, resolvePresetTools } from './presets/presets.js';
 import { augmentSystemPrompt } from './prompt/capability-prompt.js';
 import { connectRepairBridge, type LiveRepairDeps } from './repair/bridge.js';
 import { createToolCallFixer, withRepairAttempts } from './repair/fixer.js';
@@ -87,6 +88,7 @@ import {
 import { registerAskUser } from './tools/ask-user.js';
 import { registerCapabilityTool } from './tools/capability-tool.js';
 import { registerImageTools } from './tools/image-tools.js';
+import { applyBias, lastAssistantThought, planBias } from './tools/intent-bias.js';
 import { detectOpenedApp, openedAppNote } from './tools/opened-app.js';
 import { registerPlanTool } from './tools/plan-tool.js';
 import { registerSandboxFileTools } from './tools/sandbox-fs.js';
@@ -872,6 +874,72 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     active: () => runtime.activeTools,
   });
 
+  /**
+   * INTENT BIAS — the model says what it means to do; make that the easy thing.
+   *
+   * jedd: "it's still doing a lot of page reading repeating when it clearly
+   * intends not to … so if it says as is common 'i need to click' then it will be
+   * biased toward calling the click action and will hopefully stop the looping
+   * behavior outright."
+   *
+   * The A/Bs behind this live in tools/intent-bias.ts. The short version: with
+   * `browser_click` advertised the model picks it 5/5 unaided, and with it absent
+   * NO bias can rescue the turn — the tool-call grammar has already masked those
+   * tokens, and pushing on them measured worse than doing nothing. So the loop is
+   * an availability problem, and the primary action is to hand over the tool (and
+   * its whole capability, since a model that wants to click is about to want to
+   * type). The graded nudge jedd asked for rides along on top, for the case where
+   * the tool IS present and the model is merely wavering.
+   */
+  const activateCapability = (added: readonly string[]): void => {
+    const next = Array.from(new Set([...runtime.activeTools, ...added]));
+    if (next.length === runtime.activeTools.length) return;
+    runtime.activeTools = next;
+    pi.setActiveTools(next);
+  };
+  pi.on('before_provider_request', (e) => {
+    const payload = e.payload;
+    if (typeof payload !== 'object' || payload === null) return payload;
+    const body = payload as Record<string, unknown>;
+    if (!Array.isArray(body.messages)) return body;
+    try {
+      const thought = lastAssistantThought(body.messages);
+      if (thought === '') return body;
+      const advertised = Array.isArray(body.tools)
+        ? (body.tools as Array<{ function?: { name?: unknown } }>)
+            .map((t) => (typeof t.function?.name === 'string' ? t.function.name : ''))
+            .filter((n) => n !== '')
+        : [];
+      // Candidates come from pi, which sees every extension — our own capture
+      // only ever holds ours (measured; see capability-tool.ts). Descriptions and
+      // parameters are what make an injected tool callable rather than a name.
+      const all = pi.getAllTools().map((t) => ({
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+      }));
+      const plan = planBias(thought, advertised, all);
+      if (plan.match === null) return body;
+      if (plan.inject.length > 0) {
+        // The whole group, not the single tool — same one re-prefill, and it
+        // spares the next two turns theirs.
+        const wanted = plan.inject[0] ?? '';
+        const cap = capabilityForTool(wanted);
+        const names = all.map((t) => t.name);
+        const group = cap !== undefined ? cap.tools.filter((t) => names.includes(t)) : plan.inject;
+        activateCapability(group.length > 0 ? group : plan.inject);
+        // Also add them to THIS request, so the intent is served on the very next
+        // action instead of a turn later.
+        applyBias(body, { ...plan, inject: [...group] }, all);
+      } else {
+        applyBias(body, plan, all);
+      }
+    } catch {
+      // A steering heuristic must never be able to break a turn.
+    }
+    return body;
+  });
+
   // Task-list / checklist tool: the model publishes a plan the app renders live.
   registerPlanTool(pi, {
     onUpdate: (plan, title) => {
@@ -1313,6 +1381,24 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     if (event.toolName === 'bash') {
       const command = (event.input as { command?: unknown }).command;
       lastOpened = typeof command === 'string' ? detectOpenedApp(command) : undefined;
+    }
+    /*
+     * NAVIGATING IS BROWSING. jedd's goal, verbatim: "load browser navigate by
+     * default and load the capability suite of browser tools when it's called
+     * immediately."
+     *
+     * navigate and snapshot ship advertised; the rest arrive the moment the model
+     * actually goes somewhere. That is the point where wanting to click becomes
+     * certain, and getting the suite here means the click turn never has to be
+     * spent discovering it is not allowed to click — which is the loop jedd kept
+     * screenshotting. One re-prefill, at the only moment it is obviously earned.
+     */
+    if (event.toolName === BROWSER_NAVIGATE_ALWAYS) {
+      const cap = capabilityForTool(BROWSER_NAVIGATE_ALWAYS);
+      if (cap !== undefined) {
+        const names = new Set(pi.getAllTools().map((t) => t.name));
+        activateCapability(cap.tools.filter((t) => names.has(t)));
+      }
     }
     const detector = runtime.loopDetector;
     if (detector === null) return;

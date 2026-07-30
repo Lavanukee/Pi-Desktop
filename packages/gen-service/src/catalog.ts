@@ -451,11 +451,26 @@ export const MODALITY_CATALOG: readonly ModalityModel[] = [
     minUnifiedMemoryGB: 2,
     runsLocally: true,
     heavy: false,
-    auxDeps: ['ffmpeg', 'headless-chrome'],
-    reserved: true,
+    /*
+     * NO AUX DEPS, AND NO LONGER RESERVED. This entry was gated behind
+     * `['ffmpeg', 'headless-chrome']` and `reserved: true`, which is why every
+     * motion commission died on "the runner is not installed" — the catalog
+     * refused before the runner was ever asked.
+     *
+     * Both deps were phantoms. Chromium is the process this app runs inside, so
+     * headless Chrome was never missing; ffmpeg was only ever needed to ENCODE,
+     * and jedd cut encoding when he asked for stills ("you can ignore video
+     * generation … hyperframes has to be in, still renderer and all"). The
+     * renderer now captures deterministic PNG frames through an offscreen
+     * BrowserWindow — see apps/desktop/electron/gen/hyperframes-still.ts.
+     */
+    auxDeps: [],
+    reserved: false,
     recommended: true,
     notes:
-      'Only genuinely-local non-diffusion video path: Node+ffmpeg+headless-Chrome, agent authors HTML/CSS/JS→MP4. Deterministic, CPU. Not photoreal.',
+      'The genuinely-local, non-diffusion motion path: the agent authors HTML/CSS/JS and it is ' +
+      "rendered to a deterministic sequence of PNG stills through the app's own Chromium — no " +
+      'weights, no network, no ffmpeg, same pixels every run. Frames, not a clip. Not photoreal.',
   },
   {
     id: 'wan2.1-t2v-1.3b',

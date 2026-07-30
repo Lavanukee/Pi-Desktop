@@ -15,6 +15,12 @@ import type { ExtensionAPI } from '@mariozechner/pi-coding-agent';
 import { type Static, Type } from '@sinclair/typebox';
 import { type ChildAgentResult, type RunChildAgentOptions, runChildAgent } from './child-agent.js';
 import type { SubagentRunner, SubagentScheduler } from './scheduler.js';
+import {
+  composeCommission,
+  DEFAULT_IMAGE_ITERATIONS,
+  MESH_SPECIALIST_KINDS,
+  normalizeSpecialist,
+} from './specialist-commission.js';
 import { SPAWN_SUBAGENT_TOOL_NAME } from './types.js';
 
 export { SPAWN_SUBAGENT_TOOL_NAME };
@@ -52,6 +58,32 @@ const SubagentParams = Type.Object({
   timeout_seconds: Type.Optional(
     Type.Number({
       description: `Timeout in seconds (default ${DEFAULT_TIMEOUT_S}, max ${MAX_TIMEOUT_S}).`,
+    }),
+  ),
+  /*
+   * THE SPECIALIST OPTION. jedd: "these should be via a subagent tool that has
+   * options for having it be a specific specialist workflow."
+   *
+   * Twelve written charters already existed in corp-mesh.ts and were reachable
+   * only from inside a running corp mesh. Naming one here runs the child AS that
+   * specialist — its charter, the capability it needs, and for `image` the pass
+   * loop below.
+   */
+  specialist: Type.Optional(
+    Type.String({
+      description:
+        "Run the subagent as a named specialist, with that role's charter and tools. One of: " +
+        `${MESH_SPECIALIST_KINDS.join(', ')}. Producers come back with an artifact — ` +
+        '`image` makes pictures and improves them over passes, `motion` renders motion ' +
+        'graphics, `ui-critic` judges an interface, `research` delivers exactly the ' +
+        'deliverable you name. The rest answer a question through one lens.',
+    }),
+  ),
+  iterations: Type.Optional(
+    Type.Number({
+      description:
+        'For specialist="image": how many improvement passes to run after the first ' +
+        `image (default ${DEFAULT_IMAGE_ITERATIONS}). Ignored by other specialists.`,
     }),
   ),
 });
@@ -106,7 +138,41 @@ export function registerSubagentTool(pi: ExtensionAPI, deps: SubagentToolDeps): 
           details: { rejected: true },
         };
       }
-      const name = params.name?.trim() ? params.name.trim() : deriveSubagentName(goal);
+      /*
+       * A named specialist runs with its charter ahead of the commission. The
+       * child is driven by exactly one string (`bridge.prompt(goal)` in the
+       * desktop host), so this is where the role is applied — see
+       * ./specialist-commission.ts for why that is the seam.
+       */
+      const kind =
+        params.specialist !== undefined ? normalizeSpecialist(params.specialist) : undefined;
+      if (params.specialist !== undefined && kind === undefined) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                `There is no "${params.specialist}" specialist. Choose one of: ` +
+                `${MESH_SPECIALIST_KINDS.join(', ')} — or omit it for a general subagent.`,
+            },
+          ],
+          isError: true,
+          details: { rejected: true },
+        };
+      }
+      const prompt =
+        kind !== undefined
+          ? composeCommission({
+              kind,
+              goal,
+              iterations: params.iterations ?? DEFAULT_IMAGE_ITERATIONS,
+            })
+          : goal;
+      const name = params.name?.trim()
+        ? params.name.trim()
+        : kind !== undefined
+          ? `${kind}: ${deriveSubagentName(goal)}`
+          : deriveSubagentName(goal);
       const id = toolCallId && toolCallId.length > 0 ? toolCallId : `sub-${Date.now()}`;
       const timeoutMs = clampTimeout(params.timeout_seconds);
 
@@ -117,7 +183,7 @@ export function registerSubagentTool(pi: ExtensionAPI, deps: SubagentToolDeps): 
       const run: SubagentRunner = async ({ setStep }) => {
         setStep('Working…');
         const child = await runChild({
-          goal,
+          goal: prompt,
           id,
           name,
           timeoutMs,

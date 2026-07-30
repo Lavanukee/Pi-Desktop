@@ -189,7 +189,15 @@ function contentToOAI(
  */
 export function contextHasImage(context: Context): boolean {
   for (const msg of context.messages) {
-    if (msg.role !== 'user') continue;
+    /*
+     * TOOL RESULTS COUNT. This read `msg.role !== 'user'` and skipped everything
+     * else, which meant the exact images this app generates itself — a browser
+     * screenshot, a rendered frame, an image the model just made — could never
+     * turn vision on. Only a human dragging a file into the composer could. That
+     * is backwards for an agent: the pictures it needs to look at are almost
+     * always ones a tool just handed it.
+     */
+    if (msg.role !== 'user' && msg.role !== 'toolResult') continue;
     const content = msg.content;
     if (typeof content === 'string') continue;
     if (content.some((part) => part.type === 'image')) return true;
@@ -245,6 +253,41 @@ export function buildChatCompletionsRequest(
         name: msg.toolName,
         content: text,
       });
+      /*
+       * AND THE IMAGES A TOOL RETURNED.
+       *
+       * This block used to not exist: tool content was filtered to text and every
+       * image was dropped on the floor. So `browser_snapshot({screenshot:true})`
+       * dutifully captured a PNG, attached it, and the model never saw a pixel —
+       * and the image specialist's "LOOK at it, decide what is wrong with it" was
+       * an instruction it had no way to follow. Both features were shipped shapes
+       * with nothing behind them.
+       *
+       * They cannot ride in the tool message itself: the OpenAI shape (which
+       * llama-server implements) takes a plain string for `role:"tool"`, so an
+       * array with an image part is not carried. The portable move is the one
+       * below — hand the image over immediately afterwards as a user turn that
+       * says where it came from, which every vision-capable chat template renders.
+       */
+      const images = msg.content.filter((c) => c.type === 'image');
+      if (images.length > 0) {
+        messages.push({
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: `[image returned by ${msg.toolName}]`,
+            },
+            ...images.map((c) => {
+              const img = c as { data: string; mimeType: string };
+              return {
+                type: 'image_url',
+                image_url: { url: `data:${img.mimeType};base64,${img.data}` },
+              };
+            }),
+          ],
+        });
+      }
     }
   }
 

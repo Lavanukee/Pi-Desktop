@@ -27,7 +27,7 @@
  */
 import { randomBytes, randomInt } from 'node:crypto';
 import { existsSync, unlinkSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -72,6 +72,8 @@ import type {
   GenInvokeMap,
   GenSurfacePayload,
 } from './gen-ipc-contract';
+import { createStillRenderer } from './hyperframes-still';
+import { openStillWindow } from './hyperframes-window';
 import {
   buildVideoJob,
   defaultExtractPosterFrame,
@@ -196,7 +198,21 @@ export function registerGenIpc(opts: GenManagerOptions): void {
           new Error('ComfyUI is not configured for local video generation on this machine'),
         )),
   });
-  const hyperframes = new HyperFramesRunner(opts.hyperFramesRender);
+  /*
+   * HYPERFRAMES NOW RENDERS. The default used to be
+   * `hyperFramesRenderUnavailable` — a stub that refused with "needs ffmpeg +
+   * headless Chrome" — so every motion commission ended in that message and the
+   * motion specialist's charter described a renderer that did not exist. Neither
+   * dependency was real: Chromium is the process we are in, and ffmpeg was only
+   * for encoding, which is the part jedd cut when he asked for stills.
+   */
+  const hyperframes = new HyperFramesRunner(
+    opts.hyperFramesRender ??
+      createStillRenderer({
+        openWindow: openStillWindow,
+        writeFile: (file: string, data: Buffer) => writeFile(file, data),
+      }),
+  );
   const extractPoster = opts.extractPosterFrame ?? defaultExtractPosterFrame;
   const jobQueue = new JobQueue({
     maxConcurrent: opts.maxConcurrent ?? 2,

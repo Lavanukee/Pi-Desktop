@@ -768,3 +768,73 @@ describe('createLlamaCppStream — context-overflow recovery', () => {
     expect(final.errorMessage).not.toContain('boom');
   });
 });
+
+/*
+ * IMAGES A TOOL RETURNED. These two paths were both shipped shapes with nothing
+ * behind them: browser_snapshot({screenshot:true}) attached a PNG that was
+ * filtered away before the request was built, and the image specialist was told
+ * to "LOOK at it" with no way to. See the block in buildChatCompletionsRequest.
+ */
+describe('tool-result images', () => {
+  const shotContext = (): Context =>
+    ({
+      systemPrompt: 'You are a test.',
+      messages: [
+        { role: 'user', content: 'look at the page', timestamp: 0 },
+        {
+          role: 'toolResult',
+          toolCallId: 'a',
+          toolName: 'browser_snapshot',
+          content: [
+            { type: 'text', text: '[1] link "More information"' },
+            { type: 'image', data: 'QUJD', mimeType: 'image/png' },
+          ],
+          isError: false,
+          timestamp: 0,
+        },
+      ],
+    }) as unknown as Context;
+
+  it('carries the image over as a following user turn', () => {
+    const body = buildChatCompletionsRequest(makeModel(), shotContext()) as {
+      messages: Array<{ role: string; content: unknown; name?: string }>;
+    };
+    // tool message keeps the TEXT (the OpenAI shape takes a plain string here)…
+    const tool = body.messages.find((m) => m.role === 'tool');
+    expect(tool?.content).toBe('[1] link "More information"');
+    // …and the picture arrives immediately after, where a template will render it.
+    const last = body.messages[body.messages.length - 1] as {
+      role: string;
+      content: Array<{ type: string; image_url?: { url: string } }>;
+    };
+    expect(last.role).toBe('user');
+    expect(last.content[0]).toEqual({
+      type: 'text',
+      text: '[image returned by browser_snapshot]',
+    });
+    expect(last.content[1]?.image_url?.url).toBe('data:image/png;base64,QUJD');
+  });
+
+  it('adds nothing when a tool returned only text', () => {
+    const body = buildChatCompletionsRequest(makeModel(), {
+      systemPrompt: 's',
+      messages: [
+        {
+          role: 'toolResult',
+          toolCallId: 'a',
+          toolName: 'bash',
+          content: [{ type: 'text', text: 'ok' }],
+          isError: false,
+          timestamp: 0,
+        },
+      ],
+    } as unknown as Context) as { messages: Array<{ role: string }> };
+    expect(body.messages.filter((m) => m.role === 'user')).toHaveLength(0);
+  });
+
+  /* The vision launch keys off this. Reading only user turns meant the images
+   * this app generates ITSELF could never turn the projector on. */
+  it('sees an image a tool returned, not just one a human attached', () => {
+    expect(contextHasImage(shotContext())).toBe(true);
+  });
+});

@@ -94,12 +94,62 @@ to switch mid-session.
 | Motion specialist checking frames | "check that frame 0, middle, last DIFFER" — cannot |
 | Review its own work visually | the whole category |
 
-**Structural fix.** Not "if the task mentions a screenshot". The signal is already
-in the code and already correct — `contextHasImage(context)` is TRUE the moment a
-tool hands back an image. What is missing is that nothing acts on it. The
-provider should, on seeing an image in a context while `launchMode==='fast-text'`,
-request the multimodal relaunch and retry the turn — the `launchMode` field and
-the on-demand-restart seam both already exist for exactly this and are unused.
+### 2a. Blocker one: the projector was never on disk — FIXED
+
+jedd's first instinct ("mmproj loaded at all?") was right, and it was worse than
+not loaded. The default model's projector had been sitting as a **stranded
+`.part`**:
+
+```
+620553303  mmproj-F16.gguf.part      # qwen3.5-4b-mtp — never promoted
+175115840  mmproj-F16.gguf           # gemma-4-12b-it — fine
+927607360  mmproj-F16.gguf           # qwen3.6-27b-mtp — fine
+```
+
+The catalog entry carried `bytes: 0` — a placeholder — and the download's
+completion check read:
+
+```ts
+if (expectedSha256 === undefined && expectedBytes !== undefined && bytes !== expectedBytes)
+  throw new DownloadError(`size mismatch: expected ${expectedBytes} bytes, got ${bytes}`);
+await rename(partPath, dest);   // ← never reached
+```
+
+`0 !== undefined`, so **every completed transfer threw `expected 0 bytes, got
+620553303` and the rename never ran.** The download could never succeed, no
+matter how many times it was retried, and nothing surfaced that.
+
+**Fix:** a zero expected size means *unknown*, not *expect nothing*
+(`expectedBytes > 0`). Unit-tested both ways — the placeholder promotes, a real
+expected size still rejects a short file. The 4B's real size (672,423,488, from
+`unsloth/Qwen3.5-4B-MTP-GGUF`) is now in the catalog, and the projector is on
+disk and verified (`GGUF` magic).
+
+> The lesson is bigger than this file: **a placeholder was being enforced as a
+> constraint.** Nothing said so, and the visible symptom was a model that
+> appeared unable to use a tool.
+
+### 2b. Blocker two: nothing asks for the switch — NOT FIXED, precisely located
+
+With the projector present I re-ran the same ask. The server *still* launched
+`fast-text` and only `fast-text`. The model again navigated, again asked for a
+screenshot, again could not see it.
+
+`ensureVisionMode()` already exists and works — but it is called from exactly one
+place, `pi-connect.ts:382`, guarded by `messageNeedsVision({ imageDataUris })`.
+That only sees images **the user attaches in the composer**. An image the MODEL
+produces — a browser screenshot, a rendered frame, an image it just generated —
+never reaches that check, so the relaunch is never requested.
+
+**The fix, stated precisely so it can be picked up cold:** the same
+`ensureVisionMode()` path must be reachable when a TOOL returns an image, not
+only when a human attaches one. `contextHasImage(context)` in
+`provider-llamacpp/src/stream.ts` is already the correct predicate and already
+returns true for tool results (fixed earlier today) — it has no callers. The
+honest interim behaviour, worth having regardless: when an image rides a tool
+result and the server is text-only, **say so in the result**. The model then
+reports "I cannot see this" instead of looping four times and concluding the tool
+is broken.
 
 Second, cheaper half: `browser_snapshot`'s screenshot is **opt-in via a parameter
 buried in its description** ("Optionally attach a screenshot"). A model that says

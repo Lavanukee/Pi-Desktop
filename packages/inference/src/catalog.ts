@@ -513,7 +513,11 @@ const QWEN35_4B_MTP: CatalogModel = {
       sha256: '28bedf3269ebb40444dab71cf884d85ad639fd57cfc30757a62b7929d4e316de',
     },
   ],
-  mmproj: { name: 'mmproj-F16.gguf', bytes: 0, quant: 'F16' },
+  // Real size (HF content-length for unsloth/Qwen3.5-4B-MTP-GGUF), not the 0
+  // placeholder this carried. `bytes: 0` was being ENFORCED as an expectation by
+  // the completion check in ./download.ts, so this projector's `.part` could never
+  // be promoted — and the DEFAULT model therefore had no vision at all.
+  mmproj: { name: 'mmproj-F16.gguf', bytes: 672_423_488, quant: 'F16' },
   mtpEmbedded: true,
   spec: 'mtp',
   // Smallest DFlash target in-family is 4B (late-June draft).

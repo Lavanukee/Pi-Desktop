@@ -201,3 +201,42 @@ describe('downloadFile', () => {
     expect(fixture.requests.length).toBe(before);
   });
 });
+
+/*
+ * A PLACEHOLDER MUST NOT BECOME A CONSTRAINT.
+ *
+ * `bytes: 0` in a catalog entry means "size unknown" — several entries carry it.
+ * The completion check read `expectedBytes !== undefined`, and 0 is defined, so
+ * every finished transfer of such a file threw and its `.part` was never
+ * promoted. That is why the default model had no mmproj and therefore no vision.
+ */
+describe('zero expected size means unknown', () => {
+  let fixture: Fixture;
+  let dest: string;
+
+  beforeEach(async () => {
+    fixture = await startFixture();
+    dest = join(tmpdir(), `dl-zero-${Date.now()}-${Math.random().toString(16).slice(2)}.bin`);
+  });
+  afterEach(async () => {
+    await new Promise<void>((resolve) => fixture.server.close(() => resolve()));
+    await rm(dest, { force: true });
+    await rm(`${dest}.part`, { force: true });
+  });
+
+  it('promotes the file when the catalog size is the 0 placeholder', async () => {
+    const result = await downloadFile({ url: fixture.url, dest, expectedBytes: 0 });
+    expect(result.bytes).toBe(PAYLOAD.length);
+    expect(existsSync(dest)).toBe(true);
+    // The stranded `.part` was the whole bug: 620MB re-fetched and discarded
+    // every attempt, so the projector never existed and vision never turned on.
+    expect(existsSync(`${dest}.part`)).toBe(false);
+  });
+
+  it('still enforces a REAL expected size', async () => {
+    await expect(downloadFile({ url: fixture.url, dest, expectedBytes: 99_999 })).rejects.toThrow(
+      /size mismatch/,
+    );
+    expect(existsSync(dest)).toBe(false);
+  });
+});

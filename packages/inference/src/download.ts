@@ -213,7 +213,29 @@ export async function downloadFile(opts: DownloadOptions): Promise<DownloadResul
   if (expectedSha256 !== undefined && sha256 !== expectedSha256) {
     throw new ChecksumMismatchError(expectedSha256, sha256);
   }
-  if (expectedSha256 === undefined && expectedBytes !== undefined && bytes !== expectedBytes) {
+  /*
+   * A ZERO expected size is "we don't know", not "expect nothing".
+   *
+   * This read `expectedBytes !== undefined`, and 0 is defined — so a catalog
+   * entry carrying the placeholder `bytes: 0` failed this check on EVERY
+   * completed transfer and the `.part` was never promoted. Measured on this
+   * machine: qwen3.5-4b-mtp's `mmproj-F16.gguf.part`, 620,553,303 bytes,
+   * re-downloaded and thrown away every attempt with "expected 0 bytes, got
+   * 620553303".
+   *
+   * The user-visible consequence was nothing to do with downloads. No mmproj
+   * meant the server could only ever launch `fast-text`, so vision was never
+   * available for the default model — and the model, asked to look at a
+   * screenshot, tried four times and concluded "the browser_snapshot tool isn't
+   * giving me useful information". It was right, and the cause was a placeholder
+   * in a catalog being enforced as a constraint.
+   */
+  if (
+    expectedSha256 === undefined &&
+    expectedBytes !== undefined &&
+    expectedBytes > 0 &&
+    bytes !== expectedBytes
+  ) {
     throw new DownloadError(`size mismatch: expected ${expectedBytes} bytes, got ${bytes}`);
   }
 

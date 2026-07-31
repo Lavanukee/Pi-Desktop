@@ -71,6 +71,10 @@ const env = { ...process.env, PI_E2E: '1' };
 if (!REAL) {
   env.PI_BIN = mockPi;
   env.MOCK_PI_FIXTURE = fixture;
+  // A mock-pi fixture has no model to reach, so skip the server boot. REAL=1
+  // deliberately does NOT set this — it needs a real server, and this flag being
+  // implied by PI_E2E is what made every live probe answer "fetch failed".
+  env.PI_E2E_NO_SERVER = '1';
 }
 if (CORP) env.PI_DESKTOP_CORP = '1';
 
@@ -105,6 +109,23 @@ const app = await electron.launch({
   executablePath: electronBinary,
   args: [appRoot, `--user-data-dir=${userDataDir}`],
   env,
+});
+
+/*
+ * FORWARD THE MAIN PROCESS. Without this the probe shows only the renderer, and
+ * an app whose inference never starts looks like a model that answers "fetch
+ * failed" — the supervisor's own log lines, the ones that say WHY, go to a pipe
+ * nobody reads. This is what turned a long guessing session into a diagnosis.
+ */
+app.process().stdout?.on('data', (d) => {
+  for (const line of String(d).split('\n')) {
+    if (line.trim() !== '') console.log(`[main] ${line.slice(0, 300)}`);
+  }
+});
+app.process().stderr?.on('data', (d) => {
+  for (const line of String(d).split('\n')) {
+    if (line.trim() !== '') console.log(`[main!] ${line.slice(0, 300)}`);
+  }
 });
 
 const artifacts = [];

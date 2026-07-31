@@ -163,6 +163,7 @@ function loadRenderer(win: BrowserWindow, extraQuery?: Record<string, string>): 
     isPackaged: app.isPackaged,
     devServerUrl: process.env.VITE_DEV_SERVER_URL,
     e2e: process.env.PI_E2E === '1',
+    noServer: process.env.PI_E2E_NO_SERVER === '1',
   });
   if (target.kind === 'dev-server') {
     const url = new URL(target.url);
@@ -557,17 +558,19 @@ if (!hasSingleInstanceLock) {
     // Grant ONLY audio capture, and only to our own windows; everything else a
     // page might ask for (camera, geolocation, notifications, MIDI…) stays
     // denied, so this widens the app's surface by exactly one capability.
-    session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
-      if (!isTrustedWebContents(contents) || permission !== 'media') {
-        callback(false);
-        return;
-      }
-      // 'media' covers camera AND microphone; the requested types say which.
-      // Dictation needs audio only, so a request that also asks for video is
-      // refused rather than quietly granted alongside it.
-      const types = (details as { mediaTypes?: readonly string[] }).mediaTypes ?? [];
-      callback(types.includes('audio') && !types.includes('video'));
-    });
+    session.defaultSession.setPermissionRequestHandler(
+      (contents, permission, callback, details) => {
+        if (!isTrustedWebContents(contents) || permission !== 'media') {
+          callback(false);
+          return;
+        }
+        // 'media' covers camera AND microphone; the requested types say which.
+        // Dictation needs audio only, so a request that also asks for video is
+        // refused rather than quietly granted alongside it.
+        const types = (details as { mediaTypes?: readonly string[] }).mediaTypes ?? [];
+        callback(types.includes('audio') && !types.includes('video'));
+      },
+    );
     session.defaultSession.setPermissionCheckHandler((contents, permission, _origin, details) => {
       if (!isTrustedWebContents(contents) || permission !== 'media') return false;
       const kind = (details as { mediaType?: string }).mediaType;

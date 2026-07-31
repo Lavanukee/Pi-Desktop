@@ -167,7 +167,8 @@ export function resolveBootModel(
   if (sel.mode === 'model' && onDisk(sel.modelId)) return { modelId: sel.modelId };
   if (sel.mode === 'tier' && inp.tierModels !== undefined) {
     const pick = inp.tierModels[sel.tier];
-    if (pick !== undefined && onDisk(pick.modelId)) return { modelId: pick.modelId, quant: pick.quant };
+    if (pick !== undefined && onDisk(pick.modelId))
+      return { modelId: pick.modelId, quant: pick.quant };
   }
   // Auto, or a pinned pick that isn't on disk → guarantee SOME server is up.
   return pickPreloadModel(inp);
@@ -579,7 +580,23 @@ const diag = (msg: string): void => {
 };
 
 export function ensureChatServerReady(): Promise<void> {
-  if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('piE2E'))
+  /*
+   * THIS USED TO SKIP ON `?piE2E` — the SAME flag that unlocks `window.__pi_store`
+   * for probes. So the moment a probe made the app observable, it also stopped it
+   * ever starting a model: every turn answered "fetch failed", and every live
+   * probe in this repo has been driving a deliberately server-less app. jedd,
+   * after I reported it as a possible inference bug: "the fetch failed thing has
+   * always been something with your probes."
+   *
+   * Observing the app and disabling it are different intentions and now have
+   * different flags. `?piNoServer` skips the boot — which is what a mock-pi
+   * fixture run wants, since there is no model to talk to anyway — while a
+   * REAL=1 probe boots a server exactly like the shipped app.
+   */
+  if (
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).has('piNoServer')
+  )
     return Promise.resolve();
   if (serverIsReady()) {
     diag('ensureChatServerReady: server already ready — no-op');

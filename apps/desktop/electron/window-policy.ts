@@ -8,6 +8,10 @@ export interface RendererTargetInput {
   /** `app.isPackaged` — packaged builds must never honor VITE_DEV_SERVER_URL. */
   isPackaged: boolean;
   devServerUrl: string | undefined;
+  /** PI_E2E_NO_SERVER=1: threads `?piNoServer=1`, which skips the chat server
+   * boot. For mock-pi runs that have no model to reach. Deliberately NOT implied
+   * by `e2e` — see ensureChatServerReady. */
+  noServer?: boolean;
   /** PI_E2E=1: threads the `?piE2E=1` opt-in that unlocks `window.__pi_store`
    * (see src/state/pi-connect.ts and tests/e2e/pi-probe.mjs). */
   e2e: boolean;
@@ -26,7 +30,16 @@ export type RendererTarget =
  * will-navigate cannot cover this: loadURL is programmatic navigation.
  */
 export function resolveRendererTarget(input: RendererTargetInput): RendererTarget {
-  const query = input.e2e ? { piE2E: '1' } : undefined;
+  const query =
+    input.e2e || input.noServer === true
+      ? {
+          ...(input.e2e ? { piE2E: '1' } : {}),
+          // Separate from piE2E on purpose: a probe may want to SEE the app
+          // without also preventing it from starting a model. See
+          // ensureChatServerReady in src/chat/auto-router.ts.
+          ...(input.noServer === true ? { piNoServer: '1' } : {}),
+        }
+      : undefined;
   const { devServerUrl } = input;
   if (input.isPackaged || devServerUrl === undefined || devServerUrl === '') {
     return { kind: 'packaged-file', query };

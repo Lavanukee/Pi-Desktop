@@ -20,7 +20,6 @@ import type {
   RpcSlashCommand,
 } from '@pi-desktop/engine';
 
-import { ensureVisionServer } from '../inference/llm-main';
 import { takeVisionWant } from '../inference/vision-want';
 import type { PiInvokeMap } from './contract';
 
@@ -83,6 +82,8 @@ export interface PiSessionsDeps<S extends SessionSender> {
   ) => SessionBridge;
   /** Fans a bridge event out to the renderer (the 'pi:event' wire). */
   sendEvent: (sender: S, event: PiBridgeEvent) => void;
+  /** Ask the renderer to switch vision on (see 'llm:vision-wanted'). */
+  sendVisionWanted?: (sender: S) => void;
   log: SessionLog;
 }
 
@@ -211,8 +212,8 @@ export function createPiSessions<S extends SessionSender>(deps: PiSessionsDeps<S
          * The next turn can see. Fire-and-forget: a failed relaunch must never
          * break event delivery, and it is logged inside ensureVisionServer.
          */
-        if (event.type === 'agent_end' && takeVisionWant()) {
-          void ensureVisionServer();
+        if (event.type === 'agent_end' && takeVisionWant() && !sender.isDestroyed()) {
+          deps.sendVisionWanted?.(sender);
         }
         if (!sender.isDestroyed()) deps.sendEvent(sender, event);
       },

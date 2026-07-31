@@ -166,6 +166,17 @@ export function registerBrowserUseTools(pi: ExtensionAPI, options: BrowserUseOpt
         const text = formatSnapshot(snap);
         const content: AgentToolResult<BrowserDetails>['content'] = [{ type: 'text', text }];
         if (params.screenshot === true) {
+          /*
+           * NEVER SILENTLY OMIT A SCREENSHOT THAT WAS ASKED FOR.
+           *
+           * This swallowed every failure: a null dataUrl (which is what a hidden
+           * browser view returns) produced a result with no image and nothing
+           * saying why. The model asked for a screenshot, got a text snapshot,
+           * and asked again — four times, before concluding the tool was broken.
+           * A capability that fails quietly is worse than one that is absent,
+           * because the model has no way to stop trying.
+           */
+          let failure: string | undefined;
           try {
             const shot = await bridge.request<{ dataUrl: string | null }>('screenshot');
             const dataUrl = shot?.dataUrl ?? null;
@@ -176,9 +187,20 @@ export function registerBrowserUseTools(pi: ExtensionAPI, options: BrowserUseOpt
                 data: dataUrl.slice(comma + 1),
                 mimeType: 'image/png',
               });
+            } else {
+              failure = 'the browser returned an empty image';
             }
-          } catch {
-            // Screenshot is best-effort; the indexed list is the primary payload.
+          } catch (err) {
+            failure = messageOf(err);
+          }
+          if (failure !== undefined) {
+            content.push({
+              type: 'text',
+              text:
+                `\n[No screenshot was attached — ${failure}. The indexed element list ` +
+                'above is your view of this page; use it. Asking for the screenshot again ' +
+                'will not produce one.]',
+            });
           }
         }
         return {

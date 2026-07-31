@@ -31,8 +31,8 @@ import {
 } from './gen/gen-ipc-contract';
 import {
   DICTATION_INVOKE_CHANNELS,
-  GEN3D_INVOKE_CHANNELS,
   type DictationInvokeMap,
+  GEN3D_INVOKE_CHANNELS,
   type Gen3dEventMap,
   type Gen3dInvokeMap,
 } from './gen3d/gen3d-contract';
@@ -495,9 +495,7 @@ export type MacInvokeMap = {
   };
 };
 
-export const MAC_INVOKE_CHANNELS = [
-  'mac:debug',
-] as const satisfies readonly (keyof MacInvokeMap)[];
+export const MAC_INVOKE_CHANNELS = ['mac:debug'] as const satisfies readonly (keyof MacInvokeMap)[];
 
 export type AppInvokeMap = CoreInvokeMap &
   FsInvokeMap &
@@ -563,6 +561,17 @@ export type AppEventMap = {
   'app:accelerator': { action: 'close-tab' };
   /** Inference supervisor state (server/model/TPS) for the composer footer. */
   'llm:status': LlmStatus;
+  /**
+   * A tool produced an image the running (text-only) server cannot read, so the
+   * renderer should switch vision on.
+   *
+   * Main deliberately does NOT do this itself. Going multimodal is a llama-server
+   * RESTART onto a NEW PORT, and the pi child holds the old base URL — restarting
+   * from main leaves the child talking to an address that no longer exists, which
+   * is exactly the hang this replaced. The renderer's `ensureVisionMode()` already
+   * does the whole sequence, respawn included, so it owns this.
+   */
+  'llm:vision-wanted': Record<string, never>;
   'llm:download-progress': {
     modelId: string;
     file: string;

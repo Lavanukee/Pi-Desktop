@@ -50,9 +50,11 @@ not forward. It does now.
 
 ---
 
-## 2. THE BIG ONE — vision never turns on, so the model cannot see its own work
+## 2. THE BIG ONE — vision never turned on. THREE separate blockers, all now fixed
 
-**NOT FIXED. This is the most valuable finding in the document.**
+**FIXED AND VERIFIED END-TO-END.** It took three independent bugs, stacked. Each
+one alone was enough to make the model look incapable, and fixing any two still
+left it blind.
 
 Asked to *"take a screenshot of stripe.com's homepage and recreate its hero
 section"*, the model did exactly the right thing and then died trying, over five
@@ -129,7 +131,7 @@ disk and verified (`GGUF` magic).
 > constraint.** Nothing said so, and the visible symptom was a model that
 > appeared unable to use a tool.
 
-### 2b. Blocker two: nothing asks for the switch — TRIGGER FIXED, relaunch unverified
+### 2b. Blocker two: nothing asked for the switch — FIXED
 
 With the projector present I re-ran the same ask. The server *still* launched
 `fast-text` and only `fast-text`. The model again navigated, again asked for a
@@ -159,13 +161,47 @@ never reaches that check, so the relaunch is never requested.
 **Confirmed live:** `ensureVisionServer: relaunching multimodal { modelId:
 'qwen3.5-4b-mtp' }` fires, at the turn boundary, exactly once.
 
-**NOT confirmed, and I will not claim it:** that the relaunch COMPLETES and the
-next turn can actually see. In the verifying run the relaunch was requested and
-then the following turn produced no token within 200s, and no success or failure
-line followed. Either loading the 672 MB projector takes longer than the window,
-or the relaunch stalls. `ensureVisionServer` logs a warning on failure and none
-appeared, so it was most likely still in flight. **This is the next thing to
-check**, and it may share a root with §5a below.
+**The first attempt was wrong in an instructive way.** Main restarted
+llama-server itself — and a relaunch comes up on a NEW PORT while the pi child
+still holds the old base URL, so the next turn talked to an address that no
+longer existed and never produced a token. The renderer's `ensureVisionMode()`
+already owned the whole sequence, respawn included. So main now raises
+`llm:vision-wanted` and the renderer does the work. Restarting the server is not
+the same as switching the model's vision on, and only one component knew that.
+
+### 2c. Blocker three: the agent's browser could never take a screenshot — FIXED
+
+Even with vision ON, the model still saw nothing, because there was never an
+image. `ensureAgentView` attaches the agent's browser to the window and calls
+`setVisible(false)`, and Chromium returns an EMPTY image for a view it is not
+compositing. Every screenshot came back null. The tool then **silently dropped
+it** — `catch {}` with the comment "screenshot is best-effort". The code called
+this a graceful degrade to DOM. It is only graceful if something says so, and
+nothing did.
+
+Two fixes: capture now briefly reveals the view **off-screen** (outside the
+window's own bounds, restored in a `finally`) so it composits without ever being
+drawn where the user can see it; and the tool never omits a requested screenshot
+in silence — it says what failed and that asking again will not help.
+
+> **The pattern, three times in one feature:** a capability that fails quietly is
+> worse than one that is absent, because the model cannot tell the difference and
+> so cannot stop trying.
+
+### 2d. Verified end-to-end
+
+Same task, real app, real 4B:
+
+- **Turn 1 (text-only):** "The screenshot of example.com has been captured
+  successfully. While I cannot display the image myself (I'm in text-only mode),
+  the browser_snapshot call did attach an image…" — honest, and **no loop**.
+- **Auto-switch fires at the turn boundary:** `llm:start-server requested
+  { launchMode: 'multimodal' }`.
+- **Turn 2 (multimodal):** *"The background is light gray and the heading says
+  'Example Domain'."* — correct. It saw the image.
+
+Before this, the same task produced four identical retries and "the
+browser_snapshot tool isn't giving me useful information".
 
 **The original statement of the fix, kept because the remaining half is exactly
 this:** the same

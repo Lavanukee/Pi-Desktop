@@ -360,7 +360,41 @@ function navigate(tabId: string, url: string): void {
 async function capture(tabId: string): Promise<string | null> {
   const entry = entries.get(tabId);
   if (entry === undefined) return null;
-  const image = await entry.view.webContents.capturePage();
+  let image = await entry.view.webContents.capturePage();
+  /*
+   * THE AGENT'S VIEW IS HIDDEN, AND A HIDDEN VIEW CAPTURES NOTHING.
+   *
+   * `ensureAgentView` attaches the agent's browser to the window but calls
+   * setVisible(false), and Chromium returns an EMPTY image for a view that is not
+   * being composited. So every screenshot the model asked for came back null and
+   * was then silently dropped by the tool — the model requested one, received a
+   * text snapshot with no image and no explanation, and asked again. Measured:
+   * four attempts in a row, ending in "I don't see an actual screenshot attached".
+   * The comment on ensureAgentView called this a graceful degrade to DOM; it is
+   * only graceful if something SAYS so, and nothing did.
+   *
+   * Reveal it OFF-SCREEN instead: a view positioned outside the window's own
+   * bounds is composited (so capturePage works) but is never drawn anywhere the
+   * user can see. Restored immediately afterwards, in a finally, so an agent
+   * screenshot can never strand the view visible.
+   */
+  if (image.isEmpty() && !entry.visible) {
+    const prev = entry.view.getBounds();
+    const width = prev.width > 0 ? prev.width : 1280;
+    const height = prev.height > 0 ? prev.height : 800;
+    try {
+      entry.view.setBounds({ x: -(width + 64), y: 0, width, height });
+      entry.view.setVisible(true);
+      entry.view.webContents.invalidate();
+      // One frame's grace: the reveal has to actually paint before we grab it,
+      // or we capture the same empty surface we were trying to escape.
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      image = await entry.view.webContents.capturePage();
+    } finally {
+      entry.view.setVisible(false);
+      entry.view.setBounds(prev);
+    }
+  }
   return image.isEmpty() ? null : image.toDataURL();
 }
 

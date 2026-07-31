@@ -204,6 +204,22 @@ export function connectLlm(): void {
   if (connected) return;
   connected = true;
   window.piDesktop.onEvent('llm:status', (status) => useLlmStore.getState().applyStatus(status));
+
+  /*
+   * A tool produced an image the text-only server could not read. Main raises this
+   * at a TURN BOUNDARY (never mid-turn — going multimodal restarts llama-server and
+   * would kill the turn that took the screenshot), and the renderer switches vision
+   * on through `ensureVisionMode()`.
+   *
+   * It has to happen HERE rather than in main: the relaunch moves the server to a
+   * NEW PORT, and the pi child holds the old base URL. `ensureVisionMode` owns the
+   * whole sequence including respawning the child; a direct supervisor restart from
+   * main left the child talking to an address that no longer existed, and the next
+   * turn simply never produced a token.
+   */
+  window.piDesktop.onEvent('llm:vision-wanted', () => {
+    void import('./local-model').then(({ ensureVisionMode }) => ensureVisionMode());
+  });
   window.piDesktop.onEvent('llm:download-progress', (p) =>
     useLlmStore.getState().applyDownloadProgress({
       modelId: p.modelId,

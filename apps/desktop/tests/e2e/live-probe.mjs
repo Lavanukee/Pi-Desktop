@@ -47,6 +47,10 @@ const GAP_MS = Number(process.env.GAP_MS ?? 120);
 const SETTLE_MS = Number(process.env.SETTLE_MS ?? 6000);
 const REAL = process.env.REAL === '1';
 const CORP = process.env.CORP === '1';
+const EFFORT = process.env.EFFORT ?? '';
+/** Pause before the FIRST send — stands in for the seconds a real user spends
+ * reading the screen and typing, during which the mount-time warm-up runs. */
+const PRE_SEND_MS = Number(process.env.PRE_SEND_MS ?? 0);
 const OUT = process.env.OUT ?? path.join(repoRoot, '.corp-runs', 'live-probe');
 
 mkdirSync(OUT, { recursive: true });
@@ -139,6 +143,25 @@ try {
    * race, not the feature — every turn answers "fetch failed" and the run looks
    * like a model failure when it is a probe failure.
    */
+  /*
+   * EFFORT, set where the app actually reads it. `settings:set` updates the MAIN
+   * process only; the RENDERER store is what stamps effort on a turn, so a probe
+   * that sets the former runs at the default and silently tests the wrong thing.
+   * This cost a earlier round of "max effort" runs that were really Balanced —
+   * which is why the corp/hierarchy tool never appeared in their tool lists.
+   */
+  if (EFFORT !== '') {
+    const applied = await page
+      .evaluate((level) => {
+        const st = window.__settings_store?.();
+        if (st === undefined) return null;
+        st.getState().update({ effort: level, effortMode: 'level' });
+        return st.getState().settings?.effort ?? null;
+      }, EFFORT)
+      .catch(() => null);
+    console.log(`[effort] requested=${EFFORT} applied=${applied ?? 'FAILED — running at default'}`);
+  }
+
   if (REAL) {
     /*
      * DO NOT GATE — REPORT. The model is chosen by TIER
@@ -164,6 +187,11 @@ try {
     });
   }
 
+  if (PRE_SEND_MS > 0) {
+    console.log(`[pre-send] waiting ${PRE_SEND_MS}ms (user reading/typing time)`);
+    await page.waitForTimeout(PRE_SEND_MS);
+  }
+
   for (let i = 0; i < MESSAGES.length; i++) {
     const msg = MESSAGES[i];
     await page.click('[data-testid="composer-input"]');
@@ -185,6 +213,26 @@ try {
     const t0 = Date.now();
     await page.keyboard.press('Enter');
     console.log(`[sent ${i + 1}/${MESSAGES.length}] ${JSON.stringify(msg)}`);
+    /*
+     * "No text" is not the same as "blank screen". A tool-calling turn can show
+     * tool rows for minutes before any prose, so measure BOTH: the first thing
+     * the user sees at all (any block — a tool call counts), and the first
+     * readable character. If the first is fast and the second is slow, the UX is
+     * fine and the metric was wrong; if BOTH are slow, the screen is genuinely
+     * empty and that is the bug.
+     */
+    const firstAnything = page
+      .waitForFunction(
+        (n) => {
+          const ms = window.__pi_store?.().getState?.().messages ?? [];
+          return ms.slice(n).some((m) => m.kind === 'assistant' && (m.blocks ?? []).length > 0);
+        },
+        before,
+        { timeout: GAP_MS },
+      )
+      .then(() => Date.now() - t0)
+      .catch(() => null);
+
     const gotToken = await page
       .waitForFunction(
         (n) => {
@@ -203,10 +251,11 @@ try {
       .then(() => true)
       .catch(() => false);
     const ttft = Date.now() - t0;
+    const anyMs = await firstAnything;
     console.log(
-      gotToken
-        ? `[TTFT ${i + 1}] ${ttft}ms${ttft > 2000 ? '  <-- SLOW' : ''}`
-        : `[TTFT ${i + 1}] NO TOKEN within ${GAP_MS}ms`,
+      `[TTFT ${i + 1}] first-paint=${anyMs === null ? 'NEVER' : `${anyMs}ms`} ` +
+        `first-text=${gotToken ? `${ttft}ms` : `NONE within ${GAP_MS}ms`}` +
+        `${anyMs !== null && anyMs > 2000 ? '  <-- SLOW FIRST PAINT' : ''}`,
     );
     if (i < MESSAGES.length - 1) await page.waitForTimeout(Math.max(0, GAP_MS - ttft));
   }

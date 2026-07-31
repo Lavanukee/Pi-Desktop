@@ -77,6 +77,29 @@ export function App() {
     applyThemeAttributes(document.documentElement, { flavor, mode });
   }, [flavor, mode]);
 
+  /*
+   * WARM THE MODEL WHILE THE USER IS STILL READING THE SCREEN.
+   *
+   * The chat server was started lazily by the first SEND, so the first message
+   * of every session paid for the whole cold start inside the user's turn.
+   * Measured from the keypress: 12,986ms / 15,257ms / 17,292ms before a single
+   * character appeared. Nothing explained the wait, so it reads as a hang.
+   *
+   * None of that work depends on what the user types. Starting it at mount moves
+   * it into the seconds someone spends looking at an empty chat and deciding
+   * what to ask, and `ensureChatServerReady` is idempotent + already guarded by
+   * an in-flight promise, so the send simply finds it done.
+   *
+   * Deliberately not gated on onboarding finishing: a profile with no model
+   * resolves to nothing and returns immediately.
+   */
+  useEffect(() => {
+    if (IS_CANVAS_POPOUT || IS_SITUATION_DEMO || IS_TRIPO) return;
+    void import('./chat/auto-router')
+      .then(({ ensureChatServerReady }) => ensureChatServerReady())
+      .catch(() => undefined);
+  }, []);
+
   // "Redo onboarding" (Settings → Interface): clear the persisted first-run flag,
   // re-arm the first-run tips, and re-open the wizard. Settings persist; the
   // wizard applies fresh choices live.

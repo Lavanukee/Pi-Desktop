@@ -129,7 +129,7 @@ disk and verified (`GGUF` magic).
 > constraint.** Nothing said so, and the visible symptom was a model that
 > appeared unable to use a tool.
 
-### 2b. Blocker two: nothing asks for the switch — NOT FIXED, precisely located
+### 2b. Blocker two: nothing asks for the switch — TRIGGER FIXED, relaunch unverified
 
 With the projector present I re-ran the same ask. The server *still* launched
 `fast-text` and only `fast-text`. The model again navigated, again asked for a
@@ -141,7 +141,34 @@ That only sees images **the user attaches in the composer**. An image the MODEL
 produces — a browser screenshot, a rendered frame, an image it just generated —
 never reaches that check, so the relaunch is never requested.
 
-**The fix, stated precisely so it can be picked up cold:** the same
+**What now exists.** Three pieces:
+
+1. The host publishes whether the running server can see (`PI_DESKTOP_VISION`),
+   so the provider is no longer guessing.
+2. When it cannot, the provider **replaces the image with an explanation** rather
+   than shipping tokens the server has no encoder for. The model reads that
+   images are unreadable right now and that retrying will not help — which ends
+   the four-turn loop immediately, with no relaunch needed. The note deliberately
+   does NOT promise sight is coming (an earlier draft did; that would only have
+   moved the loop one turn later).
+3. A screenshot taken while the server is text-only records a **vision want**,
+   spent at the next `agent_end` — not immediately, because going multimodal is a
+   hard restart of llama-server and firing it mid-turn would kill the very turn
+   that took the screenshot.
+
+**Confirmed live:** `ensureVisionServer: relaunching multimodal { modelId:
+'qwen3.5-4b-mtp' }` fires, at the turn boundary, exactly once.
+
+**NOT confirmed, and I will not claim it:** that the relaunch COMPLETES and the
+next turn can actually see. In the verifying run the relaunch was requested and
+then the following turn produced no token within 200s, and no success or failure
+line followed. Either loading the 672 MB projector takes longer than the window,
+or the relaunch stalls. `ensureVisionServer` logs a warning on failure and none
+appeared, so it was most likely still in flight. **This is the next thing to
+check**, and it may share a root with §5a below.
+
+**The original statement of the fix, kept because the remaining half is exactly
+this:** the same
 `ensureVisionMode()` path must be reachable when a TOOL returns an image, not
 only when a human attaches one. `contextHasImage(context)` in
 `provider-llamacpp/src/stream.ts` is already the correct predicate and already

@@ -34,8 +34,9 @@ import {
 } from '@pi-desktop/browser-use/protocol';
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
 import { type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
+import { getInferenceLaunchMode } from '../inference/llm-main';
+import { wantVision } from '../inference/vision-want';
 import type { AppEventMap } from '../ipc-contract';
-import { siteFavicon } from './favicons';
 import { isTrustedIpcEvent } from '../trusted-senders';
 import { browserManager } from './browser-manager';
 import {
@@ -46,6 +47,7 @@ import {
   resolveByIndex,
   setValueByIndex,
 } from './browser-scripts';
+import { siteFavicon } from './favicons';
 
 const log = createLogger('desktop:browser-agent');
 const events = createIpcEventSender<AppEventMap>();
@@ -297,6 +299,13 @@ async function dispatch(
     }
     case 'screenshot': {
       const id = await ensureAgentTab();
+      /*
+       * The model just captured something to LOOK at. If the running server is
+       * text-only it cannot, so record the want — the turn boundary relaunches
+       * multimodal (restarting here would kill this very turn). Without this the
+       * model retries the capture until it gives up and calls the tool broken.
+       */
+      if (getInferenceLaunchMode() === 'fast-text') wantVision();
       return { dataUrl: await browserManager.capture(id) };
     }
     case 'click': {

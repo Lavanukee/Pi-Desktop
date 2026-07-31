@@ -45,6 +45,58 @@ let lastStatus: LlmStatus | null = null;
  * the same local server. Never a hardcoded URL — absent server ⇒ null ⇒ the
  * harness degrades to its heuristic fallback.
  */
+/**
+ * Whether the RUNNING server can actually see images.
+ *
+ * Published to the pi child so the provider never hands a vision model's tokens
+ * to a text-only server. Without this the child has no idea: it builds a request
+ * with image parts, llama-server (launched without --mmproj) cannot decode them,
+ * and the model concludes its tools are broken. Measured exactly that — five
+ * turns of a 4B trying to look at a screenshot it was never going to see.
+ */
+export function getInferenceLaunchMode(): 'fast-text' | 'multimodal' | null {
+  return lastStatus?.launchMode ?? null;
+}
+
+/**
+ * Switch the RUNNING server into multimodal so images become readable.
+ *
+ * The trigger this exists for is an image a TOOL produced — a browser
+ * screenshot, a rendered frame — which never passes through the composer's
+ * `messageNeedsVision` check and so never reached `ensureVisionMode()`. That gap
+ * is why the 4B, asked to look at a page it had just captured, tried four times
+ * and concluded its tools were broken (LIVE-TEST-FINDINGS.md §2).
+ *
+ * DEFERRED BY THE CALLER, DELIBERATELY. Going multimodal is a hard RESTART of
+ * llama-server, so firing it the instant a screenshot is taken would kill the
+ * very turn that took it. Callers set the want and act on it at a turn boundary.
+ *
+ * Never throws, and no-ops when already multimodal (vision is sticky for the
+ * session) or when nothing is running.
+ */
+export async function ensureVisionServer(): Promise<{ ok: boolean; reason?: string }> {
+  const status = lastStatus;
+  if (status === null || !status.serverRunning) return { ok: false, reason: 'no server running' };
+  if (status.launchMode === 'multimodal') return { ok: true };
+  const model = status.model;
+  if (model === null || model === undefined) return { ok: false, reason: 'no model resolved' };
+  log.info('ensureVisionServer: relaunching multimodal', { modelId: model.id });
+  try {
+    const res = await request<{ success: boolean; error?: string }>({
+      type: 'start-server',
+      modelId: model.id,
+      quant: model.quant,
+      launchMode: 'multimodal',
+    });
+    if (!res.success) log.warn('ensureVisionServer FAILED', { error: res.error });
+    return res.success ? { ok: true } : { ok: false, reason: res.error ?? 'relaunch failed' };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    log.warn('ensureVisionServer threw', { reason });
+    return { ok: false, reason };
+  }
+}
+
 export function getInferenceUtility(): { baseUrl: string; model: string } | null {
   if (
     lastStatus === null ||

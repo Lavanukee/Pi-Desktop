@@ -12,6 +12,8 @@ import {
   createLlamaCppStream,
   type LlamaCppTimings,
   promptProgressFraction,
+  serverCanSeeImages,
+  unviewableImageNote,
 } from './stream.js';
 
 function makeModel(baseUrl = 'http://127.0.0.1:8080/v1'): Model<'openai-completions'> {
@@ -981,5 +983,69 @@ describe('createLlamaCppStream — abort mid-stream (pause)', () => {
     } as unknown as Context) as { messages: Array<{ role: string; tool_calls?: unknown }> };
     const assistant = body.messages.find((m) => m.role === 'assistant');
     expect(assistant?.tool_calls).toBeUndefined();
+  });
+});
+
+/*
+ * A BLIND SERVER MUST BE TOLD IT IS BLIND.
+ *
+ * llama-server launched without --mmproj accepts image_url parts and cannot
+ * decode them, so the model saw nothing and had no way to know why. Measured: it
+ * retried the same screenshot four times, then concluded the tool was broken.
+ */
+describe('images on a text-only server', () => {
+  const withVision = (v: string | undefined) => ({ PI_DESKTOP_VISION: v });
+
+  it('assumes vision works when the host publishes nothing', () => {
+    // A plain CLI pi, or any host without this env — never downgrade blindly.
+    expect(serverCanSeeImages({})).toBe(true);
+    expect(serverCanSeeImages(withVision('1'))).toBe(true);
+  });
+
+  it('knows a text-only server cannot see', () => {
+    expect(serverCanSeeImages(withVision('0'))).toBe(false);
+  });
+
+  it('tells the model not to retry in a loop', () => {
+    const note = unviewableImageNote();
+    expect(note).toMatch(/TEXT-ONLY/);
+    expect(note).toMatch(/Do NOT loop/);
+    // And it must NOT promise sight that is not coming — nothing yet requests
+    // the multimodal relaunch for a tool-produced image, so a promise here would
+    // only move the retry loop one turn later.
+    expect(note).not.toMatch(/being switched on|available on your next/);
+    expect(note).toMatch(/Retrying will not help/);
+  });
+
+  it('replaces a tool-returned image with the note rather than undecodable tokens', () => {
+    const prev = process.env.PI_DESKTOP_VISION;
+    process.env.PI_DESKTOP_VISION = '0';
+    try {
+      const body = buildChatCompletionsRequest(makeModel(), {
+        systemPrompt: 's',
+        messages: [
+          {
+            role: 'toolResult',
+            toolCallId: 'a',
+            toolName: 'browser_snapshot',
+            content: [
+              { type: 'text', text: '[1] link' },
+              { type: 'image', data: 'QUJD', mimeType: 'image/png' },
+            ],
+            isError: false,
+            timestamp: 0,
+          },
+        ],
+      } as unknown as Context) as { messages: Array<{ role: string; content: unknown }> };
+      const last = body.messages[body.messages.length - 1];
+      expect(last?.role).toBe('user');
+      expect(String(last?.content)).toContain('browser_snapshot');
+      expect(String(last?.content)).toContain('TEXT-ONLY');
+      // The whole point: no base64 image ever reaches a server that cannot read it.
+      expect(JSON.stringify(body)).not.toContain('QUJD');
+    } finally {
+      if (prev === undefined) delete process.env.PI_DESKTOP_VISION;
+      else process.env.PI_DESKTOP_VISION = prev;
+    }
   });
 });

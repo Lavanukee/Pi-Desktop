@@ -15,7 +15,7 @@ import { app, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electro
 import { resolveBundledPackageAsset } from '../app-paths';
 import { registerGen3dBridge } from '../gen3d/gen3d-bridge';
 import { runImageJob } from '../gen3d/gen3d-main';
-import { getInferenceUtility } from '../inference/llm-main';
+import { getInferenceLaunchMode, getInferenceUtility } from '../inference/llm-main';
 import type { AppEventMap } from '../ipc-contract';
 import { activeProjectPath } from '../project/project-main';
 import { resolveSessionCwd } from '../sandbox';
@@ -105,6 +105,9 @@ const KILL_GRACE_MS = 1500;
  */
 function buildPiEnv(cwd: string | undefined): Record<string, string | undefined> {
   const utility = getInferenceUtility();
+  // Whether the server this child will talk to can SEE. Read by the provider so
+  // an image is never sent to a text-only server as undecodable tokens.
+  const vision = getInferenceLaunchMode() === 'multimodal' ? '1' : '0';
   return {
     ...process.env,
     // File-spill containment (blind-test round-2 #2): turn ON the harness's
@@ -118,6 +121,7 @@ function buildPiEnv(cwd: string | undefined): Record<string, string | undefined>
     // live per-request sampling (power-user panel). Pointing at a stable path;
     // the file may not exist yet (default profile) — the hook no-ops then.
     PI_ADV_SAMPLING_FILE: advancedSamplingFilePath(),
+    PI_DESKTOP_VISION: vision,
     ...(cwd !== undefined ? { PI_DESKTOP_WORKSPACE_ROOT: cwd } : {}),
     ...(utility !== null
       ? { PI_DESKTOP_UTILITY_BASE_URL: utility.baseUrl, PI_DESKTOP_UTILITY_MODEL: utility.model }

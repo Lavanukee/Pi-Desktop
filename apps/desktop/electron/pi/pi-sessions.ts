@@ -19,6 +19,9 @@ import type {
   RpcSessionState,
   RpcSlashCommand,
 } from '@pi-desktop/engine';
+
+import { ensureVisionServer } from '../inference/llm-main';
+import { takeVisionWant } from '../inference/vision-want';
 import type { PiInvokeMap } from './contract';
 
 /** Structural slice of PiBridge used by the registry (tests inject fakes).
@@ -198,6 +201,18 @@ export function createPiSessions<S extends SessionSender>(deps: PiSessionsDeps<S
       (event) => {
         if (event.type === 'extension_ui_request' && DIALOG_METHODS.has(event.method)) {
           pendingDialogs.set(event.id, event);
+        }
+        /*
+         * THE TURN BOUNDARY, where a pending vision want is spent.
+         *
+         * A tool that produced an image the server could not read set the want
+         * (inference/vision-want.ts); going multimodal is a hard restart, so it
+         * waits until here rather than killing the turn that took the screenshot.
+         * The next turn can see. Fire-and-forget: a failed relaunch must never
+         * break event delivery, and it is logged inside ensureVisionServer.
+         */
+        if (event.type === 'agent_end' && takeVisionWant()) {
+          void ensureVisionServer();
         }
         if (!sender.isDestroyed()) deps.sendEvent(sender, event);
       },

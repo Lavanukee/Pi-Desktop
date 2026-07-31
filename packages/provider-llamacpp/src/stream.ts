@@ -165,15 +165,63 @@ interface OAIMessage {
   name?: string;
 }
 
+/**
+ * Can the server this provider talks to actually see an image?
+ *
+ * Published by the desktop host at spawn (`PI_DESKTOP_VISION`), because the
+ * child cannot otherwise know: llama-server launched WITHOUT `--mmproj` accepts
+ * a request carrying `image_url` parts and simply cannot decode them. Absent
+ * (a plain CLI pi, or any host that doesn't publish it) → assume vision works
+ * and change nothing, so this can only ever downgrade a KNOWN-blind server.
+ */
+export function serverCanSeeImages(env: Record<string, string | undefined> = process.env): boolean {
+  return env.PI_DESKTOP_VISION !== '0';
+}
+
+/**
+ * What a blind server is told in place of an image.
+ *
+ * THE FAILURE THIS REPLACES. Asked to screenshot a page and rebuild it, the 4B
+ * captured the image, was handed tokens it had no encoder for, saw nothing, and
+ * tried again — four times — before concluding "the browser_snapshot tool isn't
+ * giving me useful information". It was right about the outcome and wrong about
+ * the cause, and it had no way to tell the difference, because nothing in its
+ * context said the image had not arrived.
+ *
+ * So say it. A model that reads this stops looping and reports the truth to the
+ * user, which is the correct behaviour and is available immediately; the host
+ * separately switches the server into multimodal so the NEXT turn can see.
+ */
+export function unviewableImageNote(): string {
+  /*
+   * Say only what is TRUE. An earlier draft of this promised "vision is being
+   * switched on" — it is not; nothing yet requests the multimodal relaunch when
+   * a TOOL produces an image (see LIVE-TEST-FINDINGS.md §2b). Telling the model
+   * to expect sight that is not coming would just move the retry loop one turn
+   * later. The honest instruction is to stop and hand it back to the user, who
+   * CAN turn vision on — attaching any image in the composer relaunches the
+   * server multimodal for the rest of the session.
+   */
+  return (
+    '[An image was attached here, but it could not be shown to you: this model is ' +
+    'currently running in TEXT-ONLY mode, so images cannot be read. Retrying will not ' +
+    'help — the next capture will be just as invisible. Do NOT loop. Say plainly that ' +
+    'you cannot see images right now, and either carry on without looking or tell the ' +
+    'user that seeing it requires vision to be switched on.]'
+  );
+}
+
 function contentToOAI(
   content: string | (TextContent | ImageContent)[],
 ): string | Array<Record<string, unknown>> {
   if (typeof content === 'string') return content;
-  return content.map((part) =>
-    part.type === 'text'
-      ? { type: 'text', text: part.text }
-      : { type: 'image_url', image_url: { url: `data:${part.mimeType};base64,${part.data}` } },
-  );
+  const canSee = serverCanSeeImages();
+  return content.map((part) => {
+    if (part.type === 'text') return { type: 'text', text: part.text };
+    // A blind server gets an explanation instead of tokens it cannot decode.
+    if (!canSee) return { type: 'text', text: unviewableImageNote() };
+    return { type: 'image_url', image_url: { url: `data:${part.mimeType};base64,${part.data}` } };
+  });
 }
 
 /**
@@ -285,7 +333,15 @@ export function buildChatCompletionsRequest(
        * says where it came from, which every vision-capable chat template renders.
        */
       const images = msg.content.filter((c) => c.type === 'image');
-      if (images.length > 0) {
+      if (images.length > 0 && !serverCanSeeImages()) {
+        // Text-only server: name the tool and explain, rather than shipping
+        // tokens it has no encoder for and letting the model guess why it saw
+        // nothing. This is the exact path a browser screenshot takes.
+        messages.push({
+          role: 'user',
+          content: `[image returned by ${msg.toolName}] ${unviewableImageNote()}`,
+        });
+      } else if (images.length > 0) {
         messages.push({
           role: 'user',
           content: [

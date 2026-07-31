@@ -838,3 +838,148 @@ describe('tool-result images', () => {
     expect(contextHasImage(shotContext())).toBe(true);
   });
 });
+
+/*
+ * PAUSE IS AN ABORT MID-STREAM.
+ *
+ * The desktop's Pause halts generation by aborting the request while keeping the
+ * turn resumable, so whatever the model was halfway through emitting is cut in
+ * place. These cover what the cut must leave behind: nothing half-built in the
+ * message (a tool call still accumulating its argument JSON is not a tool call),
+ * and no block left open without its closing event.
+ */
+describe('createLlamaCppStream — abort mid-stream (pause)', () => {
+  const tools: Context['tools'] = [
+    {
+      name: 'web_search',
+      description: 'search the web',
+      parameters: Type.Object({ query: Type.String() }),
+    },
+  ];
+
+  /** A fake fetch that streams `chunks`, then trips the signal and throws the way
+   * a real aborted body iteration does. */
+  function abortingSseFetch(chunks: unknown[]): {
+    fetchImpl: typeof fetch;
+    controller: AbortController;
+  } {
+    const controller = new AbortController();
+    const fetchImpl = (async () => {
+      async function* body(): AsyncGenerator<Uint8Array> {
+        const enc = new TextEncoder();
+        for (const c of chunks) yield enc.encode(`data: ${JSON.stringify(c)}\n\n`);
+        controller.abort();
+        throw Object.assign(new Error('The user aborted a request.'), { name: 'AbortError' });
+      }
+      return { ok: true, status: 200, body: body() } as unknown as Response;
+    }) as unknown as typeof fetch;
+    return { fetchImpl, controller };
+  }
+
+  it('leaves NO half-built tool call behind, and the NEXT turn parses a clean one', async () => {
+    // Turn 1: some visible text, then a tool call cut in the middle of its args.
+    const { fetchImpl, controller } = abortingSseFetch([
+      { choices: [{ delta: { content: 'Let me look that up.' } }] },
+      {
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                { index: 0, id: 'call_0', function: { name: 'web_search', arguments: '{"que' } },
+              ],
+            },
+          },
+        ],
+      },
+    ]);
+    const provider = createLlamaCppStream({ fetchImpl });
+    const aborted = await consume(
+      provider(makeModel(), emptyContext(tools), { signal: controller.signal }),
+    );
+
+    expect(aborted.final.stopReason).toBe('aborted');
+    // The row was SHOWN while it streamed (start fired) but never completed…
+    expect(aborted.events.some((e) => e.type === 'toolcall_start')).toBe(true);
+    expect(aborted.events.some((e) => e.type === 'toolcall_end')).toBe(false);
+    // …so it must not survive into the message the transcript + next request are
+    // built from — that is the dangling `tool_calls` entry with no result.
+    expect(aborted.final.content.filter((c) => c.type === 'toolCall')).toEqual([]);
+    // The text block it DID produce is intact and explicitly closed.
+    expect(aborted.final.content).toEqual([{ type: 'text', text: 'Let me look that up.' }]);
+    const textEnd = aborted.events.find((e) => e.type === 'text_end');
+    expect(textEnd?.type === 'text_end' && textEnd.content).toBe('Let me look that up.');
+
+    // Turn 2 (same provider): a clean tool call parses normally — no residue from
+    // the aborted turn's half-accumulated argument buffer.
+    const { fetchImpl: nextFetch } = sseFetch([
+      {
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'call_1',
+                  function: { name: 'web_search', arguments: '{"query":"pi desktop"}' },
+                },
+              ],
+            },
+          },
+        ],
+      },
+      { choices: [{ delta: {}, finish_reason: 'tool_calls' }] },
+    ]);
+    const next = await consume(
+      createLlamaCppStream({ fetchImpl: nextFetch })(makeModel(), emptyContext(tools)),
+    );
+    const call = next.final.content.find((c) => c.type === 'toolCall');
+    expect(call?.type === 'toolCall' && call.name).toBe('web_search');
+    expect(call?.type === 'toolCall' && call.arguments).toEqual({ query: 'pi desktop' });
+    expect(next.final.stopReason).toBe('toolUse');
+  });
+
+  it('CLOSES a thinking block that was still open when the stream was cut', async () => {
+    const { fetchImpl, controller } = abortingSseFetch([
+      { choices: [{ delta: { reasoning_content: 'The user wants ' } }] },
+      { choices: [{ delta: { reasoning_content: 'me to weigh two options' } }] },
+    ]);
+    const { events, final } = await consume(
+      createLlamaCppStream({ fetchImpl })(makeModel(), emptyContext(), {
+        signal: controller.signal,
+      }),
+    );
+
+    const endAt = events.findIndex((e) => e.type === 'thinking_end');
+    const errorAt = events.findIndex((e) => e.type === 'error');
+    expect(endAt).toBeGreaterThanOrEqual(0);
+    // …and it closes BEFORE the stream reports the abort, so no consumer ever
+    // sees the run finish with the block still open.
+    expect(endAt).toBeLessThan(errorAt);
+    const end = events[endAt];
+    expect(end?.type === 'thinking_end' && end.content).toBe(
+      'The user wants me to weigh two options',
+    );
+    expect(final.content).toEqual([
+      { type: 'thinking', thinking: 'The user wants me to weigh two options' },
+    ]);
+  });
+
+  it('never replays a NAMELESS tool call from history (a partial already on disk)', () => {
+    const body = buildChatCompletionsRequest(makeModel(), {
+      messages: [
+        { role: 'user', content: 'search for pi', timestamp: 0 },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Looking…' },
+            // What a pre-fix abort froze into the session file.
+            { type: 'toolCall', id: 'call_0', name: '', arguments: {} },
+          ],
+          timestamp: 0,
+        },
+      ],
+    } as unknown as Context) as { messages: Array<{ role: string; tool_calls?: unknown }> };
+    const assistant = body.messages.find((m) => m.role === 'assistant');
+    expect(assistant?.tool_calls).toBeUndefined();
+  });
+});

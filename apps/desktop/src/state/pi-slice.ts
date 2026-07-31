@@ -424,6 +424,71 @@ export const usePiStore = create<PiSliceState>((set) => ({
 }));
 
 // ---------------------------------------------------------------------------
+// Queued-send drain
+// ---------------------------------------------------------------------------
+
+/** The slice of store state the queue drain reads. */
+export interface QueueDrainState {
+  agent: { isStreaming: boolean };
+  promptInFlight: boolean;
+  resuming: boolean;
+  bgRun: { streaming: boolean } | null;
+  queuedSends: QueuedSend[];
+}
+
+/**
+ * Is the pipe idle enough to dispatch a queued send?
+ *
+ * LEVEL-triggered (idle *now*?), not edge-triggered: a backgrounded chat's
+ * completion never moves `agent.isStreaming` (it was forced false when the chat
+ * was backgrounded), so an edge on that flag would MISS it and the queue would
+ * stick.
+ *
+ * `resuming` counts as busy. A token-exact resume is not a pi turn — it holds
+ * the single llama-server slot directly over `/completion` — so none of the
+ * other three flags is raised while one runs, and the drain read the store as
+ * idle and fired a queued message straight into the middle of it. Two requests
+ * then fought over one slot: the resume's resident KV (the entire reason the
+ * pause was token-exact) was evicted, and the queued turn raced a continuation
+ * streaming into the same thread. Pure.
+ */
+export function canDrainQueue(s: QueueDrainState): boolean {
+  return !s.agent.isStreaming && !s.promptInFlight && s.bgRun?.streaming !== true && !s.resuming;
+}
+
+/**
+ * The queued-send drain: dispatch the head of the queue as its OWN sequential
+ * turn the moment there is capacity, so [msg1, reply1, msg2, reply2] instead of
+ * two user echoes stacked above one reply. Returned as a store subscriber.
+ *
+ * FIFO, one at a time — the `draining` latch plus the dispatcher re-raising
+ * `promptInFlight` gate the next one. A dispatch that THROWS puts the message
+ * back at the head: it was removed optimistically (so its faded queued bubble
+ * disappears the instant it goes out), and a failure that left it removed is a
+ * message the user typed and watched vanish with nothing sent.
+ */
+export function createQueueDrain(
+  dispatch: (item: QueuedSend) => Promise<unknown>,
+  store: Pick<typeof usePiStore, 'setState' | 'getState'> = usePiStore,
+): (state: QueueDrainState) => void {
+  let draining = false;
+  return (state) => {
+    if (draining || !canDrainQueue(state)) return;
+    const head = state.queuedSends[0];
+    if (head === undefined) return;
+    draining = true;
+    store.setState({ queuedSends: state.queuedSends.slice(1) });
+    void dispatch(head)
+      .catch(() => {
+        store.setState((s) => ({ queuedSends: [head, ...s.queuedSends] }));
+      })
+      .finally(() => {
+        draining = false;
+      });
+  };
+}
+
+// ---------------------------------------------------------------------------
 // StoreSink implementation over the store
 // ---------------------------------------------------------------------------
 

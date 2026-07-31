@@ -41,7 +41,10 @@
  * arc orbits a faint ring track (pd-spin on the svg) while its sweep gently
  * BREATHES between short and long (pd-loader-breathe) — calm, alive, legible at
  * 13px. currentColor throughout so it inherits the surrounding text color.
- * Multiple loaders desync via a per-instance --pd-loader-delay.
+ * --pd-loader-delay is a negative delay pinned ONCE at mount to the document
+ * clock (spinner.tsx), so the phase depends only on wall time: every loader
+ * turns in step and a remounted one resumes mid-turn instead of snapping to 0°.
+ * Both animations below must therefore read the SAME variable.
  */
 .pd-loader {
   display: inline-flex;

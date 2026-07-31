@@ -30,7 +30,7 @@ import {
   PopoverTrigger,
 } from '@pi-desktop/ui';
 import { useMemo, useRef } from 'react';
-import { AUTO_PROJECT_PREFIX, assignChat, createProject, useChatOrg } from '../state/chat-org';
+import { assignChat, createProject, useChatOrg } from '../state/chat-org';
 import { useCorpStore } from '../state/corp-store';
 import { useLlmStore } from '../state/llm-store';
 import { autoEffortForTier } from '../state/model-selection';
@@ -38,7 +38,11 @@ import { restartPi } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
 import { useProjectStore } from '../state/project-store';
 import { useEffortMode, useSettingsStore } from '../state/settings-store';
-import { useVisibleProjects } from '../state/visible-projects';
+import {
+  activeVisibleProjectId,
+  autoProjectPath,
+  useVisibleProjects,
+} from '../state/visible-projects';
 import {
   type ContextGaugeView,
   EFFORT_STEP_COUNT,
@@ -55,8 +59,6 @@ import { useHarnessStatus } from './harness-status';
  * sandbox, the chip drops the stale name for a subtle "Sandbox" warn state
  * (jedd #13) instead of pretending the dead folder is the working dir. */
 function ProjectRegion() {
-  const projects = useProjectStore((s) => s.projects);
-  const activeId = useProjectStore((s) => s.activeId);
   const activePath = useProjectStore((s) => s.activePath);
   // jedd #6: drive the sandbox/"No project" chip off the STORE FLAG, not a stale
   // folder name. The project store already tracks `projectMissing` (the selected
@@ -69,9 +71,7 @@ function ProjectRegion() {
   );
   const sessionCwd = usePiStore((s) => s.session?.cwd);
   const sessionFile = usePiStore((s) => s.session?.sessionFile);
-  const selectProject = useProjectStore((s) => s.selectProject);
   const selectProjectPath = useProjectStore((s) => s.selectPath);
-  const newProject = useProjectStore((s) => s.newProject);
   const clearProject = useProjectStore((s) => s.clearProject);
 
   // When the viewed chat belongs to a sidebar chat-org project, the chip shows
@@ -102,13 +102,13 @@ function ProjectRegion() {
    */
   const visible = useVisibleProjects();
   const items = useMemo(() => visible.map((p) => ({ id: p.id, name: p.name })), [visible]);
-  /** An auto folder is selected by its PATH; a real project by its id. */
+  /** An auto folder is selected by its PATH; a real project by its id. The path
+   * is decoded by the list that encoded it, so only one module knows the shape. */
   const autoPathById = useMemo(() => {
     const out = new Map<string, string>();
     for (const p of visible) {
-      if (p.auto && p.id.startsWith(AUTO_PROJECT_PREFIX)) {
-        out.set(p.id, p.id.slice(AUTO_PROJECT_PREFIX.length));
-      }
+      const path = autoProjectPath(p);
+      if (path !== null) out.set(p.id, path);
     }
     return out;
   }, [visible]);
@@ -120,6 +120,17 @@ function ProjectRegion() {
     if (sessionFile !== undefined && sessionFile.length > 0) {
       await assignChat(sessionFile, id);
     }
+  };
+
+  /** Selecting a FOLDER makes it this chat's project too. The rows are radios, so
+   * a manual assignment left behind would keep ITS check mark and the click would
+   * again look ignored; dropping it also lets the chat's sidebar row follow the
+   * folder it now lives in. */
+  const selectAutoFolder = async (path: string) => {
+    if (orgProjectId !== null && sessionFile !== undefined && sessionFile.length > 0) {
+      await assignChat(sessionFile, null);
+    }
+    await selectProjectPath(path);
   };
 
   // Selecting a sidebar project = put THIS chat in it (assign + root at its
@@ -167,13 +178,19 @@ function ProjectRegion() {
       className={className}
       projects={items}
       // The active entry is the chat's org project (if it's in one), else the
-      // selected working folder (unless pi fell back to the sandbox).
-      active={orgProjectId ?? (sandbox ? null : activeId)}
+      // selected working folder (unless pi fell back to the sandbox) — resolved
+      // against the LIST's ids, not the electron project store's, which is a
+      // different id space that no row could ever match (activeVisibleProjectId).
+      active={activeVisibleProjectId(visible, {
+        orgProjectId,
+        workingPath: sandbox ? null : activePath,
+      })}
+      // The list holds exactly two kinds of id: a directory-derived folder,
+      // selected by its PATH, and a project the user made, selected by its id.
       onSelect={(id) => {
         const autoPath = autoPathById.get(id);
-        if (autoPath !== undefined) void selectProjectPath(autoPath);
+        if (autoPath !== undefined) void selectAutoFolder(autoPath);
         else if (orgIds.has(id)) void selectOrgProject(id);
-        else void selectProject(id);
       }}
       /* A NAMED project, in both places at once. This used to call the electron
          `project:new` folder picker, which registered a working directory that the

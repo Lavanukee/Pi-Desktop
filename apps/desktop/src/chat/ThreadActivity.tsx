@@ -126,14 +126,24 @@ export function ThreadActivityChain({
   });
   const steps: MappedStep[] = blocks.map((block, i) => {
     const running = runningFlags[i] ?? false;
-    if (block.type === 'thinking') {
-      return mapThinkingStep(
-        block,
-        running,
-        !streaming && i === firstThinkingIdx ? thinkingMs : undefined,
-      );
-    }
-    return mapToolStep(block, resultForBlock.get(block.id), running);
+    const mapped =
+      block.type === 'thinking'
+        ? mapThinkingStep(
+            block,
+            running,
+            !streaming && i === firstThinkingIdx ? thinkingMs : undefined,
+          )
+        : mapToolStep(block, resultForBlock.get(block.id), running);
+    // Give each step an identity that outlives its LABEL. ActivityChain keys its
+    // rows on `id`, falling back to `kind:label` — and the label flips tense the
+    // instant a step settles ("Editing a file" → "Edited a file"), which re-keyed
+    // the row and remounted it. Worse, the fallback's duplicate suffix reshuffled
+    // (`read:Reading a file#1` → `read:Reading a file`) whenever an earlier
+    // same-kind row settled, remounting a row that was still RUNNING and
+    // restarting its spinner mid-turn. A tool call's id never moves; a thinking
+    // block has none, so its slot in the append-only block list stands in.
+    const id = block.type === 'thinking' ? `thinking:${i}` : block.id;
+    return { ...mapped, data: { ...mapped.data, id } };
   });
 
   return (

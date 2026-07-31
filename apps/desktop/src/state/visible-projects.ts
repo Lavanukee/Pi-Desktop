@@ -22,7 +22,7 @@
 import { useEffect } from 'react';
 import { create } from 'zustand';
 import type { SessionSummary } from '../../electron/ipc-contract';
-import { groupChats, useChatOrg } from './chat-org';
+import { AUTO_PROJECT_PREFIX, groupChats, useChatOrg } from './chat-org';
 import { listSessions } from './pi-connect';
 
 interface SessionListState {
@@ -76,6 +76,50 @@ export function visibleProjectsOf(
     name: g.project.name,
     auto: g.auto,
   }));
+}
+
+/** One directory, one spelling: trailing slashes off (a lone `/` stays `/`), so
+ * the folder pi was rooted at compares equal to the folder a chat recorded. Main
+ * cleans project paths the same way (project-main.ts `projectFor`). */
+function normalizeDir(dir: string | null | undefined): string | null {
+  if (dir === null || dir === undefined || dir.length === 0) return null;
+  return dir.replace(/\/+$/, '') || '/';
+}
+
+/** The working folder behind a directory-derived entry, or null for a project the
+ * user made — those are identified by id, and never by a path. */
+export function autoProjectPath(project: VisibleProject): string | null {
+  if (!project.auto || !project.id.startsWith(AUTO_PROJECT_PREFIX)) return null;
+  return normalizeDir(project.id.slice(AUTO_PROJECT_PREFIX.length));
+}
+
+/**
+ * Which entry is SELECTED — answered in this list's own id space, which is the
+ * whole reason this lives next to the list.
+ *
+ * The rows are {@link visibleProjectsOf} ids: a project the user made (a chatOrg
+ * id) or a folder derived from the chats in it (`cwd:<path>`). The active working
+ * folder, though, is tracked by the ELECTRON project store, whose ids are path
+ * hashes (`p_1a2b`) belonging to neither. The composer chip compared those two
+ * spaces, so picking a folder set the working directory and then nothing could
+ * find it again: no check mark, and a chip still reading "No project" — the click
+ * looked like it had done nothing at all. Paths are the one thing both spaces
+ * agree on, so that is what the folder match uses.
+ *
+ * A chat that lives in a project the user made keeps that as its selection (the
+ * chip's "this chat's project" meaning); otherwise the folder pi is rooted at
+ * wins. Pass `workingPath: null` when the conversation is running in a sandbox —
+ * nothing is selected then.
+ */
+export function activeVisibleProjectId(
+  visible: readonly VisibleProject[],
+  opts: { orgProjectId?: string | null; workingPath?: string | null },
+): string | null {
+  const org = opts.orgProjectId ?? null;
+  if (org !== null && visible.some((p) => p.id === org)) return org;
+  const path = normalizeDir(opts.workingPath);
+  if (path === null) return null;
+  return visible.find((p) => autoProjectPath(p) === path)?.id ?? null;
 }
 
 /**

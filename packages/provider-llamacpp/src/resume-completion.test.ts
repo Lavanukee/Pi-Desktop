@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   buildApplyTemplateBody,
   buildCompletionBody,
+  createResumeSplitter,
   llamaServerRoot,
   type PartialBlock,
+  type ResumeEvent,
+  type ResumeSplitter,
   resumeCompletion,
   serializePartialAssistant,
 } from './resume-completion.js';
@@ -228,5 +231,104 @@ describe('resumeCompletion', () => {
       fetchImpl: bad,
     });
     expect(result.text).toBe('ok');
+  });
+});
+
+/*
+ * The raw `/completion` continuation is UNDIFFERENTIATED: no reasoning channel,
+ * no structured tool calls — the model's literal tokens, tags and all. These
+ * pin the demux that puts each of them back where it belongs.
+ */
+describe('createResumeSplitter', () => {
+  /** Push every delta and flush, collecting everything the splitter emitted. */
+  function run(splitter: ResumeSplitter, deltas: string[]): ResumeEvent[] {
+    const out: ResumeEvent[] = [];
+    for (const d of deltas) out.push(...splitter.push(d));
+    out.push(...splitter.flush());
+    return out;
+  }
+
+  /** Concatenated deltas per channel, the shape the renderer folds into blocks. */
+  function byChannel(events: ResumeEvent[], channel: 'thinking' | 'text'): string {
+    return events
+      .filter((e) => e.type === 'delta' && e.channel === channel)
+      .map((e) => (e.type === 'delta' ? e.delta : ''))
+      .join('');
+  }
+
+  it('keeps continuing a THINKING block that was open at pause, then closes it', () => {
+    // Paused mid-thought: the reply resumes inside <think>, so the reasoning that
+    // follows belongs to the thinking block — not to the answer.
+    const events = run(createResumeSplitter({ thinkingOpen: true }), [
+      ' and the second option',
+      ' is cheaper.',
+      '</think>',
+      '\n\nOption two is cheaper.',
+    ]);
+    expect(byChannel(events, 'thinking')).toBe(' and the second option is cheaper.');
+    // The closing tag itself never reaches the answer, and neither does the blank
+    // line the template puts between the reasoning and the reply.
+    expect(byChannel(events, 'text')).toBe('Option two is cheaper.');
+  });
+
+  it('handles a </think> split across token boundaries', () => {
+    const events = run(createResumeSplitter({ thinkingOpen: true }), [
+      'weighing it up',
+      '</thi',
+      'nk>',
+      'Yes.',
+    ]);
+    expect(byChannel(events, 'thinking')).toBe('weighing it up');
+    expect(byChannel(events, 'text')).toBe('Yes.');
+  });
+
+  it('a reply paused in its ANSWER stays on the text channel', () => {
+    const events = run(createResumeSplitter({ thinkingOpen: false }), [' the rest', ' of it.']);
+    expect(byChannel(events, 'text')).toBe(' the rest of it.');
+    expect(byChannel(events, 'thinking')).toBe('');
+  });
+
+  it('PARSES a tool call out of its envelope instead of spilling raw markup', () => {
+    const events = run(createResumeSplitter({ thinkingOpen: false }), [
+      'Let me search. ',
+      '<tool_call>\n{"name": "web_search", "arg',
+      'uments": {"query": "pi desktop"}}\n</tool_call>',
+    ]);
+    // Nothing of the envelope is left in the visible answer…
+    expect(byChannel(events, 'text')).toBe('Let me search. ');
+    // …it comes back as the call it is.
+    const call = events.find((e) => e.type === 'toolCall');
+    expect(call).toMatchObject({
+      type: 'toolCall',
+      name: 'web_search',
+      arguments: { query: 'pi desktop' },
+    });
+  });
+
+  it('falls back to showing an envelope whose body is not the JSON we expect', () => {
+    const events = run(createResumeSplitter({ thinkingOpen: false }), [
+      '<tool_call>not json at all</tool_call>',
+    ]);
+    expect(events.some((e) => e.type === 'toolCall')).toBe(false);
+    // Better visible than silently swallowed.
+    expect(byChannel(events, 'text')).toBe('<tool_call>not json at all</tool_call>');
+  });
+
+  it('flush releases a tail held back for a marker the stream never finished', () => {
+    const splitter = createResumeSplitter({ thinkingOpen: true });
+    // `</thi` might still become `</think>`, so it is withheld…
+    expect(splitter.push('done</thi')).toEqual([
+      { type: 'delta', channel: 'thinking', delta: 'done' },
+    ]);
+    // …until the stream ends (an abort mid-tag), where nothing is coming to
+    // complete it and swallowing it would lose the model's output.
+    expect(splitter.flush()).toEqual([{ type: 'delta', channel: 'thinking', delta: '</thi' }]);
+  });
+
+  it('tracks whether the reply is still inside <think>', () => {
+    const splitter = createResumeSplitter({ thinkingOpen: true });
+    expect(splitter.isThinkingOpen()).toBe(true);
+    splitter.push('mulling</think>done');
+    expect(splitter.isThinkingOpen()).toBe(false);
   });
 });

@@ -227,6 +227,19 @@ export function createEventRouter(sink: StoreSink, options: EventRouterOptions =
         break;
 
       case 'agent_end':
+        /*
+         * A RUN CANNOT END WITH A ROW STILL MARKED LIVE.
+         *
+         * `isStreaming` on an assistant row is only ever cleared by `endTurn`,
+         * which hangs off `turn_end` — and a user pause/stop tears the run down
+         * on paths that reach `agent_end` without one. The row then spins
+         * forever, and worse, the pause/resume path looks for the last
+         * NON-streaming assistant row to continue: with the frozen partial still
+         * flagged live it finds nothing, so Resume silently regenerates the whole
+         * reply instead of continuing it. Close it here the same way the crash
+         * path does. A no-op when `turn_end` already fired (the id is null).
+         */
+        if (currentAssistantId !== null) sink.endTurn(currentAssistantId, 'aborted');
         sink.agentEnd();
         sink.setAgentStatus({ isStreaming: false, agentStartedAt: null });
         reset();

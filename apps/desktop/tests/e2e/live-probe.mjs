@@ -168,9 +168,47 @@ try {
     const msg = MESSAGES[i];
     await page.click('[data-testid="composer-input"]');
     await page.keyboard.type(msg);
+    /*
+     * TTFT, measured where the USER feels it: from pressing Enter to the first
+     * assistant character appearing. jedd: "any oddities/non instant stuff we
+     * would expect to be instant … this is really important to UX".
+     *
+     * Deliberately counted from the keypress, not from the provider request —
+     * everything between them (queueing, a server that has to be started, a tool
+     * prefix that got invalidated and forces a full re-prefill) is latency the
+     * user is sitting through, and hiding it behind "provider TTFT" is how a
+     * 4-second wait gets reported as 200ms.
+     */
+    const before = await page
+      .evaluate(() => window.__pi_store?.().getState?.().messages?.length ?? 0)
+      .catch(() => 0);
+    const t0 = Date.now();
     await page.keyboard.press('Enter');
     console.log(`[sent ${i + 1}/${MESSAGES.length}] ${JSON.stringify(msg)}`);
-    if (i < MESSAGES.length - 1) await page.waitForTimeout(GAP_MS);
+    const gotToken = await page
+      .waitForFunction(
+        (n) => {
+          const ms = window.__pi_store?.().getState?.().messages ?? [];
+          if (ms.length <= n) return false;
+          return ms.slice(n).some((m) => {
+            if (m.kind !== 'assistant') return false;
+            return (m.blocks ?? []).some(
+              (b) => (b.type === 'text' || b.type === 'thinking') && (b.text ?? '').length > 0,
+            );
+          });
+        },
+        before,
+        { timeout: GAP_MS },
+      )
+      .then(() => true)
+      .catch(() => false);
+    const ttft = Date.now() - t0;
+    console.log(
+      gotToken
+        ? `[TTFT ${i + 1}] ${ttft}ms${ttft > 2000 ? '  <-- SLOW' : ''}`
+        : `[TTFT ${i + 1}] NO TOKEN within ${GAP_MS}ms`,
+    );
+    if (i < MESSAGES.length - 1) await page.waitForTimeout(Math.max(0, GAP_MS - ttft));
   }
 
   // Let the turn(s) run, then capture ground truth.

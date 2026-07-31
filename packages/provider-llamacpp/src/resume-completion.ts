@@ -147,6 +147,201 @@ export function serializePartialAssistant(blocks: readonly PartialBlock[]): stri
   return out;
 }
 
+// --- continuation demux ----------------------------------------------------
+
+/**
+ * One piece of a resumed continuation, already routed to the channel it belongs
+ * in. `delta` events carry text for the reply's thinking or answer block; a
+ * `toolCall` event is a tool call the model emitted, parsed out of its raw
+ * template envelope instead of being spilled into the answer as markup.
+ */
+export type ResumeEvent =
+  | { readonly type: 'delta'; readonly channel: 'thinking' | 'text'; readonly delta: string }
+  | {
+      readonly type: 'toolCall';
+      readonly name: string;
+      readonly arguments: Record<string, unknown>;
+      /** The envelope's raw body, for a caller that wants to show what arrived. */
+      readonly raw: string;
+    };
+
+/** Incremental splitter over a raw `/completion` continuation. Stateful but
+ * pure (no I/O); one instance per resume. */
+export interface ResumeSplitter {
+  /** Feed a raw token; returns whatever became unambiguous because of it. */
+  push(delta: string): ResumeEvent[];
+  /** End of stream — release anything still held back. */
+  flush(): ResumeEvent[];
+  /** Whether the reply is currently inside an open `<think>` span. */
+  isThinkingOpen(): boolean;
+}
+
+/** Markers the splitter recognizes, longest-first so `</tool_call>` can never be
+ * matched as a shorter prefix of itself. Template-specific — see the note on
+ * {@link serializePartialAssistant}; this is the same seam. */
+const THINK_CLOSE = '</think>';
+const THINK_OPEN = '<think>';
+const TOOL_OPEN = '<tool_call>';
+const TOOL_CLOSE = '</tool_call>';
+
+/** The longest suffix of `buf` that is a proper prefix of one of `markers` —
+ * i.e. how much tail must be held back because it MIGHT be a marker that the
+ * next token completes. Pure. */
+function heldBackLength(buf: string, markers: readonly string[]): number {
+  let longest = 0;
+  for (const marker of markers) {
+    const max = Math.min(marker.length - 1, buf.length);
+    for (let n = max; n > longest; n--) {
+      if (buf.endsWith(marker.slice(0, n))) {
+        longest = n;
+        break;
+      }
+    }
+  }
+  return longest;
+}
+
+/** Index + marker of the earliest marker occurrence in `buf`, or null. Pure. */
+function firstMarker(
+  buf: string,
+  markers: readonly string[],
+): { index: number; marker: string } | null {
+  let best: { index: number; marker: string } | null = null;
+  for (const marker of markers) {
+    const index = buf.indexOf(marker);
+    if (index < 0) continue;
+    if (
+      best === null ||
+      index < best.index ||
+      (index === best.index && marker.length > best.marker.length)
+    ) {
+      best = { index, marker };
+    }
+  }
+  return best;
+}
+
+/**
+ * Demultiplex a RESUMED reply's raw token stream.
+ *
+ * The token-exact resume runs over llama.cpp's raw `/completion` endpoint, which
+ * — unlike `/chat/completions` — does NO channel separation and NO tool-call
+ * parsing: it hands back exactly what the model emitted, `<think>` tags, tool
+ * envelopes and all. The renderer used to append every one of those tokens to a
+ * TEXT block, which produced the two things that made resume look broken:
+ *
+ *  - a reply paused INSIDE its thinking would visibly stop growing there — the
+ *    thinking block appeared to close on its own — while the rest of the
+ *    reasoning, and then a literal `</think>`, poured into the answer body;
+ *  - a tool call in the continuation arrived as its raw `<tool_call>{…}` markup
+ *    and was rendered verbatim as prose, never parsed.
+ *
+ * Seed `thinkingOpen` from the frozen partial exactly as
+ * {@link serializePartialAssistant} does: a thinking block that is the LAST
+ * block was still open when the reply was paused, so the continuation starts on
+ * the thinking channel.
+ *
+ * Markers can be split across token boundaries (`</thi` + `nk>`), so a tail that
+ * might still become one is held back until the next token settles it.
+ */
+export function createResumeSplitter(opts: { readonly thinkingOpen: boolean }): ResumeSplitter {
+  let mode: 'thinking' | 'text' | 'tool' = opts.thinkingOpen ? 'thinking' : 'text';
+  let buf = '';
+  /** Body accumulated since `<tool_call>`, awaiting its close tag. */
+  let toolBuf = '';
+  /** Set when a `</think>` just closed: the qwen convention puts a blank line
+   * between the reasoning and the answer, and leading newlines at the top of the
+   * answer block are the model's framing, not its prose. */
+  let trimLeadingText = false;
+
+  const markersFor = (): readonly string[] => {
+    if (mode === 'thinking') return [THINK_CLOSE];
+    if (mode === 'tool') return [TOOL_CLOSE];
+    return [THINK_OPEN, TOOL_OPEN];
+  };
+
+  const emit = (out: ResumeEvent[], channel: 'thinking' | 'text', raw: string): void => {
+    let delta = raw;
+    if (channel === 'text' && trimLeadingText) {
+      delta = delta.replace(/^\s+/, '');
+      if (delta.length > 0) trimLeadingText = false;
+    }
+    if (delta.length > 0) out.push({ type: 'delta', channel, delta });
+  };
+
+  /** A completed `<tool_call>…</tool_call>` body → a structured call, or null
+   * when it isn't the JSON we expected (the caller then keeps it as text rather
+   * than dropping the model's output on the floor). */
+  const parseToolCall = (body: string): ResumeEvent | null => {
+    try {
+      const parsed = JSON.parse(body.trim()) as { name?: unknown; arguments?: unknown };
+      if (typeof parsed.name !== 'string' || parsed.name.length === 0) return null;
+      const args =
+        typeof parsed.arguments === 'object' && parsed.arguments !== null
+          ? (parsed.arguments as Record<string, unknown>)
+          : {};
+      return { type: 'toolCall', name: parsed.name, arguments: args, raw: body };
+    } catch {
+      return null;
+    }
+  };
+
+  const drain = (final: boolean): ResumeEvent[] => {
+    const out: ResumeEvent[] = [];
+    for (;;) {
+      const hit = firstMarker(buf, markersFor());
+      if (hit === null) break;
+      const before = buf.slice(0, hit.index);
+      buf = buf.slice(hit.index + hit.marker.length);
+      if (mode === 'tool') {
+        // `</tool_call>` — the envelope is complete.
+        const body = toolBuf + before;
+        toolBuf = '';
+        mode = 'text';
+        const call = parseToolCall(body);
+        if (call !== null) out.push(call);
+        else emit(out, 'text', `${TOOL_OPEN}${body}${TOOL_CLOSE}`);
+        continue;
+      }
+      emit(out, mode, before);
+      if (hit.marker === THINK_CLOSE) {
+        mode = 'text';
+        trimLeadingText = true;
+      } else if (hit.marker === THINK_OPEN) {
+        mode = 'thinking';
+      } else {
+        mode = 'tool';
+      }
+    }
+    // Hold back a tail that might still become a marker — unless this is the
+    // end of the stream, where nothing more is coming to complete it.
+    const keep = final ? 0 : heldBackLength(buf, markersFor());
+    const ready = buf.slice(0, buf.length - keep);
+    buf = buf.slice(buf.length - keep);
+    if (mode === 'tool') {
+      toolBuf += ready;
+      if (final && (toolBuf.length > 0 || buf.length > 0)) {
+        // An envelope that never closed: show it rather than swallow it.
+        emit(out, 'text', `${TOOL_OPEN}${toolBuf}${buf}`);
+        toolBuf = '';
+        buf = '';
+      }
+    } else {
+      emit(out, mode, ready);
+    }
+    return out;
+  };
+
+  return {
+    push: (delta) => {
+      buf += delta;
+      return drain(false);
+    },
+    flush: () => drain(true),
+    isThinkingOpen: () => mode === 'thinking',
+  };
+}
+
 export interface ResumeCompletionOptions {
   /** OpenAI-compat base URL (may end in `/v1`; the raw root is derived from it). */
   readonly baseUrl: string;

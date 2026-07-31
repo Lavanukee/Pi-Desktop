@@ -1,6 +1,6 @@
 import { type ChatMsg, createEventRouter, type PiBridgeEvent } from '@pi-desktop/engine';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPiSink, usePiStore } from './pi-slice';
+import { canDrainQueue, createPiSink, createQueueDrain, usePiStore } from './pi-slice';
 
 const initial = usePiStore.getState();
 
@@ -480,5 +480,149 @@ describe('in-flight bridge + queued sends (message-ordering fix)', () => {
     usePiStore.getState().setMessagesExternal([]);
     expect(usePiStore.getState().queuedSends).toEqual([]);
     expect(usePiStore.getState().promptInFlight).toBe(false);
+  });
+});
+
+/*
+ * PAUSE vs the QUEUE.
+ *
+ * Pause (unlike Stop) exists to free the model while KEEPING what the user has
+ * queued behind the running turn — so the queue has to survive the pause, wait
+ * out a token-exact resume, and then actually go out.
+ */
+describe('queued-send drain across pause → resume', () => {
+  /** Let the drain's dispatch promise settle so its FIFO latch clears. */
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('a message queued mid-turn survives the pause AND the resume, then sends', async () => {
+    const sent: string[] = [];
+    const drain = createQueueDrain(async (item) => {
+      sent.push(item.text);
+    });
+
+    // Typed while the reply was streaming → held, not injected into the turn.
+    usePiStore.setState({ agent: { ...usePiStore.getState().agent, isStreaming: true } });
+    usePiStore.getState().enqueueSend({ text: 'and check the logs too', images: [] });
+    drain(usePiStore.getState());
+    expect(sent).toEqual([]);
+
+    // PAUSE: the turn is aborted, but the queue is deliberately kept.
+    usePiStore.setState({
+      agent: { ...usePiStore.getState().agent, isStreaming: false },
+      promptInFlight: false,
+      pausedChat: { sessionFile: '/s.jsonl', userText: 'summarize the run' },
+    });
+    expect(usePiStore.getState().queuedSends).toHaveLength(1);
+
+    // RESUME: a token-exact continuation is not a pi turn — none of the usual
+    // busy flags rise — but it holds the single llama-server slot, so the queued
+    // message must WAIT rather than be fired into the middle of it.
+    usePiStore.setState({ resuming: true });
+    drain(usePiStore.getState());
+    expect(sent).toEqual([]);
+    expect(usePiStore.getState().queuedSends).toHaveLength(1);
+
+    // Resume finished — now it goes.
+    usePiStore.setState({ resuming: false });
+    drain(usePiStore.getState());
+    await settle();
+    expect(sent).toEqual(['and check the logs too']);
+    expect(usePiStore.getState().queuedSends).toEqual([]);
+  });
+
+  it('puts the message BACK at the head when its dispatch throws', async () => {
+    const drain = createQueueDrain(async () => {
+      throw new Error('fetch failed');
+    });
+    usePiStore.getState().enqueueSend({ text: 'first', images: [] });
+    usePiStore.getState().enqueueSend({ text: 'second', images: [] });
+
+    drain(usePiStore.getState());
+    await settle();
+    // A message the user typed must never vanish because the send blew up.
+    expect(usePiStore.getState().queuedSends.map((q) => q.text)).toEqual(['first', 'second']);
+  });
+
+  it('dispatches one at a time, in order', async () => {
+    const sent: string[] = [];
+    const drain = createQueueDrain(async (item) => {
+      sent.push(item.text);
+    });
+    usePiStore.getState().enqueueSend({ text: 'one', images: [] });
+    usePiStore.getState().enqueueSend({ text: 'two', images: [] });
+
+    drain(usePiStore.getState());
+    expect(sent).toEqual(['one']);
+    await settle();
+    drain(usePiStore.getState());
+    await settle();
+    expect(sent).toEqual(['one', 'two']);
+  });
+
+  it('canDrainQueue counts a resume, a live turn, a dispatch gap and a bg run as busy', () => {
+    const idle = {
+      agent: { isStreaming: false },
+      promptInFlight: false,
+      resuming: false,
+      bgRun: null,
+      queuedSends: [],
+    };
+    expect(canDrainQueue(idle)).toBe(true);
+    expect(canDrainQueue({ ...idle, resuming: true })).toBe(false);
+    expect(canDrainQueue({ ...idle, agent: { isStreaming: true } })).toBe(false);
+    expect(canDrainQueue({ ...idle, promptInFlight: true })).toBe(false);
+    expect(canDrainQueue({ ...idle, bgRun: { streaming: true } })).toBe(false);
+    // A background chat that FINISHED no longer blocks the queue.
+    expect(canDrainQueue({ ...idle, bgRun: { streaming: false } })).toBe(true);
+  });
+});
+
+/*
+ * `isStreaming` on an assistant row is cleared by ONE thing: endTurn. A user
+ * pause/stop can tear the run down on a path that reaches agent_end without a
+ * turn_end, and a row left flagged live is not just a stuck spinner — the resume
+ * path continues the last NON-streaming assistant row, so a ghost-live partial
+ * makes Resume regenerate the whole reply instead of picking it up.
+ */
+describe('a run that ends without a turn_end still closes its row', () => {
+  it('agent_end finalizes the in-flight assistant message', () => {
+    route([
+      { type: 'agent_start' },
+      { type: 'turn_start' },
+      {
+        type: 'message_update',
+        message: { role: 'assistant', content: [] },
+        assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'weighing…' },
+      } as unknown as PiBridgeEvent,
+      // No turn_end — the abort cut the run here.
+      { type: 'agent_end', messages: [] } as unknown as PiBridgeEvent,
+    ]);
+    const assistant = usePiStore.getState().messages[0];
+    if (assistant?.kind !== 'assistant') throw new Error('expected assistant');
+    expect(assistant.isStreaming).toBe(false);
+    expect(assistant.stopReason).toBe('aborted');
+    // The partial reasoning it did produce is kept — that is what Resume continues.
+    expect(assistant.blocks).toEqual([{ type: 'thinking', thinking: 'weighing…' }]);
+  });
+
+  it('leaves a normally-ended turn alone (turn_end already closed it)', () => {
+    route([
+      { type: 'agent_start' },
+      { type: 'turn_start' },
+      {
+        type: 'message_update',
+        message: { role: 'assistant', content: [] },
+        assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'done' },
+      } as unknown as PiBridgeEvent,
+      {
+        type: 'turn_end',
+        message: { role: 'assistant', content: [], stopReason: 'stop' },
+      } as unknown as PiBridgeEvent,
+      { type: 'agent_end', messages: [] } as unknown as PiBridgeEvent,
+    ]);
+    const assistant = usePiStore.getState().messages[0];
+    if (assistant?.kind !== 'assistant') throw new Error('expected assistant');
+    expect(assistant.isStreaming).toBe(false);
+    expect(assistant.stopReason).toBe('stop');
   });
 });

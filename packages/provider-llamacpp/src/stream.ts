@@ -223,7 +223,22 @@ export function buildChatCompletionsRequest(
         .filter((c): c is TextContent => c.type === 'text')
         .map((c) => c.text)
         .join('');
-      const toolCalls = msg.content.filter((c): c is ToolCall => c.type === 'toolCall');
+      /*
+       * A NAMELESS TOOL CALL IS NOT A TOOL CALL.
+       *
+       * A turn aborted mid-`tool_calls` used to leave a half-built block in the
+       * assistant message — the name arrives in one delta and the arguments in
+       * the next, so a pause between them freezes `{ name: '', arguments: {} }`
+       * into history. Replayed here it renders as a `tool_calls` entry the chat
+       * template cannot name, with no `role:"tool"` result after it: the prompt
+       * the model reads is structurally broken exactly where tool-call framing
+       * lives, and the next call it emits comes back as prose instead of a
+       * structured call. The abort path below no longer produces one; this is the
+       * defense for sessions that already carry one on disk.
+       */
+      const toolCalls = msg.content.filter(
+        (c): c is ToolCall => c.type === 'toolCall' && c.name.length > 0,
+      );
       // Carry this turn's reasoning back so `--reasoning-preserve` (server) can
       // re-render it into the prompt. Without this the flag has nothing to
       // preserve — llama-server is stateless per request and only sees history
@@ -402,8 +417,49 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
       let textIndex: number | undefined;
       let thinkingIndex: number | undefined;
       const toolStates = new Map<number, ToolState>();
+      /**
+       * Tool-call blocks that reached `toolcall_end` — i.e. whose arguments are
+       * COMPLETE (parsed, or repaired by the ladder). Held by object identity so
+       * the abort path can tell a finished call from one still accumulating
+       * argument deltas without any index arithmetic.
+       */
+      const finalizedTools = new Set<ToolCall>();
       let lastTimings: LlamaCppTimings | undefined;
       let finishReason: 'stop' | 'length' | 'toolUse' = 'stop';
+
+      /**
+       * Emit `thinking_end` / `text_end` for the blocks this stream opened.
+       *
+       * Called on BOTH the normal finish and the abort/error path: a stream cut
+       * mid-block used to just push `error` and stop, leaving the block it had
+       * opened with no closing event at all. Idempotent (a failure raised AFTER
+       * the normal close must not double-emit), and it reads `textIndex` /
+       * `thinkingIndex` live so the abort path can call it once the aborted
+       * content has been pruned and the indices re-based.
+       */
+      let blocksClosed = false;
+      const closeOpenBlocks = (): void => {
+        if (blocksClosed) return;
+        blocksClosed = true;
+        if (thinkingIndex !== undefined) {
+          const block = output.content[thinkingIndex];
+          stream.push({
+            type: 'thinking_end',
+            contentIndex: thinkingIndex,
+            content: block?.type === 'thinking' ? block.thinking : '',
+            partial: output,
+          });
+        }
+        if (textIndex !== undefined) {
+          const block = output.content[textIndex];
+          stream.push({
+            type: 'text_end',
+            contentIndex: textIndex,
+            content: block?.type === 'text' ? block.text : '',
+            partial: output,
+          });
+        }
+      };
 
       // Resolve the live harness repair wiring once for this stream (fixer, rungs
       // 3–5, telemetry, per-session relaxed schemas). Falls back to static deps.
@@ -634,24 +690,7 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
         }
 
         // --- finalize blocks ------------------------------------------------
-        if (thinkingIndex !== undefined) {
-          const block = output.content[thinkingIndex];
-          stream.push({
-            type: 'thinking_end',
-            contentIndex: thinkingIndex,
-            content: block?.type === 'thinking' ? block.thinking : '',
-            partial: output,
-          });
-        }
-        if (textIndex !== undefined) {
-          const block = output.content[textIndex];
-          stream.push({
-            type: 'text_end',
-            contentIndex: textIndex,
-            content: block?.type === 'text' ? block.text : '',
-            partial: output,
-          });
-        }
+        closeOpenBlocks();
 
         // --- RUNG 0: reconstruct a tool call written into the CONTENT ---------
         // If the model emitted NO structured tool_calls frame but wrote a call as
@@ -750,6 +789,9 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
           }
           block.arguments = finalArgs;
           if (finishReason === 'stop') finishReason = 'toolUse';
+          // This call is COMPLETE — record it so an error raised later in this
+          // loop (a throwing fixer/rung) can't prune an already-finished call.
+          finalizedTools.add(block);
           stream.push({
             type: 'toolcall_end',
             contentIndex: state.contentIndex,
@@ -767,6 +809,37 @@ export function createLlamaCppStream(deps: LlamaCppStreamDeps = {}): LlamaCppStr
         stream.end();
       } catch (error) {
         const aborted = options?.signal?.aborted === true;
+        /*
+         * AN ABORTED STREAM MUST NOT LEAVE HALF A MESSAGE BEHIND.
+         *
+         * A pause is an abort mid-stream, and this handler used to push `error`
+         * and stop — handing pi (and the transcript, and the next request built
+         * from it) a message with blocks that were still OPEN and a tool call
+         * that was still ACCUMULATING. Two things went wrong downstream:
+         *
+         *  - the open thinking/text block never got its closing event, so a
+         *    consumer that finalizes on `*_end` was left holding a block that,
+         *    from its point of view, never ended;
+         *  - the in-progress tool call survived into history as `{ name: '',
+         *    arguments: {} }` (or a name with argument JSON that stops halfway),
+         *    which the next turn replays as a `tool_calls` entry with no result
+         *    after it — a prompt that is broken precisely where the model reads
+         *    how to frame a tool call, and it answers with prose instead.
+         *
+         * So: prune what never completed, THEN close what stayed open. Order
+         * matters — pruning shifts the surviving blocks down, so the text /
+         * thinking indices are re-based before the close events quote them.
+         */
+        for (let i = output.content.length - 1; i >= 0; i--) {
+          const block = output.content[i];
+          if (block === undefined || block.type !== 'toolCall' || finalizedTools.has(block)) {
+            continue;
+          }
+          output.content.splice(i, 1);
+          if (thinkingIndex !== undefined && i < thinkingIndex) thinkingIndex--;
+          if (textIndex !== undefined && i < textIndex) textIndex--;
+        }
+        closeOpenBlocks();
         output.stopReason = aborted ? 'aborted' : 'error';
         output.errorMessage = error instanceof Error ? error.message : String(error);
         stream.push({ type: 'error', reason: output.stopReason, error: output });

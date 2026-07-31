@@ -12,12 +12,20 @@ import {
   rehydrateSessionJsonl,
 } from '@pi-desktop/engine';
 import type { TaskClass } from '@pi-desktop/harness';
+import { createResumeSplitter, type ResumeEvent } from '@pi-desktop/provider-llamacpp/resume';
 import { ensureChatServerReady, maybeRouteAuto } from '../chat/auto-router';
 import { ADVANCED_GROUNDTRUTH_KEY } from './advanced-store';
 import { resetCanvasForNewSession, restoreCanvas, snapshotCanvas } from './canvas-store';
 import { renameChat } from './chat-org';
 import { ensureVisionMode } from './local-model';
-import { type BgRun, createPiSink, type PausedChat, type QueuedSend, usePiStore } from './pi-slice';
+import {
+  type BgRun,
+  createPiSink,
+  createQueueDrain,
+  type PausedChat,
+  type QueuedSend,
+  usePiStore,
+} from './pi-slice';
 import { useSettingsStore } from './settings-store';
 import { appendOrMergeBlock, mutateAssistant } from './transcript-fold';
 
@@ -112,33 +120,19 @@ export function connectPi(): () => void {
   // Drain queued sends whenever the pipe is IDLE. A message typed while a turn was
   // in-flight (or while another chat streams in the background) is held in the
   // store (ChatComposer) and dispatched here as its OWN sequential turn the moment
-  // there's capacity, so [msg1, reply1, msg2, reply2] instead of stacking echoes.
-  // LEVEL-triggered (idle now?), not edge-triggered: a backgrounded chat's
-  // completion never moves `agent.isStreaming` (it was forced false when the chat
-  // was backgrounded), so an edge on isStreaming would MISS it and the queue would
-  // stick — idle here means no live turn, no dispatch gap, and no bg run streaming.
-  // FIFO, one at a time — `draining` + sendPrompt re-setting promptInFlight gate the
-  // next drain.
-  let draining = false;
-  const unsubscribeQueue = usePiStore.subscribe((state) => {
-    const idle =
-      !state.agent.isStreaming && !state.promptInFlight && state.bgRun?.streaming !== true;
-    if (draining || !idle) return;
-    const head = state.queuedSends[0];
-    if (head === undefined) return;
-    draining = true;
-    usePiStore.setState({ queuedSends: state.queuedSends.slice(1) });
-    void sendPrompt(
-      head.text,
-      head.images,
-      head.agentMessage,
-      head.taskClass as TaskClass | undefined,
-    )
-      .catch(() => {})
-      .finally(() => {
-        draining = false;
-      });
-  });
+  // there's capacity. The idle predicate + the FIFO/latch/restore semantics live
+  // in pi-slice (`createQueueDrain`) where they are unit-testable; this only binds
+  // the dispatcher.
+  const unsubscribeQueue = usePiStore.subscribe(
+    createQueueDrain((head) =>
+      sendPrompt(
+        head.text,
+        head.images,
+        head.agentMessage,
+        head.taskClass as TaskClass | undefined,
+      ),
+    ),
+  );
 
   // Report the viewed chat's session to main so a model-spawned subagent
   // (spawn_subagent → app bridge) nests under it in the sidebar dropdown.
@@ -467,7 +461,10 @@ export async function abortPi() {
   // Stopping interrupts the current turn AND drops anything queued behind it —
   // the user asked to halt, so pending messages must not fire after the abort.
   const resuming = usePiStore.getState().resuming;
-  usePiStore.setState({ queuedSends: [], pausedChat: null });
+  // `promptInFlight: false` for the same reason as {@link pausePi}: a stop during
+  // the dispatch→agent_start gap has no turn for pi to end, so nothing else ever
+  // lowers the flag and the composer stays stuck showing Stop.
+  usePiStore.setState({ queuedSends: [], pausedChat: null, promptInFlight: false });
   // Stop pressed DURING a token-exact resume: there's no pi turn to abort — cancel
   // the direct `/completion` continuation instead. Discards resumability (Stop).
   if (resuming) {
@@ -485,7 +482,10 @@ export async function abortPi() {
  * message; the same-chat case simply ends the current reply and the queue drains.
  */
 export async function stopRunningForQueue(): Promise<void> {
-  usePiStore.setState({ pausedChat: null });
+  // Lower the dispatch bridge (see {@link pausePi}) — this path exists PURELY to
+  // let the queue through, and a stuck `promptInFlight` is exactly what stops the
+  // drain from running.
+  usePiStore.setState({ pausedChat: null, promptInFlight: false });
   await window.piDesktop.invoke('pi:abort', undefined);
 }
 
@@ -507,6 +507,21 @@ export async function pausePi(): Promise<void> {
   const userText = lastUser !== undefined && lastUser.kind === 'user' ? lastUser.text : '';
   usePiStore.setState({
     pausedChat: { sessionFile: store.session?.sessionFile ?? null, userText },
+    /*
+     * RELEASE THE DISPATCH BRIDGE, ALWAYS.
+     *
+     * `promptInFlight` is normally cleared by `agent_start` / `agent_end`. Pause
+     * can land BEFORE either exists: the composer flips to Stop/Pause the instant
+     * Enter is pressed, and a send can sit for seconds in `ensureChatServerReady`
+     * before it ever reaches pi. Aborting there is a no-op inside pi (there is no
+     * turn), so no `agent_end` is coming — and the flag stays raised forever.
+     * A store stuck in-flight is a chat that silently swallows everything after
+     * it: the composer queues each new message (it sees a turn in flight) and the
+     * drain refuses to dispatch (it sees the same), so the message just sits as a
+     * faded bubble that never sends. Clearing it here is safe for the normal case
+     * too — the turn we just aborted is over by definition.
+     */
+    promptInFlight: false,
   });
   // Pausing DURING a token-exact resume: cancel the direct `/completion`
   // continuation (not a pi turn) but stay resumable (pausedChat set above).
@@ -644,14 +659,52 @@ export async function resumePausedChat(): Promise<void> {
     messages: mutateAssistant(s.messages, partialId, (m) => ({ ...m, isStreaming: true })),
   }));
 
-  // Stream each continuation token onto the SAME assistant message. `appendOrMerge
-  // Block` merges into the trailing text block (the visible answer), producing the
-  // seamless continue.
+  /*
+   * Stream each continuation token onto the SAME assistant message, through the
+   * splitter that tells the reply's channels apart.
+   *
+   * The resume runs over llama.cpp's RAW `/completion` endpoint, so — unlike a
+   * normal turn — nothing upstream has separated reasoning from the answer or
+   * lifted tool calls out of their template envelope. Appending every token
+   * straight into a text block (what this used to do) is what made a reply paused
+   * mid-thought appear to close its thinking block on its own and spill the rest
+   * of the reasoning, a bare `</think>`, and any `<tool_call>{…}` markup into the
+   * visible answer. The splitter is seeded from the frozen partial the same way
+   * the partial itself is re-serialized for the server: a trailing thinking block
+   * means the reply was still inside `<think>` when it was paused.
+   */
+  const splitter = createResumeSplitter({
+    thinkingOpen: partial.blocks[partial.blocks.length - 1]?.type === 'thinking',
+  });
+  let resumeToolSeq = 0;
+  const applyResumeEvents = (events: readonly ResumeEvent[]): void => {
+    for (const ev of events) {
+      if (ev.type === 'delta') {
+        usePiStore.setState((s) => ({
+          messages: appendOrMergeBlock(s.messages, partialId, ev.channel, ev.delta),
+        }));
+        continue;
+      }
+      // A tool call in a continuation is shown as the CALL it is rather than as
+      // raw markup. It is not dispatched: this path talks to llama-server
+      // directly, outside pi, so there is no agent loop here to run a tool and
+      // feed the result back — the row is the honest record of what the model
+      // asked for.
+      const id = `resume-tc-${resumeId}-${++resumeToolSeq}`;
+      usePiStore.setState((s) => ({
+        messages: mutateAssistant(s.messages, partialId, (m) => ({
+          ...m,
+          blocks: [
+            ...m.blocks,
+            { type: 'toolCall' as const, id, name: ev.name, arguments: ev.arguments },
+          ],
+        })),
+      }));
+    }
+  };
   const off = window.piDesktop.onEvent('pi:resume-delta', (e) => {
     if (e.resumeId !== resumeId) return;
-    usePiStore.setState((s) => ({
-      messages: appendOrMergeBlock(s.messages, partialId, 'text', e.token),
-    }));
+    applyResumeEvents(splitter.push(e.token));
   });
 
   const epoch = store.sessionEpoch;
@@ -675,6 +728,9 @@ export async function resumePausedChat(): Promise<void> {
     }
   } finally {
     off();
+    // Release anything the splitter was holding back waiting for a marker the
+    // stream never delivered (an abort mid-`</thi`), so no token is swallowed.
+    if (usePiStore.getState().sessionEpoch === epoch) applyResumeEvents(splitter.flush());
     // Only touch THIS session's state (a switch during the resume moved on).
     if (usePiStore.getState().sessionEpoch === epoch) {
       usePiStore.setState((s) => ({

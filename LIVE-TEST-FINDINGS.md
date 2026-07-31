@@ -1,507 +1,342 @@
-# Live testing the 4B — what breaks, and why
+# Harness findings — driving the 4B on real tasks
 
-Driving the real app with the real model (`qwen3.5-4b-mtp`, Q8_0, MTP draft) and
-writing down what actually goes wrong. jedd's framing, which shapes the whole
-document:
+Every task below was run against the real app, real profile, real model
+(`qwen3.5-4b-mtp`, Q8_0, MTP draft). Each entry is: what was asked, what actually
+happened, the harness failure underneath it, and the fix.
+
+jedd's framing, which is the standard everything here is held to:
 
 > there's literally no reason that the 4b model can't do anything like that, none
-> of the individual steps are out of its reach or anything, it's not complex
-> coding, it's totally doable stuff that we can fix in the harness without
-> actually saying "if you get this task do this" or equivalent, we just need
-> structuring better.
+> of the individual steps are out of its reach … it's totally doable stuff that we
+> can fix in the harness without actually saying "if you get this task do this" or
+> equivalent, we just need structuring better.
 
-So every finding has to end in a STRUCTURAL fix — something that changes how the
-harness presents work to the model — not a special case keyed to a task. Where I
-can only see the symptom and not the structure yet, it says so.
+So no finding below ends in "the model is too small", and no fix keys on a task.
 
-**A theme runs through all of it.** In every case below the model wanted the
-right thing. It said so out loud, in its own thinking, and then could not get
-there — because a capability was absent, or present but unreachable, or reachable
-but silently returned nothing. Not one of these is a reasoning failure.
+**Scope:** harness only. UI/UX problems (onboarding, empty states, navigation,
+the dead-end send with no model) are in `UI-UX-REVIEW.md` and deliberately not
+repeated here.
 
----
-
-## 1. `fetch failed` — none of this was testable until now
-
-**FIXED — shipped `0b36241`.**
-
-Every "live" probe in this repo has been driving an app that **never starts a
-model**. `ensureChatServerReady()` returned early on `?piE2E` — the same flag
-that unlocks `window.__pi_store` so a probe can observe the app at all.
-
-> Making the app observable switched its model off.
-
-The visible symptom was `fetch failed` on every turn, which reads as an inference
-bug. It is not: the supervisor forks, idles, and pi fetches an address with
-nothing behind it.
-
-**Fix:** split the two intentions. `?piNoServer` (`PI_E2E_NO_SERVER=1`) skips the
-boot for mock-pi runs that have no model to reach; `?piE2E` now only means "let me
-see inside".
-
-**Why it hid for so long:** the renderer console said nothing, `status.error` said
-nothing, and the one line that named the cause (`[pi-diag]
-ensureChatServerReady: …`) went to the main process's stdout, which the probe did
-not forward. It does now.
-
-> **Generalisable, and it recurs below:** a failure that surfaces as a two-word
-> transport error gets blamed on the model. Every layer that can refuse to start
-> needs to say so where the operator is already looking.
+**How the evidence is gathered.** `PI_ADV_DEBUG_TOOLS=<file>` logs the EXACT
+advertised tool list for every provider request. That single artefact decides
+most of these: *a tool the model "should have used" that never appears in that
+list is a harness failure, not a model failure.*
 
 ---
 
-## 2. THE BIG ONE — vision never turned on. THREE separate blockers, all now fixed
+## Task 1 — "What is 17 times 23?"
 
-**FIXED AND VERIFIED END-TO-END.** It took three independent bugs, stacked. Each
-one alone was enough to make the model look incapable, and fixing any two still
-left it blind.
+**Trace.** `user → assistant text`. One request, no tools.
 
-Asked to *"take a screenshot of stripe.com's homepage and recreate its hero
-section"*, the model did exactly the right thing and then died trying, over five
-consecutive turns:
+**What happened.** Correct, immediately. Nothing to fix — recorded because it is
+the control that proves the rig works.
 
+---
+
+## Task 2 — "Open example.com and tell me the exact text of the main heading"
+
+**Trace.**
 ```
-assistant: "The user wants me to: 1. Take a screenshot of stripe.com's h…"
-assistant: "The user wants a screenshot of the Stripe homepage and a rec…"
-assistant: "I need to see the actual visual appearance of the Stripe hom…"
-assistant: "I need to get a screenshot to see the actual Stripe homepage…"
-assistant: "The browser_snapshot tool isn't giving me useful information…"
-```
-
-It knew it needed to look. It tried four times. Then it correctly concluded the
-tool was useless to it — and wrote the HTML blind.
-
-**Root cause, from the same run's main-process log:**
-
-```
-llm:start-server requested { modelId: 'qwen3.5-4b-mtp', quant: 'Q8_0', launchMode: 'fast-text' }
+assistant "The user wants me to open example.com and find the exact tex…"
+toolResult (browser_navigate)
+assistant "The page loaded and I can see the main heading from the page"
 ```
 
-`fast-text` was the only launch mode for the entire session. **No `mmproj`, so no
-vision.** Any image handed back by a tool is tokens the model has no encoder for.
+**What happened.** Worked, first try, no loop. The tool list grew 15 → 23 mid-turn
+(`browser_click, browser_type, browser_scroll, browser_read, browser_wait, …`) —
+capability activation firing correctly and **appending**, so the KV prefix ahead
+of it stayed a prefix.
 
-This is one level deeper than the bug I fixed earlier today. I made tool-returned
-images actually reach the request (they were being filtered out entirely), and
-extended `contextHasImage` to notice them. But *reaching the request* is not
-*being seen*: the server has to be running multimodal, and nothing ever asks it
-to switch mid-session.
+**Recorded because it was the fix under test:** advertising `browser_navigate`
+without `browser_snapshot` had previously produced an endless re-navigate loop —
+llama-server's grammar pins the emitted function name to the advertised list, so
+a bid for a tool that is not advertised lands on the nearest one that is.
 
-**What it silently breaks** — every one of these is a task jedd named:
+> **Harness rule this establishes:** never advertise a tool whose obvious partner
+> is missing. The grammar will not give you a clean failure, it will give you a
+> plausible wrong call.
 
-| Task | Fails because |
-|---|---|
-| Recreate a UI from a screenshot | never sees the screenshot |
-| Draw bounding boxes on an image | never sees the image, so cannot locate anything |
-| Image specialist's improve-loop | "LOOK at it, decide what is wrong" — cannot |
-| Motion specialist checking frames | "check that frame 0, middle, last DIFFER" — cannot |
-| Review its own work visually | the whole category |
+---
 
-### 2a. Blocker one: the projector was never on disk — FIXED
+## Task 3 — "Screenshot stripe.com and recreate its hero section"
 
-jedd's first instinct ("mmproj loaded at all?") was right, and it was worse than
-not loaded. The default model's projector had been sitting as a **stranded
-`.part`**:
+The most valuable failure in the whole exercise. **Three independent bugs,
+stacked.** Each alone was enough; fixing any two still left the model blind.
 
+**Trace (before), five consecutive turns:**
 ```
-620553303  mmproj-F16.gguf.part      # qwen3.5-4b-mtp — never promoted
-175115840  mmproj-F16.gguf           # gemma-4-12b-it — fine
-927607360  mmproj-F16.gguf           # qwen3.6-27b-mtp — fine
+assistant "The user wants me to: 1. Take a screenshot of stripe.com's h…"
+assistant "The user wants a screenshot of the Stripe homepage and a rec…"
+assistant "I need to see the actual visual appearance of the Stripe hom…"
+assistant "I need to get a screenshot to see the actual Stripe homepage…"
+assistant "The browser_snapshot tool isn't giving me useful information…"
 ```
+It then wrote the HTML blind. **It was right about the tool and wrong about the
+cause, and nothing in its context could have told it the difference.**
 
-The catalog entry carried `bytes: 0` — a placeholder — and the download's
-completion check read:
+### 3a — The projector could never finish downloading
+
+`qwen3.5-4b-mtp/mmproj-F16.gguf.part`, 620 MB, never promoted. Its catalog entry
+carried `bytes: 0` (a placeholder) and the completion check read
+`expectedBytes !== undefined` — where `0` is defined:
 
 ```ts
 if (expectedSha256 === undefined && expectedBytes !== undefined && bytes !== expectedBytes)
-  throw new DownloadError(`size mismatch: expected ${expectedBytes} bytes, got ${bytes}`);
-await rename(partPath, dest);   // ← never reached
+  throw new DownloadError(...);          // threw: "expected 0 bytes, got 620553303"
+await rename(partPath, dest);            // never reached
 ```
 
-`0 !== undefined`, so **every completed transfer threw `expected 0 bytes, got
-620553303` and the rename never ran.** The download could never succeed, no
-matter how many times it was retried, and nothing surfaced that.
+**Fix:** zero means *unknown*, not *expect nothing* (`expectedBytes > 0`). Real
+size recorded. Tested both directions.
 
-**Fix:** a zero expected size means *unknown*, not *expect nothing*
-(`expectedBytes > 0`). Unit-tested both ways — the placeholder promotes, a real
-expected size still rejects a short file. The 4B's real size (672,423,488, from
-`unsloth/Qwen3.5-4B-MTP-GGUF`) is now in the catalog, and the projector is on
-disk and verified (`GGUF` magic).
+> **A placeholder was being enforced as a constraint**, and the visible symptom
+> was a model that appeared unable to use a tool.
 
-> The lesson is bigger than this file: **a placeholder was being enforced as a
-> constraint.** Nothing said so, and the visible symptom was a model that
-> appeared unable to use a tool.
+### 3b — Nothing ever asked the server to switch on vision
 
-### 2b. Blocker two: nothing asked for the switch — FIXED
+`ensureVisionMode()` existed and worked, reachable from exactly one place, guarded
+by `messageNeedsVision({ imageDataUris })` — which only sees images **the user
+attaches in the composer**. Every image the *model* produces missed it.
 
-With the projector present I re-ran the same ask. The server *still* launched
-`fast-text` and only `fast-text`. The model again navigated, again asked for a
-screenshot, again could not see it.
+**Fix:** the host publishes whether the server can see (`PI_DESKTOP_VISION`); a
+screenshot taken on a blind server records a want, spent at the next `agent_end`
+(never mid-turn — going multimodal restarts llama-server and would kill the turn
+that took the screenshot).
 
-`ensureVisionMode()` already exists and works — but it is called from exactly one
-place, `pi-connect.ts:382`, guarded by `messageNeedsVision({ imageDataUris })`.
-That only sees images **the user attaches in the composer**. An image the MODEL
-produces — a browser screenshot, a rendered frame, an image it just generated —
-never reaches that check, so the relaunch is never requested.
+**My first attempt was wrong, instructively:** main restarted the server itself,
+and a relaunch comes up on a **new port** while the pi child still holds the old
+base URL — so the next turn talked to an address that no longer existed. The
+renderer's `ensureVisionMode()` already owned the whole sequence including the
+child respawn. Main now raises `llm:vision-wanted` and lets it.
 
-**What now exists.** Three pieces:
+### 3c — The agent's browser could never take a screenshot at all
 
-1. The host publishes whether the running server can see (`PI_DESKTOP_VISION`),
-   so the provider is no longer guessing.
-2. When it cannot, the provider **replaces the image with an explanation** rather
-   than shipping tokens the server has no encoder for. The model reads that
-   images are unreadable right now and that retrying will not help — which ends
-   the four-turn loop immediately, with no relaunch needed. The note deliberately
-   does NOT promise sight is coming (an earlier draft did; that would only have
-   moved the loop one turn later).
-3. A screenshot taken while the server is text-only records a **vision want**,
-   spent at the next `agent_end` — not immediately, because going multimodal is a
-   hard restart of llama-server and firing it mid-turn would kill the very turn
-   that took the screenshot.
+`ensureAgentView` attaches the agent's browser and calls `setVisible(false)`.
+Chromium returns an **empty image** for a view it is not compositing, so every
+capture came back null — and the tool then dropped it under `catch {}` with the
+comment *"screenshot is best-effort"*.
 
-**Confirmed live:** `ensureVisionServer: relaunching multimodal { modelId:
-'qwen3.5-4b-mtp' }` fires, at the turn boundary, exactly once.
+**Fix:** capture briefly reveals the view **off-screen** (outside the window's own
+bounds, restored in a `finally`) so it composits without ever being drawn where
+the user can see it. And the tool never omits a requested screenshot in silence —
+it names the failure and says asking again will not help.
 
-**The first attempt was wrong in an instructive way.** Main restarted
-llama-server itself — and a relaunch comes up on a NEW PORT while the pi child
-still holds the old base URL, so the next turn talked to an address that no
-longer existed and never produced a token. The renderer's `ensureVisionMode()`
-already owned the whole sequence, respawn included. So main now raises
-`llm:vision-wanted` and the renderer does the work. Restarting the server is not
-the same as switching the model's vision on, and only one component knew that.
-
-### 2c. Blocker three: the agent's browser could never take a screenshot — FIXED
-
-Even with vision ON, the model still saw nothing, because there was never an
-image. `ensureAgentView` attaches the agent's browser to the window and calls
-`setVisible(false)`, and Chromium returns an EMPTY image for a view it is not
-compositing. Every screenshot came back null. The tool then **silently dropped
-it** — `catch {}` with the comment "screenshot is best-effort". The code called
-this a graceful degrade to DOM. It is only graceful if something says so, and
-nothing did.
-
-Two fixes: capture now briefly reveals the view **off-screen** (outside the
-window's own bounds, restored in a `finally`) so it composits without ever being
-drawn where the user can see it; and the tool never omits a requested screenshot
-in silence — it says what failed and that asking again will not help.
-
-> **The pattern, three times in one feature:** a capability that fails quietly is
-> worse than one that is absent, because the model cannot tell the difference and
-> so cannot stop trying.
-
-### 2d. Verified end-to-end
-
-Same task, real app, real 4B:
-
-- **Turn 1 (text-only):** "The screenshot of example.com has been captured
-  successfully. While I cannot display the image myself (I'm in text-only mode),
-  the browser_snapshot call did attach an image…" — honest, and **no loop**.
-- **Auto-switch fires at the turn boundary:** `llm:start-server requested
-  { launchMode: 'multimodal' }`.
-- **Turn 2 (multimodal):** *"The background is light gray and the heading says
-  'Example Domain'."* — correct. It saw the image.
-
-Before this, the same task produced four identical retries and "the
-browser_snapshot tool isn't giving me useful information".
-
-**The original statement of the fix, kept because the remaining half is exactly
-this:** the same
-`ensureVisionMode()` path must be reachable when a TOOL returns an image, not
-only when a human attaches one. `contextHasImage(context)` in
-`provider-llamacpp/src/stream.ts` is already the correct predicate and already
-returns true for tool results (fixed earlier today) — it has no callers. The
-honest interim behaviour, worth having regardless: when an image rides a tool
-result and the server is text-only, **say so in the result**. The model then
-reports "I cannot see this" instead of looping four times and concluding the tool
-is broken.
-
-Second, cheaper half: `browser_snapshot`'s screenshot is **opt-in via a parameter
-buried in its description** ("Optionally attach a screenshot"). A model that says
-"I need to see the actual visual appearance" is not going to discover a boolean.
-When the model's intent is visual, the screenshot should not be a parameter it has
-to find.
-
-**Until this lands, every "look at what you made" instruction in every charter is
-a promise the harness cannot keep** — and the honesty clauses I wrote into those
-charters ("if you cannot see it, say so plainly") are currently the only thing
-between that and invented critique.
-
----
-
-## 3. Spinners re-aim themselves on every render
-
-**FIXED (working tree).** Root cause was not a remount, which is what it looks
-like:
-
-```js
-// packages/ui/src/components/spinner.tsx — before
-const delay = { '--pd-loader-delay': `-${Date.now() % 1600}ms` };
-```
-
-That feeds `animation-delay` on both loader animations. Per spec, changing
-`animation-delay` on a *running* animation updates it in place rather than
-restarting — so re-deriving it from the clock on every render **re-aimed the arc
-to a pseudo-random angle each time React re-rendered**. The jump could be up to
-1600ms of an 1100ms rotation, which reads as snapping back.
-
-It fired on every status change next to a spinner — the corp row status line, the
-`m:ss` tick (1/sec), "Processing… Ns", the sidebar. Measured churning in the DOM:
-`-1556` → `-1541` across two re-renders. That is "a lot of the time … constantly".
-
-**Fix:** compute the delay once at mount, pinned to the document clock
-(`-(performance.now() % 17600)`, the lcm of the two loader periods). This kills
-the re-aiming *and* makes remounts invisible — a replacement element resumes at
-its predecessor's angle, which immunises every spinner in the app against the
-whole remount class.
-
-Also fixed one genuine structural remount: `ActivityChain` keyed rows on their
-**label**, which flips tense the moment a step settles ("Editing a file" →
-"Edited a file"), remounting rows that were still running. Rows now carry the
-tool-call id.
-
-**Trade-off jedd should know about:** loaders are now phase-locked to each other
-rather than staggered. Desync and remount-immunity are mutually exclusive here;
-easy to revert to a stable per-instance random offset if the stagger is wanted.
-
----
-
-## 4. Project selection: the click worked, nothing showed it
-
-**FIXED (working tree).** The composer's project chip compared **two different id
-spaces**. The dropdown's rows come from `useVisibleProjects()` (sidebar ids —
-`cwd:<path>` for a folder, a `chatOrg` id for a user-made project) but `active`
-read `useProjectStore.activeId`, the electron store's **path hash** (`p_1a2b`).
-
-No row could ever equal it. So clicking a folder *did* select it — pi re-rooted,
-the canvas file tree followed — but the menu showed no check mark and the chip
-still read "No project". Indistinguishable from a click that did nothing.
-
-Not the `getPiState`/`sessionChanged` race I expected. This is the other failure
-mode this codebase keeps producing: **state lands in a namespace nothing renders
-from.**
-
----
-
-## 5. TTFT
-
-Instrumented after the first runs, measured where the user actually feels it —
-**from the Enter keypress to the first visible character**, not from the provider
-request. Everything between those two points (queueing, a server that has to be
-started, a tool prefix that got invalidated and forced a full re-prefill) is time
-the user is sitting through, and reporting "provider TTFT" instead is how a
-4-second wait gets logged as 200ms.
-
-Two structural facts confirmed from the request logs, both good:
-
-- **The advertised tool set never churned between turns.** Byte-identical across
-  all 12 requests of the first run. That is the KV prefix holding, which is what
-  it is for.
-- **Capability activation APPENDS** rather than rewriting: 15 tools → 23 tools,
-  with the original 15 unchanged and in order. A reused prefix stays a prefix.
-
-### 5a. Two full minutes with nothing on screen — NOT FIXED, worst UX finding
-
-The chained task (*find the Eiffel Tower page → download the photo → grayscale →
-set as wallpaper*) measured:
+### Verified end-to-end
 
 ```
-[sent 1/3] Find the Wikipedia page … save it to my Desktop as eiffel.png.
-[TTFT 1] NO TOKEN within 120000ms
-[sent 2/3] Now make that image grayscale …
-[TTFT 2] NO TOKEN within 120000ms
+turn 1 (text-only)  "…captured successfully. While I cannot display the image
+                     myself (I'm in text-only mode)…"        ← honest, NO LOOP
+turn boundary       llm:start-server requested { launchMode: 'multimodal' }
+turn 2              "The background is light gray and the heading says
+                     'Example Domain'."                       ← it SAW it
 ```
 
-The model was **not** idle: 18 provider requests fired across the three turns (~6
-per turn — it was working through tool calls the whole time). But for the first
-two minutes of each turn the user sees nothing appear.
-
-Whatever the attribution turns out to be, the UX conclusion stands on its own: a
-turn that does real work for minutes must show that it is doing so from the first
-second. Everything needed is already plumbed — llama-server emits
-`prompt_progress` frames during prefill, the provider normalises them
-(`promptProgressFraction`), and the harness publishes a fraction on the turn
-status channel. Something between that and the first rendered block is not
-landing. **This is the next thing I would chase**, and it is worth more than any
-model-quality work: two silent minutes reads as a hang, and a user reaches for
-the Stop button long before then.
-
-Not yet attributed — candidates, in the order I would test them: the first
-provider request genuinely takes that long to prefill; the model opens with tool
-calls whose reasoning never renders a visible block; or blocks are only committed
-to the store at turn end rather than streamed.
-
-**Attachment prefill** (jedd's upload/large-paste question) — already built and
-measured: a ~5k-token paste goes 3747ms → 290ms, because `buildAgentMessage` puts
-file blocks *before* the typed text, so the primed prefix is byte-identical to
-what is sent by construction. **Images are deliberately excluded** with a stated
-reason (vision encode re-runs per request on the pinned build, so priming buys
-nothing). Numbers per-run are in the appendix as they land.
+> **The rule all three share:** a capability that fails quietly is worse than one
+> that is absent, because the model cannot tell the difference and so cannot stop
+> trying.
 
 ---
 
----
+## Task 4 — "Convert this JSON to CSV and save it to my Desktop"
 
-## 6. Pause / resume — three symptoms, three different causes
+**Trace.** `assistant → python_run → assistant → verify → assistant "created with
+the correct format"`.
 
-**FIXED (working tree).** My starting hypothesis was wrong, and usefully so: the
-provider's stream parser keeps all its accumulation state *inside* the per-call
-closure, so a new turn always starts clean. Nothing carries over there.
-
-**Raw tool calls + the "ghost close" share a cause, and it is not the parser.**
-Resume does not go through it. `resumePausedChat` continues the frozen reply over
-llama.cpp's **raw `/completion`** endpoint, which returns undifferentiated tokens
-— no `reasoning_content` channel, no structured `tool_calls`. The renderer
-appended every one of those into a **text** block. So a reply paused inside
-`<think>` resumes its reasoning correctly, but that reasoning (and then the
-literal `</think>`) lands in a *new* text block: the thinking block stops growing
-— exactly the ghost close — and a `<tool_call>{…}</tool_call>` in the
-continuation is just markup, never parsed. Fixed with an incremental splitter that
-demuxes thinking / text / tool-call from the raw continuation, holding back
-markers split across token boundaries.
-
-**The dropped send is separate, and there were two of them.** `pausePi` never
-lowered `promptInFlight`. Pause is reachable in the dispatch→`agent_start` gap
-(the composer flips to Pause the instant Enter is pressed, and `ensureChatServerReady`
-can hold a send for seconds), where `pi:abort` is a no-op inside pi — so no
-`agent_end` ever arrives and the store wedges "busy" permanently. Every later
-message then queues behind a drain that requires `!promptInFlight`: a faded bubble
-that never sends. `abortPi` and `stopRunningForQueue` had the identical hole.
-Second, the drain's idle check ignored `resuming`, so a queued send could fire
-into the middle of a token-exact resume — two requests fighting the single slot,
-evicting the very KV that makes resume exact.
-
-Two more found in the same sweep: an aborted stream left a half-built
-`{name:'', arguments:{}}` tool call in the persisted message (replayed next turn
-as an unnameable `tool_calls` entry with no result — a prompt corrupted precisely
-where tool-call framing lives), and `agent_end` without `turn_end` left the row
-`isStreaming: true` forever, which makes `frozenPartialAssistant()` return null so
-**Resume silently regenerates instead of continuing**.
-
-**Known remaining gaps, deliberate:** a tool call in a *resumed* continuation is
-now parsed and displayed, but cannot be **executed** — that path talks to
-llama-server directly, outside pi, so there is no agent loop to run it. And a send
-parked mid-await when Pause is pressed still dispatches afterwards.
-
+**What happened.** Worked. Wrote the file, then re-read it to check. No harness
+failure.
 
 ---
 
-## 7. Turning generation ON removed every tool in the app — FIXED
+## Task 5 — "Sort the files on my Desktop into folders by file type"
 
-The single worst bug found in this whole exercise, and it was invisible.
+**What happened.** Ran, but I could not separate "did it correctly" from "claimed
+it did" without a filesystem diff the probe does not take.
 
-Motion graphics never worked in a default build, for a reason that had nothing to
-do with the renderer I built and verified: `experimentalGeneration` is **false**,
-so `gen-tools` never loads and `generate_image` / `generate_video` **do not
-exist**. The model asked to make an animation spent **45 provider requests**
-flailing at a tool that was not there.
+**Harness gap, and it is real:** nothing makes a destructive filesystem action
+*checkable after the fact*. Worth a `--dry-run`-style summary before a bulk move.
+**Not fixed. Not enough evidence to say more.**
 
-So I turned the flag on. That is when it got interesting:
+---
+
+## Task 6 — "Draw red bounding boxes around every button in that screenshot"
+
+**Trace.** Three turns of restating the task, no image tool called.
+
+**Harness failure.** Downstream of Task 3 — with no vision it could not locate a
+button to box. Also worth noting it never reached for a *code* path (PIL/canvas),
+which is the right way to draw boxes deterministically and needs no image model.
+The `generation` capability advertises image editing, so the framing pushes
+toward the wrong instrument.
+
+**Fix, partial:** vision now works (§3), so the locate step is possible.
+**Unfixed:** nothing suggests "draw on an image" is a code task rather than a
+generation task.
+
+---
+
+## Task 7 — Chained: find a page → download the photo → grayscale → set as wallpaper
+
+**Trace.** 18 provider requests across three turns.
+
+**What happened.** The chain ran; I did not verify the artefacts. The interesting
+part was a measurement error of mine — see §TTFT.
+
+**Harness observation, unfixed:** a multi-step chain has no notion of *step
+completed*. Each turn re-derives where it is from the transcript. `update_plan`
+exists and was never called. A chain of five mini-tasks is exactly where an
+explicit, cheap progress structure would pay, and nothing currently makes reaching
+for one attractive.
+
+---
+
+## Task 8 — "Make a motion graphics animation of the word BOBBLE sliding in"
+
+**Trace.** 45 provider requests. No animation. It eventually spawned a subagent.
+
+**Harness failure — three layers, and the first is severe.**
+
+**8a. Turning generation ON removed every tool in the app.** `generate_video` does
+not exist in a default build (`experimentalGeneration: false` → `gen-tools` never
+loads), so the task was impossible. Enabling the flag produced:
 
 ```
 pi bridge spawned { extensionsDisabled: false }
 pi exited at startup; retrying without extensions
-pi bridge spawned { extensionsDisabled: true }      <- NO TOOLS AT ALL
+pi bridge spawned { extensionsDisabled: true }      ← NO TOOLS AT ALL
 ```
 
-Enabling generation did not add generation. **It removed every tool in the
-app** — browser, files, bash, subagents, all of it — and said nothing. The chat
-still looked completely normal.
-
-**The cause was one line that nothing was keeping.** pi prints it to stderr and
-the app threw it away, so a total loss of capability was diagnosable only by
-bisecting the extension list by hand. After making the app keep it:
+Enabling generation did not add generation — it removed the browser, files, bash,
+subagents, everything, **silently**, and the chat looked normal. The cause was one
+line pi printed to stderr that nothing was keeping:
 
 ```
 Failed to load extension ".../gen-tools/src/index.ts":
   Tool "generate_image" conflicts with ".../harness/src/index.ts"
 ```
 
-Two packages register `generate_image`. pi rejects a duplicate tool name by
-failing the whole extension; a failed extension exits pi; and the app's
-crash-loop guard respawns it **extension-free**. That guard is right to exist and
-was silent about the most consequential thing it can do.
+Two packages register `generate_image`; pi fails the whole extension on a
+duplicate name; a failed extension exits pi; the crash-loop guard respawns it
+extension-free. That guard is right to exist and was silent about the most
+consequential thing it can do.
 
-**Three fixes:**
+**Fix:** one owner per tool name (gen-tools owns generation when loaded — it also
+has `generate_video`, which the harness never had); pi's stderr is retained per
+session; and the fallback now logs `this session has NO TOOLS` with pi's own error
+and raises `pi:extensions-disabled` to the renderer.
 
-1. **One owner per tool name.** `gen-tools` owns generation when it is loaded (it
-   also has `generate_video`, the HyperFrames path, which the harness never had);
-   the harness's image tools stand aside when `PI_GEN_SOCK` is present. Tested
-   both ways.
-2. **Keep pi's stderr.** The last 40 lines are retained per session, so the next
-   extension crash names itself instead of requiring a bisect.
-3. **Say it out loud.** The fallback now logs `consequence: 'this session has NO
-   TOOLS'` with pi's own error, and raises `pi:extensions-disabled` to the
-   renderer so it can be surfaced to the user. A warn in the main log is not a
-   user-visible anything.
+**8b. Still not reachable even with generation on.** The main chat never called
+`capability("generation")`, so `generate_video` stayed out of its 15-tool list.
+**Unfixed.** The capability menu is only consulted when the model already suspects
+it needs something; a task naming a modality we can produce should make that
+obvious.
 
-> Same pattern as §2, one level up: **a silent degrade is worse than a crash.** A
-> crash gets fixed. This shipped.
+**8c. It picked the wrong specialist.** It spawned `image` for a motion task.
+`specialistToolsFor('motion')` does carry `generate_video`, so the path existed.
+**Unfixed** — discoverability, not capability.
 
-### 7a. Still not reachable, even with generation on
-
-With the flag on and the conflict fixed, extensions load and `generate_image`
-appears — but the motion ask *still* did not render, for two softer reasons worth
-recording:
-
-- The main chat never called `capability("generation")`, so `generate_video` was
-  never in its 15-tool list.
-- It spawned an **image** specialist for a **motion** task. `specialistToolsFor
-  ('motion')` does carry `generate_video`, so the path exists; the model just picked
-  the neighbouring role.
-
-Neither is a "the model is too small" problem — both are discoverability, and
-both are fixable in the harness without keying on the task.
+**Separately verified working:** the HyperFrames renderer itself, driven directly
+— 5 frames, 5 distinct, first ≠ last, 5/5 live canvas previews. The renderer is
+not the problem; reaching it is.
 
 ---
 
-## 8. TTFT — the numbers, and they are bad
+## Task 9 — Godot 2D platformer, max effort
 
-Measured from the Enter keypress to the first visible character.
+**Trace.** 29 provider requests. Produced `~/Desktop/platformer_game/` with 14
+files: `project.godot`, `main_scene.tscn`, and seven scripts.
 
-| Run | TTFT | Note |
+**What happened.** A plausible project that was never run. `player.gd` opens with
+`@onready var velocity = Vector2.ZERO`, shadowing `CharacterBody2D`'s built-in
+`velocity` — it would not work. There is one `.tscn` for a game described as
+having a player, platforms, a coin, and an enemy.
+
+**Harness failure 1 — it never verified anything.** No attempt to run Godot, open
+the project, or check a single file loads. This is the same shape as the visual
+review gap: producing an artefact and checking an artefact are different acts, and
+nothing structurally prompts the second.
+
+**Harness failure 2, and it was mine:** `create_production_hierarchy` never
+appeared in the tool list, so the hierarchy was never exercised. **The probe was
+ignoring `EFFORT`** — `settings:set` updates the MAIN process while the RENDERER
+store is what stamps effort on a turn, so a run launched as "max effort" ran at
+the default. **Fixed in the probe.** The max-effort hierarchy remains genuinely
+untested.
+
+---
+
+## Task 10 — Spawning a specialist subagent
+
+**Trace.** Main chat `tools[15]` → child `tools[12]`:
+```
+generate_image, write, read, ls, bash, browser_navigate, browser_read,
+browser_snapshot, browser_click, browser_key, browser_scroll, browser_back
+```
+
+**What happened.** Correct. That is exactly `specialistToolsFor('image')`, and
+note what is **absent** — no `capability`, no `use`, no `spawn_subagent`, none of
+the coding preset. The child is pinned to its role's kit rather than carrying the
+generic preset, which is what stops an image specialist wandering off to read
+source.
+
+---
+
+## TTFT
+
+Measured from the Enter keypress — not from the provider request, because
+everything in between (queueing, a server that has to be started, a prefix that
+got invalidated) is time the user sits through.
+
+**The bug: the cold start was inside the user's first turn.** The chat server was
+started lazily by the first *send*, so every session paid for spawning
+llama-server, loading a 4B Q8 and prefilling the system prompt inside the turn.
+None of that depends on what the user types.
+
+**Fix:** start it at mount, during the seconds someone spends reading an empty
+chat and deciding what to ask.
+
+| | first-paint | first-text |
 |---|---|---|
-| arithmetic (turn 1) | 12,986 ms | includes server start |
-| screenshot (turn 1) | 15,257 ms | includes server start |
-| screenshot (turn 1) | 17,292 ms | includes server start |
-| screenshot (turn 2) | **4,895 ms** | after multimodal relaunch |
-| chained task (turns 1-2) | **no token in 120,000 ms** ×2 | 18 provider requests in flight |
-| motion graphics (turn 1) | **no token in 260,000 ms** | 45 provider requests in flight |
-| motion graphics, retry | **191,506 ms** | worst measured |
+| before | — | 12,986 / 15,257 / 17,292 ms |
+| after, typing immediately | 6,654 ms | 7,237 ms |
+| after, 20s of reading first | **243 ms** | **646 ms** |
+| after, follow-up turn | **239 ms** | **606 ms** |
 
-Two distinct problems hide in that table:
+**A correction to my own earlier finding.** I reported "no visible token for 120
+seconds, twice" and called it the worst UX problem here. That was my *metric*, not
+the app: I was waiting on the first TEXT block, and a tool-calling turn shows tool
+rows long before prose. The screen was not blank. The probe now measures
+first-paint (any block — a tool call counts) alongside first-text, because "is
+this hung" and "is it talking yet" are different questions.
 
-1. **First turn after a server start costs 13-17s** and the UI does not explain
-   the wait.
-2. **A tool-calling turn can show nothing for minutes** while doing real work.
-   45 requests with an empty screen is not a slow model, it is a missing signal —
-   llama-server already emits `prompt_progress`, the provider already normalises
-   it (`promptProgressFraction`), the harness already publishes a fraction. The
-   last hop, to something the user can see, is what is missing.
-
-Two silent minutes reads as a hang, and a user reaches for Stop long before then.
-This is the highest-value UX work left.
+**Confirmed healthy, from the request logs:** the advertised tool set never churns
+between turns (byte-identical across 12 consecutive requests), and capability
+activation appends rather than rewrites (15 → 23, originals in order). The KV
+prefix holds, which is what it is for.
 
 ---
 
-## Still to run
+## Open, ranked
 
-Honest status — these were launched or planned but are not yet analysed, and I
-will not write findings I have not observed:
-
-- Motion-graphics request end-to-end through the chat (the renderer itself is
-  verified separately: 5 frames, 5 distinct, live canvas previews).
-- The long chained task (find → download → transform → set wallpaper).
-- Max-effort Godot game exercising the full hierarchy.
-- Per-run TTFT tables.
-
----
+1. **Nothing structurally prompts verification.** Godot wrote 14 files and ran
+   none; the wallpaper chain never checked its artefacts. Producing and checking
+   are different acts and only the first is currently attractive.
+2. **Capability discovery is pull-only** (§8b). A task naming a modality we can
+   produce should make the capability obvious rather than waiting to be searched
+   for.
+3. **Specialist choice is unguided** (§8c) — `image` was picked for a motion job.
+4. **No step-completion structure for chains** (§7). `update_plan` exists and goes
+   unused.
+5. **Max-effort hierarchy genuinely untested** (§9) now that the probe can set
+   effort.
+6. **Destructive filesystem actions are not checkable after the fact** (§5).
 
 ## Method
 
-- Real Electron build, real profile, real model — `REAL=1` through
-  `apps/desktop/tests/e2e/live-probe.mjs`.
-- Ground truth per turn: `PI_ADV_DEBUG_TOOLS=<file>` logs the EXACT advertised
-  tool list and system-prompt size for every provider request. **A tool the model
-  "should have used" that never appears in that list is a harness failure, not a
-  model failure** — that distinction does most of the work above.
-- Main-process output forwarded, so supervisor/server errors are visible.
-- Screenshots + store dumps per step; TTFT from keypress to first character.
+- Real Electron build, real profile, real model, via
+  `apps/desktop/tests/e2e/live-probe.mjs` with `REAL=1`.
+- `PI_ADV_DEBUG_TOOLS` for the exact per-request tool list.
+- Main-process output forwarded (this is what ended several guessing sessions —
+  the renderer console and `status.error` were both silent for failures that were
+  fully explained in main's log).
+- Screenshots + store dumps per step; TTFT from keypress to first paint and to
+  first text.

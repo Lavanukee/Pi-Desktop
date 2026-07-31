@@ -27,9 +27,8 @@
  * message is immediately followed by its own assistant reply, never two user
  * rows in a row ahead of a single reply.
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,6 +59,13 @@ if (
   process.exit(2);
 }
 
+/*
+ * A temp profile per run is FINE, and I briefly changed it on a wrong theory.
+ * Model selection does NOT live in Electron's userData — it is in
+ * ~/.pi/desktop/settings.json (`modelSelection: {mode:'tier'}`), shared by every
+ * launch regardless of --user-data-dir. So an isolated profile is not why a run
+ * answers "fetch failed"; see the [llm] line below for what actually is.
+ */
 const userDataDir = mkdtempSync(path.join(tmpdir(), 'pi-live-udd-'));
 const env = { ...process.env, PI_E2E: '1' };
 if (!REAL) {
@@ -106,6 +112,36 @@ try {
   const page = await app.firstWindow();
   await page.waitForFunction(() => typeof window.__pi_store === 'function', { timeout: 15000 });
   await page.waitForSelector('[data-testid="composer-input"]', { timeout: 15000 });
+
+  /*
+   * WAIT FOR THE MODEL. Typing at t≈5s while a 4B Q8 is still loading tests the
+   * race, not the feature — every turn answers "fetch failed" and the run looks
+   * like a model failure when it is a probe failure.
+   */
+  if (REAL) {
+    /*
+     * DO NOT GATE — REPORT. The model is chosen by TIER
+     * (settings.json `modelSelection: {mode:'tier'}`) and only resolved to a
+     * concrete model when the server is lazily started on the first turn, so
+     * both `phase` and `status.model` sit empty until then. Two earlier gates
+     * here were wrong for exactly that reason. What IS worth doing is printing
+     * the status and any server error alongside the transcript, so a run that
+     * answers "fetch failed" says WHY instead of looking like a model failure.
+     */
+    const status = await page
+      .evaluate(() => window.__llm_store?.().getState?.().status ?? null)
+      .catch(() => null);
+    console.log(
+      `[llm] phase=${status?.phase ?? '?'} serverRunning=${status?.serverRunning ?? '?'} ` +
+        `model=${status?.model?.id ?? '(unresolved — tier resolves on first turn)'} ` +
+        `${status?.error !== undefined ? `error=${status.error}` : ''}`,
+    );
+    page.on('console', (m) => {
+      const t = m.text();
+      if (/error|fail|refus|ECONN|supervisor|llama/i.test(t))
+        console.log(`[console] ${t.slice(0, 300)}`);
+    });
+  }
 
   for (let i = 0; i < MESSAGES.length; i++) {
     const msg = MESSAGES[i];

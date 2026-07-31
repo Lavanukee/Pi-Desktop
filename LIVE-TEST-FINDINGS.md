@@ -381,6 +381,105 @@ now parsed and displayed, but cannot be **executed** — that path talks to
 llama-server directly, outside pi, so there is no agent loop to run it. And a send
 parked mid-await when Pause is pressed still dispatches afterwards.
 
+
+---
+
+## 7. Turning generation ON removed every tool in the app — FIXED
+
+The single worst bug found in this whole exercise, and it was invisible.
+
+Motion graphics never worked in a default build, for a reason that had nothing to
+do with the renderer I built and verified: `experimentalGeneration` is **false**,
+so `gen-tools` never loads and `generate_image` / `generate_video` **do not
+exist**. The model asked to make an animation spent **45 provider requests**
+flailing at a tool that was not there.
+
+So I turned the flag on. That is when it got interesting:
+
+```
+pi bridge spawned { extensionsDisabled: false }
+pi exited at startup; retrying without extensions
+pi bridge spawned { extensionsDisabled: true }      <- NO TOOLS AT ALL
+```
+
+Enabling generation did not add generation. **It removed every tool in the
+app** — browser, files, bash, subagents, all of it — and said nothing. The chat
+still looked completely normal.
+
+**The cause was one line that nothing was keeping.** pi prints it to stderr and
+the app threw it away, so a total loss of capability was diagnosable only by
+bisecting the extension list by hand. After making the app keep it:
+
+```
+Failed to load extension ".../gen-tools/src/index.ts":
+  Tool "generate_image" conflicts with ".../harness/src/index.ts"
+```
+
+Two packages register `generate_image`. pi rejects a duplicate tool name by
+failing the whole extension; a failed extension exits pi; and the app's
+crash-loop guard respawns it **extension-free**. That guard is right to exist and
+was silent about the most consequential thing it can do.
+
+**Three fixes:**
+
+1. **One owner per tool name.** `gen-tools` owns generation when it is loaded (it
+   also has `generate_video`, the HyperFrames path, which the harness never had);
+   the harness's image tools stand aside when `PI_GEN_SOCK` is present. Tested
+   both ways.
+2. **Keep pi's stderr.** The last 40 lines are retained per session, so the next
+   extension crash names itself instead of requiring a bisect.
+3. **Say it out loud.** The fallback now logs `consequence: 'this session has NO
+   TOOLS'` with pi's own error, and raises `pi:extensions-disabled` to the
+   renderer so it can be surfaced to the user. A warn in the main log is not a
+   user-visible anything.
+
+> Same pattern as §2, one level up: **a silent degrade is worse than a crash.** A
+> crash gets fixed. This shipped.
+
+### 7a. Still not reachable, even with generation on
+
+With the flag on and the conflict fixed, extensions load and `generate_image`
+appears — but the motion ask *still* did not render, for two softer reasons worth
+recording:
+
+- The main chat never called `capability("generation")`, so `generate_video` was
+  never in its 15-tool list.
+- It spawned an **image** specialist for a **motion** task. `specialistToolsFor
+  ('motion')` does carry `generate_video`, so the path exists; the model just picked
+  the neighbouring role.
+
+Neither is a "the model is too small" problem — both are discoverability, and
+both are fixable in the harness without keying on the task.
+
+---
+
+## 8. TTFT — the numbers, and they are bad
+
+Measured from the Enter keypress to the first visible character.
+
+| Run | TTFT | Note |
+|---|---|---|
+| arithmetic (turn 1) | 12,986 ms | includes server start |
+| screenshot (turn 1) | 15,257 ms | includes server start |
+| screenshot (turn 1) | 17,292 ms | includes server start |
+| screenshot (turn 2) | **4,895 ms** | after multimodal relaunch |
+| chained task (turns 1-2) | **no token in 120,000 ms** ×2 | 18 provider requests in flight |
+| motion graphics (turn 1) | **no token in 260,000 ms** | 45 provider requests in flight |
+| motion graphics, retry | **191,506 ms** | worst measured |
+
+Two distinct problems hide in that table:
+
+1. **First turn after a server start costs 13-17s** and the UI does not explain
+   the wait.
+2. **A tool-calling turn can show nothing for minutes** while doing real work.
+   45 requests with an empty screen is not a slow model, it is a missing signal —
+   llama-server already emits `prompt_progress`, the provider already normalises
+   it (`promptProgressFraction`), the harness already publishes a fraction. The
+   last hop, to something the user can see, is what is missing.
+
+Two silent minutes reads as a hang, and a user reaches for Stop long before then.
+This is the highest-value UX work left.
+
 ---
 
 ## Still to run

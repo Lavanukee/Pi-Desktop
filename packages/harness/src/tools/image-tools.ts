@@ -106,11 +106,35 @@ const EditParams = Type.Object({
  * can't honour, so there is nothing to fail and nothing to hang. Pass an
  * explicit bridge in tests.
  */
+/**
+ * Is the dedicated gen-tools extension going to provide these instead?
+ *
+ * It publishes its own bridge env (`PI_GEN_SOCK`) and is loaded only when the
+ * experimental-generation flag is on. When it IS loaded, both packages tried to
+ * register `generate_image`, pi rejected the duplicate, and the whole gen-tools
+ * extension failed to load — which made pi EXIT AT STARTUP, which made the app
+ * silently respawn it with NO EXTENSIONS AT ALL.
+ *
+ * So turning generation on did not add generation: it removed every tool in the
+ * app — browser, files, everything — and said nothing. Measured live; the cause
+ * was one line of pi's stderr that nothing was keeping.
+ *
+ * One owner per tool name. gen-tools owns generation when it is present (it also
+ * has `generate_video`, the HyperFrames path, which this module never had), and
+ * these register only when it is absent.
+ */
+function genToolsWillRegister(env: Record<string, string | undefined>): boolean {
+  const sock = env.PI_GEN_SOCK;
+  return typeof sock === 'string' && sock.length > 0;
+}
+
 export function registerImageTools(
   pi: ExtensionAPI,
   bridge: ImageBridge | null = imageBridgeFromEnv(),
+  env: Record<string, string | undefined> = process.env,
 ): void {
   if (bridge === null) return;
+  if (genToolsWillRegister(env)) return;
 
   pi.registerTool({
     name: GENERATE_IMAGE_TOOL,

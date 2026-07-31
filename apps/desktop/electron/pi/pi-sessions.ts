@@ -84,6 +84,8 @@ export interface PiSessionsDeps<S extends SessionSender> {
   sendEvent: (sender: S, event: PiBridgeEvent) => void;
   /** Ask the renderer to switch vision on (see 'llm:vision-wanted'). */
   sendVisionWanted?: (sender: S) => void;
+  /** Tell the renderer this session came up with NO tools, and why. */
+  sendExtensionsDisabled?: (sender: S, reason: string) => void;
   log: SessionLog;
 }
 
@@ -129,6 +131,8 @@ const DIALOG_METHODS: ReadonlySet<string> = new Set([
 
 interface SessionEntry {
   readonly bridge: SessionBridge;
+  /** Recent lines pi printed to stderr — the only record of WHY it died. */
+  readonly stderrTail: string[];
   /** The spawn request, kept so pi:restart can respawn with the same cwd/session. */
   readonly req: PiInvokeMap['pi:start']['request'];
   /**
@@ -197,9 +201,25 @@ export function createPiSessions<S extends SessionSender>(deps: PiSessionsDeps<S
       });
     }
     const pendingDialogs = new Map<string, RpcExtensionUIRequest>();
+    /*
+     * KEEP pi's STDERR. When an extension crashes pi at startup the bridge is
+     * simply dead by the time `ready()` resolves, and the reason — the actual
+     * stack pi printed — was going nowhere. So a total loss of every tool was
+     * diagnosable only by bisecting the extension list by hand. Measured:
+     * turning on experimentalGeneration killed pi at startup, the app silently
+     * fell back to a tool-free session, and nothing anywhere said why.
+     */
+    const stderrTail: string[] = [];
     const bridge = deps.createBridge(
       req,
       (event) => {
+        if ((event as { type?: string }).type === '_stderr') {
+          const text = (event as unknown as { text?: string }).text ?? '';
+          if (text.trim() !== '') {
+            stderrTail.push(text);
+            if (stderrTail.length > 40) stderrTail.shift();
+          }
+        }
         if (event.type === 'extension_ui_request' && DIALOG_METHODS.has(event.method)) {
           pendingDialogs.set(event.id, event);
         }
@@ -222,7 +242,7 @@ export function createPiSessions<S extends SessionSender>(deps: PiSessionsDeps<S
     // Only reachable once the previous bridge is dead (liveEntry gates on
     // alive), but dispose explicitly so a replaced bridge is never orphaned.
     entries.get(wcId)?.bridge.dispose();
-    const entry: SessionEntry = { bridge, req, pendingDialogs };
+    const entry: SessionEntry = { bridge, req, pendingDialogs, stderrTail };
     entries.set(wcId, entry);
     deps.log.info('pi bridge spawned', {
       wcId,
@@ -246,9 +266,23 @@ export function createPiSessions<S extends SessionSender>(deps: PiSessionsDeps<S
     const entry = attach(sender, req);
     await entry.bridge.ready();
     if (!entry.bridge.alive) {
-      deps.log.warn('pi exited at startup; retrying without extensions', { wcId: sender.id });
+      /*
+       * A TOOL-FREE SESSION IS NOT A WORKING SESSION, whatever the comment above
+       * says. Degrading rather than crash-looping is right, but this was SILENT:
+       * the model came up with zero tools and the user was told nothing, so every
+       * request afterwards failed for a reason nobody could see. Say which
+       * extension list died and what pi printed, and tell the renderer so it can
+       * surface it — a warn in the main log is not a user-visible anything.
+       */
+      const why = entry.stderrTail.join('').trim().slice(-1200);
+      deps.log.warn('pi exited at startup; retrying WITHOUT ANY EXTENSIONS', {
+        wcId: sender.id,
+        consequence: 'this session has NO TOOLS — no browser, no files, no generation',
+        piStderr: why === '' ? '(pi printed nothing)' : why,
+      });
       const safe = attach(sender, req, true);
       await safe.bridge.ready();
+      if (!sender.isDestroyed()) deps.sendExtensionsDisabled?.(sender, why);
       return safe;
     }
     return entry;

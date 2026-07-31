@@ -172,3 +172,42 @@ describe('edit_image', () => {
     expect(desc).toContain('no mask');
   });
 });
+
+/*
+ * ONE OWNER PER TOOL NAME.
+ *
+ * gen-tools (loaded only behind the experimental-generation flag) also registers
+ * `generate_image`. pi rejects a duplicate tool name by failing the whole
+ * extension — which made pi EXIT AT STARTUP, which made the desktop app silently
+ * respawn it with NO EXTENSIONS AT ALL. Turning generation on therefore removed
+ * every tool in the app, silently. Verified live before the fix:
+ *   Failed to load extension ".../gen-tools/src/index.ts":
+ *     Tool "generate_image" conflicts with ".../harness/src/index.ts"
+ */
+describe('generation ownership', () => {
+  const bridge = {
+    generateImage: async () => ({ ok: true as const, images: [] }),
+    editImage: async () => ({ ok: true as const, images: [] }),
+  } as unknown as ImageBridge;
+
+  it('stands aside when gen-tools is present', () => {
+    const names: string[] = [];
+    const pi = { registerTool: (d: { name: string }) => names.push(d.name) } as never;
+    registerImageTools(pi, bridge, { PI_GEN_SOCK: '/tmp/gen.sock' });
+    expect(names).toEqual([]);
+  });
+
+  it('registers normally when gen-tools is absent', () => {
+    const names: string[] = [];
+    const pi = { registerTool: (d: { name: string }) => names.push(d.name) } as never;
+    registerImageTools(pi, bridge, {});
+    expect(names).toContain('generate_image');
+  });
+
+  it('treats an empty socket as absent', () => {
+    const names: string[] = [];
+    const pi = { registerTool: (d: { name: string }) => names.push(d.name) } as never;
+    registerImageTools(pi, bridge, { PI_GEN_SOCK: '' });
+    expect(names).toContain('generate_image');
+  });
+});

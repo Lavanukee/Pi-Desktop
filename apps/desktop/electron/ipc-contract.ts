@@ -572,6 +572,12 @@ export type AppEventMap = {
    * does the whole sequence, respawn included, so it owns this.
    */
   'llm:vision-wanted': Record<string, never>;
+  /**
+   * pi crashed at startup and was respawned with NO extensions, so this session
+   * has no tools at all. Carries what pi printed, because otherwise a total loss
+   * of capability is indistinguishable from a model that is simply refusing.
+   */
+  'pi:extensions-disabled': { reason: string };
   'llm:download-progress': {
     modelId: string;
     file: string;

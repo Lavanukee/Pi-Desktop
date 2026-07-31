@@ -182,6 +182,8 @@ const sessions = createPiSessions<WebContents>({
   },
   sendEvent: (sender, event) => events.send(sender, 'pi:event', event),
   sendVisionWanted: (sender) => events.send(sender, 'llm:vision-wanted', {}),
+  sendExtensionsDisabled: (sender, reason) =>
+    events.send(sender, 'pi:extensions-disabled', { reason }),
   log,
 });
 

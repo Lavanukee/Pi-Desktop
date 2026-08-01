@@ -165,6 +165,32 @@ export function assembleServerArgs(cfg: LaunchConfig): string[] {
     '70',
     '--dry-penalty-last-n',
     '4096',
+    /*
+     * AND CLEAR THE DEFAULT SEQUENCE BREAKERS, or none of the above can fire on
+     * the content that loops most.
+     *
+     * llama.cpp's DRY defaults to breaking its match on '\n', ':', '"' and '*',
+     * and a breaker RESETS the matched run. A repeating unit like
+     *   "fileguid_version": 1,\n
+     * contains three of the four, so the longest matchable run is a couple of
+     * tokens — nowhere near --dry-allowed-length 70 — and DRY is structurally
+     * INERT on JSON, config and most structured text. Which is exactly what a
+     * `write` tool argument is: jedd caught a run emitting 1383 identical lines
+     * into a Godot project file and asked, reasonably, how that happens with DRY
+     * configured. It happens because DRY was never able to see it.
+     *
+     * MEASURED on this model, continuing a JSON block already repeating,
+     * 300 tokens, everything else identical:
+     *   default breakers  → 30 repeats, still looping
+     *   breakers cleared  →  3 repeats, broke out
+     *
+     * Safe for code, which was the reason the breakers looked desirable: the
+     * penalty only starts past 70 matched tokens, and genuinely different lines
+     * (imports, fields, cases) never build a run that long. Only real degenerate
+     * repetition does.
+     */
+    '--dry-sequence-breaker',
+    'none',
   );
 
   // Preserve the model's <think> reasoning across the WHOLE history, not just the

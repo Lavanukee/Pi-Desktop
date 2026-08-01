@@ -424,3 +424,32 @@ describe('LlamaServerSupervisor lifecycle', () => {
     expect(events.some((e) => e.type === 'exit')).toBe(true);
   });
 });
+
+/*
+ * DRY MUST BE ABLE TO SEE STRUCTURED TEXT.
+ *
+ * llama.cpp's DRY defaults to breaking its match on '\n', ':', '"' and '*', and
+ * a breaker RESETS the matched run — so on JSON/config content the longest run
+ * is a couple of tokens, far below --dry-allowed-length, and DRY never fires.
+ * That is how a write tool argument reached 1383 identical lines with DRY fully
+ * configured. Measured on the 4B, continuing an already-repeating JSON block:
+ * default breakers 30 repeats (still looping), cleared 3 (broke out).
+ */
+describe('DRY sequence breakers', () => {
+  const base = { modelPath: '/m.gguf', host: '127.0.0.1', port: 8080 } as const;
+
+  it('clears the defaults so DRY applies to JSON and config text', () => {
+    const args = assembleServerArgs({ ...base, launchMode: 'fast-text' });
+    const i = args.indexOf('--dry-sequence-breaker');
+    expect(i).toBeGreaterThan(-1);
+    expect(args[i + 1]).toBe('none');
+  });
+
+  it('keeps the allowed run long enough not to punish real code', () => {
+    // The breakers existed to protect legitimately repetitive text; the allowed
+    // length is what protects it now, and it has to stay generous.
+    const args = assembleServerArgs({ ...base, launchMode: 'fast-text' });
+    const i = args.indexOf('--dry-allowed-length');
+    expect(Number(args[i + 1])).toBeGreaterThanOrEqual(64);
+  });
+});

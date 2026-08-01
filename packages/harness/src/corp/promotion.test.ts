@@ -19,22 +19,26 @@ describe('PROMOTION_SYSTEM_PROMPT', () => {
     expect(PROMOTION_SYSTEM_PROMPT.toLowerCase()).toContain('one focused pass');
   });
 
-  it('bounds the worker: stop the moment the promotion tool is called (no ramble)', () => {
-    expect(PROMOTION_SYSTEM_PROMPT).toContain('YOUR job here is complete');
-    expect(PROMOTION_SYSTEM_PROMPT).toContain('output nothing after the call');
+  /* The CEO no longer goes silent after delegating — it still reviews what comes
+   * back. What it must not do is build the same thing in parallel. */
+  it('bounds the worker: hand it over, do not build it too', () => {
+    expect(PROMOTION_SYSTEM_PROMPT).toContain('do not try to build it yourself in parallel');
+    expect(PROMOTION_SYSTEM_PROMPT).toContain('delegating IS how the user');
   });
 });
 
 describe('CREATE_PRODUCTION_HIERARCHY_TOOL', () => {
-  it('is a well-formed OpenAI function tool with reason + divisions params', () => {
+  it('is a well-formed OpenAI function tool taking a MESSAGE', () => {
     const t = CREATE_PRODUCTION_HIERARCHY_TOOL;
     expect(t.type).toBe('function');
     expect(t.function.name).toBe(CREATE_PRODUCTION_HIERARCHY);
-    // Description makes the WHEN explicit (outsource a large build to the manager).
-    expect(t.function.description.toLowerCase()).toContain('outsource');
+    // The surface is a message, not an org-design form — divisions were REQUIRED
+    // and that entry fee is what stopped the tool being used at all.
+    expect(t.function.parameters).toMatchObject({ required: ['message'] });
+    expect(t.function.description.toLowerCase()).toContain('manager');
     expect(t.function.description.toLowerCase()).toContain('manager');
     // …and names the CEO↔manager channel it promises.
-    expect(t.function.description).toContain('speak_to_manager');
+    expect(t.function.description).toContain('talk to them again');
 
     const params = t.function.parameters as {
       type: string;
@@ -42,7 +46,7 @@ describe('CREATE_PRODUCTION_HIERARCHY_TOOL', () => {
       properties: Record<string, { type: string; items?: { required?: string[] } }>;
     };
     expect(params.type).toBe('object');
-    expect(params.required).toEqual(expect.arrayContaining(['reason', 'divisions']));
+    expect(params.required).toEqual(['message']);
     expect(params.properties.reason?.type).toBe('string');
     expect(params.properties.divisions?.type).toBe('array');
     expect(params.properties.divisions?.items?.required).toEqual(
@@ -57,7 +61,7 @@ describe('parseCreateHierarchyArgs', () => {
       reason: '  too big  ',
       divisions: [{ name: '  Frontend ', purpose: ' the UI ' }],
     });
-    expect(got).toEqual({
+    expect(got).toMatchObject({
       reason: 'too big',
       divisions: [{ name: 'Frontend', purpose: 'the UI' }],
     });
@@ -86,7 +90,7 @@ describe('parseCreateHierarchyArgs', () => {
 
   it('tolerates a missing reason (defaults to empty) when divisions are valid', () => {
     const got = parseCreateHierarchyArgs({ divisions: [{ name: 'A', purpose: 'p' }] });
-    expect(got).toEqual({ reason: '', divisions: [{ name: 'A', purpose: 'p' }] });
+    expect(got).toMatchObject({ reason: '', divisions: [{ name: 'A', purpose: 'p' }] });
   });
 });
 
@@ -156,12 +160,12 @@ describe('applyCreateHierarchy', () => {
 describe('createPromotionGuard — idempotent-terminal (J5)', () => {
   const args: CreateHierarchyArgs = { reason: 'r', divisions: [{ name: 'A', purpose: 'a' }] };
 
-  it('the FIRST valid call records the hierarchy and returns the terminal DONE ack', () => {
+  it('the FIRST valid call records the hierarchy and hands it to the manager', () => {
     const guard = createPromotionGuard();
     const first = guard.handle(args);
     expect(first.created).toBe(true);
     expect(first.done).toBe(true);
-    expect(first.args).toEqual({ reason: 'r', divisions: [{ name: 'A', purpose: 'a' }] });
+    expect(first.args).toMatchObject({ reason: 'r', divisions: [{ name: 'A', purpose: 'a' }] });
     expect(first.ack).toBe(HIERARCHY_CREATED_ACK);
     expect(guard.recorded).toEqual(first.args);
   });
@@ -191,27 +195,30 @@ describe('createPromotionGuard — idempotent-terminal (J5)', () => {
     expect(guard.recorded).toBeDefined();
   });
 
-  it('the acks decisively tell the model it is DONE (output nothing, call no tool)', () => {
-    expect(HIERARCHY_CREATED_ACK).toContain('DONE');
-    expect(HIERARCHY_CREATED_ACK.toLowerCase()).toContain('call no tool');
-    expect(HIERARCHY_ALREADY_CREATED_ACK.toLowerCase()).toContain('already exists');
-    expect(HIERARCHY_ALREADY_CREATED_ACK.toLowerCase()).toContain('call no further tool');
+  it('the acks say the manager owns it, without closing the conversation', () => {
+    expect(HIERARCHY_CREATED_ACK).toContain('Your manager has it');
+    expect(HIERARCHY_CREATED_ACK.toLowerCase()).toContain('do not start building it yourself');
+    expect(HIERARCHY_ALREADY_CREATED_ACK.toLowerCase()).toContain('already has this build');
+    expect(HIERARCHY_ALREADY_CREATED_ACK.toLowerCase()).toContain('wait for what they deliver');
   });
 });
 
 describe('PROMOTION one-shot messaging (J5)', () => {
-  it('the system prompt says to call it EXACTLY ONCE and never twice', () => {
-    expect(PROMOTION_SYSTEM_PROMPT).toContain('EXACTLY ONCE');
-    expect(PROMOTION_SYSTEM_PROMPT.toLowerCase()).toContain('never call it a second time');
+  it('the system prompt tells the CEO it need not design divisions', () => {
+    expect(PROMOTION_SYSTEM_PROMPT).toContain(
+      "splitting the work across their engineers is the manager's own first job",
+    );
+    expect(PROMOTION_SYSTEM_PROMPT.toLowerCase()).toContain(
+      'do not try to build it yourself in parallel',
+    );
     // The original bounded-stop language is preserved.
-    expect(PROMOTION_SYSTEM_PROMPT).toContain('YOUR job here is complete');
-    expect(PROMOTION_SYSTEM_PROMPT).toContain('output nothing after the call');
+    expect(PROMOTION_SYSTEM_PROMPT).toContain('do not try to build it yourself in parallel');
   });
 
-  it('the tool description is one-shot + terminal (call again does nothing)', () => {
+  it('the tool description frames it as a conversation, not a form', () => {
     const d = CREATE_PRODUCTION_HIERARCHY_TOOL.function.description;
-    expect(d).toContain('EXACTLY ONCE');
-    expect(d.toLowerCase()).toContain('one-shot');
-    expect(d.toLowerCase()).toContain('calling it again does nothing');
+    expect(d).toContain('conversation, not a');
+    expect(d.toLowerCase()).toContain('conversation, not a form');
+    expect(d.toLowerCase()).toContain('talk to them again at any time');
   });
 });

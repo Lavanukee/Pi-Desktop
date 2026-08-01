@@ -44,14 +44,27 @@ const DivisionSpec = Type.Object({
 });
 
 const PromoteParams = Type.Object({
-  reason: Type.String({
+  /*
+   * A MESSAGE, not a form. `divisions` used to be REQUIRED, which made handing
+   * work over an org-design exercise the CEO had to complete before anything
+   * could start — and splitting the work is the manager's own first instruction.
+   * See TALK_TO_MANAGER in ./promotion.ts for the run this cost.
+   */
+  message: Type.String({
     description:
-      'Why this task needs a hierarchy rather than a single pass (what makes it too large or multi-part).',
+      'What you want built, in your own words — the full vision, in as much detail as you have. ' +
+      'The manager has not spoken to the user and only knows what you tell them.',
   }),
-  divisions: Type.Array(DivisionSpec, {
-    description:
-      'The divisions to create — one per distinct area of the work. Prefer a few focused divisions over one catch-all.',
-  }),
+  reason: Type.Optional(
+    Type.String({ description: 'Optional: why this needs a team rather than a single pass.' }),
+  ),
+  divisions: Type.Optional(
+    Type.Array(DivisionSpec, {
+      description:
+        'OPTIONAL. Only if you already have a shape in mind. Leave it out and the manager ' +
+        'splits the work itself.',
+    }),
+  ),
 });
 export type PromoteInput = Static<typeof PromoteParams>;
 
@@ -81,13 +94,13 @@ export function registerCreateHierarchyTool(pi: ExtensionAPI, deps: PromoteToolD
 
   pi.registerTool({
     name: CREATE_PRODUCTION_HIERARCHY,
-    label: 'Create Production Hierarchy',
+    label: 'Talk to Manager',
     description: CREATE_PRODUCTION_HIERARCHY_TOOL.function.description,
     promptSnippet:
-      'create_production_hierarchy: hand a large, professional build to a manager + team of engineers who deliver it back for your review (high/max effort only).',
+      'talk_to_manager: hand a large build to your manager and their team of engineers, who deliver it back for your review (high/max effort only).',
     promptGuidelines: [
-      'Call this ONLY for a large, multi-part build that a single pass cannot do well — not for a question, a quick edit, or a one-file task (do those yourself).',
-      'Call it EXACTLY ONCE: the hierarchy is created the instant you call it; you are then done — output nothing and call no tool after.',
+      'Use it for a large, multi-part build that a single pass cannot do well — not for a question, a quick edit, or a one-file task (do those yourself).',
+      "Just send the message: say what you want built, in full. You do not need to design divisions — splitting the work is the manager's job.",
     ],
     parameters: PromoteParams,
     async execute(_toolCallId, params: PromoteInput, _signal, _onUpdate, ctx) {
@@ -110,7 +123,7 @@ export function registerCreateHierarchyTool(pi: ExtensionAPI, deps: PromoteToolD
           content: [
             {
               type: 'text',
-              text: 'create_production_hierarchy needs a "reason" and at least one division (each with a name and purpose).',
+              text: 'talk_to_manager needs a "message" — tell the manager what you want built.',
             },
           ],
           isError: true,

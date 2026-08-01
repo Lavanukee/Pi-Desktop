@@ -27,13 +27,42 @@ import { emptyOrgChart, type OrgChart, type OrgNode } from './org-chart.js';
  * the corporation works (the worker doesn't need to know). NOT wired into the
  * live chat path in slice 1; used by the test driver and future dispatch.
  */
-export const PROMOTION_SYSTEM_PROMPT = `You are the CEO, and you have just formed the vision. Now you decide HOW it gets built. You do NOT build it yourself — you connect to a MANAGER who does, by calling create_production_hierarchy.
+/*
+ * THE CEO TALKS TO THE MANAGER. It does not design a corporation first.
+ *
+ * jedd, watching a max-effort run build a whole game solo with this tool sitting
+ * unused in its list: "I thought we renamed the create hierarchy to just be the
+ * talk to tool that the original model (which IS the CEO) just talks to the
+ * manager with."
+ *
+ * The old surface was `create_production_hierarchy(reason, divisions[])` — an
+ * ORG-DESIGN EXERCISE as the entry fee. Before any work could start the CEO had
+ * to invent named divisions with stated purposes, commit one-shot, and then go
+ * silent ("output nothing, call no tool after"). Faced with that versus just
+ * doing the task, it did the task: measured, a full 2D-platformer request at max
+ * effort with this tool advertised produced eight solo turns and zero delegation.
+ *
+ * And the entry fee was redundant work. The MANAGER's first instruction is
+ * literally "YOUR FIRST ACTION IS TO SPLIT THE WORK AND HAND IT OUT" — splitting
+ * is its job, done with the whole vision in hand. Charging the CEO for it up
+ * front bought nothing and cost the delegation.
+ *
+ * So the tool is now a message: say what you want built. Divisions stay
+ * available for a CEO that genuinely has a shape in mind, and are derived from
+ * the message when it does not.
+ */
+export const TALK_TO_MANAGER = 'talk_to_manager';
 
-If the task is genuinely small enough to finish well in ONE focused pass, just do it. But for anything larger or multi-part — which is most real projects — call create_production_hierarchy EXACTLY ONCE with the divisions you would set up (name + purpose). That single call hands the ENTIRE build to a highly capable manager and their team of engineers and specialized divisions: they turn your vision into a working product and deliver it back to you for review.
+/** Back-compat alias — the host, the corp run and the effort gate key off this. */
+export const CREATE_PRODUCTION_HIERARCHY = TALK_TO_MANAGER;
 
-The manager is your partner and is very capable — they and their team handle all the technical implementation, so you are free to focus on the USER and the highest level of abstraction, and to keep the user informed about what is going on. You can talk to the manager any time through the speak_to_manager tool: ask them anything, check on progress, or ask them to iterate on, change, or produce anything you'd like. They are friendly and here to help — don't hesitate to ask.
+export const PROMOTION_SYSTEM_PROMPT = `You are the CEO, and you have just formed the vision. Now you decide HOW it gets built. You do NOT build it yourself — you hand it to your MANAGER by calling ${TALK_TO_MANAGER}.
 
-Understand this so you are never confused: delegating with create_production_hierarchy IS how the user's request gets fulfilled — it is NOT leaving the work undone. The instant you call it, your team owns the build and YOUR job here is complete: output nothing after the call, do not try to build anything yourself, and never call it a second time (a repeat does nothing). If a tool tells you that you are finished, that is correct — trust it.`;
+If the task is genuinely small enough to finish well in ONE focused pass, just do it. But for anything larger or multi-part — which is most real projects — ${TALK_TO_MANAGER} and tell them what you want built. Say it in your own words, in full: they have not spoken to the user and know only what you tell them, so include how it should look and feel, not just what it must do. You do NOT need to design divisions or an org chart — splitting the work across their engineers is the manager's own first job, and they do it better with the whole vision in hand.
+
+The manager is your partner and is very capable — they and their team handle all the technical implementation, so you are free to focus on the USER and the highest level of abstraction, and to keep the user informed about what is going on. This is a conversation, not a hand-off: talk to them again any time to ask how something works, check progress, change direction, or commission more.
+
+Understand this so you are never confused: delegating IS how the user's request gets fulfilled — it is NOT leaving the work undone. Once the manager owns the build, do not try to build it yourself in parallel.`;
 
 /**
  * The system prompt for the SOLO EXECUTION turn — the two lower effort levels, where
@@ -47,7 +76,6 @@ export const SOLO_EXECUTION_PROMPT = `You are a highly capable assistant working
 If it is a build, create the real, working files and make sure they actually run. If it is a question or a piece of research, answer it directly and well. Do the work yourself in this one pass: do not delegate, do not form a formal "vision" document, and do not ask permission to proceed — just do the task and finish.`;
 
 /** The tool name the worker calls to promote itself into a corporation. */
-export const CREATE_PRODUCTION_HIERARCHY = 'create_production_hierarchy';
 
 /** A minimal OpenAI-compatible function-tool schema shape (no `any`). */
 export interface OpenAiFunctionTool {
@@ -71,19 +99,32 @@ export const CREATE_PRODUCTION_HIERARCHY_TOOL: OpenAiFunctionTool = {
   function: {
     name: CREATE_PRODUCTION_HIERARCHY,
     description:
-      "Use this to outsource a large build — anything that needs to be professional and high-quality — instead of attempting it yourself. It connects you to a MANAGER who takes the vision you provide and produces a working application for you. The manager is highly capable and well-equipped: they have a team of engineers and specialized divisions and can complete any task you ask of them, then deliver the finished product back to you for review. You can always ask them to iterate on the project, change it, or produce anything else you'd like later on — you talk to them any time through the speak_to_manager tool. They're friendly and here to help you achieve the user's vision, so don't hesitate to ask them anything; they and their team handle all the technical implementation, which frees you to focus on the user and the highest level of abstraction and to keep the user informed about what's going on. Provide a clear reason and the divisions to set up. Call this EXACTLY ONCE: it is one-shot — the hierarchy is created the moment you call it, you are then DONE (output nothing, call no tool after), and calling it again does nothing.",
+      'Hand this build to your MANAGER. Send them what you want made, in your own words, and ' +
+      'they take it from there — they split the work across their engineers, run it, check it, ' +
+      'and deliver the finished product back to you for review. This is a conversation, not a ' +
+      'form: you can talk to them again at any time to change direction, ask how something ' +
+      'works, or commission more. Use it for a large or multi-part build rather than attempting ' +
+      'it alone; for a question, a quick edit, or a single file, just do it yourself. Give them ' +
+      'the FULL vision, including anything the user said about how it should look or feel — ' +
+      'they have not spoken to the user and only know what you tell them.',
     parameters: {
       type: 'object',
       properties: {
-        reason: {
+        message: {
           type: 'string',
           description:
-            'Why this task needs a hierarchy rather than a single pass (what makes it too large or multi-part).',
+            'What you want built, in your own words — the full vision, in as much detail as you ' +
+            'have. This is the brief the manager works from.',
+        },
+        reason: {
+          type: 'string',
+          description: 'Optional: why this needs a team rather than a single pass.',
         },
         divisions: {
           type: 'array',
           description:
-            'The divisions to create — one per distinct area of the work. Prefer a few focused divisions over one catch-all.',
+            'OPTIONAL. Only if you already have a shape in mind — one entry per distinct area. ' +
+            'Leave it out and the manager splits the work itself, which is its job.',
           items: {
             type: 'object',
             properties: {
@@ -100,7 +141,7 @@ export const CREATE_PRODUCTION_HIERARCHY_TOOL: OpenAiFunctionTool = {
           },
         },
       },
-      required: ['reason', 'divisions'],
+      required: ['message'],
     },
   },
 };
@@ -114,6 +155,9 @@ export interface HierarchyDivisionSpec {
 /** The validated arguments of a {@link CREATE_PRODUCTION_HIERARCHY} call. */
 export interface CreateHierarchyArgs {
   readonly reason: string;
+  /** What the CEO actually asked the manager to build — the brief. Optional so
+   * existing constructors (and a divisions-only call) stay valid. */
+  readonly message?: string;
   readonly divisions: readonly HierarchyDivisionSpec[];
 }
 
@@ -126,19 +170,35 @@ export interface CreateHierarchyArgs {
 export function parseCreateHierarchyArgs(raw: unknown): CreateHierarchyArgs | undefined {
   if (raw === null || typeof raw !== 'object') return undefined;
   const obj = raw as Record<string, unknown>;
+  const message = typeof obj.message === 'string' ? obj.message.trim() : '';
   const reason = typeof obj.reason === 'string' ? obj.reason.trim() : '';
-  if (!Array.isArray(obj.divisions)) return undefined;
   const divisions: HierarchyDivisionSpec[] = [];
-  for (const d of obj.divisions) {
-    if (d === null || typeof d !== 'object') continue;
-    const entry = d as Record<string, unknown>;
-    const name = typeof entry.name === 'string' ? entry.name.trim() : '';
-    const purpose = typeof entry.purpose === 'string' ? entry.purpose.trim() : '';
-    if (name === '' || purpose === '') continue;
-    divisions.push({ name, purpose });
+  if (Array.isArray(obj.divisions)) {
+    for (const d of obj.divisions) {
+      if (d === null || typeof d !== 'object') continue;
+      const entry = d as Record<string, unknown>;
+      const name = typeof entry.name === 'string' ? entry.name.trim() : '';
+      const purpose = typeof entry.purpose === 'string' ? entry.purpose.trim() : '';
+      if (name === '' || purpose === '') continue;
+      divisions.push({ name, purpose });
+    }
   }
-  if (divisions.length === 0) return undefined;
-  return { reason, divisions };
+  /*
+   * A MESSAGE IS ENOUGH. This used to require a non-empty `divisions[]` and
+   * reject anything else, which made handing work over an org-design exercise —
+   * see the note on TALK_TO_MANAGER. Splitting the work is the MANAGER's first
+   * instruction, so when the CEO has not named divisions we create the one team
+   * that covers the brief and let the manager divide it with the whole vision in
+   * hand.
+   *
+   * A call with neither a message nor divisions is still rejected: that is a
+   * genuinely empty hand-off and the manager would have nothing to work from.
+   */
+  if (message === '' && divisions.length === 0) return undefined;
+  if (divisions.length === 0) {
+    divisions.push({ name: 'Production', purpose: message });
+  }
+  return { reason: reason !== '' ? reason : message, message, divisions };
 }
 
 // --- Idempotent-terminal promotion guard (J5) --------------------------------
@@ -158,12 +218,24 @@ export function parseCreateHierarchyArgs(raw: unknown): CreateHierarchyArgs | un
 /** The TERMINAL ack for the FIRST `create_production_hierarchy` call — the model
  * is done the instant the hierarchy exists (mirrors the F1 submit_contract ack). */
 export const HIERARCHY_CREATED_ACK =
-  'Hierarchy created — you are DONE. The manager block now authors the contracts; your job is over. Output nothing and call no tool after this.';
+  'Your manager has it. They are splitting the work across their engineers now and will ' +
+  'deliver the finished product back to you for review. Nothing more is needed from you on ' +
+  'this call — do not start building it yourself in parallel.';
 
 /** The IDEMPOTENT DEAD-END ack for a SECOND+ `create_production_hierarchy` call:
  * it created nothing (the hierarchy already exists) and does not pass control back. */
+/*
+ * Says only what is TRUE. This told the model "you are DONE: output nothing and
+ * call no further tool", which reads as the channel being closed — and the CEO
+ * still has a job after delegating (it reviews what comes back against what the
+ * user asked for). It no longer implies the conversation is over, and it does
+ * not promise a second message will reach the manager either, because on this
+ * path it does not.
+ */
 export const HIERARCHY_ALREADY_CREATED_ACK =
-  'The production hierarchy already exists — this repeat call did nothing (no second hierarchy is created). You are DONE: output nothing and call no further tool.';
+  'Your manager already has this build — the repeat call changed nothing and created no second ' +
+  'team. They are still working; wait for what they deliver rather than re-sending or starting ' +
+  'it yourself.';
 
 /** The outcome of feeding ONE `create_production_hierarchy` call to a guard. */
 export interface PromotionCallResult {

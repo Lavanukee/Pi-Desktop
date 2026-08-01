@@ -1078,11 +1078,38 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     );
   }
 
+  /*
+   * DROP THE CACHED SYSTEM PROMPT WHEN THE TEAM APPEARS OR DISAPPEARS.
+   *
+   * `canonicalSystemPrompt` is computed ONCE at warm-up and reused for every turn
+   * after — and at warm-up the effort is still the default, so a session later
+   * raised to high/max kept a prompt that never mentioned the team. Measured: two
+   * max-effort runs whose system prompt was byte-identical (11675 chars) to a
+   * default-effort one, with the TEAM section nowhere in it. The tool was
+   * advertised and the framing for it was not, which is the whole reason the CEO
+   * kept building alone.
+   *
+   * Checked here because applyPreset is the one place EVERY path funnels through
+   * (the desktop never uses the /effort command; effort arrives with the restored
+   * session config). Only fires when availability actually FLIPS: the prompt heads
+   * the KV-cached prefix, so rebuilding it costs a full re-prefill and must not
+   * happen on every turn.
+   */
+  let lastTeamAvailable: boolean | null = null;
+  function syncTeamPrompt(): void {
+    const now = teamAvailable();
+    if (lastTeamAvailable !== null && now !== lastTeamAvailable) {
+      runtime.canonicalSystemPrompt = null;
+    }
+    lastTeamAvailable = now;
+  }
+
   function applyPreset(
     cls: TaskClass,
     ctx: ExtensionContext,
     extraTools: readonly string[] = [],
   ): void {
+    syncTeamPrompt();
     const available = pi.getAllTools().map((t) => t.name);
     /*
      * A SPECIALIST CHILD IS PINNED, not preset. jedd: "with just these tools

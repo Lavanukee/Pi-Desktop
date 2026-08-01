@@ -3,8 +3,10 @@ import {
   augmentSystemPrompt,
   CAPABILITY_PROMPT,
   CAPABILITY_PROMPT_MARKER,
+  DECIDE_FIRST_PROMPT,
   stripToolCatalog,
   TEAM_PROMPT,
+  TEAM_PROMPT_MARKER,
 } from './capability-prompt.js';
 
 // pi's default base prompt shape (abbreviated): a full-registry tool catalog
@@ -310,5 +312,22 @@ describe('delegation is not forbidden by the do-the-task clause', () => {
 
   it('no longer tells the model to build every artifact itself', () => {
     expect(CAPABILITY_PROMPT).not.toMatch(/BUILD it and put it in place yourself/);
+  });
+});
+
+describe('the delegation decision is made explicitly', () => {
+  it('puts the decision first and the team detail last', () => {
+    const out = augmentSystemPrompt('Base.', { team: true });
+    expect(out.indexOf(DECIDE_FIRST_PROMPT)).toBeLessThan(out.indexOf(TEAM_PROMPT_MARKER));
+    // Measured: the clause at top AND bottom scored WORSE (2/5 vs 3/5).
+    expect(out.split('Deciding by default').length - 1).toBe(1);
+  });
+
+  it('is absent without a team, like everything else that names the manager', () => {
+    expect(augmentSystemPrompt('Base.', {})).not.toContain('hand it to your manager');
+  });
+
+  it('asks for the choice to be stated, not just made', () => {
+    expect(DECIDE_FIRST_PROMPT).toMatch(/say which you chose/);
   });
 });

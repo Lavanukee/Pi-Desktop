@@ -1781,6 +1781,7 @@ export {
   augmentSystemPrompt,
   CAPABILITY_PROMPT,
   CAPABILITY_PROMPT_MARKER,
+  DECIDE_FIRST_PROMPT,
   TEAM_PROMPT,
   TEAM_PROMPT_MARKER,
 } from './prompt/capability-prompt.js';

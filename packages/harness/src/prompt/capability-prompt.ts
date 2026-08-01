@@ -187,6 +187,32 @@ export function stripToolCatalog(base: string): string {
  * emitted name to the ADVERTISED list, so prose about an absent tool produces a
  * plausible wrong call rather than a clean one.
  */
+/**
+ * The one decision the model was never making.
+ *
+ * With the team section present and last, and the do-the-task contradiction
+ * resolved, delegation still ran at 1/5 on a large build — because the model does
+ * not WEIGH the choice. Its own reasoning identified "a multi-file project that
+ * needs to be set up properly" and then went straight to `bash`. Nothing was
+ * wrong with what it knew; it simply never stopped to choose.
+ *
+ * So the choice is made explicit, once, at the top. MEASURED on the 4B, five
+ * seeds per variant, identical user message, no task hinting anywhere:
+ *
+ *   team section last (as shipped)      1/5 delegated
+ *   team section moved first            2/5
+ *   this clause at top + team last      3/5   <- shipped
+ *   this clause at top AND bottom       2/5   (repetition hurts)
+ *
+ * And on a trivial task ("what is 17 times 23"), over-delegation was 0/3 in EVERY
+ * variant — asking for the decision does not make it convene a team for
+ * arithmetic, which was the risk worth checking.
+ *
+ * Gated with the team section: it names a manager, and prose about a tool the
+ * model does not have is the phantom-tool failure this file exists to prevent.
+ */
+export const DECIDE_FIRST_PROMPT = `Before you begin any build, make ONE decision explicitly and say which you chose: is this something you finish well in a single pass yourself, or is it a PROJECT with real parts to it? If it is a project, hand it to your manager. Deciding by default — just starting — is how a project gets built badly by one person.`;
+
 /** Marker used to tell whether a cached prompt already carries the team section. */
 export const TEAM_PROMPT_MARKER = 'You lead a TEAM';
 
@@ -203,7 +229,12 @@ export function augmentSystemPrompt(
   opts: { team?: boolean } = {},
 ): string {
   const trimmed = stripToolCatalog((base ?? '').trim());
-  const section = opts.team === true ? `${CAPABILITY_PROMPT}\n\n${TEAM_PROMPT}` : CAPABILITY_PROMPT;
+  // The decision goes FIRST and the team detail LAST — measured better than
+  // either alone, and better than repeating it (see DECIDE_FIRST_PROMPT).
+  const section =
+    opts.team === true
+      ? `${DECIDE_FIRST_PROMPT}\n\n${CAPABILITY_PROMPT}\n\n${TEAM_PROMPT}`
+      : CAPABILITY_PROMPT;
   if (trimmed.includes(CAPABILITY_PROMPT_MARKER)) return trimmed;
   if (trimmed.length === 0) return section;
   return `${trimmed}\n\n${section}`;

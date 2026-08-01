@@ -472,7 +472,7 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
 
   function maybeWarmPrefix(ctx: ExtensionContext): void {
     if (callModel === undefined || typeof ctx.getSystemPrompt !== 'function') return;
-    const canonical = augmentSystemPrompt(ctx.getSystemPrompt());
+    const canonical = augmentSystemPrompt(ctx.getSystemPrompt(), { team: teamAvailable() });
     if (canonical.trim().length === 0 || canonical === warmedCanonical) return;
     warmedCanonical = canonical;
     runtime.canonicalSystemPrompt = canonical;
@@ -1064,6 +1064,20 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     ctx.ui.setStatus(HARNESS_SUBAGENTS_STATUS_KEY, JSON.stringify(payload));
   }
 
+  /*
+   * Is the delegation tool actually on offer this turn? The team section of the
+   * system prompt is gated on the SAME condition that puts `talk_to_manager` in
+   * the advertised list — effort, and the tool being registered at all. Prose
+   * about a tool the model does not have is the phantom-tool failure that
+   * produces a plausible wrong call instead of a clean one.
+   */
+  function teamAvailable(): boolean {
+    return (
+      corpToolEnabled(runtime.config.effort) &&
+      pi.getAllTools().some((t) => t.name === CREATE_PRODUCTION_HIERARCHY)
+    );
+  }
+
   function applyPreset(
     cls: TaskClass,
     ctx: ExtensionContext,
@@ -1242,7 +1256,8 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     // the ~7k-char prompt and forces a FULL KV re-prefill on EVERY message. Reusing
     // the canonical prompt keeps the prefix byte-identical so follow-ups reuse it.
     const augmentedSystemPrompt =
-      runtime.canonicalSystemPrompt ?? augmentSystemPrompt(event.systemPrompt);
+      runtime.canonicalSystemPrompt ??
+      augmentSystemPrompt(event.systemPrompt, { team: teamAvailable() });
     runtime.canonicalSystemPrompt = augmentedSystemPrompt;
     // Classification REMOVED from the turn path (jedd: "we seldom use it at all,
     // let's just completely remove"). The turn-1 {title,class} piggyback cost
@@ -1315,7 +1330,12 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
       // shares the conversation's resident KV (cheap) instead of re-prefilling.
       const sys =
         runtime.canonicalSystemPrompt ??
-        augmentSystemPrompt(typeof ctx.getSystemPrompt === 'function' ? ctx.getSystemPrompt() : '');
+        augmentSystemPrompt(
+          typeof ctx.getSystemPrompt === 'function' ? ctx.getSystemPrompt() : '',
+          {
+            team: teamAvailable(),
+          },
+        );
       const input: ClassifyInput = {
         prompt: namePrompt,
         turnIndex: 1,

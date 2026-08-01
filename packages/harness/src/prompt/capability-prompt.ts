@@ -170,9 +170,38 @@ export function stripToolCatalog(base: string): string {
  * - Otherwise the section is appended after a blank-line separator (recency:
  *   it lands as the most recent instruction, after pi's base guidelines).
  */
-export function augmentSystemPrompt(base: string | undefined): string {
+/**
+ * The team section — appended ONLY when the delegation tool is actually
+ * advertised (high/max effort).
+ *
+ * WHY THIS HAD TO EXIST. The tool was in the model's `tools` array and the system
+ * prompt never mentioned a manager, a team, or delegation at all — and
+ * {@link stripToolCatalog} removes pi's prose catalog, which is where a tool's
+ * promptSnippet/promptGuidelines would otherwise have appeared. So the only
+ * framing that ever reached the model was the JSON description of one tool among
+ * sixteen. Measured twice: a full 2D-platformer request at max effort, with the
+ * tool advertised, produced 8 and then 78 solo turns and zero delegation.
+ *
+ * Gated rather than always-on because naming a tool the model does not have is
+ * the phantom-tool failure this file already fixed once: the grammar pins the
+ * emitted name to the ADVERTISED list, so prose about an absent tool produces a
+ * plausible wrong call rather than a clean one.
+ */
+export const TEAM_PROMPT = `You lead a TEAM, and for a big build you should use it.
+
+\`talk_to_manager\` hands the work to a manager who splits it across their engineers, runs it, checks it, and delivers the finished product back to you for review. Send them a message saying what you want built — in full, including how it should look and feel, because they have not spoken to the user and know only what you tell them. You do not design the team or the divisions; splitting the work is the manager's job.
+
+Reach for it when the work has real parts to it — several files or components that different people could build at once, or anything that would take you many turns alone. Do NOT reach for it for a question, a single file, a quick edit, or anything you can finish well yourself in one pass; convening a team for those is slower and worse.
+
+Building a large project alone is the more expensive mistake, and the easier one to make, because it does not feel like a mistake while you are doing it — you are busy the whole time.`;
+
+export function augmentSystemPrompt(
+  base: string | undefined,
+  opts: { team?: boolean } = {},
+): string {
   const trimmed = stripToolCatalog((base ?? '').trim());
+  const section = opts.team === true ? `${CAPABILITY_PROMPT}\n\n${TEAM_PROMPT}` : CAPABILITY_PROMPT;
   if (trimmed.includes(CAPABILITY_PROMPT_MARKER)) return trimmed;
-  if (trimmed.length === 0) return CAPABILITY_PROMPT;
-  return `${trimmed}\n\n${CAPABILITY_PROMPT}`;
+  if (trimmed.length === 0) return section;
+  return `${trimmed}\n\n${section}`;
 }

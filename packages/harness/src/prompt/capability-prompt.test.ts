@@ -4,6 +4,7 @@ import {
   CAPABILITY_PROMPT,
   CAPABILITY_PROMPT_MARKER,
   stripToolCatalog,
+  TEAM_PROMPT,
 } from './capability-prompt.js';
 
 // pi's default base prompt shape (abbreviated): a full-registry tool catalog
@@ -242,5 +243,45 @@ describe('multi-step and destructive work leave a trail', () => {
   it('requires a bulk or irreversible change to be stated and then checked', () => {
     expect(CAPABILITY_PROMPT).toMatch(/BEFORE ANYTHING BULK OR IRREVERSIBLE/);
     expect(CAPABILITY_PROMPT).toMatch(/"Done" is not an observation/);
+  });
+});
+
+/*
+ * THE TEAM SECTION.
+ *
+ * The delegation tool was in the model's `tools` array while the system prompt
+ * never mentioned a manager, a team, or delegation at all — and stripToolCatalog
+ * removes pi's prose catalog, where a tool's promptSnippet/promptGuidelines
+ * would otherwise appear. So the only framing that reached the model was one
+ * JSON description among sixteen. Measured: a max-effort platformer request with
+ * the tool advertised produced 8 and then 78 solo turns and zero delegation.
+ */
+describe('the team section', () => {
+  it('is absent when the delegation tool is not advertised', () => {
+    const out = augmentSystemPrompt('Base.', {});
+    expect(out).not.toMatch(/talk_to_manager/);
+    // Naming an unadvertised tool is the phantom-tool failure this file exists to
+    // prevent — the grammar would land a bid for it on the nearest real name.
+    expect(out).not.toMatch(/You lead a TEAM/);
+  });
+
+  it('appears when it is', () => {
+    const out = augmentSystemPrompt('Base.', { team: true });
+    expect(out).toMatch(/You lead a TEAM/);
+    expect(out).toMatch(/talk_to_manager/);
+  });
+
+  it('says the CEO does not design the team', () => {
+    expect(TEAM_PROMPT).toMatch(/You do not design the team or the divisions/);
+  });
+
+  it('names both mistakes, not just the over-delegation one', () => {
+    expect(TEAM_PROMPT).toMatch(/Do NOT reach for it for a question, a single file/);
+    expect(TEAM_PROMPT).toMatch(/Building a large project alone is the more expensive mistake/);
+  });
+
+  it('keeps the capability section either way', () => {
+    expect(augmentSystemPrompt('Base.', { team: true })).toContain(CAPABILITY_PROMPT_MARKER);
+    expect(augmentSystemPrompt('Base.', {})).toContain(CAPABILITY_PROMPT_MARKER);
   });
 });

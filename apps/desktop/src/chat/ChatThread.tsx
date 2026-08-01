@@ -27,6 +27,7 @@ import {
   IconTerminal,
   MessageActions,
   MessageRow,
+  PresentCard,
   ScrollArea,
   Spinner,
   Thread,
@@ -37,6 +38,7 @@ import { useCorpStore } from '../state/corp-store';
 import { useLlmStore } from '../state/llm-store';
 import { forkAndReprompt, switchBranch } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
+import { openPresented, usePresentStore } from '../state/present-store';
 import { AssistantGroup } from './AssistantGroup';
 import { focusSituationTab } from './canvas/corp-canvas-routing';
 import { CorpChatStream } from './corp/CorpChatStream';
@@ -144,6 +146,7 @@ export function ChatThread() {
         null)
       : null;
   const { controller: canvasController } = useCanvasTabs();
+  const presented = usePresentStore((st) => st.items);
 
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -483,6 +486,26 @@ export function ChatThread() {
               </div>
             </MessageRow>
           ))}
+          {/*
+           * What the model PRESENTED, at the foot of the thread — the finished
+           * artefacts, each openable in the canvas beside the conversation. It
+           * sits last because presenting is the last act of a turn, and the
+           * thing handed over should be the thing nearest the composer.
+           */}
+          {presented.length > 0 ? (
+            <div className="flex flex-col gap-2 px-1 pt-2" data-testid="presented">
+              {presented.map((item) => (
+                <PresentCard
+                  key={item.path}
+                  item={item}
+                  onOpen={() => openPresented(canvasController, item)}
+                  onReveal={() => {
+                    void window.piDesktop.invoke('canvas:reveal', { path: item.path });
+                  }}
+                />
+              ))}
+            </div>
+          ) : null}
           {/* Breathing room so the last message/thought is never jammed against
               the composer — the user can scroll it up clear of the input bar. */}
           <div className="h-28 shrink-0" aria-hidden />

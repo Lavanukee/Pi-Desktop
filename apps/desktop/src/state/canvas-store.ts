@@ -53,6 +53,11 @@ export function registerCanvasController(c: CanvasController | null): void {
   controller = c;
 }
 
+/** The app's canvas controller, for code that runs outside React (event wiring). */
+export function getCanvasController(): CanvasController | null {
+  return controller;
+}
+
 /**
  * Reset the canvas for a conversation with no saved state: drop every tab and
  * slide the rail closed so it starts empty. Safe before the shell mounts (no-op).

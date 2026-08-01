@@ -195,6 +195,8 @@ export {
   PopoverContent,
   PopoverTrigger,
 } from './components/popover.tsx';
+export type { PresentCardProps, PresentedItem, PresentKind } from './components/present-card.tsx';
+export { baseName, kindLine, PresentCard } from './components/present-card.tsx';
 export type {
   QuestionAnswer,
   QuestionCardProps,

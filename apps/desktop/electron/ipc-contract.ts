@@ -578,6 +578,11 @@ export type AppEventMap = {
    * of capability is indistinguishable from a model that is simply refusing.
    */
   'pi:extensions-disabled': { reason: string };
+  /**
+   * The model called `present`: show this artefact to the user — a card in the
+   * thread and the thing itself open (or running) in the canvas.
+   */
+  'present:show': { path: string; note?: string };
   'llm:download-progress': {
     modelId: string;
     file: string;

@@ -33,6 +33,7 @@ import { askCorpTask, startCorpTask } from '../state/corp-connect';
 import { useCorpStore } from '../state/corp-store';
 import { getModels, setSessionName, startPi } from '../state/pi-connect';
 import { usePiStore } from '../state/pi-slice';
+import { connectPresent } from '../state/present-store';
 import { useProjectStore } from '../state/project-store';
 import { applySavedHarnessConfig, useUserMode } from '../state/settings-store';
 import { useThemeStore } from '../store/theme';
@@ -42,13 +43,13 @@ import { ChatComposer } from './ChatComposer';
 import { ChatThread } from './ChatThread';
 import { ChatTitle } from './ChatTitle';
 import { ChildChatView } from './ChildChatView';
-import { useSiteIcon } from './site-icons';
 import { CanvasTabsPanel } from './canvas/CanvasTabsPanel';
 import { CorpDebugHud } from './corp/CorpDebugHud';
 import { PROMOTE_STATUS_KEY, parsePromoteSignal } from './harness-status';
 import { useHarnessTitleSync } from './harness-title';
 import { InputNeededBanner } from './InputNeededBanner';
 import { SessionSidebar, type SidebarStub } from './SessionSidebar';
+import { useSiteIcon } from './site-icons';
 import { ToastHost } from './ToastHost';
 import { UiRequestDialogs } from './UiRequestDialogs';
 import { WhyQueuedModal } from './WhyQueuedModal';
@@ -207,7 +208,13 @@ export function ChatApp({
     const controller = canvasController.current;
     if (controller === null) return;
     registerCanvasController(controller);
-    return () => registerCanvasController(null);
+    // `present` needs the controller to exist before it can open anything, so it
+    // is wired here rather than at module load.
+    const offPresent = connectPresent();
+    return () => {
+      offPresent();
+      registerCanvasController(null);
+    };
   }, []);
 
   // ⌘W → close the active canvas tab (blind-test round-2 #5). The Electron menu
@@ -374,100 +381,102 @@ export function ChatApp({
           forbids remote images) and open in the canvas browser when clicked. */}
       <SiteIconProvider value={useSiteIcon}>
         <OpenUrlProvider value={openResultUrl}>
-      <div className="flex h-full">
-        {/* The sidebar stays mounted; when collapsed the slot narrows to a
+          <div className="flex h-full">
+            {/* The sidebar stays mounted; when collapsed the slot narrows to a
             ~64px ICON RAIL (round-8 #1) rather than hiding — global.css owns the
             rail width + the panel's stay-put override. */}
-        <div className="pd-sidebar-slot" data-open={sidebarOpen}>
-          <SessionSidebar
-            open={sidebarOpen}
-            onCollapse={() => setSidebarOpen(false)}
-            onExpand={() => setSidebarOpen(true)}
-            onTruncated={() => setTruncatedNote(true)}
-            onOpenSettings={onOpenSettings}
-            onOpenConnectors={onOpenConnectors}
-            onOpenStub={setStub}
-          />
-        </div>
+            <div className="pd-sidebar-slot" data-open={sidebarOpen}>
+              <SessionSidebar
+                open={sidebarOpen}
+                onCollapse={() => setSidebarOpen(false)}
+                onExpand={() => setSidebarOpen(true)}
+                onTruncated={() => setTruncatedNote(true)}
+                onOpenSettings={onOpenSettings}
+                onOpenConnectors={onOpenConnectors}
+                onOpenStub={setStub}
+              />
+            </div>
 
-        <MainSurface className="flex min-w-0 flex-1 flex-col">
-          <TopBar
-            // The rail always hosts the traffic lights now, so the top bar never
-            // needs to inset for them — EXCEPT when the sidebar is COLLAPSED to the
-            // narrow rail: the macOS traffic lights overhang past that ~52px rail
-            // into the top bar, so the class below insets the title clear of the
-            // lights (+ the rail's expand control). Expanded, the wide sidebar
-            // already clears them.
-            trafficLightInset={false}
-            className={sidebarOpen ? undefined : 'pd-topbar--sidebar-collapsed'}
-            left={
-              // The chat title sits just RIGHT of the sidebar/rail (#13). The
-              // rail carries its own expand toggle, so no top-bar sidebar button.
-              <ChatTitle title={title} onRename={(name) => void setSessionName(name)} />
-            }
-            right={
-              // The canvas toggle (round-8 #11/#16) plus, for power users only,
-              // the brain/gear advanced-params entry to its left. In simple mode
-              // the top-right is exactly the canvas toggle, unchanged.
-              <div className="flex items-center gap-1">
-                <AdvancedParamsButton />
-                <CanvasTopBarControls />
-              </div>
-            }
-          />
+            <MainSurface className="flex min-w-0 flex-1 flex-col">
+              <TopBar
+                // The rail always hosts the traffic lights now, so the top bar never
+                // needs to inset for them — EXCEPT when the sidebar is COLLAPSED to the
+                // narrow rail: the macOS traffic lights overhang past that ~52px rail
+                // into the top bar, so the class below insets the title clear of the
+                // lights (+ the rail's expand control). Expanded, the wide sidebar
+                // already clears them.
+                trafficLightInset={false}
+                className={sidebarOpen ? undefined : 'pd-topbar--sidebar-collapsed'}
+                left={
+                  // The chat title sits just RIGHT of the sidebar/rail (#13). The
+                  // rail carries its own expand toggle, so no top-bar sidebar button.
+                  <ChatTitle title={title} onRename={(name) => void setSessionName(name)} />
+                }
+                right={
+                  // The canvas toggle (round-8 #11/#16) plus, for power users only,
+                  // the brain/gear advanced-params entry to its left. In simple mode
+                  // the top-right is exactly the canvas toggle, unchanged.
+                  <div className="flex items-center gap-1">
+                    <AdvancedParamsButton />
+                    <CanvasTopBarControls />
+                  </div>
+                }
+              />
 
-          {/* A selected child agent (subagent / role) shows its own read-only chat
+              {/* A selected child agent (subagent / role) shows its own read-only chat
               view in place of the main thread + composer. */}
-          {viewedChildId !== null ? (
-            <ChildChatView childId={viewedChildId} />
-          ) : (
-            /* One flex column that hosts BOTH states so the keyed composer slot
+              {viewedChildId !== null ? (
+                <ChildChatView childId={viewedChildId} />
+              ) : (
+                /* One flex column that hosts BOTH states so the keyed composer slot
               below keeps the same DOM parent across empty→thread. #A3: the empty
               state centers the greeting + composer vertically. */
-            <div
-              className={`flex min-h-0 flex-1 flex-col ${
-                empty ? 'items-center justify-center gap-6 px-6' : ''
-              }`}
-            >
-              {empty ? (
-                <div key="lead" className="flex flex-col items-center gap-2">
-                  <h1 className="text-title">Bobble</h1>
-                  <p className="text-body text-text-muted">
-                    {flavor === 'claude' ? 'How can I help you today?' : 'What are we building?'}
-                  </p>
-                </div>
-              ) : (
-                // The thread is ALWAYS the lead surface — a corp run renders
-                // inline inside it (CorpInlineTurn) instead of swapping it out.
-                <div key="lead" className="flex min-h-0 flex-1 flex-col">
-                  <ChatThread />
-                </div>
-              )}
-              <div key="composer-slot" className={empty ? 'w-full' : 'shrink-0 px-4 pb-4 pt-2'}>
-                {!empty && truncatedNote ? (
-                  <div className="mx-auto mb-2 max-w-[700px] text-caption text-text-muted">
-                    Restored an earlier session; some history was truncated.
-                  </div>
-                ) : null}
-                {/* Round-12 W2: the project (working-folder) chip moved OFF the
+                <div
+                  className={`flex min-h-0 flex-1 flex-col ${
+                    empty ? 'items-center justify-center gap-6 px-6' : ''
+                  }`}
+                >
+                  {empty ? (
+                    <div key="lead" className="flex flex-col items-center gap-2">
+                      <h1 className="text-title">Bobble</h1>
+                      <p className="text-body text-text-muted">
+                        {flavor === 'claude'
+                          ? 'How can I help you today?'
+                          : 'What are we building?'}
+                      </p>
+                    </div>
+                  ) : (
+                    // The thread is ALWAYS the lead surface — a corp run renders
+                    // inline inside it (CorpInlineTurn) instead of swapping it out.
+                    <div key="lead" className="flex min-h-0 flex-1 flex-col">
+                      <ChatThread />
+                    </div>
+                  )}
+                  <div key="composer-slot" className={empty ? 'w-full' : 'shrink-0 px-4 pb-4 pt-2'}>
+                    {!empty && truncatedNote ? (
+                      <div className="mx-auto mb-2 max-w-[700px] text-caption text-text-muted">
+                        Restored an earlier session; some history was truncated.
+                      </div>
+                    ) : null}
+                    {/* Round-12 W2: the project (working-folder) chip moved OFF the
                   top of the composer into the sticking-out ComposerBar below the
                   input (mounted inside ChatComposer). */}
-                {composer}
-              </div>
-            </div>
-          )}
+                    {composer}
+                  </div>
+                </div>
+              )}
 
-          {stub !== null ? <StubPanel stub={stub} onClose={() => setStub(null)} /> : null}
-        </MainSurface>
+              {stub !== null ? <StubPanel stub={stub} onClose={() => setStub(null)} /> : null}
+            </MainSurface>
 
-        <CanvasTabsPanel />
+            <CanvasTabsPanel />
 
-        <UiRequestDialogs />
-        <InputNeededBanner />
-        <WhyQueuedModal />
-        <ToastHost />
-        <WindowDropOverlay />
-      </div>
+            <UiRequestDialogs />
+            <InputNeededBanner />
+            <WhyQueuedModal />
+            <ToastHost />
+            <WindowDropOverlay />
+          </div>
         </OpenUrlProvider>
       </SiteIconProvider>
     </CanvasProvider>

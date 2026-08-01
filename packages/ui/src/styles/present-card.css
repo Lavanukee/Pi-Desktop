@@ -1,0 +1,157 @@
+/*
+ * The `present` card — the finished artefact, handed over.
+ *
+ * Geometry follows the reference jedd gave: a rounded outlined row, a square
+ * icon tile on the left with the name and a quiet `Kind · EXT` line beside it,
+ * actions right-aligned. What differs is the verb — the reference downloads,
+ * ours OPENS, because the file is already on this machine and the canvas can
+ * show it.
+ */
+
+.pd-present-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--pd-border-subtle);
+  border-radius: var(--pd-radius-lg);
+  background: var(--pd-surface-raised);
+  transition:
+    border-color var(--pd-duration-base) var(--pd-easing-standard),
+    background-color var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-present-card + .pd-present-card {
+  margin-top: 8px;
+}
+
+.pd-present-card:hover {
+  border-color: var(--pd-border-strong);
+}
+
+/* The row itself is the Open target, so it must fill the card and stay a button
+ * (not a link) — the canvas opens it, nothing navigates. */
+.pd-present-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--pd-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* A fixed square so a thumbnail and a glyph occupy identical space — a row must
+ * not change height when a preview arrives. */
+.pd-present-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--pd-border-subtle);
+  border-radius: var(--pd-radius-md);
+  background: var(--pd-surface-hover);
+  color: var(--pd-text-secondary);
+  overflow: hidden;
+}
+
+.pd-present-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pd-present-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pd-present-name {
+  font-size: var(--pd-font-size-body);
+  font-weight: 550;
+  line-height: 1.25;
+  /* A long filename truncates rather than wrapping the row to two heights. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pd-present-meta {
+  font-size: var(--pd-font-size-caption);
+  color: var(--pd-text-secondary);
+  line-height: 1.3;
+  /* One line, always — a long note truncates instead of growing the row. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Quieter than the kind, so `Image · PNG` still reads as the classification and
+ * the model's sentence sits behind it rather than competing with it. */
+.pd-present-note {
+  color: var(--pd-text-secondary);
+  opacity: 0.85;
+}
+
+.pd-present-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/*
+ * Secondary is a GHOST, not a second bordered button.
+ *
+ * With both actions boxed, each row carried two equal-weight buttons and a list
+ * of four carried eight — precisely the failure our own ui-critic charter names:
+ * "the primary action shares its weight with three secondary buttons, so there
+ * is nothing to look at first." Reveal only earns a border on hover.
+ */
+.pd-present-action {
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--pd-radius-md);
+  color: var(--pd-text-secondary);
+  background: transparent;
+  color: var(--pd-text-primary);
+  font: inherit;
+  font-size: var(--pd-font-size-caption);
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--pd-duration-base) var(--pd-easing-standard),
+    border-color var(--pd-duration-base) var(--pd-easing-standard);
+}
+
+.pd-present-action:hover {
+  background: var(--pd-surface-hover);
+  border-color: var(--pd-border-subtle);
+  color: var(--pd-text-primary);
+}
+
+/* Exactly one primary action, so there is something to look at first — the
+ * failure the ui-critic charter names: "the primary action shares its weight
+ * with three secondary buttons, so there is nothing to look at first". */
+.pd-present-action--primary {
+  border-color: transparent;
+  background: var(--pd-accent);
+  color: var(--pd-accent-contrast);
+  font-weight: 550;
+}
+
+.pd-present-action--primary:hover {
+  background: var(--pd-accent-hover, var(--pd-accent));
+  filter: brightness(1.05);
+}

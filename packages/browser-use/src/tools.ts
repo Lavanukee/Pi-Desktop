@@ -12,8 +12,9 @@
  * caller passes explicit `x,y`, fall back to coordinate clicks (sendInputEvent).
  */
 
+import { existsSync, mkdirSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import type { AgentToolResult, ExtensionAPI } from '@mariozechner/pi-coding-agent';
 import { Type } from '@sinclair/typebox';
@@ -86,6 +87,29 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** Register every browser_* tool onto `pi`. */
+/**
+ * `~/Bobble/screenshots/<page>.png`, deduplicated with a small counter.
+ *
+ * jedd: "no complicated var/askldfjh;lkh/asdjkgbm,3241/1324iu1b types of things."
+ * Captures used to land on `bobble-screenshot-m9x2k1.png` in the OS temp tree —
+ * unfindable, unspeakable back to the user, and deleted whenever the OS liked.
+ */
+function screenshotFile(pageUrlOrTitle: string): string {
+  const dir = path.join(homedir(), 'Bobble', 'screenshots');
+  mkdirSync(dir, { recursive: true });
+  const base =
+    pageUrlOrTitle
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48)
+      .replace(/-+$/, '') || 'page';
+  let name = base;
+  for (let n = 2; existsSync(path.join(dir, `${name}.png`)); n++) name = `${base}-${n}`;
+  return path.join(dir, `${name}.png`);
+}
+
 export function registerBrowserUseTools(pi: ExtensionAPI, options: BrowserUseOptions): void {
   const bridge = options.bridge;
   const cap = options.elementCap ?? DEFAULT_ELEMENT_CAP;
@@ -210,10 +234,10 @@ export function registerBrowserUseTools(pi: ExtensionAPI, options: BrowserUseOpt
                * which is the behaviour that already existed.
                */
               try {
-                const file = path.join(
-                  tmpdir(),
-                  `bobble-screenshot-${Date.now().toString(36)}.png`,
-                );
+                // ~/Bobble/screenshots/<page>.png — a path a person can read and
+                // the model can hand back. jedd: "no complicated
+                // var/askldfjh;lkh/... types of things."
+                const file = screenshotFile(snap.summary.url || snap.summary.title);
                 await writeFile(file, Buffer.from(b64, 'base64'));
                 content.push({
                   type: 'text',

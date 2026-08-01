@@ -175,7 +175,7 @@ describe('the producing specialists (jedd’s presets)', () => {
   it('tell the truth about what they can SEE', () => {
     // The one lie the system cannot catch. The image specialist is held to the
     // same rule as the visual one.
-    expect(prompt('image')).toContain('NEVER describe an image you have not looked at');
+    expect(prompt('image')).toContain('Never describe an image you have not looked at');
     expect(prompt('visual')).toContain('NEVER describe what something looks like');
   });
 
@@ -310,21 +310,32 @@ describe('managerMeshPrompt: the submit gate', () => {
 describe('image specialist: generation vs pixel work', () => {
   const p = specialistMeshPrompt('image');
 
-  it('covers modifying an image, not only making one', () => {
-    expect(p).toMatch(/You make and modify the pictures/);
+  /* The old opener — "You are the IMAGE SPECIALIST. You make the pictures this
+   * product needs" — is what made it reason itself out of annotating: "I'm the
+   * IMAGE SPECIALIST - I should generate images using my tools, not use computer
+   * use to drive a browser and then edit the screenshot." */
+  it('does not define the role as picture-making', () => {
+    expect(p).not.toMatch(/You are the IMAGE SPECIALIST/);
+    expect(p).toMatch(/You work with images/);
   });
 
-  it('sends deterministic edits to code', () => {
-    expect(p).toMatch(/DETERMINISTIC PIXEL WORK/);
-    expect(p).toMatch(/Pillow, or a canvas/);
+  it('splits making from changing, and sends changing to code', () => {
+    expect(p).toMatch(/MAKING a picture that does not exist yet/);
+    expect(p).toMatch(/CHANGING an image that already exists/);
+    expect(p).toMatch(/is CODE/);
+    expect(p).toMatch(/Pillow/);
   });
 
-  it('says that is still its job, so it does not hand the task back', () => {
-    expect(p).toMatch(/it is not a reason to hand the task back/);
+  it('says why generation is the wrong instrument for a mark-up', () => {
+    expect(p).toMatch(/paints a new picture of roughly the right idea/);
   });
 
-  it('tells it to capture the thing before annotating it', () => {
-    expect(p).toMatch(/GO AND GET IT FIRST/);
-    expect(p).toMatch(/FILE PATH on disk/);
+  it('tells it to capture the thing first and open the path', () => {
+    expect(p).toMatch(/go and capture it first/i);
+    expect(p).toMatch(/Never draw on a blank canvas/);
+  });
+
+  it('stays short — the old one was too long to act on', () => {
+    expect(p.length).toBeLessThan(4000);
   });
 });

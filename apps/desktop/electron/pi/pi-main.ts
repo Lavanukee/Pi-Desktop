@@ -15,7 +15,11 @@ import { app, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electro
 import { resolveBundledPackageAsset } from '../app-paths';
 import { registerGen3dBridge } from '../gen3d/gen3d-bridge';
 import { runImageJob } from '../gen3d/gen3d-main';
-import { getInferenceLaunchMode, getInferenceUtility } from '../inference/llm-main';
+import {
+  getInferenceLaunchMode,
+  getInferenceUtility,
+  visionStateFilePath,
+} from '../inference/llm-main';
 import type { AppEventMap } from '../ipc-contract';
 import { activeProjectPath } from '../project/project-main';
 import { resolveSessionCwd } from '../sandbox';
@@ -122,6 +126,9 @@ function buildPiEnv(cwd: string | undefined): Record<string, string | undefined>
     // the file may not exist yet (default profile) — the hook no-ops then.
     PI_ADV_SAMPLING_FILE: advancedSamplingFilePath(),
     PI_DESKTOP_VISION: vision,
+    // …and the live file, which children re-read. The env value above is a
+    // spawn-time snapshot and a subagent outlives it — see serverCanSeeImages.
+    PI_DESKTOP_VISION_FILE: visionStateFilePath(),
     ...(cwd !== undefined ? { PI_DESKTOP_WORKSPACE_ROOT: cwd } : {}),
     ...(utility !== null
       ? { PI_DESKTOP_UTILITY_BASE_URL: utility.baseUrl, PI_DESKTOP_UTILITY_MODEL: utility.model }

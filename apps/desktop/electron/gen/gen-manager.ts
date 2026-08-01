@@ -58,6 +58,7 @@ import {
 } from '@pi-desktop/gen-tools/contract';
 import { createLogger, registerIpcHandlers } from '@pi-desktop/shared';
 import { type IpcMain, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
+import { bobbleDir, GENERATED_DIR, slug, uniqueName } from '../bobble-paths';
 import {
   type AssetConsent,
   type EnsureAssetFn,
@@ -187,7 +188,14 @@ function toSrc(p: string): string {
 }
 
 export function registerGenIpc(opts: GenManagerOptions): void {
-  const outputRoot = opts.outputRoot ?? path.join(tmpdir(), 'pi-generated');
+  /*
+   * ~/Bobble/generated, not the OS temp tree. jedd: "no complicated
+   * var/askldfjh;lkh/... types of things". A rendered animation used to land in
+   * /var/folders/4h/nq1c73…/T/pi-generated/gen_1785566138272_fc7490/ — which
+   * nobody can find, the model cannot usefully name back to the user, and the OS
+   * deletes whenever it likes.
+   */
+  const outputRoot = opts.outputRoot ?? bobbleDir(GENERATED_DIR);
   /*
    * TELL THE CLIENT WHERE worker.py IS. It cannot work it out for itself here.
    *
@@ -271,7 +279,8 @@ export function registerGenIpc(opts: GenManagerOptions): void {
       throw new Error(`unknown or non-image model "${raw.model ?? ''}"`);
     }
     const jobId = `gen_${Date.now()}_${randomBytes(3).toString('hex')}`;
-    const outputDir = path.join(outputRoot, jobId);
+    // The FOLDER is named after what was asked for; jobId stays the internal id.
+    const outputDir = path.join(outputRoot, uniqueName(outputRoot, slug(raw.prompt, 'image')));
     await mkdir(outputDir, { recursive: true });
 
     const { width, height } = parseSize(raw.size);
@@ -369,7 +378,8 @@ export function registerGenIpc(opts: GenManagerOptions): void {
       throw new Error(`unknown or non-video model "${raw.model ?? ''}"`);
     }
     const jobId = `gen_${Date.now()}_${randomBytes(3).toString('hex')}`;
-    const outputDir = path.join(outputRoot, jobId);
+    // The FOLDER is named after what was asked for; jobId stays the internal id.
+    const outputDir = path.join(outputRoot, uniqueName(outputRoot, slug(raw.prompt, 'animation')));
     await mkdir(outputDir, { recursive: true });
 
     const clamp = (n: number, lo: number, hi: number): number =>

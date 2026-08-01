@@ -14,6 +14,7 @@ import {
   promptProgressFraction,
   serverCanSeeImages,
   unviewableImageNote,
+  VISION_STATE_FILE_ENV,
 } from './stream.js';
 
 function makeModel(baseUrl = 'http://127.0.0.1:8080/v1'): Model<'openai-completions'> {
@@ -1047,5 +1048,38 @@ describe('images on a text-only server', () => {
       if (prev === undefined) delete process.env.PI_DESKTOP_VISION;
       else process.env.PI_DESKTOP_VISION = prev;
     }
+  });
+});
+
+/*
+ * A SUBAGENT OUTLIVES ITS SPAWN-TIME ENV.
+ *
+ * PI_DESKTOP_VISION is fixed when a process starts. A child spawns mid-turn,
+ * normally before anything has asked for vision, so it inherited '0' and kept it
+ * for life — reporting "text only mode" long after the server relaunched
+ * multimodal. jedd caught one doing exactly that.
+ */
+describe('vision state is read live', () => {
+  it('prefers the state file over the spawn-time env', () => {
+    const env = { PI_DESKTOP_VISION: '0', [VISION_STATE_FILE_ENV]: '/tmp/vision' };
+    expect(serverCanSeeImages(env, () => '1')).toBe(true);
+  });
+
+  it('honours a blind state file over a permissive env', () => {
+    const env = { PI_DESKTOP_VISION: '1', [VISION_STATE_FILE_ENV]: '/tmp/vision' };
+    expect(serverCanSeeImages(env, () => '0')).toBe(false);
+  });
+
+  it('falls back to the env when the file cannot be read', () => {
+    const env = { PI_DESKTOP_VISION: '0', [VISION_STATE_FILE_ENV]: '/tmp/gone' };
+    expect(
+      serverCanSeeImages(env, () => {
+        throw new Error('ENOENT');
+      }),
+    ).toBe(false);
+  });
+
+  it('tolerates a trailing newline', () => {
+    expect(serverCanSeeImages({ [VISION_STATE_FILE_ENV]: '/tmp/v' }, () => '1\n')).toBe(true);
   });
 });

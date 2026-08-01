@@ -5,6 +5,7 @@
  * app window as `llm:*` events. The supervisor owns llama-server; main only
  * relays, so a crash there never takes the UI down.
  */
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   createIpcEventSender,
@@ -56,6 +57,28 @@ let lastStatus: LlmStatus | null = null;
  */
 export function getInferenceLaunchMode(): 'fast-text' | 'multimodal' | null {
   return lastStatus?.launchMode ?? null;
+}
+
+/** The file every pi process reads to learn whether the server can SEE. */
+export function visionStateFilePath(): string {
+  return path.join(app.getPath('userData'), 'vision-state');
+}
+
+/**
+ * Keep that file current.
+ *
+ * A pi process gets `PI_DESKTOP_VISION` fixed at spawn, and a SUBAGENT spawns
+ * mid-turn — normally before anything has asked for vision — so it inherited `0`
+ * and kept it for life, reporting "text only mode" long after the server had
+ * relaunched multimodal. A one-byte file both parent and children re-read is the
+ * cheapest thing that cannot go stale.
+ */
+function writeVisionState(mode: 'fast-text' | 'multimodal' | null): void {
+  try {
+    writeFileSync(visionStateFilePath(), mode === 'multimodal' ? '1' : '0');
+  } catch {
+    // Best effort — the env snapshot remains the fallback.
+  }
 }
 
 /**
@@ -196,7 +219,9 @@ function ensureChild(): UtilityProcess {
 
   proc.on('message', (message: LlmOutbound) => {
     if (message.kind === 'status') {
+      const before = lastStatus?.launchMode;
       lastStatus = message.status;
+      if (message.status.launchMode !== before) writeVisionState(message.status.launchMode ?? null);
       broadcast('llm:status', message.status);
       return;
     }

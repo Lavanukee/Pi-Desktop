@@ -10,6 +10,7 @@
  * Electron-free; `fetchImpl` is injectable so tests feed fixture SSE without a
  * live server.
  */
+import { readFileSync } from 'node:fs';
 import {
   type Api,
   type AssistantMessage,
@@ -174,7 +175,34 @@ interface OAIMessage {
  * (a plain CLI pi, or any host that doesn't publish it) → assume vision works
  * and change nothing, so this can only ever downgrade a KNOWN-blind server.
  */
-export function serverCanSeeImages(env: Record<string, string | undefined> = process.env): boolean {
+export const VISION_STATE_FILE_ENV = 'PI_DESKTOP_VISION_FILE';
+
+export function serverCanSeeImages(
+  env: Record<string, string | undefined> = process.env,
+  readFileImpl: (p: string) => string = (p) => readFileSync(p, 'utf8'),
+): boolean {
+  /*
+   * READ THE LIVE STATE, NOT A SPAWN-TIME SNAPSHOT.
+   *
+   * `PI_DESKTOP_VISION` is fixed when a process starts. A SUBAGENT spawns
+   * mid-turn — usually before anything has asked for vision — so it inherited
+   * `0` and kept it for its whole life, even after the server relaunched
+   * multimodal. jedd, watching one: "the subagent says it's in 'text only mode'".
+   * It was telling the truth about a value that had gone stale.
+   *
+   * The host rewrites a one-byte file whenever the launch mode changes (same
+   * shape as PI_ADV_SAMPLING_FILE), so parent and children alike see the switch.
+   * The env var stays the fallback, and an unreadable file means "assume we can
+   * see" — which can only ever downgrade a KNOWN-blind server, never the reverse.
+   */
+  const file = env[VISION_STATE_FILE_ENV];
+  if (file !== undefined && file.length > 0) {
+    try {
+      return readFileImpl(file).trim() !== '0';
+    } catch {
+      // Fall through to the env snapshot.
+    }
+  }
   return env.PI_DESKTOP_VISION !== '0';
 }
 

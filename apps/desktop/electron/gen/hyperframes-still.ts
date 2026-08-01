@@ -30,6 +30,7 @@
  * needs a display.
  */
 
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import type { GenOutput } from '@pi-desktop/gen-service';
 import type { HyperFramesRender } from './video-dispatch.js';
@@ -173,13 +174,31 @@ export function createStillRenderer(deps: StillRendererDeps): HyperFramesRender 
 
     const win = await deps.openWindow(width, height);
     const outputs: GenOutput[] = [];
+    /*
+     * A RENDER THAT DID NOT MOVE IS NOT A SUCCESS.
+     *
+     * Measured: a real motion request produced 61 frames, ONE of them distinct,
+     * and the job reported success. The scene the model authored animated in a
+     * way the seek cannot drive (JS/rAF, or SMIL, with no `hyperframesSeek`
+     * hook), so every frame captured the same instant.
+     *
+     * `seekScript` already returns how many animations it found and pinned; that
+     * return value was being thrown away. Now it is the evidence: zero animations
+     * across the whole render, or every frame byte-identical, means the caller is
+     * told plainly instead of handed a directory of duplicates that looks like a
+     * finished animation.
+     */
+    let seekedAnimations = 0;
+    const digests = new Set<string>();
     try {
       await win.load(html, width, height);
       for (let i = 0; i < times.length; i++) {
         if (signal?.aborted === true) break;
         const t = times[i] ?? 0;
-        await win.evaluate(seekScript(t));
+        const found = await win.evaluate(seekScript(t));
+        if (typeof found === 'number') seekedAnimations = Math.max(seekedAnimations, found);
         const png = await win.capture();
+        digests.add(createHash('sha1').update(png).digest('hex'));
         const file = path.join(outputDir, frameFileName(i, times.length));
         await deps.writeFile(file, png);
         outputs.push({
@@ -216,6 +235,16 @@ export function createStillRenderer(deps: StillRendererDeps): HyperFramesRender 
     }
     if (outputs.length === 0) {
       throw new Error('hyperframes rendered no frames');
+    }
+    if (outputs.length > 1 && digests.size === 1) {
+      throw new Error(
+        `hyperframes rendered ${outputs.length} IDENTICAL frames — the scene did not animate. ` +
+          `${seekedAnimations === 0 ? 'No CSS/Web animations were found to seek: ' : ''}` +
+          'every frame is rendered by pinning a virtual clock, so motion must come from CSS ' +
+          'animations/transitions or Web Animations, or from a `window.hyperframesSeek(t)` ' +
+          'function the scene defines. Motion driven by requestAnimationFrame, setTimeout or ' +
+          'SMIL cannot be seeked and renders the same instant every time.',
+      );
     }
     return outputs;
   };

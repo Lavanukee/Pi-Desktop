@@ -114,7 +114,9 @@ describe('createStillRenderer', () => {
         win.seeks.push(s);
         return 1;
       }),
-      capture: vi.fn(async () => Buffer.from('PNG')),
+      // Distinct bytes per capture by default — a real animation. Tests that
+      // need a STATIC render override this.
+      capture: vi.fn(async () => Buffer.from(`PNG-${win.seeks.length}`)),
       dispose: vi.fn(async () => {
         win.disposed = true;
       }),
@@ -224,5 +226,81 @@ describe('createStillRenderer', () => {
       writeFile: async () => {},
     });
     await expect(render(spec, '/out', () => {}, ac.signal)).rejects.toThrow('no frames');
+  });
+});
+
+/*
+ * A RENDER THAT DID NOT MOVE IS NOT A SUCCESS.
+ *
+ * Measured live: a real motion request produced 61 frames, ONE distinct, and the
+ * job reported success — a directory of duplicates that looks like a finished
+ * animation. The seek script already reported how many animations it pinned and
+ * that number was being discarded.
+ */
+describe('a static render is reported, not passed off', () => {
+  const spec = {
+    prompt: '<div>scene</div>',
+    modelId: 'hyperframes',
+    width: 640,
+    height: 360,
+    seconds: 1,
+    fps: 2,
+    seeds: [42],
+  };
+
+  const staticWin = (animations: number) => {
+    const win: StillWindow & { seeks: string[]; disposed: boolean } = {
+      seeks: [],
+      disposed: false,
+      load: vi.fn(async () => {}),
+      evaluate: vi.fn(async (s: string) => {
+        win.seeks.push(s);
+        return animations;
+      }),
+      capture: vi.fn(async () => Buffer.from('IDENTICAL')),
+      dispose: vi.fn(async () => {
+        win.disposed = true;
+      }),
+    };
+    return win;
+  };
+
+  it('fails when every frame is byte-identical', async () => {
+    const render = createStillRenderer({
+      openWindow: async () => staticWin(3),
+      writeFile: async () => {},
+    });
+    await expect(render(spec, '/out', () => {})).rejects.toThrow(/IDENTICAL frames/);
+  });
+
+  it('names the cause when nothing seekable was found', async () => {
+    const render = createStillRenderer({
+      openWindow: async () => staticWin(0),
+      writeFile: async () => {},
+    });
+    await expect(render(spec, '/out', () => {})).rejects.toThrow(
+      /No CSS\/Web animations were found to seek/,
+    );
+  });
+
+  it('tells the author what CAN be seeked', async () => {
+    const render = createStillRenderer({
+      openWindow: async () => staticWin(0),
+      writeFile: async () => {},
+    });
+    await expect(render(spec, '/out', () => {})).rejects.toThrow(/hyperframesSeek/);
+  });
+
+  it('still passes a genuinely animated render', async () => {
+    const out = await createStillRenderer({
+      openWindow: async () => {
+        const w = staticWin(2);
+        let n = 0;
+        w.capture = vi.fn(async () => Buffer.from(`frame-${n++}`));
+        return w;
+      },
+      writeFile: async () => {},
+    })(spec, '/out', () => {});
+    expect(out).toHaveLength(3);
   });
 });

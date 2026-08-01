@@ -84,7 +84,7 @@ describe('augmentSystemPrompt', () => {
   it('tells the agent to BUILD/RUN/TEST its own artifacts, not punt to the user (item 4)', () => {
     const p = CAPABILITY_PROMPT.toLowerCase();
     // The artifact goes into the working dir via the agent's own tools…
-    expect(p).toContain('write it to the working directory');
+    expect(p).toContain('written to the working directory with real content');
     // …the agent exercises it before reporting…
     expect(p).toContain('exercise it yourself');
     // …and never hands the doing-part back to the user (the exact punt language
@@ -283,5 +283,32 @@ describe('the team section', () => {
   it('keeps the capability section either way', () => {
     expect(augmentSystemPrompt('Base.', { team: true })).toContain(CAPABILITY_PROMPT_MARKER);
     expect(augmentSystemPrompt('Base.', {})).toContain(CAPABILITY_PROMPT_MARKER);
+  });
+});
+
+/*
+ * THE PROMPT MUST NOT ARGUE WITH ITSELF.
+ *
+ * "Do the task — never hand it back" + "BUILD it and put it in place yourself"
+ * (with `game` named among the artifacts) reads as a ban on delegating, and it
+ * sits ABOVE the team section and is far more emphatic. Measured: three
+ * consecutive max-effort runs where the CEO built a whole game alone with
+ * talk_to_manager advertised — the last of them with the team section verifiably
+ * in the prompt (12677 chars vs 11675). The two sections were telling it opposite
+ * things and the older, louder one won.
+ *
+ * The clause was always about not handing work back to the USER. It now says so.
+ */
+describe('delegation is not forbidden by the do-the-task clause', () => {
+  it('scopes "never hand it back" to the user', () => {
+    expect(CAPABILITY_PROMPT).toContain('never hand it back TO THE USER');
+  });
+
+  it('says using the team still counts as doing it', () => {
+    expect(CAPABILITY_PROMPT).toMatch(/Getting it built by your own team counts as doing it/);
+  });
+
+  it('no longer tells the model to build every artifact itself', () => {
+    expect(CAPABILITY_PROMPT).not.toMatch(/BUILD it and put it in place yourself/);
   });
 });

@@ -300,3 +300,31 @@ describe('managerMeshPrompt: the submit gate', () => {
     expect(managerMeshPrompt('Make a bread-baking timer.')).toContain('Make a bread-baking timer.');
   });
 });
+
+/*
+ * The image charter said "You make the pictures this product needs", so asked to
+ * annotate a screenshot the specialist reasoned itself out of the right approach:
+ * "I'm the IMAGE SPECIALIST - I should generate images using my tools, not use
+ * computer use to drive a browser and then edit the screenshot."
+ */
+describe('image specialist: generation vs pixel work', () => {
+  const p = specialistMeshPrompt('image');
+
+  it('covers modifying an image, not only making one', () => {
+    expect(p).toMatch(/You make and modify the pictures/);
+  });
+
+  it('sends deterministic edits to code', () => {
+    expect(p).toMatch(/DETERMINISTIC PIXEL WORK/);
+    expect(p).toMatch(/Pillow, or a canvas/);
+  });
+
+  it('says that is still its job, so it does not hand the task back', () => {
+    expect(p).toMatch(/it is not a reason to hand the task back/);
+  });
+
+  it('tells it to capture the thing before annotating it', () => {
+    expect(p).toMatch(/GO AND GET IT FIRST/);
+    expect(p).toMatch(/FILE PATH on disk/);
+  });
+});

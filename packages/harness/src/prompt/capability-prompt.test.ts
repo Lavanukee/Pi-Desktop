@@ -349,3 +349,32 @@ describe('the delegation decision is made explicitly', () => {
     expect(DECIDE_FIRST_PROMPT).toMatch(/finishing and merely stopping/);
   });
 });
+
+/*
+ * Asked to screenshot a page and box its heading, the model spawned the IMAGE
+ * specialist, which reasoned: "but I'm the IMAGE SPECIALIST - I should generate
+ * images using my tools, not use computer use to drive a browser and then edit
+ * the screenshot" — and then called generate_image (which was broken anyway) and
+ * finally drew a filled rectangle on a blank canvas.
+ *
+ * Annotating an image that exists is not generation. Both prompts now say so.
+ */
+describe('pixel work is code, not generation', () => {
+  it('separates inventing imagery from operating on an existing image', () => {
+    expect(CAPABILITY_PROMPT).toMatch(/DETERMINISTIC PIXEL WORK IS CODE, NOT GENERATION/);
+    expect(CAPABILITY_PROMPT).toMatch(/INVENTING something that did not exist/);
+  });
+
+  it('names the concrete operations that want code', () => {
+    expect(CAPABILITY_PROMPT).toMatch(/cropping, resizing, compositing/);
+  });
+
+  it('says why a generation model is the wrong instrument for it', () => {
+    expect(CAPABILITY_PROMPT).toMatch(/paints a fresh\s+picture of roughly the right idea/);
+  });
+
+  it('tells it to capture the thing first, and use the PATH', () => {
+    expect(CAPABILITY_PROMPT).toMatch(/GO AND GET IT FIRST/);
+    expect(CAPABILITY_PROMPT).toMatch(/never draw on a blank canvas/i);
+  });
+});

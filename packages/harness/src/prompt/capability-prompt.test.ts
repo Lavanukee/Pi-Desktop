@@ -330,4 +330,22 @@ describe('the delegation decision is made explicitly', () => {
   it('asks for the choice to be stated, not just made', () => {
     expect(DECIDE_FIRST_PROMPT).toMatch(/say which you chose/);
   });
+
+  it('names the effort level, so the standard is explicit', () => {
+    expect(DECIDE_FIRST_PROMPT).toMatch(/HIGH\/MAXIMUM effort/);
+  });
+
+  it('rules out the linear and the trivial, not just ruling delegation in', () => {
+    expect(DECIDE_FIRST_PROMPT).toMatch(/quickly do yourself/);
+    expect(DECIDE_FIRST_PROMPT).toMatch(/cannot be parallelised/);
+  });
+
+  /* The doc's top open item: nothing structurally prompted verification, so a
+   * Godot project was written and never opened. At high effort it is required. */
+  it('requires a verify-as-the-user pass before submitting', () => {
+    expect(DECIDE_FIRST_PROMPT).toMatch(/VERIFY BEFORE YOU SUBMIT/);
+    expect(DECIDE_FIRST_PROMPT).toMatch(/think of yourself as the USER/);
+    expect(DECIDE_FIRST_PROMPT).toMatch(/visually, functionally/);
+    expect(DECIDE_FIRST_PROMPT).toMatch(/finishing and merely stopping/);
+  });
 });

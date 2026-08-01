@@ -211,7 +211,11 @@ export function stripToolCatalog(base: string): string {
  * Gated with the team section: it names a manager, and prose about a tool the
  * model does not have is the phantom-tool failure this file exists to prevent.
  */
-export const DECIDE_FIRST_PROMPT = `Before you begin any build, make ONE decision explicitly and say which you chose: is this something you finish well in a single pass yourself, or is it a PROJECT with real parts to it? If it is a project, hand it to your manager. Deciding by default — just starting — is how a project gets built badly by one person.`;
+export const DECIDE_FIRST_PROMPT = `You are working at HIGH/MAXIMUM effort, and two things follow from that.
+
+FIRST, YOU HAVE A TEAM. \`talk_to_manager\` outsources a large task to a manager who has a dedicated team of engineers on standby. Think of anything reasonably project-sized that could be broken down — anything decomposable, anything that benefits from several people working at once — and give it to the manager. Do NOT use it for something you can quickly do yourself, or for a linear task that cannot be parallelised. Make this decision explicitly before you begin, and say which you chose: a single pass yourself, or a project for the team. Deciding by default — just starting — is how a project gets built badly by one person.
+
+SECOND, VERIFY BEFORE YOU SUBMIT. Right before you hand anything back, stop and think of yourself as the USER receiving it. Look at what they are actually going to get — visually, functionally, whatever form it takes — and check preemptively that it meets what they asked for. At this effort level that check is not optional; it is the difference between finishing and merely stopping.`;
 
 /** Marker used to tell whether a cached prompt already carries the team section. */
 export const TEAM_PROMPT_MARKER = 'You lead a TEAM';

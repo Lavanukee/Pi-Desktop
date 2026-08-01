@@ -100,6 +100,8 @@ export interface GenManagerOptions {
   readonly resolveUv?: () => Promise<string>;
   /** Root dir for generated outputs. Default `<tmp>/pi-generated`. */
   readonly outputRoot?: string;
+  /** Explicit worker.py path. Defaults to {@link resolveGenWorkerScript}. */
+  readonly workerScript?: string;
   /** Max concurrent LIGHT jobs (default 2). Heavy models always run alone. */
   readonly maxConcurrent?: number;
   /**
@@ -186,7 +188,27 @@ function toSrc(p: string): string {
 
 export function registerGenIpc(opts: GenManagerOptions): void {
   const outputRoot = opts.outputRoot ?? path.join(tmpdir(), 'pi-generated');
-  const client = new GenServiceClient({ resolveUv: opts.resolveUv });
+  /*
+   * TELL THE CLIENT WHERE worker.py IS. It cannot work it out for itself here.
+   *
+   * `resolveWorkerScript` falls back to `packageRoot()`, which is derived from
+   * `import.meta.url` — and gen-service is BUNDLED into the Electron main, so
+   * that resolves to apps/desktop/dist-electron/, and `..` yields
+   * apps/desktop/python/worker.py. Which does not exist. Measured, from a real
+   * generate_image call:
+   *
+   *   gen worker exited (code 2) … can't open file
+   *   '/Users/jedd/Desktop/OSS-harness/apps/desktop/python/worker.py'
+   *
+   * So EVERY image generation failed, and the model — asked to annotate a
+   * screenshot — watched its tool die and fell back to drawing on a blank canvas.
+   * The PI_GEN_WORKER_PATH escape hatch existed for exactly this and nothing set
+   * it.
+   */
+  const client = new GenServiceClient({
+    resolveUv: opts.resolveUv,
+    ...(opts.workerScript !== undefined ? { workerScript: opts.workerScript } : {}),
+  });
   // Video routes to a persistent ComfyUI server (LTX/Wan) or the Node HyperFrames
   // runner — never the uv worker. Both default to a clear "not configured" error
   // until their runtimes install; image (mflux) still runs on the uv `client`.

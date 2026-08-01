@@ -31,6 +31,7 @@ import { registerConnectorsIpc } from './connectors/connectors-main';
 import { registerCorpIpc } from './corp/corp-main';
 import { fsHandlers } from './fs-handlers';
 import { disposeGen, registerGenCatalogIpc, registerGenIpc } from './gen/gen-manager';
+import { genWorkerCandidates, resolveGenWorkerScript } from './gen/worker-path';
 import { registerGen3dIpc } from './gen3d/gen3d-main';
 import { registerImportIpc } from './import/import-main';
 import { registerLlmIpc, shutdownInference } from './inference/llm-main';
@@ -466,8 +467,21 @@ function registerAppIpc(): void {
   // `emit` → `events.send('gen:comfy-install')`) to answer the modular-download
   // UI + drive the download-then-continue gate end-to-end.
   if (generationExperimentEnabled()) {
+    const genWorker = resolveGenWorkerScript({
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
+    });
+    if (genWorker === undefined) {
+      log.warn('gen worker script NOT FOUND — image generation will fail', {
+        tried: genWorkerCandidates({
+          resourcesPath: process.resourcesPath,
+          appPath: app.getAppPath(),
+        }),
+      });
+    }
     registerGenIpc({
       getWindow: () => (mainWindow !== null ? mainWindow.webContents : null),
+      ...(genWorker !== undefined ? { workerScript: genWorker } : {}),
       // gen event channels are a subset of AppEventMap; forward through the
       // app-wide sender (the cast only bridges the two generic key domains).
       sendEvent: (wc, channel, payload) =>

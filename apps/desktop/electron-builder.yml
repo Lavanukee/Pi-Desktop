@@ -32,6 +32,13 @@ extraResources:
   - from: resources/skills
     to: skills
     filter: ['**/*']
+  # The uv generation worker. gen-service resolves this from `import.meta.url`,
+  # which is wrong once it is bundled into the Electron main (it lands on
+  # apps/desktop/python/worker.py, which does not exist — every image generation
+  # died on it). Shipped outside the asar because uv spawns it as a real file.
+  - from: ../../packages/gen-service/python
+    to: gen-worker
+    filter: ['**/*']
 asarUnpack:
   # pi is spawned as a real child process (ELECTRON_RUN_AS_NODE). Its cli.js is
   # read through the asar shim, but its native transitive dep koffi (loaded via

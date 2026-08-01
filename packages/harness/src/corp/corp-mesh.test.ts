@@ -243,3 +243,60 @@ describe('the CEO’s brief matches the tools it actually has', () => {
     expect(p()).toContain('A greeting');
   });
 });
+
+/*
+ * THE MANAGER'S SUBMIT CONTRACT.
+ *
+ * jedd, predicting the failure before the run: "the manager will fail to
+ * commission a tester that actually drives the product … that needs to be baked
+ * into the system prompt just like the engineers get their one submit contract".
+ *
+ * The asymmetry was real: an engineer had a hard contract (check, then
+ * submit_work, and the submission is a real act) and the manager had none —
+ * nothing stood between "the engineers stopped sending me things" and reporting
+ * up.
+ */
+describe('managerMeshPrompt: the submit gate', () => {
+  const VISION = 'Build a 2D platformer with a coin counter and a win condition.';
+  const p = managerMeshPrompt(VISION);
+
+  it('obliges commissioning a tester that DRIVES the product', () => {
+    expect(p).toMatch(/COMMISSION THE TESTER/);
+    expect(p).toMatch(/not to read it, not to reason about it, to drive it/);
+  });
+
+  it('asks for the kind of testing the product actually needs', () => {
+    // An interface has to be opened and operated; a shell cannot see a window.
+    expect(p).toMatch(/OPENED and OPERATED/);
+    expect(p).toMatch(/visual specialist/);
+    expect(p).toMatch(/RUN end to end on real input/);
+  });
+
+  it('refuses a green report as proof', () => {
+    expect(p).toMatch(
+      /A test run that found nothing is either a finished product or a test that never left the happy path/,
+    );
+  });
+
+  it('commissions an auditor on the WHOLE stack, not one file', () => {
+    expect(p).toMatch(/AUDITOR ON THE WHOLE STACK/i);
+    expect(p).toMatch(/end to end/);
+  });
+
+  it('states the manager has a submit contract of its own', () => {
+    expect(p).toMatch(/YOU HAVE A SUBMIT CONTRACT TOO/);
+    expect(p).toMatch(/USED the product/);
+    expect(p).toMatch(/TESTED by someone who did not build it/);
+  });
+
+  it('ends on the hard gate, quoting the vision back', () => {
+    expect(p).toMatch(/DO NOT SUBMIT UNTIL YOU ARE CERTAIN THIS IS UP TO PAR WITH THE VISION/);
+    // The vision must be the LAST thing it reads — twenty exchanges deep, that is
+    // the first thing to blur.
+    expect(p.trimEnd().endsWith(VISION)).toBe(true);
+  });
+
+  it('carries whatever vision it is given', () => {
+    expect(managerMeshPrompt('Make a bread-baking timer.')).toContain('Make a bread-baking timer.');
+  });
+});

@@ -163,7 +163,7 @@ describe('wireHarness', () => {
     // The base is preserved and the capability section is appended after it.
     expect(result?.systemPrompt?.startsWith('You are a helpful coding agent.')).toBe(true);
     expect(result?.systemPrompt).toContain(CAPABILITY_PROMPT_MARKER);
-    expect(result?.systemPrompt).toContain('tool_search');
+    expect(result?.systemPrompt).toContain('capability');
   });
 
   it('does NOT classify on the turn path — no utility call blocks the reply (jedd)', async () => {

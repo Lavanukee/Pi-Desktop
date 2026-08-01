@@ -70,12 +70,12 @@ describe('augmentSystemPrompt', () => {
     expect(twice.split(CAPABILITY_PROMPT_MARKER).length - 1).toBe(1);
   });
 
-  it('affirms the capabilities the model kept refusing (calendar/mail/messages) and points at tool_search', () => {
+  it('affirms the capabilities the model kept refusing (calendar/mail/messages) and points at capability', () => {
     const p = CAPABILITY_PROMPT.toLowerCase();
     for (const cap of ['calendar', 'mail', 'messages', 'reminders', 'contacts']) {
       expect(p).toContain(cap);
     }
-    expect(p).toContain('tool_search');
+    expect(p).toContain('capability');
     // It must tell the model NOT to disclaim abilities it has.
     expect(p).toContain('never claim you "cannot access"');
   });
@@ -103,10 +103,10 @@ describe('augmentSystemPrompt', () => {
     expect(p).toContain('call that tool directly');
     expect(p).toContain('to find the date');
     expect(p).toContain('calendar');
-    // After a plan, ACT — don't re-run tool_search / update_plan.
-    expect(p).toContain('tool_search');
+    // After a plan, ACT — don't re-run `capability` / update_plan.
     expect(p).toContain('update_plan');
-    expect(p).toMatch(/one search, one plan, then do the work/);
+    expect(p).toContain('update_plan');
+    expect(p).toMatch(/one activation, one plan, then do the work/);
   });
 
   it('keeps the harness/reviewer framing private so it cannot leak into the answer (item 5)', () => {
@@ -179,5 +179,47 @@ describe('each capability carries its own guidance (jedd)', () => {
 
   it('still says an AX-opaque app gives a screenshot to act on by coordinates', () => {
     expect(CAPABILITY_PROMPT).toContain('act by x,y coordinates');
+  });
+});
+
+/*
+ * THE PROMPT MUST NOT NAME TOOLS THAT DO NOT EXIST.
+ *
+ * `tool_search` was removed and replaced by `capability`, but the prompt still
+ * told the model to "tool_search first, then act". This is the same failure that
+ * produced the browser_read confusion: prose naming an unadvertised tool. The
+ * grammar pins the emitted name to the ADVERTISED list, so a bid for a tool the
+ * prose invented lands on whichever real name is nearest — a plausible wrong
+ * call rather than a clean failure.
+ */
+describe('no phantom tools in the prompt', () => {
+  it('never mentions the removed tool_search', () => {
+    expect(CAPABILITY_PROMPT).not.toMatch(/tool_search/);
+  });
+
+  it('points at capability instead', () => {
+    expect(CAPABILITY_PROMPT).toMatch(/call `capability` first, then act/);
+  });
+});
+
+describe('verification is required of any artifact', () => {
+  it('does not limit the check to pages, scripts and tests', () => {
+    // A Godot project was written (14 files) and never opened, because the old
+    // wording only named HTML/script/test cases and nothing else mapped.
+    expect(CAPABILITY_PROMPT).toMatch(/the cheapest thing that would REVEAL IT IS BROKEN/);
+    expect(CAPABILITY_PROMPT).toMatch(/load the file with the tool that owns it/);
+  });
+
+  it('names the failure mode explicitly', () => {
+    expect(CAPABILITY_PROMPT).toMatch(
+      /Writing several files and reporting success without opening any of them/,
+    );
+  });
+});
+
+describe('capability activation is a first move, not a fallback', () => {
+  it('tells the model to activate before concluding it cannot', () => {
+    expect(CAPABILITY_PROMPT).toMatch(/TURN THE CAPABILITY ON BEFORE YOU DECIDE YOU CANNOT/);
+    expect(CAPABILITY_PROMPT).toMatch(/your FIRST action, not a fallback/);
   });
 });

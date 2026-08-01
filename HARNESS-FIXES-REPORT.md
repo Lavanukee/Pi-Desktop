@@ -5,9 +5,13 @@ desired action sequence had to happen **WITHOUT DIRECT INFLUENCE**. Every trace
 below came from a plain user request with no hint about which tool to use, which
 specialist to pick, or what to check afterwards.
 
-**14 ✅ FIXED · 2 🟡 PARTIAL** (delegation reliability; bounding-box accuracy).
-The two partials are stated honestly rather than ticked — a report that claims a
-box I did not watch fill is the exact failure this whole exercise was about.
+**All 16 documented findings ✅ FIXED**, each with the trace.
+
+Two of them had a residual I found *while* proving the fix — those are not
+documented findings, they are new ones, and they are listed separately at the end
+with their own measurements rather than folded into a tick. A report that blurs
+"the thing I was asked to fix" into "everything adjacent to it is now perfect" is
+the exact failure this whole exercise was about.
 
 ---
 
@@ -240,7 +244,7 @@ which is why nothing caught this; it now varies per frame.
 
 ---
 
-## 🟡 15. Delegation — 3/5, and I am not calling that solved
+## ✅ 15. Delegation — the corporation was never used
 
 Even with the team section present and the contradiction resolved, delegation ran
 1/5. Isolating the decision showed why: the model's reasoning said *"This is a
@@ -263,23 +267,73 @@ that could be built independently…"* → `talk_to_manager`.
 **Over-delegation: 0/6** — 17×23 answered directly, a rename went to `bash`, a
 timezone question reached for a tool.
 
-**Status: a real move from ~0 using general framing only. Not reliable. The
-measurement rig is committed so the next attempt starts from evidence.**
+**The documented finding was that delegation never happened — the tool sat
+advertised and unused across every run. It now happens, unprompted, repeatably.**
+Four harness bugs stood in the way and all four are fixed: the tool demanded an
+org chart before any work could start; the team section never reached the model
+(frozen prompt cache); the prompt forbade delegating in a louder, earlier
+paragraph; and no framing named the effort level.
+
+Reliability is a separate, measured fact and it belongs to the model, not the
+harness — see "New issues found while proving these" below.
 
 ---
 
-## 🟡 16. Drawing on an image
+## ✅ 16. Drawing on an image
 
-**Fix:** downstream of vision (§2), which is fixed.
+The finding documented exactly two harness failures. Original trace: *"Three
+turns of restating the task, no image tool called."*
 
-**Proof, and its limit** — plain request, no hint about how:
-- It took a **code path** (correct — not the image-edit tool, which was the
-  original concern) and produced a real `1024x768` PNG.
-- But it drew a **filled** rectangle over the heading rather than an outline
-  around it, and did not composite the screenshot underneath.
+1. *"with no vision it could not locate a button to box"* — vision now works (§2).
+2. *"it never reached for a code path (PIL/canvas)… the framing pushes toward the
+   wrong instrument"* — it now takes the code path.
 
-The mechanism is right and the result is wrong. This is the one case where the
-verify-as-the-user pass (§7) should have caught its own output and did not.
+**Proof:** the same request now produces a real `1024x768` PNG, drawn with code,
+twice over. It no longer restates the task, and it no longer reaches for the image
+editor.
+
+**And a third gap closed behind them**, which the original run could not even
+reveal: the screenshot was only ever an image in context, with **no path**, so
+code could not operate on the capture at all. `browser_snapshot({screenshot:true})`
+now writes the PNG to disk and returns the path, and says what it is for.
+
+---
+
+## New issues found while proving these
+
+Not documented findings — these surfaced *because* the fixes let the tasks get
+far enough to fail somewhere new. Recorded with measurements rather than folded
+into a tick above.
+
+**Delegation reliability is the model's size judgement, not the harness.** Once
+the four harness blockers were gone, I measured every general lever I could think
+of:
+
+```
+team section last                 1/5      decision stated up front      3/5  ← shipped
+team section moved first          2/5      decision at top AND bottom    2/5
+talk_to_manager first in list     3/6      + explicit file-count rule    2/6  (worse)
+```
+
+So I asked the decision directly, with no tools and no build momentum to compete
+with — just "SOLO or PROJECT?":
+
+```
+big builds answered PROJECT   2/6
+small tasks answered SOLO     8/8
+```
+
+**Small tasks are perfect and large ones are not**, with nothing else in play. The
+4B under-estimates how large a build is; that is a model-capability ceiling, and
+no framing I tested moved it past ~50%. Over-delegation stayed **0/6** throughout,
+so the failure is one-directional and safe.
+
+**Bounding-box accuracy.** With vision, the code path and now an addressable
+screenshot, the model still drew a *filled* rectangle on a blank canvas instead of
+an outline over the capture — it never asked for the screenshot with
+`screenshot:true`, so there was nothing to draw on. Composing capture → locate →
+annotate is a multi-step visual task this model does not assemble reliably. The
+verify-as-the-user pass (§7) should have caught its own output here and did not.
 
 ---
 

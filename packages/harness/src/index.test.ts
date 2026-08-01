@@ -11,6 +11,7 @@ import {
   HARNESS_CONFIG_ENTRY,
   hasAttachedFileBlock,
   type StoredEntryLike,
+  TEAM_PROMPT_MARKER,
   type ToolSchemaLike,
   wireHarness,
 } from './index.js';
@@ -437,5 +438,49 @@ describe('wireHarness — rung-4 schema relaxation wiring', () => {
     const { ctx } = makeCtx(f.entries);
     await f.fire('session_start', { type: 'session_start', reason: 'startup' }, ctx);
     expect(deps.relaxedSchemaFor?.('read')).toBeUndefined();
+  });
+});
+
+/*
+ * THE TEAM SECTION MUST SURVIVE THE CACHE.
+ *
+ * canonicalSystemPrompt is computed once at warm-up, when effort is still the
+ * default — so a session raised to max got `talk_to_manager` in its tool list and
+ * a prompt that never mentioned a team. Measured: sysPromptChars byte-identical
+ * (11675) across a max-effort run and a default-effort one.
+ *
+ * My first fix tracked the previous value and invalidated on a change, which
+ * never fired: the first observation has nothing to compare against, and that IS
+ * the transition that matters. So the check reads the cached TEXT.
+ */
+describe('team prompt invalidation', () => {
+  const fire = async (f: ReturnType<typeof makeFakePi>, ctx: unknown) =>
+    (
+      await f.fire(
+        'before_agent_start',
+        {
+          type: 'before_agent_start',
+          prompt: 'build me a thing',
+          systemPrompt: 'You are a helpful coding agent.',
+          systemPromptOptions: {},
+        },
+        ctx as never,
+      )
+    )[0] as { systemPrompt?: string } | undefined;
+
+  it('rebuilds the prompt when the team becomes available', async () => {
+    const f = makeFakePi(['read', 'write', 'bash', 'talk_to_manager']);
+    wireHarness(f.pi);
+    const { ctx } = makeCtx(f.entries);
+    await f.fire('session_start', { type: 'session_start', reason: 'startup' }, ctx);
+
+    // Default effort → no team on offer, so no team section.
+    const before = await fire(f, ctx);
+    expect(before?.systemPrompt).not.toContain(TEAM_PROMPT_MARKER);
+
+    // Raised to max → the tool is advertised, so the framing must appear too.
+    await (f.getCommand()?.handler('effort max', ctx) ?? Promise.resolve());
+    const after = await fire(f, ctx);
+    expect(after?.systemPrompt).toContain(TEAM_PROMPT_MARKER);
   });
 });

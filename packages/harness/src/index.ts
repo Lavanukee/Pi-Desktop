@@ -47,7 +47,7 @@ import {
 } from './permissions/modes.js';
 import { capabilityForTool } from './presets/capabilities.js';
 import { BROWSER_NAVIGATE_ALWAYS, resolvePresetTools } from './presets/presets.js';
-import { augmentSystemPrompt } from './prompt/capability-prompt.js';
+import { augmentSystemPrompt, TEAM_PROMPT_MARKER } from './prompt/capability-prompt.js';
 import { connectRepairBridge, type LiveRepairDeps } from './repair/bridge.js';
 import { createToolCallFixer, withRepairAttempts } from './repair/fixer.js';
 import {
@@ -1095,13 +1095,20 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
    * the KV-cached prefix, so rebuilding it costs a full re-prefill and must not
    * happen on every turn.
    */
-  let lastTeamAvailable: boolean | null = null;
   function syncTeamPrompt(): void {
-    const now = teamAvailable();
-    if (lastTeamAvailable !== null && now !== lastTeamAvailable) {
+    const cached = runtime.canonicalSystemPrompt;
+    if (cached === null) return;
+    /*
+     * Compare the CACHED TEXT against what is wanted, not a tracked boolean.
+     * My first attempt tracked the previous value and invalidated on a change —
+     * which never fired, because the very first observation has nothing to
+     * compare against and that IS the transition that matters (warm-up caches at
+     * default effort; the session is raised to max immediately after). Reading
+     * the cache itself has no state to get out of sync.
+     */
+    if (cached.includes(TEAM_PROMPT_MARKER) !== teamAvailable()) {
       runtime.canonicalSystemPrompt = null;
     }
-    lastTeamAvailable = now;
   }
 
   function applyPreset(
@@ -1282,6 +1289,10 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
     // non-deterministically per turn (reorders / adds / drops lines), which shifts
     // the ~7k-char prompt and forces a FULL KV re-prefill on EVERY message. Reusing
     // the canonical prompt keeps the prefix byte-identical so follow-ups reuse it.
+    // Correct the frozen prompt if the TEAM has appeared or gone since it was
+    // built — the freeze below is what made the team section unreachable, because
+    // warm-up runs at default effort and the session is raised afterwards.
+    syncTeamPrompt();
     const augmentedSystemPrompt =
       runtime.canonicalSystemPrompt ??
       augmentSystemPrompt(event.systemPrompt, { team: teamAvailable() });
@@ -1770,6 +1781,8 @@ export {
   augmentSystemPrompt,
   CAPABILITY_PROMPT,
   CAPABILITY_PROMPT_MARKER,
+  TEAM_PROMPT,
+  TEAM_PROMPT_MARKER,
 } from './prompt/capability-prompt.js';
 export {
   connectRepairBridge as connectHarnessRepairBridge,

@@ -187,6 +187,9 @@ export function stripToolCatalog(base: string): string {
  * emitted name to the ADVERTISED list, so prose about an absent tool produces a
  * plausible wrong call rather than a clean one.
  */
+/** Marker used to tell whether a cached prompt already carries the team section. */
+export const TEAM_PROMPT_MARKER = 'You lead a TEAM';
+
 export const TEAM_PROMPT = `You lead a TEAM, and for a big build you should use it.
 
 \`talk_to_manager\` hands the work to a manager who splits it across their engineers, runs it, checks it, and delivers the finished product back to you for review. Send them a message saying what you want built — in full, including how it should look and feel, because they have not spoken to the user and know only what you tell them. You do not design the team or the divisions; splitting the work is the manager's job.

@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ToolDefinition } from '@mariozechner/pi-coding-agent';
+import { defaultVideoModel, getModel } from '@pi-desktop/gen-service';
 import { describe, expect, it } from 'vitest';
 import type { GenBridge } from './gen-bridge-client.ts';
 import type { GenBridgeMethod } from './gen-contract.ts';
@@ -202,11 +203,20 @@ describe('generate_video tool', () => {
     expect(bridge.calls[0]?.params?.model).toBe('hyperframes');
   });
 
-  it('routes a photoreal prompt to the default video model', async () => {
+  /*
+   * This pinned `wan2.1-t2v-1.3b`, which is `reserved: true` — a backend that is
+   * not installed and cannot execute. So any prompt missing the motion-graphics
+   * regex was routed to a dead model and failed. The assertion is now the
+   * INTENT: a non-motion prompt goes to whatever the catalog's default is, and
+   * that default must be something that can actually run.
+   */
+  it('routes a photoreal prompt to the default video model, which must be runnable', async () => {
     const bridge = new FakeBridge().on('generateVideo', okVideo);
     const tools = collectTools(bridge, async () => Buffer.from('x'));
     await runVideo(tools, { prompt: 'a photoreal drone shot over a canyon at sunset' });
-    expect(bridge.calls[0]?.params?.model).toBe('wan2.1-t2v-1.3b');
+    const chosen = bridge.calls[0]?.params?.model;
+    expect(chosen).toBe(defaultVideoModel().id);
+    expect(getModel(chosen as string)?.reserved).not.toBe(true);
   });
 
   it('enqueues via the bridge and returns the path + footnote + the poster-frame image', async () => {

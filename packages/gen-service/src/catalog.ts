@@ -665,8 +665,25 @@ export function defaultImageModel(): ModalityModel {
  */
 export function defaultVideoModel(): ModalityModel {
   const videos = modelsForModality('video');
+  /*
+   * PREFER SOMETHING THAT CAN ACTUALLY RUN.
+   *
+   * This picked the first RECOMMENDED comfyui entry — Wan2.1-T2V-1.3B — which is
+   * `reserved: true`, i.e. its backend is not installed and the job cannot
+   * execute. So every `generate_video` call whose prompt missed a narrow keyword
+   * regex was routed to a dead model and failed, while the one video backend that
+   * genuinely works on this machine (HyperFrames, no weights, no network) sat
+   * unreachable behind that regex. Measured: a motion request reached the motion
+   * specialist with `generate_video` in its kit and still rendered nothing.
+   *
+   * A default that cannot run is not a default. Reserved entries are now the LAST
+   * resort rather than the first choice, so the fallback chain degrades toward
+   * something usable instead of away from it.
+   */
+  const usable = videos.filter((m) => m.reserved !== true);
   const first =
-    videos.find((m) => m.recommended === true && m.backend === 'comfyui') ??
+    usable.find((m) => m.recommended === true) ??
+    usable[0] ??
     videos.find((m) => m.recommended === true) ??
     videos[0];
   if (first === undefined) throw new Error('catalog has no video model');

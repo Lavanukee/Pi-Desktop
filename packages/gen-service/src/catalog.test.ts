@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   activeModels,
   defaultImageModel,
+  defaultVideoModel,
   getModel,
   type License,
   MODALITY_CATALOG,
@@ -359,5 +360,26 @@ describe('license union additions (§1)', () => {
     const nvidiaNc: License = 'nvidia-nc';
     const gemma: License = 'gemma';
     expect([openrail, nvidiaNc, gemma]).toHaveLength(3);
+  });
+});
+
+/*
+ * A DEFAULT THAT CANNOT RUN IS NOT A DEFAULT.
+ *
+ * defaultVideoModel() picked the first RECOMMENDED comfyui entry —
+ * Wan2.1-T2V-1.3B — which is `reserved: true`, meaning its backend is not
+ * installed and the job cannot execute. Every generate_video call whose prompt
+ * missed a narrow keyword regex routed there and failed, while HyperFrames (no
+ * weights, no network, genuinely runnable) sat unreachable behind that regex.
+ * Measured: a motion request reached the motion specialist with generate_video in
+ * its kit and still rendered nothing.
+ */
+describe('defaultVideoModel prefers something runnable', () => {
+  it('never defaults to a reserved backend', () => {
+    expect(defaultVideoModel().reserved).not.toBe(true);
+  });
+
+  it('picks the local, no-weights motion path', () => {
+    expect(defaultVideoModel().backend).toBe('hyperframes');
   });
 });

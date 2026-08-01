@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { specialistToolsFor } from '../corp/corp-mesh.js';
 import {
   composeCommission,
   DEFAULT_IMAGE_ITERATIONS,
@@ -119,5 +120,25 @@ describe('composeCommission', () => {
       expect(out).toContain('YOUR COMMISSION');
       expect(out.length).toBeGreaterThan(200);
     }
+  });
+});
+
+/*
+ * PICKING THE RIGHT NEIGHBOUR.
+ *
+ * Measured: asked for a motion-graphics animation, the model spawned the IMAGE
+ * specialist. `specialistToolsFor('motion')` carries `generate_video` and
+ * `image` does not, so the wrong pick comes back unable to render anything. The
+ * kinds are distinguished by the ARTIFACT they return, not by topic, and the
+ * tool description has to say so.
+ */
+describe('specialist kits differ by artifact', () => {
+  it('only motion can render frames', () => {
+    expect(specialistToolsFor('motion')).toContain('generate_video');
+    expect(specialistToolsFor('image')).not.toContain('generate_video');
+  });
+
+  it('only image carries still generation', () => {
+    expect(specialistToolsFor('image')).toContain('generate_image');
   });
 });

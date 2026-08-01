@@ -223,3 +223,24 @@ describe('capability activation is a first move, not a fallback', () => {
     expect(CAPABILITY_PROMPT).toMatch(/your FIRST action, not a fallback/);
   });
 });
+
+describe('multi-step and destructive work leave a trail', () => {
+  /* A chained task re-derived its position from the transcript every turn, and
+   * `update_plan` was never called — the prompt said what to do AFTER writing a
+   * plan but never when to write one. */
+  it('asks for a plan when the work is a chain', () => {
+    expect(CAPABILITY_PROMPT).toMatch(/WHEN THE WORK IS A CHAIN/);
+    expect(CAPABILITY_PROMPT).toMatch(/mark each one off as it completes/);
+  });
+
+  it('does not demand a plan for a single action', () => {
+    expect(CAPABILITY_PROMPT).toMatch(/a plan for a single action is noise/);
+  });
+
+  /* Nothing made a bulk filesystem change checkable after the fact, which is the
+   * one class of mistake the user cannot undo by asking again. */
+  it('requires a bulk or irreversible change to be stated and then checked', () => {
+    expect(CAPABILITY_PROMPT).toMatch(/BEFORE ANYTHING BULK OR IRREVERSIBLE/);
+    expect(CAPABILITY_PROMPT).toMatch(/"Done" is not an observation/);
+  });
+});

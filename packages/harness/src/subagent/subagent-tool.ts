@@ -72,11 +72,15 @@ const SubagentParams = Type.Object({
   specialist: Type.Optional(
     Type.String({
       description:
-        "Run the subagent as a named specialist, with that role's charter and tools. One of: " +
-        `${MESH_SPECIALIST_KINDS.join(', ')}. Producers come back with an artifact — ` +
-        '`image` makes pictures and improves them over passes, `motion` renders motion ' +
-        'graphics, `ui-critic` judges an interface, `research` delivers exactly the ' +
-        'deliverable you name. The rest answer a question through one lens.',
+        "Run the subagent as a named specialist, with that role's charter and tools. " +
+        'PICK BY THE ARTIFACT YOU WANT BACK, not by topic — the kinds carry different ' +
+        'tools, so the wrong neighbour comes back empty-handed. ' +
+        '`image` makes and improves still pictures. ' +
+        '`motion` makes ANIMATION — motion graphics, titles, anything that moves over ' +
+        'time; it is the only kind that can render frames. ' +
+        '`ui-critic` judges an interface that already exists. ' +
+        '`research` goes and finds out, and delivers the exact deliverable you name. ' +
+        `The rest answer a question through one lens: ${MESH_SPECIALIST_KINDS.join(', ')}.`,
     }),
   ),
   iterations: Type.Optional(

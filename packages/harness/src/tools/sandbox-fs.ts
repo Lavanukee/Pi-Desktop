@@ -100,7 +100,53 @@ function expandUserPath(raw: string): string {
  */
 export function resolveWorkspacePath(raw: string, root: string): string {
   const expanded = expandUserPath(raw);
-  return path.isAbsolute(expanded) ? path.resolve(expanded) : path.resolve(root, expanded);
+  if (path.isAbsolute(expanded)) return path.resolve(expanded);
+  const repaired = repairDroppedRootSlash(expanded);
+  if (repaired !== undefined) return repaired;
+  return path.resolve(root, expanded);
+}
+
+/**
+ * Top-level directories that only ever exist AT the filesystem root.
+ *
+ * Nobody keeps a relative folder called `Users/` or `Applications/` inside their
+ * project, so a relative path starting with one of these is a dropped leading
+ * slash, not a real relative path.
+ */
+const ROOT_LEVEL_DIRS = new Set([
+  'Users',
+  'Applications',
+  'Library',
+  'System',
+  'Volumes',
+  'home',
+  'usr',
+  'var',
+  'etc',
+  'opt',
+  'tmp',
+]);
+
+/**
+ * `Users/jedd/Desktop/game` → `/Users/jedd/Desktop/game`.
+ *
+ * jedd found the damage this does: "an earlier godot max effort run left a folder
+ * on my desktop that is called 'users' and has a hilarious path in it:
+ * /Users/jedd/Desktop/Users/jedd/Desktop/platformer_game".
+ *
+ * A single dropped character turns an absolute path into a relative one that
+ * resolves happily against the working directory, so nothing errors — it just
+ * builds an absurd tree somewhere real and reports success. Joining is the wrong
+ * answer whenever the first segment is a directory that only exists at the root:
+ * the user's home is not inside their Desktop.
+ *
+ * Returns undefined when the path is a genuine relative path, leaving the normal
+ * join alone.
+ */
+export function repairDroppedRootSlash(relative: string): string | undefined {
+  const first = relative.split(path.sep)[0] ?? '';
+  if (!ROOT_LEVEL_DIRS.has(first)) return undefined;
+  return path.resolve(path.sep + relative);
 }
 
 /** True when `abs` is `root` itself or nested under it. Roots must be normalized. */

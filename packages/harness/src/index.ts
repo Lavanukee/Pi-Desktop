@@ -17,6 +17,7 @@
  * CLI pi users can consume the pieces directly.
  */
 
+import { stat } from 'node:fs/promises';
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -92,6 +93,8 @@ import { registerImageTools } from './tools/image-tools.js';
 import { applyBias, lastAssistantThought, planBias } from './tools/intent-bias.js';
 import { detectOpenedApp, openedAppNote } from './tools/opened-app.js';
 import { registerPlanTool } from './tools/plan-tool.js';
+import { registerPresentTool } from './tools/present.js';
+import { presentBridgeFromEnv } from './tools/present-bridge.js';
 import { registerSandboxFileTools } from './tools/sandbox-fs.js';
 import { truncateToolOutput } from './tools/tool-output-truncate.js';
 import { captureRegisteredTools } from './tools/tool-registry.js';
@@ -963,6 +966,25 @@ export function wireHarness(pi: ExtensionAPI, options: WireHarnessOptions = {}):
   // Real subagents: `spawn_subagent` runs an isolated child pi and returns ONLY
   // its summary. Spawns are memory-scheduled (concurrency bounded by detected
   // RAM/cores, degrading to 1 with no utility model / low RAM / single core).
+  /*
+   * `present` is the TOP-LEVEL model's alone. jedd: "this is only for the top
+   * level/original model, no subagent ever has this". A child reports to whoever
+   * spawned it, not to the person — a subagent presenting would put an artefact
+   * in front of a user nobody decided to show it to.
+   */
+  if (readSubagentDepth(process.env) === 0) {
+    registerPresentTool(pi, {
+      bridge: presentBridgeFromEnv(),
+      stat: async (target) => {
+        try {
+          return { isDirectory: (await stat(target)).isDirectory() };
+        } catch {
+          return null;
+        }
+      },
+    });
+  }
+
   // Only the top-level agent (depth 0) registers the tool — a spawned child
   // (depth >= 1) does not, so subagents can't recursively spawn subagents (v1).
   if (readSubagentDepth(process.env) < MAX_SUBAGENT_DEPTH) {

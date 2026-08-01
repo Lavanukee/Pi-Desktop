@@ -13,6 +13,7 @@ import { PiBridge } from '@pi-desktop/engine/main';
 import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
 import { app, type IpcMainInvokeEvent, ipcMain, type WebContents } from 'electron';
 import { resolveBundledPackageAsset } from '../app-paths';
+import { openStillWindow } from '../gen/hyperframes-window';
 import { registerGen3dBridge } from '../gen3d/gen3d-bridge';
 import { runImageJob } from '../gen3d/gen3d-main';
 import {
@@ -30,6 +31,7 @@ import type { PiInvokeMap } from './contract';
 import { extensionPackageDirs, toolExtensionPackageDirs } from './extension-dirs';
 import { createPiSessions, type PiSessionHandlers } from './pi-sessions';
 import { registerPrefillIpc } from './prefill-main';
+import { registerPresentBridge } from './present-bridge';
 import { installPiQuitHold } from './quit-hold';
 import { registerResumeIpc } from './resume-main';
 import { registerSubagentBridge } from './subagent-bridge';
@@ -317,6 +319,33 @@ export function registerPiIpc(
   registerResumeIpc();
   registerPrefillIpc();
   if (opts.getWindow !== undefined) registerSubagentBridge(opts.getWindow, childAgents);
+  /*
+   * `present` — the top-level model's last act. Its bridge shows the artefact in
+   * the canvas AND renders a preview back to the model, so nothing can be handed
+   * over unlooked-at. HTML is captured with the same offscreen window HyperFrames
+   * uses; env must be live before the first pi spawn, like its siblings.
+   */
+  if (opts.getWindow !== undefined) {
+    registerPresentBridge({
+      getWindow: opts.getWindow,
+      renderPage: async (filePath) => {
+        const win = await openStillWindow(1280, 900);
+        try {
+          await win.load(
+            `<meta http-equiv="refresh" content="0; url=file://${filePath}">`,
+            1280,
+            900,
+          );
+          await new Promise((r) => setTimeout(r, 600));
+          return (await win.capture()).toString('base64');
+        } catch {
+          return null;
+        } finally {
+          await win.dispose().catch(() => {});
+        }
+      },
+    });
+  }
   // The chat's image tools (`generate_image` / `edit_image`) reach the gen3d
   // engine through their own socket bridge, for the same reason and with the
   // same timing constraint as the subagent one: its env must be published

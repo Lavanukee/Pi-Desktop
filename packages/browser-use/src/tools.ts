@@ -11,6 +11,10 @@
  * reliable, no coordinate math). On a WebGL/`<canvas>`-heavy page, or when the
  * caller passes explicit `x,y`, fall back to coordinate clicks (sendInputEvent).
  */
+
+import { writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import type { AgentToolResult, ExtensionAPI } from '@mariozechner/pi-coding-agent';
 import { Type } from '@sinclair/typebox';
 import type { BrowserBridge } from './bridge-client.js';
@@ -152,11 +156,17 @@ export function registerBrowserUseTools(pi: ExtensionAPI, options: BrowserUseOpt
     description:
       "Return a COMPACT, indexed list of the page's interactive + salient elements plus a short " +
       'summary (title, url, headings, landmarks, scroll). This is your view of the page — act on ' +
-      'elements by their [index]. Optionally attach a screenshot. Prefer this over dumping HTML.',
+      'elements by their [index]. Optionally attach a screenshot — which you both SEE and get a ' +
+      'FILE PATH for, so you can operate on it with code (draw on it, crop it, measure it). ' +
+      'Prefer this over dumping HTML.',
     promptSnippet: 'See the current page as an indexed element list',
     parameters: Type.Object({
       screenshot: Type.Optional(
-        Type.Boolean({ description: 'Also attach a screenshot image (heavier). Default false.' }),
+        Type.Boolean({
+          description:
+            'Also capture a screenshot (heavier). You get the image to look at AND a path on ' +
+            'disk to open with code. Default false.',
+        }),
       ),
     }),
     async execute(_id, params): Promise<AgentToolResult<BrowserDetails>> {
@@ -182,11 +192,39 @@ export function registerBrowserUseTools(pi: ExtensionAPI, options: BrowserUseOpt
             const dataUrl = shot?.dataUrl ?? null;
             const comma = dataUrl?.indexOf(',') ?? -1;
             if (dataUrl !== null && comma !== -1) {
-              content.push({
-                type: 'image',
-                data: dataUrl.slice(comma + 1),
-                mimeType: 'image/png',
-              });
+              const b64 = dataUrl.slice(comma + 1);
+              content.push({ type: 'image', data: b64, mimeType: 'image/png' });
+              /*
+               * AND PUT IT ON DISK, with the path in the result.
+               *
+               * The image only ever entered the model's context — it could SEE
+               * the page and had no way to ADDRESS it. So anything needing CODE
+               * to operate on the capture (draw on it, crop it, measure it,
+               * diff it) was impossible, and the model did the only thing left:
+               * invented a blank canvas and drew on that. Measured on "draw a
+               * red box around the heading" — a real 1024x768 PNG containing a
+               * rectangle and no page behind it.
+               *
+               * A capture you can look at but cannot open is half a capability.
+               * Best-effort: if the write fails the image still rides in context,
+               * which is the behaviour that already existed.
+               */
+              try {
+                const file = path.join(
+                  tmpdir(),
+                  `bobble-screenshot-${Date.now().toString(36)}.png`,
+                );
+                await writeFile(file, Buffer.from(b64, 'base64'));
+                content.push({
+                  type: 'text',
+                  text:
+                    `\n[Screenshot also saved to ${file} — use that PATH when you need to ` +
+                    'operate on the image with code (draw on it, crop it, measure it) rather ' +
+                    'than only look at it.]',
+                });
+              } catch {
+                // Disk is a bonus; the in-context image is the primary payload.
+              }
             } else {
               failure = 'the browser returned an empty image';
             }

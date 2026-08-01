@@ -196,3 +196,30 @@ describe('registerBrowserUseTools', () => {
     expect(details(r).error).toBe('boom');
   });
 });
+
+/*
+ * A CAPTURE YOU CAN LOOK AT BUT CANNOT OPEN IS HALF A CAPABILITY.
+ *
+ * The screenshot only ever entered the model's context as an image, with no path,
+ * so anything needing CODE to operate on it — draw on it, crop it, measure it —
+ * was impossible. Measured on "draw a red box around the heading": the model
+ * invented a blank canvas and drew a rectangle on nothing.
+ */
+describe('browser_snapshot screenshot is addressable', () => {
+  it('returns a file path alongside the image', async () => {
+    const png = Buffer.from('PNG').toString('base64');
+    const bridge = new FakeBridge()
+      .on('evaluate', () => SNAP())
+      .on('screenshot', () => ({ dataUrl: `data:image/png;base64,${png}` }));
+    const tools = collectTools(bridge);
+    const r = await run(tools, 'browser_snapshot', { screenshot: true });
+    const parts = r.content as Array<{ type: string; text?: string }>;
+    expect(parts.some((c) => c.type === 'image')).toBe(true);
+    const text = parts
+      .filter((c) => c.type === 'text')
+      .map((c) => c.text ?? '')
+      .join('\n');
+    expect(text).toMatch(/Screenshot also saved to .*\.png/);
+    expect(text).toMatch(/operate on the image with code/);
+  });
+});

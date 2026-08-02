@@ -49,33 +49,69 @@ interface Request {
   params?: { path?: string; note?: string; kind?: string };
 }
 
-/** Files worth naming when a folder is presented — what makes it runnable. */
-const ENTRY_POINTS = [
-  'project.godot',
-  'index.html',
-  'package.json',
-  'main.py',
-  'README.md',
-  'Cargo.toml',
+/**
+ * Entry point → the command that OPENS it, and what to say when that command is
+ * missing.
+ *
+ * jedd, on a presented Godot project: "I can't as the user go and see the run
+ * even primitively following its instructions going to the folder and the file
+ * and pressing f5, won't do anything. it hasn't installed godot or looked for an
+ * installation or run any visual tests."
+ *
+ * A project the user cannot open is not finished, and "the files exist" is not
+ * evidence that they can. So presenting a folder now REPORTS whether the thing
+ * that runs it is actually on this machine. `null` means the entry point needs
+ * nothing installed (a browser opens an HTML file).
+ */
+const ENTRY_POINTS: ReadonlyArray<{ file: string; runtime: string | null; what: string }> = [
+  { file: 'project.godot', runtime: 'godot', what: 'Godot' },
+  { file: 'index.html', runtime: null, what: 'a browser' },
+  { file: 'package.json', runtime: 'node', what: 'Node' },
+  { file: 'Cargo.toml', runtime: 'cargo', what: 'Rust/Cargo' },
+  { file: 'main.py', runtime: 'python3', what: 'Python' },
+  { file: 'README.md', runtime: null, what: 'nothing (it is a document)' },
 ];
+
+/** Is `cmd` on PATH? Cheap, and the answer decides whether a project is openable. */
+async function hasRuntime(cmd: string): Promise<boolean> {
+  try {
+    await run('sh', ['-lc', `command -v ${cmd}`], { timeout: 4_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Describe a folder the way somebody deciding "does this work?" would want:
  * what is in it, and the file that makes it a project rather than a pile.
  */
-export async function describeProject(dir: string): Promise<string> {
+export async function describeProject(
+  dir: string,
+  probe: (cmd: string) => Promise<boolean> = hasRuntime,
+): Promise<string> {
   const names = await readdir(dir);
-  const entry = ENTRY_POINTS.find((e) => names.includes(e));
+  const entry = ENTRY_POINTS.find((e) => names.includes(e.file));
   const listed = names.slice(0, 40).sort();
   const more = names.length > listed.length ? ` (+${names.length - listed.length} more)` : '';
-  return [
-    `${dir} contains ${names.length} entries${more}:`,
-    listed.join(', '),
-    entry !== undefined
-      ? `Entry point: ${entry}. That is what decides whether this opens — check it is real.`
-      : 'No recognisable entry point (no project.godot / index.html / package.json / main.py). ' +
+  const head = [`${dir} contains ${names.length} entries${more}:`, listed.join(', ')];
+  if (entry === undefined) {
+    head.push(
+      'No recognisable entry point (no project.godot / index.html / package.json / main.py). ' +
         'A folder of files is not yet a project a user can open.',
-  ].join('\n');
+    );
+    return head.join('\n');
+  }
+  head.push(`Entry point: ${entry.file} — opened with ${entry.what}.`);
+  if (entry.runtime !== null && !(await probe(entry.runtime))) {
+    head.push(
+      `BUT ${entry.what} IS NOT INSTALLED on this machine (\`${entry.runtime}\` is not on PATH), ` +
+        'so the user cannot open this and neither can you. You have not verified that any of it ' +
+        'works. Either install it, or say plainly in your reply that the project is written but ' +
+        'unopenable here and what they need — do NOT describe it as finished and working.',
+    );
+  }
+  return head.join('\n');
 }
 
 /** Produce the preview for one artefact. Pure-ish; the renderer is injected. */

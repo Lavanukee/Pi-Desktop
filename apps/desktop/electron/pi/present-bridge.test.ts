@@ -19,6 +19,37 @@ describe('describeProject', () => {
     expect(out).toContain('2 entries');
   });
 
+  /* jedd, on a presented Godot project: "I can't as the user go and see the run
+   * even primitively... pressing f5, won't do anything. it hasn't installed
+   * godot or looked for an installation." A project whose runtime is absent is
+   * unopenable, and the model has no way to know that unless we say so. */
+  it('says the runtime is missing when it is not on this machine', async () => {
+    const d = dir();
+    writeFileSync(path.join(d, 'project.godot'), 'x');
+    const out = await describeProject(d, async () => false);
+    expect(out).toContain('IS NOT INSTALLED');
+    expect(out).toContain('godot');
+    expect(out).toContain('do NOT describe it as finished');
+  });
+
+  it('stays quiet about the runtime when it IS installed', async () => {
+    const d = dir();
+    writeFileSync(path.join(d, 'project.godot'), 'x');
+    const out = await describeProject(d, async () => true);
+    expect(out).toContain('opened with Godot');
+    expect(out).not.toContain('NOT INSTALLED');
+  });
+
+  /* An HTML file needs nothing installed, so probing would be a lie waiting to
+   * happen — a machine without `open` on PATH is not a machine without a browser. */
+  it('never claims a missing runtime for something a browser opens', async () => {
+    const d = dir();
+    writeFileSync(path.join(d, 'index.html'), '<p>x</p>');
+    const out = await describeProject(d, async () => false);
+    expect(out).toContain('opened with a browser');
+    expect(out).not.toContain('NOT INSTALLED');
+  });
+
   it('says plainly when a folder is not yet a project', async () => {
     const d = dir();
     writeFileSync(path.join(d, 'a.txt'), 'x');

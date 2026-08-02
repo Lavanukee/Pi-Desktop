@@ -12,6 +12,7 @@ import {
   type MenuItemConstructorOptions,
   type NativeImage,
   nativeImage,
+  screen,
   session,
   type WebContents,
   type WebPreferences,
@@ -138,14 +139,35 @@ function firstRunClaudeBounds(): Pick<
   }
   const { bounds } = parseClaudeWindowState(text);
   if (bounds === null || bounds.isMaximized || bounds.isFullScreen) return null;
-  // Clamp to the window's own minimums; only carry x/y when both are present.
+  /*
+   * CLAMP TO THE SCREEN, not just to our own minimums.
+   *
+   * This adopted Claude Desktop's saved size and position verbatim. When those
+   * bounds are taller than the usable area — or low enough that the bottom falls
+   * under the dock — Bobble opens with its bottom edge off-screen, and the two
+   * things pinned there go with it. jedd: "odd UI bug squishing the should be
+   * pinned bottom left area to the bottom." The sidebar's profile footer and the
+   * composer's model row were both cut off on the same line, which is the shape
+   * of a window hanging off the display rather than of a layout squeezing (the
+   * footer measures a correct 48px inside the viewport at every size we tested).
+   */
+  const area = screen.getDisplayMatching({
+    x: Math.round(bounds.x ?? 0),
+    y: Math.round(bounds.y ?? 0),
+    width: Math.round(bounds.width),
+    height: Math.round(bounds.height),
+  }).workArea;
+  const width = Math.min(Math.max(640, Math.round(bounds.width)), area.width);
+  const height = Math.min(Math.max(480, Math.round(bounds.height)), area.height);
   const out: Pick<BrowserWindowConstructorOptions, 'width' | 'height' | 'x' | 'y'> = {
-    width: Math.max(640, Math.round(bounds.width)),
-    height: Math.max(480, Math.round(bounds.height)),
+    width,
+    height,
   };
   if (bounds.x !== undefined && bounds.y !== undefined) {
-    out.x = Math.round(bounds.x);
-    out.y = Math.round(bounds.y);
+    // Slide it back on-screen rather than dropping the position entirely — the
+    // point of adopting these bounds is that the window lands where they expect.
+    out.x = Math.min(Math.max(Math.round(bounds.x), area.x), area.x + area.width - width);
+    out.y = Math.min(Math.max(Math.round(bounds.y), area.y), area.y + area.height - height);
   }
   return out;
 }

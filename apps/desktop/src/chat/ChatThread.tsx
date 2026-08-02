@@ -498,7 +498,7 @@ export function ChatThread() {
                 <PresentCard
                   key={item.path}
                   item={item}
-                  onOpen={() => openPresented(canvasController, item)}
+                  onOpen={() => void openPresented(canvasController, item)}
                   onReveal={() => {
                     void window.piDesktop.invoke('canvas:reveal', { path: item.path });
                   }}

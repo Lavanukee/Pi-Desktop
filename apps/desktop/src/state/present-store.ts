@@ -103,18 +103,45 @@ export const usePresentStore = create<PresentState>((set, get) => ({
  */
 /** Open (or focus) a presented artefact's canvas tab. Shared by the event
  * wiring and the card's Open button, so both land on the same tab. */
-export function openPresented(
+export async function openPresented(
   controller: { upsertTab: (key: string, spec: never) => string } | null,
   item: { path: string; note?: string },
-): void {
+): Promise<void> {
   if (controller === null) return;
   const { tab } = classifyPresented(item.path);
   const title = item.path.split(/[\\/]/).pop() ?? item.path;
+  /*
+   * A CANVAS ARTIFACT IS `content: { kind, text }` — the file's TEXT, not a path.
+   *
+   * This used to pass `artifact: { kind, path, title }`, so every surface that
+   * reads `artifact.content.text` threw on `undefined`. React has no error
+   * boundary above the thread, so the throw unmounted the entire tree: calling
+   * `present` BLANKED THE WHOLE APP. jedd saw it happen — "complete blankscreen
+   * after asked for the present tool to be called, I briefly saw the actual UI".
+   *
+   * It also explains a run of readings I could not make sense of: a document with
+   * twelve nodes and no sidebar, blank screenshots, and yet a live, correctly
+   * populated present store — React was gone while the module singletons and the
+   * window handle survived.
+   */
+  let text = '';
+  try {
+    const read = await window.piDesktop.invoke('fs:read-file', { path: item.path });
+    text = typeof read?.text === 'string' ? read.text : '';
+  } catch {
+    // An unreadable file still opens a tab — an empty surface the user can see
+    // beats no tab and no explanation.
+  }
   controller.upsertTab(`present:${item.path}`, {
     kind: tab,
     title,
     key: `present:${item.path}`,
-    artifact: { kind: artifactKindFor(tab), path: item.path, title },
+    artifact: {
+      id: `present:${item.path}`,
+      title,
+      filename: title,
+      content: { kind: artifactKindFor(tab), text },
+    },
     ...(item.note !== undefined ? { subtitle: item.note } : {}),
   } as never);
 }
@@ -136,7 +163,7 @@ export function connectPresent(): () => void {
     const record = usePresentStore
       .getState()
       .add({ path, ...(note !== undefined ? { note } : {}) });
-    openPresented(getCanvasController() as never, record);
+    void openPresented(getCanvasController() as never, record);
   });
 }
 

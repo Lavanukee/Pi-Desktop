@@ -360,3 +360,15 @@ describe('the CEO presents', () => {
     expect(prompt).toContain('LOOK at that preview');
   });
 });
+
+describe('the runtime must exist', () => {
+  /* jedd: "it hasn't installed godot or looked for an installation or run any
+   * visual tests." No corp role could have: the mesh preamble is separate from
+   * the capability prompt, so the clause telling an agent to check its runtime
+   * never reached the building at all. */
+  it('tells every role to check the runtime before building for it', () => {
+    for (const p of [ceoMeshPrompt('x'), managerMeshPrompt('x'), specialistMeshPrompt('tester')]) {
+      expect(p).toContain('ESTABLISH THAT PROGRAM IS ON THIS MACHINE');
+    }
+  });
+});

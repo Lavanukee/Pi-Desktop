@@ -400,3 +400,36 @@ describe('capability and use travel together', () => {
     expect(resolved).not.toContain('use');
   });
 });
+
+/*
+ * `present` is the LAST act of any task that made something, so it must be
+ * reachable from every class. It was registered and appeared in NO preset — the
+ * same way `use` was missed — so the model never saw it, and llama-server's
+ * grammar can only emit a name that is in the ADVERTISED list.
+ */
+describe('present is always reachable', () => {
+  const withPresent = [
+    'read',
+    'write',
+    'edit',
+    'bash',
+    'update_plan',
+    'ask_user',
+    'present',
+    'capability',
+    'use',
+    'browser_navigate',
+    'browser_snapshot',
+  ];
+
+  it('is advertised in every task class', () => {
+    for (const cls of TASK_CLASSES) {
+      expect(resolvePresetTools(cls, withPresent), cls).toContain('present');
+    }
+  });
+
+  it('is omitted when the build never registered it', () => {
+    const without = withPresent.filter((t) => t !== 'present');
+    expect(resolvePresetTools('coding', without)).not.toContain('present');
+  });
+});

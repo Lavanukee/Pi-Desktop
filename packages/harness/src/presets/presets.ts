@@ -86,6 +86,18 @@ export const ALWAYS_ACTIVE_TOOLS: readonly string[] = [
   ...CORE_FILE_TOOLS,
   'update_plan',
   'ask_user',
+  /*
+   * `present` is the LAST act of any task that made something, so it has to be
+   * reachable from every class — a page, an image, a script and a game land in
+   * four different presets and all of them need to hand the thing over.
+   *
+   * Caught the same way `use` was: it registered fine and appeared in NO preset,
+   * so the model never saw it. Registered is not advertised, and llama-server's
+   * grammar can only emit a name that is in the advertised list. It is filtered
+   * against what is actually registered below, so a build without the desktop
+   * bridge simply never lists it.
+   */
+  'present',
 ];
 
 /**

@@ -19,6 +19,7 @@
  * Pure roster + orchestration; the model work is behind the injected seam.
  */
 
+import { PRESENT_TOOL_NAME } from '../tools/present.js';
 import {
   AgentMesh,
   DEFAULT_MESH_BUDGET,
@@ -111,7 +112,7 @@ Use your people to look, even where you could look yourself — a second pair of
 
 BE HARD TO SATISFY, on the user's behalf. "The team says it is finished" is not evidence. Neither is "the tests pass" — those were written by the same people who wrote the work. If something is missing or broken, ${TALK_TO_TOOL} the manager with exactly what you asked for, exactly what you got, and have it fixed. Send it back as many times as it takes; that is not failure, it is the job.
 
-Only when the product genuinely does what the user asked, and you have had somebody LOOK, do you finish. Then reply with what was built, how to use it, and anything you decided to leave out and why.`;
+Only when the product genuinely does what the user asked, and you have had somebody LOOK, do you finish. Then \`present\` the finished thing — that is what actually puts it in front of the user and opens it beside the conversation, and it hands you back a preview of what they are about to see. LOOK at that preview before you write a word: if the product needs a program that is not installed on this machine, or the preview is empty or wrong, it is not finished and you send it back. Then reply with what was built, how to use it, and anything you decided to leave out and why.`;
 }
 
 /**
@@ -527,12 +528,26 @@ const VIDEO_TOOLS = ['generate_video'];
  * the move — and a prompt is the right place to fix a behaviour, rather than
  * amputating a capability the same agent had a moment earlier.
  */
+/*
+ * THE CEO PRESENTS, AND ONLY THE CEO.
+ *
+ * `present` is registered for the top-level agent and every corp role loads the
+ * chat's tool extensions — but the role ALLOWLIST is the real gate, and `present`
+ * was in nobody's. So a corp run could not present at all: it built the thing,
+ * wrote a verdict, and left the user to go hunting for their own deliverable.
+ *
+ * The CEO is the one role that has spoken to the user and whose reply they read,
+ * which makes it the top-level model of a corp run in the only sense that
+ * matters. Engineers, managers and specialists report UPWARD, so jedd's rule
+ * ("no subagent ever has this") holds for them exactly as before.
+ */
 const DEFAULT_CEO_TOOLS: readonly string[] = [
   ...FILE_TOOLS,
   'bash',
   ...RESEARCH_TOOLS,
   ...BROWSER_TOOLS,
   ...CONNECTOR_TOOLS,
+  PRESENT_TOOL_NAME,
 ];
 /*
  * THE MANAGER GETS A SHELL — to RUN, never to write. MEASURED, run 15: with no

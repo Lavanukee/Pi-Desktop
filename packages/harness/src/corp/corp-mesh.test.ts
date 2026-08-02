@@ -339,3 +339,24 @@ describe('image specialist: generation vs pixel work', () => {
     expect(p.length).toBeLessThan(4000);
   });
 });
+
+describe('the CEO presents', () => {
+  /* A corp run built the thing and then left the user to go hunting for it:
+   * `present` was registered but in no role's allowlist, so it could never fire.
+   * The CEO is the only role the user hears from, so it is the one that hands
+   * over — everyone else reports upward. */
+  it('gives present to the CEO and to nobody else', () => {
+    const agents = buildCorpRoster({ task: 'build a game' });
+    const ceo = agents.find((a) => a.id === 'ceo');
+    expect(ceo?.tools).toContain('present');
+    for (const other of agents.filter((a) => a !== ceo)) {
+      expect(other.tools ?? []).not.toContain('present');
+    }
+  });
+
+  it('tells the CEO to present, since an unmentioned tool is inert', () => {
+    const prompt = ceoMeshPrompt('build a game');
+    expect(prompt).toContain('present');
+    expect(prompt).toContain('LOOK at that preview');
+  });
+});

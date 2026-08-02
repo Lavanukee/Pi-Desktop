@@ -149,6 +149,50 @@ export function repairDroppedRootSlash(relative: string): string | undefined {
   return path.resolve(path.sep + relative);
 }
 
+/**
+ * Directories under HOME that are never a place to put a user's work, even when
+ * something asks for them by name. `Library` is the OS's; a dot-directory is
+ * application state.
+ */
+const HOME_DIRS_OFF_LIMITS = new Set(['Library']);
+
+/**
+ * True when `raw` NAMES a destination rather than merely spilling into one.
+ *
+ * THIS IS THE FIX FOR THE WORST BUG IN THE FILE TOOLS. The fence used to refuse
+ * every path outside the workspace and tell the model to "use a relative path
+ * like <basename>" — so a model asked for `~/bobble-testbed/corp-run` obediently
+ * wrote `corp-run`, which resolved against the working folder and built the whole
+ * project at `/Users/jedd/Desktop/corp-run` instead. Nothing errored. The model
+ * reported the path it had been ASKED for, and jedd went to that folder and found
+ * nothing: "I can't as the user go and see the run even primitively following its
+ * instructions going to the folder and the file and pressing f5, won't do
+ * anything." The same mechanism built a duplicate tree at
+ * `/Users/jedd/Desktop/bobble-testbed/platformer` and the absurd
+ * `/Users/jedd/Desktop/Users/jedd/Desktop/platformer_game` he reported earlier.
+ *
+ * Silently relocating a user's files is worse than either writing them or
+ * refusing. So an ABSOLUTE (or `~`-anchored) path under the user's home is
+ * honoured: writing it out in full is what intent looks like, and it is how the
+ * user's own instruction reaches the disk. A bare relative name is still fenced
+ * to the workspace, which is what the containment was actually for.
+ */
+export function isNamedDestination(raw: string, abs: string, home: string): boolean {
+  const expanded = expandUserPath(raw);
+  if (!path.isAbsolute(expanded)) return false;
+  const homeRoot = normalizeRoot(home);
+  const target = normalizeRoot(abs);
+  if (target === homeRoot) return false; // never root work at bare HOME
+  if (!target.startsWith(homeRoot + path.sep)) return false;
+  const rest = target.slice(homeRoot.length + 1);
+  // A DIRECT child of HOME is a dump, not a destination: `~/notes.txt` is the
+  // spill this fence exists to stop, while `~/projects/game/main.gd` is a place
+  // someone chose. Naming a folder is the difference.
+  if (!rest.includes(path.sep)) return false;
+  const first = rest.split(path.sep)[0] ?? '';
+  return !first.startsWith('.') && !HOME_DIRS_OFF_LIMITS.has(first);
+}
+
 /** True when `abs` is `root` itself or nested under it. Roots must be normalized. */
 export function isInsideRoots(abs: string, roots: readonly string[]): boolean {
   const target = normalizeRoot(abs);
@@ -232,11 +276,17 @@ function fenceTool<S extends TSchema, D>(
       // ls with no `path` → the built-in defaults to "."; make that "." resolve
       // against OUR root by passing the root explicitly.
       const abs = raw === undefined ? root : resolveWorkspacePath(raw, root);
-      if (raw !== undefined && fence && !isInsideRoots(abs, allowedWriteRoots(root, home))) {
+      if (
+        raw !== undefined &&
+        fence &&
+        !isInsideRoots(abs, allowedWriteRoots(root, home)) &&
+        !isNamedDestination(raw, abs, home)
+      ) {
         throw new Error(
           `Refusing to ${base.name} outside the workspace: "${raw}" resolves to ${abs}. ` +
-            `Write inside the working folder (${root}) — use a relative path like ` +
-            `"${path.basename(abs) || 'file.txt'}" or an absolute path under it.`,
+            `Write inside the working folder (${root}). If you write somewhere else, ` +
+            `SAY SO in your reply and give the real path — never let the user believe ` +
+            `their files are at a location you did not use.`,
         );
       }
       // Hand pi an already-absolute path so its own resolveToCwd is a passthrough

@@ -18,6 +18,7 @@ import {
   allowedWriteRoots,
   createSandboxFileTools,
   isInsideRoots,
+  isNamedDestination,
   registerSandboxFileTools,
   resolveWorkspacePath,
   resolveWorkspaceRoot,
@@ -52,6 +53,50 @@ describe('resolveWorkspacePath', () => {
 
   it('collapses .. escapes so the fence sees the real target', () => {
     expect(resolveWorkspacePath('../../escape.txt', sandbox)).toBe('/tmp/pi/escape.txt');
+  });
+});
+
+describe('isNamedDestination', () => {
+  const home = '/Users/jedd';
+
+  /* The exact damage jedd found. Asked for ~/bobble-testbed/corp-run with the
+   * workspace at the Desktop, the fence refused and told the model to use a
+   * relative name — so the project was built at /Users/jedd/Desktop/corp-run and
+   * reported as if it were at the requested path. */
+  it('honours an absolute path the caller wrote out in full', () => {
+    expect(
+      isNamedDestination('/Users/jedd/bobble-testbed/corp-run', '/Users/jedd/bobble-testbed/corp-run', home),
+    ).toBe(true);
+  });
+
+  it('honours a ~-anchored path the same way', () => {
+    expect(isNamedDestination('~/projects/game', '/Users/jedd/projects/game', home)).toBe(true);
+  });
+
+  /* A bare name is spill, not intent — it stays fenced to the workspace, which is
+   * what the containment was for. */
+  it('does not honour a bare relative name', () => {
+    expect(isNamedDestination('corp-run', '/Users/jedd/Desktop/corp-run', home)).toBe(false);
+  });
+
+  it('never roots work at bare HOME', () => {
+    expect(isNamedDestination('~', '/Users/jedd', home)).toBe(false);
+  });
+
+  /* A direct child of HOME is a dump, not a destination — this is the case the
+   * pre-existing fence test guards, and honouring it would have re-opened the
+   * spill the fence was built for. */
+  it('refuses a bare file dumped straight into HOME', () => {
+    expect(isNamedDestination('~/notes.txt', '/Users/jedd/notes.txt', home)).toBe(false);
+  });
+
+  it('refuses application state and the OS library', () => {
+    expect(isNamedDestination('~/.ssh/x', '/Users/jedd/.ssh/x', home)).toBe(false);
+    expect(isNamedDestination('~/Library/x', '/Users/jedd/Library/x', home)).toBe(false);
+  });
+
+  it('refuses an absolute path outside the user entirely', () => {
+    expect(isNamedDestination('/etc/hosts', '/etc/hosts', home)).toBe(false);
   });
 });
 

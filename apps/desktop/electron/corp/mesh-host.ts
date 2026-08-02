@@ -350,6 +350,8 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
         ? `Message from ${from}:\n${message}\n\n${taskNote(config.task)}`
         : `Message from ${from}:\n${message}`;
     let reply = '';
+    /** Tool calls this turn — what tells a spent step budget apart from silence. */
+    let toolCallCount = 0;
     try {
       const result = await pool.talk(
         agentId,
@@ -476,6 +478,7 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
         },
       );
       reply = result.finalText.trim();
+      toolCallCount = result.toolCalls?.length ?? 0;
       const work = submitted.get(agentId);
       if (work !== undefined) {
         submitted.delete(agentId);
@@ -498,7 +501,29 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
     } catch (err) {
       reply = `(${agentId} hit a problem: ${err instanceof Error ? err.message : String(err)})`;
     }
-    if (reply === '') reply = '(no reply)';
+    /*
+     * AN EMPTY REPLY MUST SAY WHY.
+     *
+     * `(no reply)` was the whole verdict of the first corp run that completed:
+     * the CEO worked for five minutes, wrote seven files, and the user got a
+     * blank. Its own status update said what had happened — "I've now made ~30
+     * tool calls without reporting back, which has blocked progress" — but the
+     * only thing that reached the caller was two words that read like the agent
+     * had nothing to say.
+     *
+     * An agent that burned its whole step budget and one that genuinely answered
+     * with nothing are different events and need different responses, so say
+     * which it was and what to do about it. The caller here is usually another
+     * agent, and "ask it for a summary" is an instruction it can actually act on.
+     */
+    if (reply === '') {
+      reply =
+        toolCallCount > 0
+          ? `(${agentId} ran out of steps after ${toolCallCount} tool calls without ever replying. ` +
+            `Its work may be on disk but none of it was reported. Ask it directly for a short ` +
+            `summary of what it did, what works, and what is left.)`
+          : `(${agentId} replied with nothing at all.)`;
+    }
     return { reply };
   };
 

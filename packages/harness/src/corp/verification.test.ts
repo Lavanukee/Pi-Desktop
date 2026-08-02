@@ -91,8 +91,13 @@ describe('finalCheck', () => {
    * never launched. Run 6 did exactly that with Godot installed and briefed. */
   it('demands the work actually be opened in its runtime', () => {
     const text = finalCheck({ claims: ['it opens'], profile, perspective: 'engineer' });
-    expect(text).toContain('OPEN THE WORK IN IT');
+    expect(text).toContain('LOAD THE WORK IN IT');
     expect(text).toContain('never launched');
+    // The instruction that hung two runs: "open it in its runtime" made the CEO
+    // launch the Godot EDITOR, which never exits. Two processes were still alive
+    // 1h19m and 19m later, each blocking its whole run.
+    expect(text).toContain('RUN IT IN A WAY THAT EXITS');
+    expect(text).toContain('timeout 60');
   });
 
   it('offers specialists always, and drops the checks that do not apply', () => {

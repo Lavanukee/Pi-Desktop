@@ -303,7 +303,7 @@ export function finalCheck(opts: {
   }
   if (profile.runtime !== null) {
     musts.push(
-      `THE RUNTIME — this is written for \`${profile.runtime}\`. Confirm it is installed and OPEN THE WORK IN IT. Saying it "will open" in a program you never launched is the single failure this check exists to catch.`,
+      `THE RUNTIME — this is written for \`${profile.runtime}\`. Confirm it is installed and LOAD THE WORK IN IT. Saying it "will open" in a program you never launched is the single failure this check exists to catch. RUN IT IN A WAY THAT EXITS: a validate/headless/\`--quit\` mode, and wrap it in \`timeout 60 …\` so it cannot outlive its usefulness. Launching the editor or a normal GUI window NEVER RETURNS — the command hangs, your turn hangs with it, and the whole run stops. (Godot: \`timeout 60 godot --headless --quit --path .\` loads and exits; \`-e\` and a bare \`--path\` open the editor and hang forever.)`,
     );
   }
   musts.push(

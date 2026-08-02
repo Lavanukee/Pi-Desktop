@@ -104,8 +104,9 @@ describe('any form of verification is acceptable', () => {
 
   it('survives a command that cannot run at all', async () => {
     const seen: SubmittedWork[] = [];
-    await submit({ summary: 'x', verification: 'y', command: 'definitely-not-a-real-binary' }, (w) =>
-      seen.push(w),
+    await submit(
+      { summary: 'x', verification: 'y', command: 'definitely-not-a-real-binary' },
+      (w) => seen.push(w),
     );
     expect(seen).toHaveLength(1);
     expect(seen[0]?.ok).toBe(false);
@@ -129,8 +130,8 @@ describe('the first call is a last look, the second hands it over', () => {
     const seen: SubmittedWork[] = [];
     const tool = createSubmitWorkTool({ cwd: ws, onSubmitted: (w) => seen.push(w) });
     const first = await raw(tool, { summary: 'the converter', verification: 'ran it' });
-    expect(first).toContain('one last look');
-    expect(first).toContain('LOOK at it');
+    expect(first).toContain('THIS IS THE FINAL CHECK');
+    expect(first).toContain('EVERY CLAIM YOU JUST MADE');
     expect(seen).toHaveLength(0); // nothing has reached the manager
   });
 
@@ -138,7 +139,10 @@ describe('the first call is a last look, the second hands it over', () => {
     const seen: SubmittedWork[] = [];
     const tool = createSubmitWorkTool({ cwd: ws, onSubmitted: (w) => seen.push(w) });
     await raw(tool, { summary: 'x', verification: 'y' });
-    const second = await raw(tool, { summary: 'the converter', verification: 'looked again, fine' });
+    const second = await raw(tool, {
+      summary: 'the converter',
+      verification: 'looked again, fine',
+    });
     expect(second).toContain('Recorded');
     expect(seen).toHaveLength(1);
     expect(seen[0]?.verification).toBe('looked again, fine');
@@ -149,14 +153,19 @@ describe('the first call is a last look, the second hands it over', () => {
     const seen: SubmittedWork[] = [];
     const tool = createSubmitWorkTool({ cwd: ws, onSubmitted: (w) => seen.push(w) });
     await raw(tool, { summary: 'done', verification: 'it works' });
-    await raw(tool, { summary: 'done, after fixing the empty-input crash', verification: 'retried' });
+    await raw(tool, {
+      summary: 'done, after fixing the empty-input crash',
+      verification: 'retried',
+    });
     expect(seen[0]?.summary).toContain('empty-input crash');
   });
 
   it('a NEW turn starts the pause again — the tool is rebuilt per message', async () => {
     const seen: SubmittedWork[] = [];
     const next = createSubmitWorkTool({ cwd: ws, onSubmitted: (w) => seen.push(w) });
-    expect(await raw(next, { summary: 'x', verification: 'y' })).toContain('one last look');
+    expect(await raw(next, { summary: 'x', verification: 'y' })).toContain(
+      'THIS IS THE FINAL CHECK',
+    );
     expect(seen).toHaveLength(0);
   });
 });
@@ -219,5 +228,48 @@ describe('the plumbing', () => {
     const reply = submissionReply({ summary: 'x', verification: 'y' });
     expect(reply).toContain('look for what is wrong');
     expect(reply).toContain('not a judgement');
+  });
+});
+
+describe('the pause is built from the claims just made', () => {
+  const raw = async (
+    tool: ReturnType<typeof createSubmitWorkTool>,
+    params: Record<string, string>,
+  ): Promise<string> => {
+    const res = (await tool.execute(undefined, params)) as { content: Array<{ text: string }> };
+    return res.content[0]?.text ?? '';
+  };
+
+  /* jedd: "list out every claim that was just made about the final product state
+   * and verify it completely". The old pause had summary/verification in hand and
+   * ignored both, which is how a run shipped four .svg files that did not exist. */
+  it('lists the engineer\'s own claims back, numbered', async () => {
+    const tool = createSubmitWorkTool({ cwd: process.cwd() });
+    const out = await raw(tool, {
+      summary: 'Built the player controller in player.gd with jump and gravity.',
+      verification: 'I created four sprite files and the scene opens in Godot.',
+    });
+    expect(out).toContain('1. Built the player controller');
+    expect(out).toContain('2. I created four sprite files');
+    expect(out).toContain('EVERY CLAIM YOU JUST MADE');
+  });
+
+  it('demands the proof the CONTRACT admits, not a fixed list', async () => {
+    const visual = createSubmitWorkTool({
+      cwd: process.cwd(),
+      profile: () => ({ visual: true, functional: false, ui: true, runtime: 'godot' }),
+    });
+    const out = await raw(visual, { summary: 'a game', verification: 'it compiles' });
+    expect(out).toContain('ANYTHING VISUAL — LOOK AT IT');
+    expect(out).toContain('ANY UI — DRIVE IT');
+    expect(out).toContain('`godot`');
+
+    const plain = createSubmitWorkTool({
+      cwd: process.cwd(),
+      profile: () => ({ visual: false, functional: true, ui: false, runtime: null }),
+    });
+    const out2 = await raw(plain, { summary: 'a parser', verification: 'tests pass' });
+    expect(out2).not.toContain('ANYTHING VISUAL');
+    expect(out2).toContain('RUN IT RIGHT NOW');
   });
 });

@@ -30,7 +30,10 @@ import type { ExtensionFactory, ToolDefinition } from '@mariozechner/pi-coding-a
 import {
   AgentMesh,
   buildCorpRoster,
+  classifyVerification,
   COMMISSION_SPECIALIST_TOOL,
+  extractClaims,
+  finalCheck,
   MESH_SPECIALIST_KINDS,
   type MeshAgent,
   type MeshHop,
@@ -39,6 +42,8 @@ import {
   specialistId,
   TALK_TO_TOOL,
   type TalkFn,
+  type VerificationProfile,
+  verificationBriefing,
 } from '@pi-desktop/harness/corp';
 import { AgentPool } from './agent-pool';
 import {
@@ -327,6 +332,12 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
    * word, which is exactly what the rule exists to distrust. So an accepted
    * submission is stamped onto the reply the manager actually reads. */
   const submitted = new Map<string, SubmittedWork>();
+  /** Per-agent: what verifying means for the contract it was last handed. */
+  const contractProfile = new Map<string, VerificationProfile>();
+  /** The run-level profile, as a ref so the host can be built before it is known. */
+  const taskProfileRef: { value: VerificationProfile } = {
+    value: classifyVerification(config.task ?? ''),
+  };
 
   const run: RunAgentTurn = async ({ agentId, from, message, talk }) => {
     const agent = roster.get(agentId);
@@ -352,6 +363,13 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
     let reply = '';
     /** Tool calls this turn — what tells a spent step budget apart from silence. */
     let toolCallCount = 0;
+    /*
+     * PER-CONTRACT CLASSIFIER. A contract to draw a sprite sheet and a contract
+     * to write a save-file parser need different proof even inside one project,
+     * so the incoming message is classified and that is what this agent's
+     * `submit_work` will demand — not the whole run's profile.
+     */
+    contractProfile.set(agentId, classifyVerification(`${config.task}\n${incoming}`));
     try {
       const result = await pool.talk(
         agentId,
@@ -400,6 +418,10 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
               ? [
                   createSubmitWorkTool({
                     cwd: config.cwd,
+                    // Read at submit time: the tool is built once per role, the
+                    // contract arrives per message.
+                    profile: () =>
+                      contractProfile.get(agentId) ?? classifyVerification(config.task ?? ''),
                     onSubmitted: (w) => {
                       submitted.set(agentId, w);
                       config.onSubmitted?.(agentId, w);
@@ -474,6 +496,44 @@ export function createMeshAgentHost(config: MeshAgentHostConfig): MeshAgentHost 
         {
           ...(config.onActivity !== undefined
             ? { onActivity: (r: RoleAgentActivity) => config.onActivity?.(agentId, r) }
+            : {}),
+          /*
+           * THE MANAGER AND THE CEO GET THE SAME FINAL CHECK — mechanically.
+           *
+           * An engineer has `submit_work`, which is a tool boundary to hook. The
+           * two roles ABOVE it have none: they just reply, and there was nothing
+           * between "the team says it is done" and the answer going out. That is
+           * how run 6 shipped a verdict that called its own sprites broken
+           * placeholders and then asked the user to authorise the fix.
+           *
+           * So the bump does it: one extra user turn on the SAME session, built
+           * from the reply the role JUST WROTE, with its own claims listed back.
+           * Not prompt text it can skim at authoring time — its words, returned.
+           *
+           * jedd: "the manager and CEO should be given the whole shebang about
+           * how they are looking from the point of view of the ceo (who gave the
+           * manager the vision) and the ceo from the point of view of the user
+           * (who asked them for this) and are going to really look and tell: did
+           * this work out in the end as requested."
+           *
+           * Bounded to ONE. This is a last look, not a loop.
+           */
+          ...(agent.role === 'manager' || agent.role === 'ceo'
+            ? {
+                bump: {
+                  maxBumps: 1,
+                  nextPrompt: ({ finalText }: { finalText: string }) => {
+                    const claims = extractClaims(finalText);
+                    if (claims.length === 0) return undefined; // nothing asserted, nothing to discharge
+                    return finalCheck({
+                      claims,
+                      profile: contractProfile.get(agentId) ?? taskProfileRef.value,
+                      perspective: agent.role === 'ceo' ? 'ceo' : 'manager',
+                      ...(config.task !== undefined ? { vision: config.task } : {}),
+                    });
+                  },
+                },
+              }
             : {}),
         },
       );
@@ -604,7 +664,20 @@ export async function runCorpMeshTask(opts: {
   const capabilities: Capability[] =
     opts.skipCapabilityProbe === true ? [] : probeCapabilities(opts.task);
   const briefing = capabilityBriefing(capabilities);
-  const openingMessage = briefing === '' ? opts.task : `${opts.task}\n\n${briefing}`;
+  /*
+   * THE VERIFICATION CLASSIFIER, at the very start of the run.
+   *
+   * jedd: "determine at the very start of the task via a classifier if visual
+   * verification is going to be applicable and then per contract do the same,
+   * and then seed the prompt accordingly." Seeded HERE so "check it works"
+   * already has a meaning by the time anybody has written a line, rather than
+   * arriving as a surprise at submission time.
+   */
+  const taskProfile = classifyVerification(opts.task);
+  const verifyBrief = verificationBriefing(taskProfile);
+  const openingMessage = [opts.task, briefing, verifyBrief]
+    .filter((part) => part !== '')
+    .join('\n\n');
 
   const roster = buildCorpRoster({
     task: opts.task,

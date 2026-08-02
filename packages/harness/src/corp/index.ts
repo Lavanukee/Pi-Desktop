@@ -43,3 +43,11 @@ export * from './sanitize.js';
 export * from './verify.js';
 export * from './vision.js';
 export * from './workspace.js';
+export {
+  classifyVerification,
+  extractClaims,
+  finalCheck,
+  type VerificationPerspective,
+  type VerificationProfile,
+  verificationBriefing,
+} from './verification.js';

@@ -32,6 +32,11 @@
  */
 
 import { execFile } from 'node:child_process';
+import {
+  extractClaims,
+  finalCheck,
+  type VerificationProfile,
+} from '@pi-desktop/harness/corp';
 
 /** The name the prompts and the allowlist must agree on. */
 export const SUBMIT_WORK_TOOL = 'submit_work';
@@ -61,6 +66,12 @@ export interface SubmitWorkOptions {
   readonly timeoutMs?: number;
   /** Called on every submission, with whatever evidence came with it. */
   readonly onSubmitted?: (work: SubmittedWork) => void;
+  /**
+   * What verifying MEANS for the contract this engineer is working to — read at
+   * submit time, not at construction, because the tool is built once per role and
+   * the contract arrives per message. See corp/verification.ts.
+   */
+  readonly profile?: () => VerificationProfile;
 }
 
 const MAX_OUTPUT = 4000;
@@ -233,23 +244,38 @@ export function createSubmitWorkTool(opts: SubmitWorkOptions): ToolLike {
        * the pause a person takes before pressing send.
        */
       if (submissionsThisTurn === 1) {
+        /*
+         * THE PAUSE IS NOW A CHECKLIST OF YOUR OWN CLAIMS.
+         *
+         * It used to be six fixed lines, identical for every task and contract,
+         * with the engineer's `summary` and `verification` sitting unread in the
+         * params. jedd: "asking for general things, list out every claim that was
+         * just made about the final product state and verify it completely."
+         *
+         * So the claims it just made come back numbered, and what counts as proof
+         * comes from the contract's own profile — look at it, run it, drive it —
+         * rather than from a conditional the model can decide does not apply.
+         */
+        const first = (params ?? {}) as Record<string, unknown>;
+        const claims = extractClaims(
+          typeof first.summary === 'string' ? first.summary : undefined,
+          typeof first.verification === 'string' ? first.verification : undefined,
+        );
+        const profile = opts.profile?.() ?? {
+          visual: false,
+          functional: true,
+          ui: false,
+          runtime: null,
+        };
         return {
           content: [
             {
               type: 'text',
               text: [
-                `Before this goes to the manager — take one last look at your own work.`,
-                ``,
-                `  - Run it again, the way somebody else would, not the way you know works.`,
-                `  - If any of it is visible, LOOK at it. A thing that builds is not a thing`,
-                `    that appears.`,
-                `  - Try the case you would be least surprised to see fail.`,
-                `  - Check what it produced, not that it produced something.`,
-                `  - Re-read what you were asked for and make sure it is all actually there.`,
-                ``,
-                `Fix anything you find, then call ${SUBMIT_WORK_TOOL} again. That second call`,
-                `hands it over exactly as you send it — no further checks, no refusals. If you`,
-                `looked and it is right, just call it again now.`,
+                finalCheck({ claims, profile, perspective: 'engineer' }),
+                '',
+                `Then call ${SUBMIT_WORK_TOOL} again — that second call hands it over`,
+                `exactly as you send it, with no further checks.`,
               ].join('\n'),
             },
           ],

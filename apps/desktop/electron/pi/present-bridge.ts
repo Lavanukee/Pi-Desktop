@@ -25,10 +25,25 @@ import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { createLogger } from '@pi-desktop/shared';
+import { createIpcEventSender, createLogger } from '@pi-desktop/shared';
+import { getInferenceLaunchMode } from '../inference/llm-main';
+import { wantVision } from '../inference/vision-want';
+import type { AppEventMap } from '../ipc-contract';
 import type { WebContents } from 'electron';
 
 const log = createLogger('desktop:present');
+/*
+ * THE ENVELOPE SENDER, NOT `wc.send`.
+ *
+ * This was `wc.send('present:show', …)` — a RAW channel name. The preload
+ * listens on ONE channel (IPC_EVENT_CHANNEL) and dispatches envelopes from it,
+ * so a raw send by channel name reaches nobody. Every link either side of it
+ * read as correct — main logged the send, `present:show` is declared in the IPC
+ * contract, ChatApp subscribes, and the card renders unconditionally on a
+ * non-empty store — which is exactly why this took a live store read to find:
+ * presenting a file showed no card and opened no canvas tab, silently.
+ */
+const events = createIpcEventSender<AppEventMap>();
 const run = promisify(execFile);
 
 /** Head of a text preview — enough to judge, small enough not to flood context. */
@@ -187,12 +202,32 @@ async function handle(req: Request): Promise<Record<string, unknown>> {
     const wc = getWindow?.() ?? null;
     if (wc === null || wc.isDestroyed()) return { ok: false, error: 'no Bobble window' };
     // The renderer opens it in the canvas and renders the card.
-    wc.send('present:show', { path: target, note: req.params?.note });
+    events.send(wc, 'present:show', { path: target, note: req.params?.note });
     log.info('presented', { path: target });
     return { ok: true };
   }
   if (req.method === 'preview') {
-    return await buildPreview(target, req.params?.kind ?? 'describe', { renderPage });
+    const preview = await buildPreview(target, req.params?.kind ?? 'describe', { renderPage });
+    /*
+     * A PREVIEW THE MODEL CANNOT SEE IS WORSE THAN NO PREVIEW.
+     *
+     * Presented an HTML file on a text-only server, the model answered: "I'm in
+     * text-only mode right now so I cannot view or analyze the image preview
+     * that was attached. To see the actual visual content of the rendered page,
+     * you'll need to have vision enabled." It said that TO THE USER, about a
+     * capability this app owns and can turn on.
+     *
+     * The mechanism already existed and `present` was simply not attached to it:
+     * an image produced while the server is text-only records a want, and the
+     * turn boundary spends it (see inference/vision-want.ts — going multimodal
+     * is a hard restart, so firing it here would kill the turn that just
+     * rendered). Same call the browser agent makes for a screenshot, for exactly
+     * the same reason.
+     */
+    if (preview.imageBase64 !== undefined && getInferenceLaunchMode() === 'fast-text') {
+      wantVision();
+    }
+    return preview;
   }
   return { error: `unknown method: ${req.method}` };
 }

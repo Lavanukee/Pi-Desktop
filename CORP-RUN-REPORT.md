@@ -82,13 +82,17 @@ These are behavioural, and the prompt changes did not move them.
 
 ### ❌ No Godot check ever ran
 
-Godot is not installed on this machine. Every mention of "godot" in run 6's logs
-is inside the CEO's own prose — *"Godot will use placeholder rectangles"*, *"then
-the project opens in Godot and all requested features work"*. No `command -v`, no
-`/Applications` lookup. It asserted the project opens in a program it never
-checked for and cannot run.
+**Correction:** I first reported this as "Godot is not installed". It is —
+`/opt/homebrew/bin/godot`, 4.7.1. My check was stale, carried over from an
+earlier session.
 
-The preamble clause is present and was read. It did not produce the action.
+That makes the failure worse, not milder. A capability probe already runs
+`godot --version` at task start and briefs the team on what this machine has, so
+the team was told Godot was available. Every mention of "godot" in run 6's logs
+is still only inside the CEO's own prose — *"then the project opens in Godot and
+all requested features work"* — with no invocation anywhere. It asserted the
+project runs in an engine that was installed, present in its briefing, and one
+command away, and never ran it.
 
 ### ❌ `present` still never called
 

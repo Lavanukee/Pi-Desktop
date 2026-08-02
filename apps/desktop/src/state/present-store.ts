@@ -120,6 +120,18 @@ export function openPresented(
 }
 
 export function connectPresent(): () => void {
+  /*
+   * E2E handle, deliberately installed HERE rather than at module scope (same
+   * opt-in as `__pi_store`). Its presence proves this wiring ran: presenting a
+   * file showed no card and opened no canvas tab, and every link in the chain
+   * read as correct — main logged the send, the channel is in the IPC contract,
+   * ChatApp calls this, and the card renders unconditionally on a non-empty
+   * store. Reading the store from a probe is the only way to tell "the event
+   * never arrived" from "it arrived and nothing rendered".
+   */
+  if (new URLSearchParams(window.location.search).has('piE2E')) {
+    (window as unknown as { __present_store?: unknown }).__present_store = () => usePresentStore;
+  }
   return window.piDesktop.onEvent('present:show', ({ path, note }) => {
     const record = usePresentStore
       .getState()
